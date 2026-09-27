@@ -124,7 +124,7 @@ user: installed copies may already have seen it.
 
 ## 7. Check the release
 ```bash
-gh release view "$v" --json name,isLatest,assets,url -q '.url, .name, (.assets[] | .name + " " + (.size|tostring))'
+gh release view "$v" --json name,assets,url -q '.url, .name, (.assets[] | .name + " " + (.size|tostring))'
 gh api repos/doolecg/operant/releases/latest -q .tag_name
 ```
 - Exactly one asset, `Operant-$v.msi`, about 120 MB. If it's missing, the updater has
