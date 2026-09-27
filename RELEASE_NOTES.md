@@ -1,3 +1,18 @@
+# Operant 1.2.0
+
+The status pill in the top bar now counts your agent terminals too, including the master, so you can see how many are working and how many are idle.
+
+**Install:** download `Operant-1.2.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 updates to this by itself.
+
+## New
+- **Idle count:** the status pill in the top bar now reads *running · idle · done*. *Idle* is the number of agent terminals that are open but quiet.
+
+## Changed
+- **Agent terminals count as running:** the master tile and any other agent terminal count under *running* while the agent is producing output, not just Claude subagents.
+- **Workspace busy dot:** a workspace button now shows the busy dot while an agent terminal on it is working, not only while one of its subagents runs.
+
+---
+
 # Operant 1.1.0
 
 AgentLand is now **Operant**. On its first start, Operant asks which agent you'd like to use and then opens that one each time.

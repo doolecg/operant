@@ -809,17 +809,34 @@
       if (i > 4 && !list.length && i !== current) continue;
       const b = document.createElement('button');
       b.className = 'ws-btn' + (i === current ? ' active' : '') + (list.length ? ' occupied' : '')
-        + (list.some(w => w.kind === 'agent' && w.status === 'running') ? ' busy' : '');
+        + (list.some(isWorking) ? ' busy' : '');
       b.textContent = i + 1;
       b.onclick = () => switchWorkspace(i);
       wsBar.appendChild(b);
     }
     const f = focused();
     $('#bar-title').textContent = f ? f.title : '';
-    const ag = [...wins.values()].filter(w => w.kind === 'agent');
-    const run = ag.filter(w => w.status === 'running').length;
-    $('#stat-agents').innerHTML = `◆ <span class="run">${run} running</span> · <span class="ok">${ag.length - run} done</span>`;
+    refreshStats();
   }
+
+  // Agent CLI tiles (the master among them) count as running while output is streaming, idle otherwise.
+  const aiWorking = w => w.busySince && Date.now() - w.lastOut < 3000;
+  const isWorking = w => w.kind === 'agent' ? w.status === 'running' : w.kind === 'ai' && aiWorking(w);
+  let lastStats = '', lastBusy = '';
+  function refreshStats() {
+    const all = [...wins.values()];
+    const ag = all.filter(w => w.kind === 'agent');
+    const ai = all.filter(w => w.kind === 'ai');
+    const agRun = ag.filter(w => w.status === 'running').length;
+    const aiRun = ai.filter(aiWorking).length;
+    const html = `◆ <span class="run">${agRun + aiRun} running</span> · <span class="idle">${ai.length - aiRun} idle</span> · <span class="ok">${ag.length - agRun} done</span>`;
+    if (html !== lastStats) $('#stat-agents').innerHTML = lastStats = html;
+  }
+  // Working state changes without any other event, so redraw the bar when a workspace's busy dot would.
+  setInterval(() => {
+    const busy = workspaces.map((_, i) => wsWins(i).some(isWorking) ? 1 : 0).join('');
+    if (busy !== lastBusy) { lastBusy = busy; refreshBar(); } else refreshStats();
+  }, 1000);
 
   function toast(html, onClick) {
     const t = document.createElement('div');

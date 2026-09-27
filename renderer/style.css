@@ -63,6 +63,7 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 .pill { padding: 3px 10px; border-radius: 99px; background: rgba(var(--ink-rgb), .06); font-size: 12px; color: var(--text); white-space: nowrap; }
 #stat-agents .run { color: var(--agent); }
 #stat-agents .ok { color: var(--done); }
+#stat-agents .idle { color: var(--dim); }
 .icon-btn { width: 26px; height: 24px; border-radius: 7px; color: var(--dim); font-size: 14px; line-height: 1; }
 .icon-btn:hover { color: var(--text); background: rgba(var(--ink-rgb), .08); }
 .wc { display: flex; height: var(--bar-h); }
