@@ -1,3 +1,16 @@
+# Operant 1.4.1
+
+Safer automatic updates. An update that ran while Operant was still open, or at the same time as another update, could leave Operant unable to start.
+
+**Install:** download `Operant-1.4.1.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves. If Operant won't start after an earlier update (a "JavaScript error occurred in the main process" message about `app.asar.unpacked`), run this installer by hand to repair it.
+
+## Fixed
+- **Updates no longer break the install:** if part of Operant is still running when an update is due, the update waits and tries again the next time you close Operant, instead of installing over files in use.
+- **Two updates at once:** if another installer is already running, the update waits for it to finish instead of failing.
+- **Always the newest version:** a newer release now replaces an update that downloaded earlier and hasn't been installed yet, so an older update is never installed over a newer one.
+
+---
+
 # Operant 1.4.0
 
 A projects sidebar with a folder tree, more than one Operant window at a time, and a cleaner Settings with tabs and a Check for updates button. Clicking a notification now reliably takes you to its tile.

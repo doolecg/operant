@@ -27,8 +27,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
   const report = s => { status = { ...s, at: Date.now() }; send('update:status', status); };
 
   async function check() {
-    if (ready) return report({ state: 'ready', version: ready.version, notes: ready.notes, url: ready.url });
-    if (busy) return;
+    if (busy || installing) return;
     busy = true;
     report({ state: 'checking' });
     try {
@@ -39,6 +38,8 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
       const rel = await res.json();
       const version = rel.tag_name.replace(/^v/, '');
       if (!newer(version, currentVersion)) { report({ state: 'current', version: currentVersion }); return; }
+      // Keep checking once one is downloaded: a stale ready update must not be installed over a newer release.
+      if (ready && !newer(version, ready.version)) { report({ state: 'ready', version: ready.version, notes: ready.notes, url: ready.url }); return; }
       const asset = rel.assets.find(a => a.name.toLowerCase().endsWith('.msi'));
       if (!asset) { report({ state: 'error', message: `${version} has no installer yet, try again in a few minutes` }); return; }
 
@@ -75,8 +76,16 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
       `Wait-Process -Id ${process.pid} -Timeout 60 -ErrorAction SilentlyContinue`,
       // Electron helpers and node-pty's console hosts can outlive the main process briefly.
       `$dir = '${q(path.dirname(exe))}\\'`,
-      `Get-Process | Where-Object { try { $_.Path -and $_.Path.StartsWith($dir, 'OrdinalIgnoreCase') } catch { $false } } | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue`,
-      `Start-Process msiexec.exe -ArgumentList '/i "${q(ready.file)}" ${relaunch ? '/passive' : '/qn'} /norestart /l*v "${q(log)}"' -Wait`,
+      // msiexec over files still in use fails halfway through the upgrade and leaves the install
+      // folder gutted, so if anything from it is still running, skip this time (the next quit retries).
+      `$ours = { Get-Process | Where-Object { try { $_.Path -and $_.Path.StartsWith($dir, 'OrdinalIgnoreCase') } catch { $false } } }`,
+      `& $ours | Wait-Process -Timeout 60 -ErrorAction SilentlyContinue`,
+      // 1618: another install is running. Wait for it rather than giving up.
+      `if (-not (& $ours)) { for ($i = 0; $i -lt 40; $i++) {`,
+      `  $p = Start-Process msiexec.exe -ArgumentList '/i "${q(ready.file)}" ${relaunch ? '/passive' : '/qn'} /norestart /l*v "${q(log)}"' -Wait -PassThru`,
+      `  if ($p.ExitCode -ne 1618) { break }`,
+      `  Start-Sleep -Seconds 15`,
+      `} }`,
       relaunch ? `Start-Process -FilePath '${q(exe)}'` : '',
     ].join('\n');
     const encoded = Buffer.from(worker, 'utf16le').toString('base64');
