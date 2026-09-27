@@ -1,9 +1,9 @@
-// AgentLand: a Hyprland-style tiler for terminal AI agents (Claude Code, Codex, OpenCode, ...)
+// Operant: a Hyprland-style tiler for terminal AI agents (Claude Code, Codex, OpenCode, ...)
 // and Claude's subagents.
 
 (async () => {
-  const cfg = await agentland.config();
-  const defaults = await agentland.defaults();
+  const cfg = await operant.config();
+  const defaults = await operant.defaults();
   const $ = s => document.querySelector(s);
   const desktop = $('#desktop');
   const root = document.documentElement.style;
@@ -151,7 +151,7 @@
     w.fitTimer = setTimeout(() => {
       if (!w.alive) return;
       try { w.fit.fit(); } catch {}
-      if (w.ptyId) agentland.resizePty(w.ptyId, w.term.cols, w.term.rows);
+      if (w.ptyId) operant.resizePty(w.ptyId, w.term.cols, w.term.rows);
     }, delay);
   }
 
@@ -250,7 +250,7 @@
     w.agentName = name;
     if (master) { w.master = true; w.el.classList.add('master'); }
     mount(w, current, null);
-    const info = await agentland.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows });
+    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows });
     w.ptyId = info.id;
     w.sessionId = info.sessionId;
     w.cwd = info.cwd;
@@ -258,7 +258,7 @@
     updateBadge(w);
     setTitle(w, name);
     ptyWins.set(info.id, w);
-    w.term.onData(d => { touch(w); w.lastInput = Date.now(); w.typed = true; w.busySince = null; agentland.writePty(info.id, d); });
+    w.term.onData(d => { touch(w); w.lastInput = Date.now(); w.typed = true; w.busySince = null; operant.writePty(info.id, d); });
     // The shell sets its own path as the title; only keep titles the agent sets.
     w.term.onTitleChange(t => t && !/\.exe$/i.test(t.trim()) && setTitle(w, t));
     w.term.onBell(() => { if (kind === 'ai') notify(w, `${name} needs your attention`, shortPath(w.cwd || '')); });
@@ -274,7 +274,7 @@
     const wasFocused = workspaces[wsIndex].focused === w.id;
     const neighbour = wasFocused ? nearestAfterClose(w) : null;
     detach(w);
-    if (w.ptyId) { agentland.killPty(w.ptyId); ptyWins.delete(w.ptyId); }
+    if (w.ptyId) { operant.killPty(w.ptyId); ptyWins.delete(w.ptyId); }
     if (w.sessionId) sessionWin.delete(w.sessionId);
     if (w.agentId) agentWin.delete(w.agentId);
     w.el.classList.add('closing');
@@ -316,7 +316,7 @@
   // ------------------------------------------------------------- pty data
 
   const ptyWins = new Map();
-  agentland.on('pty:data', ({ id, data }) => {
+  operant.on('pty:data', ({ id, data }) => {
     const w = ptyWins.get(id);
     if (!w) return;
     const now = Date.now();
@@ -332,9 +332,9 @@
   async function notify(w, title, body) {
     if (!cfg.notifications || !w.alive) return;
     if (w.lastNotified && Date.now() - w.lastNotified < 5000) return;
-    if (cfg.notifyOnlyUnfocused && w.ws === current && workspaces[w.ws].focused === w.id && await agentland.windowFocused()) return;
+    if (cfg.notifyOnlyUnfocused && w.ws === current && workspaces[w.ws].focused === w.id && await operant.windowFocused()) return;
     w.lastNotified = Date.now();
-    agentland.notify({ title, body, tileId: w.id });
+    operant.notify({ title, body, tileId: w.id });
   }
 
   setInterval(() => {
@@ -347,17 +347,17 @@
     }
   }, 1000);
 
-  agentland.on('focus-tile', id => {
+  operant.on('focus-tile', id => {
     const w = wins.get(id);
     if (!w || !w.alive) return;
     if (w.ws !== current) switchWorkspace(w.ws);
     focusWin(w);
   });
-  agentland.on('pty:exit', ({ id }) => { const w = ptyWins.get(id); if (w) closeWin(w); });
+  operant.on('pty:exit', ({ id }) => { const w = ptyWins.get(id); if (w) closeWin(w); });
 
   // ------------------------------------------------------------- subagents
 
-  agentland.on('agent:new', info => {
+  operant.on('agent:new', info => {
     if (agentWin.has(info.agentId)) return;
     const parent = sessionWin.get(info.sessionId);
     if (!parent && !cfg.showExternalAgents) return;
@@ -382,7 +382,7 @@
     refreshBar();
   });
 
-  agentland.on('agent:entries', ({ agentId, entries }) => {
+  operant.on('agent:entries', ({ agentId, entries }) => {
     const w = agentWin.get(agentId);
     if (!w || !w.alive) return;
     let text = '';
@@ -612,7 +612,7 @@
 
   const actions = {
     newAgent: () => newTerminal('ai'),
-    newAgentIn: async () => { const d = await agentland.pickFolder(); if (d) { lastCwd = d; newTerminal('ai', d); } },
+    newAgentIn: async () => { const d = await operant.pickFolder(); if (d) { lastCwd = d; newTerminal('ai', d); } },
     pickAgent: () => togglePanel('launcher'),
     newShell: () => newTerminal('shell'),
     close: () => { const f = focused(); if (f) closeWin(f); },
@@ -629,8 +629,8 @@
     prevWorkspace: () => switchWorkspace(current - 1), nextWorkspace: () => switchWorkspace(current + 1),
     help: () => togglePanel('keys'),
     settings: () => togglePanel('settings'),
-    openConfig: () => agentland.openConfig(),
-    devtools: () => agentland.devtools(),
+    openConfig: () => operant.openConfig(),
+    devtools: () => operant.devtools(),
   };
   const bindMap = new Map();
   for (let i = 1; i <= WS_COUNT; i++) {
@@ -690,6 +690,7 @@
   }
   function closePanels(refocus = true) {
     recording = null;
+    welcome = null; // dismissed without choosing: ask again next start
     PANELS.forEach(p => $('#' + p).classList.add('hidden'));
     if (refocus) focused()?.term.focus();
   }
@@ -701,21 +702,32 @@
   $('#btn-new').onclick = () => togglePanel('launcher');
 
   // Agent launcher: 1-9 (or a click) opens that agent, Shift picks a folder first.
+  // On first run it asks which agent to use instead; the answer becomes the default.
+  let welcome = null; // { dir } while the first-run question is showing
   function renderLauncher() {
+    $('#launcher-title').textContent = welcome ? 'Choose your agent' : 'New agent';
+    $('#launcher-sub').textContent = welcome ? '1–9 or click to choose' : '1–9 opens one · Shift picks a folder first';
+    $('#launcher-foot').textContent = welcome ? 'It opens now and each time Operant starts. Change it in Settings › Agents.' : 'Add or change agents in Settings › Agents';
     $('#launcher-body').innerHTML = cfg.agents.map((a, i) => `<button class="launch-row" data-i="${i}">
       <span class="ico">${esc(a.icon || '●')}</span><span class="nm">${esc(a.name)}<small>${esc([a.command, ...[].concat(a.args || [])].join(' '))}</small></span>
-      ${a.id === cfg.defaultAgent ? '<span class="def">default</span>' : ''}${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}</button>`).join('')
-      + `<button class="launch-row" data-shell><span class="ico">❯</span><span class="nm">Shell<small>${esc(cfg.shell)}</small></span>${k('newShell')}</button>`;
+      ${a.id === cfg.defaultAgent && !welcome ? '<span class="def">default</span>' : ''}${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}</button>`).join('')
+      + (welcome ? '' : `<button class="launch-row" data-shell><span class="ico">❯</span><span class="nm">Shell<small>${esc(cfg.shell)}</small></span>${k('newShell')}</button>`);
     $('#launcher-body').querySelectorAll('[data-i]').forEach(b => b.onclick = e => launch(+b.dataset.i, e.shiftKey));
-    $('#launcher-body [data-shell]').onclick = () => { closePanels(false); newTerminal('shell'); };
+    const sh = $('#launcher-body [data-shell]');
+    if (sh) sh.onclick = () => { closePanels(false); newTerminal('shell'); };
   }
   const k = a => bindLabel(a) ? `<kbd>${esc(Panels.pretty(bindLabel(a)))}</kbd>` : '';
   async function launch(i, pickDir) {
     const a = cfg.agents[i];
     if (!a) return;
+    const first = welcome;
     closePanels(false);
+    if (first) {
+      setSetting('defaultAgent', a.id);
+      return newTerminal('ai', first.dir, { agentId: a.id, master: true });
+    }
     let dir;
-    if (pickDir) { dir = await agentland.pickFolder(); if (!dir) return; lastCwd = dir; }
+    if (pickDir) { dir = await operant.pickFolder(); if (!dir) return; lastCwd = dir; }
     newTerminal('ai', dir, { agentId: a.id });
   }
   $('#btn-settings').onclick = () => togglePanel('settings');
@@ -725,7 +737,7 @@
   function save(patch) {
     Object.assign(pending, patch);
     clearTimeout(saveT);
-    saveT = setTimeout(() => { agentland.setConfig(pending); pending = {}; }, 300);
+    saveT = setTimeout(() => { operant.setConfig(pending); pending = {}; }, 300);
   }
 
   const LIVE_LAYOUT = new Set(['defaultLayout', 'masterRatio']);
@@ -734,10 +746,11 @@
     save({ [key]: value });
     if (LIVE_LAYOUT.has(key)) for (const ws of workspaces) if (!ws.tree) { ws.layout = cfg.defaultLayout; ws.mfact = cfg.masterRatio; }
     if (key === 'agents' || key === 'defaultAgent') renderHints();
+    if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
   }
-  const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, agentland.pickFolder);
-  $('#set-json').onclick = () => agentland.openConfig();
+  const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder);
+  $('#set-json').onclick = () => operant.openConfig();
   const resetBtn = $('#set-reset');
   resetBtn.onclick = () => {
     if (!resetBtn.dataset.armed) {
@@ -820,7 +833,7 @@
 
   const tick = () => { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
   tick(); setInterval(tick, 10000);
-  $('#wc-min').onclick = agentland.minimize; $('#wc-max').onclick = agentland.maximize; $('#wc-close').onclick = agentland.close;
+  $('#wc-min').onclick = operant.minimize; $('#wc-max').onclick = operant.maximize; $('#wc-close').onclick = operant.close;
 
   let resizeT;
   window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => workspaces.forEach((_, i) => layout(i, true)), 60); });
@@ -828,8 +841,8 @@
   // ------------------------------------------------------------ updates
 
   const pill = $('#update-pill');
-  const version = await agentland.version();
-  agentland.on('update:status', s => {
+  const version = await operant.version();
+  operant.on('update:status', s => {
     pill.classList.toggle('hidden', s.state !== 'downloading' && s.state !== 'ready');
     pill.classList.toggle('ready', s.state === 'ready');
     if (s.state === 'downloading') { pill.textContent = `↓ Downloading v${s.version}…`; pill.title = ''; }
@@ -839,15 +852,19 @@
       toast(`<b>Update ready</b> v${esc(s.version)}. Click the pill in the bar to restart.`);
     }
   });
-  pill.onclick = () => { if (pill.classList.contains('ready')) agentland.installUpdate(); };
+  pill.onclick = () => { if (pill.classList.contains('ready')) operant.installUpdate(); };
 
   applyAppearance();
   renderHints();
   refreshBar();
-  // Opened from Explorer's "Open in AgentLand": the master starts in that folder,
+  // Opened from Explorer's "Open in Operant": the master starts in that folder,
   // and later right-clicks (while running) each add a tile of the default agent there.
-  const startDir = await agentland.startupFolder();
+  const startDir = await operant.startupFolder();
   if (startDir) lastCwd = startDir;
-  if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
-  agentland.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
+  if (!cfg.agentChosen && cfg.agents.length > 1) {
+    togglePanel('launcher');
+    welcome = { dir: startDir || cfg.defaultCwd };
+    renderLauncher();
+  } else if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
+  operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
 })();

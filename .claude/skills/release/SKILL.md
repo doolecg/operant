@@ -1,12 +1,12 @@
 ---
 name: release
-description: Ship a new version of AgentLand end to end — bump the version, write RELEASE_NOTES.md, test and launch-check, commit on a dev branch, fast-forward main, push a plain version tag, watch the GitHub Actions MSI build, and check the release the in-app updater will install. Use whenever the user asks to release, ship, publish, cut, bump or "update release", even if they only say "release it" at the end of a change. Optional argument: patch | minor | major | an exact version like 1.4.0.
+description: Ship a new version of Operant end to end — bump the version, write RELEASE_NOTES.md, test and launch-check, commit on a dev branch, fast-forward main, push a plain version tag, watch the GitHub Actions MSI build, and check the release the in-app updater will install. Use whenever the user asks to release, ship, publish, cut, bump or "update release", even if they only say "release it" at the end of a change. Optional argument: patch | minor | major | an exact version like 1.4.0.
 ---
 
-# Release AgentLand
+# Release Operant
 
 Pushing a version tag runs `.github/workflows/release.yml` on a Windows runner. It builds
-`dist/AgentLand-<version>.msi` and publishes it as the GitHub release for that tag, with the top
+`dist/Operant-<version>.msi` and publishes it as the GitHub release for that tag, with the top
 section of `RELEASE_NOTES.md` as the body. Installed copies find it through `updater.js`, which downloads
 the MSI and shows the "Update" pill. **Anything you release goes to every installed user**, so don't skip
 the checks.
@@ -50,14 +50,14 @@ git log "$last"..HEAD --oneline; git diff "$last" --stat
 ## 3. Write the release notes
 Prepend a section to `RELEASE_NOTES.md`, followed by a line with only `---` and a blank line before the
 previous section. The workflow publishes everything above the first `---` and **fails the build** unless
-the first line is exactly `# AgentLand <v>`.
+the first line is exactly `# Operant <v>`.
 
 ```markdown
-# AgentLand 1.3.0
+# Operant 1.3.0
 
 One or two sentences: what this release is about, for someone deciding whether to update.
 
-**Install:** download `AgentLand-1.3.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.0.0 and later update to this by themselves.
+**Install:** download `Operant-1.3.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.0.0 and later update to this by themselves.
 
 ## New
 - **Feature name:** what the user can now do, and where to find it (⚙ Settings › section, default key).
@@ -84,16 +84,16 @@ line fetches it.
 
 Syntax checks aren't enough if `main.js`, `preload.js`, `renderer/` or `updater.js` changed. Launch it
 on a throwaway profile, so it runs beside the user's installed copy (which holds the single-instance
-lock) without touching their `%APPDATA%\AgentLand\config.json`:
+lock) without touching their `%APPDATA%\Operant\config.json`:
 ```powershell
-$ud = "<scratchpad>\agentland-profile"; New-Item -ItemType Directory -Force $ud | Out-Null
+$ud = "<scratchpad>\operant-profile"; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "autoUpdate": false }' | Set-Content -Encoding utf8 "$ud\config.json"
-$env:AGENTLAND_USER_DATA = $ud; $p = Start-Process node_modules\electron\dist\electron.exe -ArgumentList '.' -PassThru
+$env:OPERANT_USER_DATA = $ud; $p = Start-Process node_modules\electron\dist\electron.exe -ArgumentList '.' -PassThru
 Start-Sleep 12
 ```
 Check that it's still running and has a descendant for the default agent (`claude.exe` for Claude Code;
 walk `Win32_Process` by `ParentProcessId`). Then stop that tree and `$p`, and nothing else: the user's own
-copy is also called "AgentLand"/electron. For UI changes, add `--remote-debugging-port=9333` and
+copy is also called "Operant"/electron. For UI changes, add `--remote-debugging-port=9333` and
 screenshot through CDP (`Page.captureScreenshot`) to look at it.
 
 ## 5. Commit, push, tag
@@ -125,9 +125,9 @@ user: installed copies may already have seen it.
 ## 7. Check the release
 ```bash
 gh release view "$v" --json name,isLatest,assets,url -q '.url, .name, (.assets[] | .name + " " + (.size|tostring))'
-gh api repos/doolecg/agentland/releases/latest -q .tag_name
+gh api repos/doolecg/operant/releases/latest -q .tag_name
 ```
-- Exactly one asset, `AgentLand-$v.msi`, about 120 MB. If it's missing, the updater has
+- Exactly one asset, `Operant-$v.msi`, about 120 MB. If it's missing, the updater has
   nothing to install: fix that before anything else.
 - `releases/latest` must be the new tag, because that's the only release the updater reads.
 - The body is the notes section. If it needs a fix, fix `RELEASE_NOTES.md` on `main` too, then

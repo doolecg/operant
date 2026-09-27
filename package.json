@@ -1,6 +1,6 @@
 {
-  "name": "agentland",
-  "version": "1.0.0",
+  "name": "operant",
+  "version": "1.1.0",
   "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenAI Codex, OpenCode, Gemini CLI and more",
   "main": "main.js",
   "scripts": {
@@ -22,15 +22,15 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0"
   },
-  "productName": "AgentLand",
+  "productName": "Operant",
   "repository": {
     "type": "git",
-    "url": "https://github.com/doolecg/agentland.git"
+    "url": "https://github.com/doolecg/operant.git"
   },
-  "homepage": "https://github.com/doolecg/agentland",
+  "homepage": "https://github.com/doolecg/operant",
   "build": {
-    "appId": "com.doolecg.agentland",
-    "productName": "AgentLand",
+    "appId": "com.doolecg.operant",
+    "productName": "Operant",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -64,8 +64,8 @@
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AgentLand",
-      "artifactName": "AgentLand-${version}.msi"
+      "shortcutName": "Operant",
+      "artifactName": "Operant-${version}.msi"
     },
     "publish": null
   }

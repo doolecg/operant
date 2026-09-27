@@ -10,7 +10,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
-const REPO = 'doolecg/agentland';
+const REPO = 'doolecg/operant';
 const CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
 
 function newer(a, b) { // is version a > b
@@ -29,7 +29,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
     busy = true;
     try {
       const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-        headers: { 'User-Agent': 'agentland', Accept: 'application/vnd.github+json' },
+        headers: { 'User-Agent': 'operant', Accept: 'application/vnd.github+json' },
       });
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
       const rel = await res.json();
@@ -38,10 +38,10 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
       const asset = rel.assets.find(a => a.name.toLowerCase().endsWith('.msi'));
       if (!asset) return;
 
-      const file = path.join(os.tmpdir(), `AgentLand-${version}.msi`);
+      const file = path.join(os.tmpdir(), `Operant-${version}.msi`);
       if (!fs.existsSync(file) || fs.statSync(file).size !== asset.size) {
         send('update:status', { state: 'downloading', version });
-        const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'agentland' } });
+        const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
         if (!dl.ok) throw new Error(`download ${dl.status}`);
         const tmp = file + '.part';
         await pipeline(Readable.fromWeb(dl.body), fs.createWriteStream(tmp));
@@ -66,7 +66,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
     if (!ready || installing) return false;
     const q = s => s.replace(/'/g, "''");
     const exe = process.execPath;
-    const log = path.join(os.tmpdir(), `AgentLand-${ready.version}-install.log`);
+    const log = path.join(os.tmpdir(), `Operant-${ready.version}-install.log`);
     const worker = [
       `Wait-Process -Id ${process.pid} -Timeout 60 -ErrorAction SilentlyContinue`,
       // Electron helpers and node-pty's console hosts can outlive the main process briefly.
@@ -88,7 +88,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
   }
 
   function start() {
-    if (!app.isPackaged && !process.env.AGENTLAND_UPDATE_TEST) return;
+    if (!app.isPackaged && !process.env.OPERANT_UPDATE_TEST) return;
     setTimeout(check, 5000);
     setInterval(check, CHECK_EVERY_MS);
     // Like electron-updater's autoInstallOnAppQuit: a downloaded update goes in when the app closes.

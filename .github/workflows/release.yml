@@ -38,12 +38,12 @@ jobs:
           fi
           # Release body: everything above the first '---' line of RELEASE_NOTES.md, which must be this version's section.
           awk '/^---[[:space:]]*$/ { exit } { print }' RELEASE_NOTES.md > notes.md
-          if ! head -1 notes.md | tr -d '\r' | grep -qx "# AgentLand $v"; then
-            echo "RELEASE_NOTES.md must start with '# AgentLand $v'"; exit 1
+          if ! head -1 notes.md | tr -d '\r' | grep -qx "# Operant $v"; then
+            echo "RELEASE_NOTES.md must start with '# Operant $v'"; exit 1
           fi
           msi=$(ls dist/*.msi)
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$msi" --clobber
           else
-            gh release create "$tag" "$msi" --title "AgentLand $v" --notes-file notes.md --latest
+            gh release create "$tag" "$msi" --title "Operant $v" --notes-file notes.md --latest
           fi

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
-  <title>AgentLand</title>
+  <title>Operant</title>
   <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -12,7 +12,7 @@
 
   <header id="bar">
     <div class="bar-left">
-      <span class="logo">◈</span><span class="brand">AgentLand</span>
+      <span class="logo">◈</span><span class="brand">Operant</span>
       <div id="workspaces"></div>
     </div>
     <div class="bar-center" id="bar-title"></div>
@@ -62,10 +62,10 @@
 
   <div id="launcher" class="overlay hidden">
     <div class="card narrow">
-      <div class="card-head"><h2><span class="logo">◈</span> New agent</h2><span class="sub">1–9 opens one · Shift picks a folder first</span></div>
+      <div class="card-head"><h2><span class="logo">◈</span> <span id="launcher-title">New agent</span></h2><span class="sub" id="launcher-sub"></span></div>
       <div class="card-body" id="launcher-body"></div>
       <div class="card-foot">
-        <span class="grow">Add or change agents in Settings › Agents</span>
+        <span class="grow" id="launcher-foot"></span>
         <button class="btn primary" data-close>Cancel</button>
       </div>
     </div>

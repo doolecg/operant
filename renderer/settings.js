@@ -50,7 +50,7 @@ const Panels = (() => {
       { key: 'notifications', label: 'Windows notifications', type: 'toggle' },
       { key: 'notifyWhenIdleSeconds', label: 'Agent is waiting for you', hint: 'Notify when a working agent goes quiet for this many seconds · 0 = off', type: 'number', min: 0, max: 600 },
       { key: 'notifySubagents', label: 'Claude subagent finished', type: 'toggle' },
-      { key: 'notifyOnlyUnfocused', label: 'Only when I\'m not looking at it', hint: 'Skip it for the focused tile while AgentLand is in front', type: 'toggle' },
+      { key: 'notifyOnlyUnfocused', label: 'Only when I\'m not looking at it', hint: 'Skip it for the focused tile while Operant is in front', type: 'toggle' },
     ]],
     ['Subagents & idle closing', [
       { key: 'showExternalAgents', label: 'Show subagents from other Claude sessions', hint: 'Your IDE, other terminals', type: 'toggle' },
@@ -63,7 +63,7 @@ const Panels = (() => {
       { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
       { key: 'defaultCwd', label: 'Default folder', type: 'folder' },
       { key: 'shell', label: 'Shell', hint: 'PowerShell runs the agents · ' + NEW_TILES, type: 'text' },
-      { key: 'explorerContextMenu', label: 'Explorer right-click entry', hint: '"Open in AgentLand" on folders (installed app)', type: 'toggle' },
+      { key: 'explorerContextMenu', label: 'Explorer right-click entry', hint: '"Open in Operant" on folders (installed app)', type: 'toggle' },
       { key: 'autoUpdate', label: 'Auto-update', hint: RESTART, type: 'toggle' },
     ]],
   ];

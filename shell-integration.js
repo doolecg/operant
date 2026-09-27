@@ -1,12 +1,12 @@
-// Explorer right-click entry: "Open in AgentLand" on folders, folder backgrounds
+// Explorer right-click entry: "Open in Operant" on folders, folder backgrounds
 // and drives. Written to HKCU (no admin) on every packaged start so the command always
 // points at the current install. The key name sorts right after Windows' "Powershell"
 // entry, which puts it directly under "Open PowerShell window here".
 
 const { execFile } = require('child_process');
 
-const KEY_NAME = 'PowershellAgentLand';
-const LABEL = 'Open in AgentLand';
+const KEY_NAME = 'PowershellOperant';
+const LABEL = 'Open in Operant';
 const ROOTS = [
   ['Directory\\Background\\shell', '%V'],
   ['Directory\\shell', '%1'],

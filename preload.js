@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('agentland', {
+contextBridge.exposeInMainWorld('operant', {
   config: () => ipcRenderer.invoke('config'),
   setConfig: patch => ipcRenderer.invoke('config:set', patch),
   defaults: () => ipcRenderer.invoke('config:defaults'),

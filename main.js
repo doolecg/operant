@@ -1,4 +1,4 @@
-// AgentLand: main process.
+// Operant: main process.
 // Owns the pseudo-terminals (AI agent CLIs / shell sessions) and watches Claude Code's
 // transcript folders so every Claude subagent that starts gets its own tile.
 
@@ -14,12 +14,12 @@ const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
-if (process.env.AGENTLAND_USER_DATA) app.setPath('userData', process.env.AGENTLAND_USER_DATA);
+if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
 // Windows only shows toast notifications for an app with an AppUserModelID (the installer's shortcut carries the same one).
-app.setAppUserModelId('com.doolecg.agentland');
+app.setAppUserModelId('com.doolecg.operant');
 
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
-// Lives in %APPDATA%/AgentLand so it survives updates (the install dir is replaced).
+// Lives in %APPDATA%/Operant so it survives updates (the install dir is replaced).
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 
 // Alt is the "Super" key here: Windows reserves most Win+ combos for itself.
@@ -58,10 +58,11 @@ const DEFAULT_CONFIG = {
     { id: 'gemini', name: 'Gemini CLI', command: 'gemini', args: [], install: 'npm i -g @google/gemini-cli', icon: '✦' },
   ],
   defaultAgent: 'claude',          // what Alt+Enter, the master and Explorer's entry open
+  agentChosen: false,             // false until the first-run "which agent?" prompt is answered
   shell: 'powershell.exe',
-  showExternalAgents: true,       // subagents from Claude sessions not started inside AgentLand
+  showExternalAgents: true,       // subagents from Claude sessions not started inside Operant
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
-  masterOnStartup: true,          // open a "master" agent terminal when AgentLand starts
+  masterOnStartup: true,          // open a "master" agent terminal when Operant starts
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
   masterRatio: 0.55,
   // Idle reaping (0 disables each). The focused tile and the master terminal are never reaped.
@@ -87,7 +88,7 @@ const DEFAULT_CONFIG = {
   borderAnimation: 'active',      // 'active' (focused + running agents) | 'focused' | 'off'
   borderAnimationSeconds: 8,
   autoUpdate: true,               // check GitHub releases and install new versions
-  explorerContextMenu: true,      // "Open in AgentLand" when right-clicking a folder
+  explorerContextMenu: true,      // "Open in Operant" when right-clicking a folder
   // Windows notifications
   notifications: true,
   notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long is waiting for you
@@ -98,7 +99,7 @@ const DEFAULT_CONFIG = {
 
 // Only what the user changed is stored, so new defaults reach existing installs.
 let user = {};
-try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch {}
+try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')); } catch {} // a BOM from Notepad or PowerShell would fail the parse
 const merged = () => ({ ...DEFAULT_CONFIG, ...user, keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) } });
 const config = merged();
 
@@ -145,7 +146,7 @@ const startupFolder = folderArg(process.argv);
 ipcMain.handle('startup-folder', () => startupFolder);
 
 // The PATH Windows would give a freshly started program: machine + user entries from the
-// registry. Our own process.env.PATH can be stale (AgentLand was started before an agent CLI was
+// registry. Our own process.env.PATH can be stale (Operant was started before an agent CLI was
 // installed, or by a parent with an old environment), so tiles couldn't find the command.
 function registryPath() {
   const read = key => {
@@ -194,7 +195,7 @@ ipcMain.handle('pty:create', (_e, { kind, agentId, cwd, cols, rows }) => {
     ].join('; ')];
   }
 
-  // If AgentLand was itself started from inside a Claude session, don't let the
+  // If Operant was itself started from inside a Claude session, don't let the
   // child claude think it's nested: that turns off transcript saving, which the
   // subagent tiles depend on.
   const env = withFreshPath({ ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' });
@@ -386,7 +387,7 @@ function createWindow() {
     width: 1600, height: 950, minWidth: 700, minHeight: 450,
     frame: false,
     backgroundColor: (THEMES[config.theme] || THEMES.obsidian).bg,
-    title: 'AgentLand',
+    title: 'Operant',
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
