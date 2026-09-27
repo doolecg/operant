@@ -37,7 +37,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
       const rel = await res.json();
       const version = rel.tag_name.replace(/^v/, '');
-      if (!newer(version, currentVersion)) { report({ state: 'current', version: currentVersion }); return; }
+      if (!newer(version, currentVersion)) { report({ state: 'current', version: currentVersion, notes: version === currentVersion ? rel.body || '' : '' }); return; }
       // Keep checking once one is downloaded: a stale ready update must not be installed over a newer release.
       if (ready && !newer(version, ready.version)) { report({ state: 'ready', version: ready.version, notes: ready.notes, url: ready.url }); return; }
       const asset = rel.assets.find(a => a.name.toLowerCase().endsWith('.msi'));
@@ -45,7 +45,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
 
       const file = path.join(os.tmpdir(), `Operant-${version}.msi`);
       if (!fs.existsSync(file) || fs.statSync(file).size !== asset.size) {
-        report({ state: 'downloading', version });
+        report({ state: 'downloading', version, notes: rel.body || '' });
         const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
         if (!dl.ok) throw new Error(`download ${dl.status}`);
         const tmp = file + '.part';

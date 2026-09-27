@@ -1,3 +1,15 @@
+# Operant 1.6.1
+
+Readable release notes: what's new in an update now shows formatted in Settings › Updates.
+
+**Install:** download `Operant-1.6.1.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## Changed
+- **Formatted release notes:** ⚙ Settings › Updates shows the notes with headings, lists and bold text instead of raw Markdown. They appear while an update downloads, and when you're up to date, *What's new in this version* shows the notes for the version you have. Links in them open in your browser.
+- **Update pill:** its tooltip now points to ⚙ Settings › Updates for what's new, instead of showing the notes as raw text.
+
+---
+
 # Operant 1.6.0
 
 Project groups in the sidebar, and CodeGraph built in: install it and index your projects from Operant.

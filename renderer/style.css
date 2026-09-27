@@ -376,7 +376,17 @@ body.border-off .win::before { animation: none; }
 .btn:disabled { opacity: .5; cursor: default; }
 .uc-notes { margin: 0 0 12px; border-radius: 10px; background: rgba(var(--ink-rgb), .03); padding: 8px 14px; }
 .uc-notes summary { cursor: pointer; color: var(--text); }
-.uc-notes pre { white-space: pre-wrap; font: 12px/1.55 'Segoe UI', sans-serif; color: var(--dim); max-height: 260px; overflow: auto; margin: 8px 0 4px; }
+.uc-notes .md { font-size: 12.5px; line-height: 1.55; color: var(--dim); max-height: 320px; overflow: auto; margin: 6px 0 4px; padding-right: 6px; }
+.md h3, .md h4, .md h5, .md h6 { color: var(--text); margin: 12px 0 4px; font-weight: 600; text-transform: none; letter-spacing: normal; }
+.md h3 { font-size: 15px; } .md h4 { font-size: 13.5px; } .md h5, .md h6 { font-size: 12.5px; }
+.md > :first-child { margin-top: 4px; }
+.md p { margin: 6px 0; }
+.md ul, .md ol { margin: 4px 0 6px; padding-left: 20px; }
+.md li { margin: 3px 0; }
+.md b { color: var(--text); font-weight: 600; }
+.md code { font: 11.5px 'Cascadia Mono', Consolas, monospace; background: rgba(var(--ink-rgb), .08); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+.md a { color: var(--accent); text-decoration: none; } .md a:hover { text-decoration: underline; }
+.md hr { border: 0; border-top: 1px solid rgba(var(--ink-rgb), .1); margin: 12px 0; }
 .uc-links { margin: 0 0 10px; }
 .cg-card .update-card { gap: 10px; }
 .cg-card .uc-logo { margin-right: 6px; }

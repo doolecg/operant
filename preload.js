@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('operant', {
   installUpdate: () => ipcRenderer.send('update:install'),
   updateState: () => ipcRenderer.invoke('update:state'),
   openReleases: () => ipcRenderer.send('open-releases'),
+  openLink: url => ipcRenderer.send('open-link', url),
   listDir: (dir, hidden) => ipcRenderer.invoke('fs:list', { dir, hidden }),
   isDir: p => ipcRenderer.invoke('fs:is-dir', p),
   openPath: p => ipcRenderer.send('fs:open', p),

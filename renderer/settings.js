@@ -155,8 +155,41 @@ const Panels = (() => {
       : `<button class="btn" data-update="check"${busy ? ' disabled' : ''}>${busy ? 'Checking…' : 'Check for updates'}</button>`;
     return `<div class="update-card"><span class="uc-logo">◈</span><div class="uc-main"><div class="uc-name">Operant ${esc(u.version)}</div>`
       + `<div class="uc-status ${esc(s.state || '')}">${esc(line)}</div></div>${btn}</div>`
-      + (s.state === 'ready' && s.notes ? `<details class="uc-notes" open><summary>What's new in ${esc(s.version)}</summary><pre>${esc(s.notes)}</pre></details>` : '')
+      + (s.notes && (s.state === 'ready' || s.state === 'downloading')
+        ? `<details class="uc-notes" open><summary>What's new in ${esc(s.version)}</summary><div class="md">${md(s.notes)}</div></details>`
+        : s.notes && s.state === 'current' ? `<details class="uc-notes"><summary>What's new in this version</summary><div class="md">${md(s.notes)}</div></details>` : '')
       + '<div class="uc-links"><button class="link" data-update="releases">All releases on GitHub ↗</button></div>';
+  }
+
+  // Release notes are Markdown: headings, lists, bold/italic, `code`, links and --- rules. HTML is escaped first.
+  function md(src) {
+    const inline = t => esc(t)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?!\w)/g, '$1<i>$2</i>')
+      .replace(/(^|[^\w])_([^_\s][^_]*)_(?!\w)/g, '$1<i>$2</i>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="#" data-link="$2">$1</a>');
+    let html = '', list = null, para = [];
+    const flush = () => {
+      if (para.length) { html += `<p>${inline(para.join(' '))}</p>`; para = []; }
+      if (list) { html += `</${list}>`; list = null; }
+    };
+    for (const raw of String(src).replace(/\r/g, '').split('\n')) {
+      const line = raw.trimEnd();
+      let m;
+      if (!line.trim()) flush();
+      else if (/^\s*(-{3,}|\*{3,}|_{3,})$/.test(line)) { flush(); html += '<hr>'; }
+      else if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flush(); const n = Math.min(m[1].length + 2, 6); html += `<h${n}>${inline(m[2])}</h${n}>`; }
+      else if ((m = line.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/))) {
+        const tag = /\d/.test(m[1]) ? 'ol' : 'ul';
+        if (para.length || list !== tag) flush();
+        if (!list) { html += `<${tag}>`; list = tag; }
+        html += `<li>${inline(m[2])}</li>`;
+      } else if (list && /^\s+\S/.test(raw)) html = html.replace(/<\/li>$/, ` ${inline(line.trim())}</li>`);
+      else { if (list) flush(); para.push(line.trim()); }
+    }
+    flush();
+    return html;
   }
 
   // The last tab you had open comes back next time.
@@ -216,6 +249,7 @@ const Panels = (() => {
         else if (a === 'install') ext.installUpdate();
         else ext.openReleases();
       });
+      pane.querySelectorAll('[data-link]').forEach(a => a.onclick = e => { e.preventDefault(); ext.openLink(a.dataset.link); });
       pane.querySelectorAll('[data-theme]').forEach(b => b.onclick = () => { set('theme', b.dataset.theme); currentTheme = cfg.theme; draw(); });
       pane.querySelectorAll('[data-accent]').forEach(b => b.onclick = () => { set('accent', b.dataset.accent); draw(); });
       pane.querySelectorAll('[data-browse]').forEach(b => b.onclick = async () => {

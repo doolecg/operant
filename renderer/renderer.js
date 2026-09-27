@@ -778,6 +778,7 @@
     checkUpdate: () => operant.checkUpdate(),
     installUpdate: () => operant.installUpdate(),
     openReleases: () => operant.openReleases(),
+    openLink: url => operant.openLink(url),
   });
   // Settings › CodeGraph: the installed version, install/update, index everything.
   let cgVersion; // undefined until asked, null when not installed
@@ -1302,7 +1303,7 @@
     if (s.state === 'downloading') { pill.textContent = `↓ Downloading v${s.version}…`; pill.title = ''; }
     if (s.state === 'ready') {
       pill.textContent = `↑ Update to v${s.version}`;
-      pill.title = `v${version} → v${s.version}. Click to install and restart (or it installs when you quit).\n\n${s.notes}`;
+      pill.title = `v${version} → v${s.version}. Click to install and restart (or it installs when you quit).\nWhat's new: Settings › Updates`;
       if (!wasReady) toast(`<b>Update ready</b> v${esc(s.version)}. Click the pill in the bar to restart.`);
     }
   });

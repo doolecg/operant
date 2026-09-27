@@ -378,6 +378,7 @@ ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.on('update:check', () => updater.check());
 ipcMain.handle('update:state', () => updater.status);
 ipcMain.on('open-releases', () => shell.openExternal('https://github.com/doolecg/operant/releases'));
+ipcMain.on('open-link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) shell.openExternal(url); }); // links in release notes
 ipcMain.on('update:install', () => { if (updater.install()) app.quit(); });
 
 // -------------------------------------------------------------------- media
