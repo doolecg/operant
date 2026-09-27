@@ -31,7 +31,7 @@ Operant sends a Windows notification when:
 - an agent rings the terminal bell,
 - a Claude subagent finishes.
 
-Click the notification to jump to that tile. By default you don't get one for the tile you're looking at. **Settings › Notifications** has the switches and the quiet time.
+Click the notification, or click it later in the Action Center, and Operant comes to the front on that tile. It switches to the right window and workspace if it needs to. By default you don't get one for the tile you're looking at. **Settings › Notifications** has the switches and the quiet time.
 
 ## Claude Code subagents
 Claude Code writes each subagent's transcript to
@@ -53,16 +53,30 @@ Nothing closes while it's still working: a subagent stays open until it says it'
 
 Set any of them to `0` to disable it.
 
+## More than one window
+Start Operant again (Start menu, desktop shortcut, or *New window* when you right-click its taskbar icon) and you get another Operant window, with its own workspaces and tiles. You can also press `Alt+Shift+N` or use *New Operant window* in the agent picker. A Claude subagent opens in the window whose tile started it. Settings changed in one window apply to all of them. Explorer's *Open in Operant* adds a tile to the window you used last, or opens a new window: pick which in Settings › Startup.
+
+## Projects sidebar
+The left side shows your **projects**, each with a folder tree you can expand, plus the folders your open tiles are running in. `Alt+B` or the sidebar button at the far left of the top bar hides and shows it. Drag its right edge to resize it.
+
+- **Add a project** with **＋** in its header, or right-click any folder and choose *Pin as project*.
+- **Click a folder** to expand it. It also becomes the folder new tiles open in. Double-click a file to open it in its default app.
+- **Hover a folder** for quick buttons that start your default agent or a shell there. **Right-click** for more: pick an agent here, open in Explorer, copy the path, pin or unpin.
+- A project shows how many tiles are open in it, and the one your focused tile is in is highlighted.
+- Settings › Sidebar has the on/off toggle, the width and *Show hidden files*.
+
 ## Media controls
 The top bar shows whatever Windows is playing, whether that's Spotify, a browser tab or any other player that shows up in Windows' volume flyout. You get the cover, the track and artist, and **shuffle**, **previous**, **play/pause** and **next** buttons. There's also a **volume** slider: drag it or scroll over it, and click the speaker to mute. The slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Turn it off in Settings › Media. Play/pause, next, previous and shuffle can each get a key in the keybinds popup.
 
 ## Settings and themes
-`Alt+,` (or the ⚙ in the top bar) opens **Settings**. Changes apply straight away and are saved. You can change:
+`Alt+,` (or the ⚙ in the top bar) opens **Settings**, with a tab for each area down the left and a search box that finds any setting. It reopens on the tab you used last. Changes apply straight away and are saved. You can change:
 
 - **Theme:** 16 dark themes: Obsidian (default), Void, Ember, Graphite, Claude, Midnight, Terminal, Nord, Dracula, Tokyo Night, Catppuccin, Gruvbox, Rosé Pine, Everforest, Solarized and One Dark. Most bring their own terminal colors. You can also pick an accent color.
 - **Look:** wallpaper, the animated border, its speed, tile opacity and blur, rounding, border width and gaps.
 - **Terminal:** font, size, line height, cursor, scrollback.
-- **Agents, notifications, layout, idle closing, media controls and startup:** everything above, plus the default folder and the shell.
+- **Agents, notifications, layout, idle closing, sidebar, media controls and startup:** everything above, plus the default folder and the shell.
+- **Keybinds:** the same editor as the keybinds popup.
+- **Updates:** your version, **Check for updates**, and *Update automatically*. When a new version has downloaded, this is where you see what's new and can restart to install it.
 
 ## Keys (Alt is the "Super" key; Alt+K shows them all)
 `Alt+K` (or the ⌨ in the top bar) opens the **keybinds** popup. Hover a row and click **+** to add a key, or **✕** to remove one. A key that's already used moves to the new action.
@@ -81,6 +95,8 @@ The top bar shows whatever Windows is playing, whether that's Spotify, a browser
 | `Alt+F` / `Alt+E` | fullscreen / flip split (dwindle) |
 | `Alt+1…9` / `Alt+Shift+1…9` | go to / move tile to workspace |
 | `Alt+Shift+A` | close all finished subagents |
+| `Alt+B` | show / hide the projects sidebar |
+| `Alt+Shift+N` | new Operant window |
 | `Alt+drag`, `Alt+right-drag`, `Alt+wheel` | swap, resize, switch workspace |
 
 Settings live in `%APPDATA%\Operant\config.json`, which stores only what you've changed. Settings has an *Open config.json* button.

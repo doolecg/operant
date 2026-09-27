@@ -33,6 +33,8 @@ const DEFAULT_KEYBINDS = {
   fullscreen: ['Alt+F'],
   toggleSplit: ['Alt+E'],
   closeDoneAgents: ['Alt+Shift+A'],
+  newWindow: ['Alt+Shift+N'],
+  toggleSidebar: ['Alt+B'],
   toggleLayout: ['Alt+M'],
   promoteMaster: ['Alt+Shift+M'],
   focusLeft: ['Alt+Left', 'Alt+H'], focusRight: ['Alt+Right', 'Alt+L'],
@@ -91,6 +93,11 @@ const DEFAULT_CONFIG = {
   borderAnimationSeconds: 8,
   autoUpdate: true,               // check GitHub releases and install new versions
   explorerContextMenu: true,      // "Open in Operant" when right-clicking a folder
+  explorerOpensIn: 'tile',        // 'tile' (in the window you used last) | 'window' (a new Operant window)
+  sidebar: true,                  // the projects and folder tree on the left
+  sidebarWidth: 250,
+  sidebarHiddenFiles: false,      // show dotfiles and the like in the tree
+  projects: [],                   // folders pinned at the top of the sidebar
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
   // Windows notifications
   notifications: true,
@@ -114,7 +121,7 @@ function saveUser() {
 }
 
 // patch: { key: value }; null resets a key to its default.
-ipcMain.handle('config:set', (_e, patch) => {
+ipcMain.handle('config:set', (e, patch) => {
   for (const [k, v] of Object.entries(patch)) {
     if (!(k in DEFAULT_CONFIG)) continue;
     if (v === null) delete user[k]; else user[k] = v;
@@ -125,29 +132,50 @@ ipcMain.handle('config:set', (_e, patch) => {
     if (config.explorerContextMenu) shellIntegration.register(process.execPath); else shellIntegration.unregister();
   }
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
+  // Other Operant windows pick the change up live.
+  for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
   return config;
 });
 ipcMain.handle('config:defaults', () => DEFAULT_CONFIG);
-let win = null;
-const send = (ch, data) => { if (win && !win.isDestroyed()) win.webContents.send(ch, data); };
+// Every Operant window lives in this one process. Each owns its terminals; subagents go to the
+// window whose Claude tile started them, and anything else to the window you used last.
+const windows = new Set();
+let lastFocused = null;
+const alive = w => !!w && !w.isDestroyed();
+const sendTo = (w, ch, data) => { if (alive(w)) w.webContents.send(ch, data); };
+const broadcast = (ch, data) => { for (const w of windows) sendTo(w, ch, data); };
+const primary = () => (alive(lastFocused) ? lastFocused : [...windows].find(alive)) || null;
+const winOf = e => BrowserWindow.fromWebContents(e.sender);
+const sessionOwner = new Map(); // Claude --session-id -> window
+// Windows only lets a background app take the foreground in some cases; briefly going
+// always-on-top gets the window in front even when it doesn't.
+function bringUp(w) {
+  if (!alive(w)) return;
+  if (w.isMinimized()) w.restore();
+  w.show();
+  w.setAlwaysOnTop(true); w.focus(); w.setAlwaysOnTop(false);
+}
 
 // ---------------------------------------------------------------- terminals
 
-const ptys = new Map(); // id -> pty
+const ptys = new Map(); // id -> pty (each also carries .owner, its window)
 
 ipcMain.handle('config', () => config);
 
 // A folder passed on the command line (e.g. from the Explorer right-click entry).
+// Dev runs also pass the app's own folder (`electron .`), and Chromium can put its flags first.
 function folderArg(argv) {
-  const args = argv.slice(app.isPackaged ? 1 : 2).filter(a => !a.startsWith('-'));
+  const appDir = path.resolve(app.getAppPath()).toLowerCase();
+  const args = argv.slice(1).filter(a => !a.startsWith('-'));
   for (const a of args) {
-    const dir = a.replace(/"/g, '');
-    try { if (fs.statSync(dir).isDirectory()) return path.resolve(dir); } catch {}
+    const dir = path.resolve(a.replace(/"/g, ''));
+    if (!app.isPackaged && dir.toLowerCase() === appDir) continue;
+    try { if (fs.statSync(dir).isDirectory()) return dir; } catch {}
   }
   return null;
 }
-const startupFolder = folderArg(process.argv);
-ipcMain.handle('startup-folder', () => startupFolder);
+const startDirs = new Map(); // webContents id -> folder that window was opened for
+ipcMain.handle('startup-folder', e => startDirs.get(e.sender.id) || null);
 
 // The PATH Windows would give a freshly started program: machine + user entries from the
 // registry. Our own process.env.PATH can be stale (Operant was started before an agent CLI was
@@ -176,7 +204,7 @@ const findAgent = id => config.agents.find(a => a.id === id) || config.agents.fi
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
 const isClaude = agent => /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim());
 
-ipcMain.handle('pty:create', (_e, { kind, agentId, cwd, cols, rows }) => {
+ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows }) => {
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
   const sessionId = agent && isClaude(agent) ? crypto.randomUUID() : null;
@@ -215,9 +243,12 @@ ipcMain.handle('pty:create', (_e, { kind, agentId, cwd, cols, rows }) => {
     env,
     useConpty: true,
   });
+  const owner = winOf(e);
+  p.owner = owner;
   ptys.set(id, p);
-  p.onData(data => send('pty:data', { id, data }));
-  p.onExit(({ exitCode }) => { ptys.delete(id); send('pty:exit', { id, exitCode }); });
+  if (sessionId) sessionOwner.set(sessionId, owner);
+  p.onData(data => sendTo(owner, 'pty:data', { id, data }));
+  p.onExit(({ exitCode }) => { ptys.delete(id); sendTo(owner, 'pty:exit', { id, exitCode }); });
   return { id, sessionId, cwd: dir, agent };
 });
 
@@ -227,43 +258,90 @@ ipcMain.on('pty:resize', (_e, { id, cols, rows }) => {
 });
 ipcMain.on('pty:kill', (_e, { id }) => { try { ptys.get(id)?.kill(); } catch {} ptys.delete(id); });
 
-ipcMain.handle('pick-folder', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: config.defaultCwd });
+ipcMain.handle('pick-folder', async e => {
+  const r = await dialog.showOpenDialog(winOf(e), { properties: ['openDirectory'], defaultPath: config.defaultCwd });
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.on('open-config', () => {
   if (!fs.existsSync(CONFIG_PATH)) saveUser();
   shell.openPath(CONFIG_PATH);
 });
-ipcMain.on('win:minimize', () => win?.minimize());
-ipcMain.on('win:maximize', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()));
-ipcMain.on('win:close', () => win?.close());
-ipcMain.on('devtools', () => win?.webContents.toggleDevTools());
+// The sidebar's folder tree: one level at a time, folders first.
+const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+ipcMain.handle('fs:list', async (_e, { dir, hidden }) => {
+  try {
+    const ents = await fs.promises.readdir(dir, { withFileTypes: true });
+    return ents
+      .filter(d => hidden || !(d.name.startsWith('.') || d.name.startsWith('$') || /^(desktop\.ini|thumbs\.db|ntuser\.)/i.test(d.name)))
+      .map(d => ({ name: d.name, path: path.join(dir, d.name), dir: d.isDirectory() || (d.isSymbolicLink() && isDir(path.join(dir, d.name))) }))
+      .sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+      .slice(0, 3000);
+  } catch { return null; }
+});
+ipcMain.handle('fs:is-dir', (_e, p) => isDir(p));
+ipcMain.on('fs:open', (_e, p) => shell.openPath(p));
+ipcMain.on('fs:reveal', (_e, p) => shell.showItemInFolder(p));
+
+ipcMain.on('win:minimize', e => winOf(e)?.minimize());
+ipcMain.on('win:maximize', e => { const w = winOf(e); if (w?.isMaximized()) w.unmaximize(); else w?.maximize(); });
+ipcMain.on('win:close', e => winOf(e)?.close());
+ipcMain.on('win:new', () => createWindow());
+ipcMain.on('devtools', e => winOf(e)?.webContents.toggleDevTools());
 
 // The renderer decides when to notify (it knows which tile is focused); clicking brings that tile up.
-ipcMain.on('notify', (_e, { title, body, tileId }) => {
-  if (!config.notifications || !Notification.isSupported()) return;
-  const n = new Notification({ title, body, icon: path.join(__dirname, 'build', 'icon.png') });
-  n.on('click', () => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.show(); win.focus();
-    send('focus-tile', tileId);
-  });
+// Clicking a notification brings up its window and focuses the tile it's about, also when the
+// toast is clicked later from the Action Center. Installed, each toast carries an operant:// link
+// that Windows hands to Operant (see second-instance); in dev the click event does it.
+const ICON = path.join(__dirname, 'build', 'icon.png').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+const protocolReady = process.platform === 'win32' && app.isPackaged && app.setAsDefaultProtocolClient('operant');
+const liveNotes = new Set(); // a Notification that gets garbage-collected never reports its click
+
+function focusTile(wcId, tileId) {
+  const w = [...windows].find(x => alive(x) && x.webContents.id === wcId);
+  if (!w) return;
+  bringUp(w);
+  sendTo(w, 'focus-tile', tileId);
+}
+
+function toastXml(title, body, launch) {
+  const x = s => String(s).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
+  return `<toast launch="${x(launch)}" activationType="protocol"><visual><binding template="ToastGeneric">`
+    + `<text>${x(title)}</text><text>${x(body)}</text><image placement="appLogoOverride" src="${x(ICON)}"/>`
+    + '</binding></visual></toast>';
+}
+
+ipcMain.on('notify', (e, { title, body, tileId }) => {
+  const w = winOf(e);
+  if (!w || !config.notifications || !Notification.isSupported()) return;
+  const wcId = w.webContents.id;
+  const n = new Notification(protocolReady
+    ? { toastXml: toastXml(title, body, `operant://focus/${wcId}/${tileId}`) }
+    : { title, body, icon: ICON });
+  liveNotes.add(n);
+  if (liveNotes.size > 50) liveNotes.delete(liveNotes.values().next().value);
+  n.on('click', () => focusTile(wcId, tileId));
   n.show();
 });
-ipcMain.handle('win:focused', () => !!win && win.isFocused() && !win.isMinimized());
+
+// operant://focus/<window>/<tile> from a clicked toast.
+function focusLink(argv) {
+  const m = argv.map(a => /^operant:\/\/focus\/(\d+)\/(\d+)/i.exec(a)).find(Boolean);
+  return m ? { wcId: +m[1], tileId: +m[2] } : null;
+}
+ipcMain.handle('win:focused', e => { const w = winOf(e); return !!w && w.isFocused() && !w.isMinimized(); });
 
 // ------------------------------------------------------------------ updates
 
-const updater = createUpdater({ send });
+const updater = createUpdater({ send: broadcast });
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.on('update:check', () => updater.check());
+ipcMain.handle('update:state', () => updater.status);
+ipcMain.on('open-releases', () => shell.openExternal('https://github.com/doolecg/operant/releases'));
 ipcMain.on('update:install', () => { if (updater.install()) app.quit(); });
 
 // -------------------------------------------------------------------- media
 
-const media = createMedia({ send });
+const media = createMedia({ send: broadcast });
 ipcMain.handle('media:state', () => media.state());
 ipcMain.on('media:command', (_e, cmd) => media.command(String(cmd)));
 
@@ -305,7 +383,8 @@ function tailAgent(a) {
     // meta.json can land a moment after the transcript; wait briefly for it.
     if (!meta && Date.now() - st.birthtimeMs < 1500) return;
     a.announced = true;
-    send('agent:new', {
+    a.owner = sessionOwner.get(a.sessionId) || primary();
+    sendTo(a.owner, 'agent:new', {
       agentId: a.agentId, sessionId: a.sessionId, project: a.project,
       agentType: meta?.agentType || 'agent', description: meta?.description || a.agentId,
       spawnDepth: meta?.spawnDepth || 1,
@@ -329,7 +408,7 @@ function tailAgent(a) {
       if (!l.trim()) continue;
       try { entries.push(JSON.parse(l)); } catch {}
     }
-    if (entries.length) send('agent:entries', { agentId: a.agentId, entries: entries.map(slimEntry).filter(Boolean) });
+    if (entries.length) sendTo(a.owner, 'agent:entries', { agentId: a.agentId, entries: entries.map(slimEntry).filter(Boolean) });
   } finally { fs.closeSync(fd); }
 }
 
@@ -392,37 +471,67 @@ function startWatcher() {
 
 // --------------------------------------------------------------------- app
 
-function createWindow() {
-  win = new BrowserWindow({
-    width: 1600, height: 950, minWidth: 700, minHeight: 450,
+let started = false;
+function createWindow(startDir = null) {
+  // A new window opens a little down and right of the one you're in.
+  const from = primary();
+  const b = from && !from.isMaximized() ? from.getBounds() : null;
+  const w = new BrowserWindow({
+    width: b?.width || 1600, height: b?.height || 950, minWidth: 700, minHeight: 450,
+    ...(b ? { x: b.x + 32, y: b.y + 32 } : {}),
     frame: false,
     backgroundColor: (THEMES[config.theme] || THEMES.obsidian).bg,
     title: 'Operant',
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.webContents.once('did-finish-load', () => {
+  const wcId = w.webContents.id;
+  windows.add(w);
+  lastFocused = w;
+  if (startDir) startDirs.set(wcId, startDir);
+  w.on('focus', () => { lastFocused = w; });
+  w.on('closed', () => {
+    windows.delete(w);
+    startDirs.delete(wcId);
+    if (lastFocused === w) lastFocused = null;
+    // Its terminals go with it.
+    for (const [id, p] of ptys) if (p.owner === w) { try { p.kill(); } catch {} ptys.delete(id); }
+  });
+  w.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  w.webContents.once('did-finish-load', () => {
+    if (started) return;
+    started = true;
     startWatcher();
     if (config.autoUpdate) updater.start();
     if (config.mediaControls) media.start();
   });
+  return w;
 }
 
-// One window: launching again (say from Explorer) opens an agent tile in the running one.
+// Right-click the taskbar icon for another window.
+function setJumpList() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  app.setUserTasks([{ program: process.execPath, arguments: '--new-window', iconPath: process.execPath, iconIndex: 0,
+    title: 'New window', description: 'Open another Operant window' }]);
+}
+
+// Launching Operant again opens another window in this one process. A folder from Explorer's
+// "Open in Operant" becomes a tile in the window you used last, or a new window (Settings).
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
+    const link = focusLink(argv);
+    if (link) return focusTile(link.wcId, link.tileId);
     const dir = folderArg(argv);
-    if (dir) send('open-folder', dir);
+    const target = primary();
+    if (dir && target && config.explorerOpensIn === 'tile') { bringUp(target); sendTo(target, 'open-folder', dir); }
+    else createWindow(dir);
   });
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
-    createWindow();
+    createWindow(folderArg(process.argv));
+    setJumpList();
     if (app.isPackaged) {
       if (config.explorerContextMenu) shellIntegration.register(process.execPath);
       else shellIntegration.unregister();

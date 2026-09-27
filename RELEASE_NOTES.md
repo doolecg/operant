@@ -1,3 +1,23 @@
+# Operant 1.4.0
+
+A projects sidebar with a folder tree, more than one Operant window at a time, and a cleaner Settings with tabs and a Check for updates button. Clicking a notification now reliably takes you to its tile.
+
+**Install:** download `Operant-1.4.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Projects sidebar:** your pinned projects down the left, each with a folder tree, plus the folders your open tiles are running in. Click a folder to expand it; it also becomes where new tiles open. Hover a folder to start your default agent or a shell there, or right-click it to pick an agent, open it in Explorer, copy the path, or pin it. Add a project with ＋. Hide or show the sidebar with the button at the far left of the top bar or `Alt+B`, and drag its edge to resize it. ⚙ Settings › Sidebar has the width and *Show hidden files*.
+- **More than one window:** starting Operant again opens another window with its own workspaces and tiles. So do `Alt+Shift+N`, *New Operant window* in the agent picker, and *New window* when you right-click the taskbar icon. A subagent opens in the window whose tile started it, and a setting changed in one window applies to all of them.
+- **Check for updates:** ⚙ Settings › Updates shows your version and has a **Check for updates** button. When a new version has downloaded, the same tab shows what's new and a **Restart and install** button.
+
+## Changed
+- **Settings has tabs:** one tab per area down the left, plus a search box that finds any setting. It reopens on the tab you used last. Keybinds now have their own tab too.
+- **Explorer's "Open in Operant"** still adds a tile to the window you used last. You can switch it to open a new window instead in ⚙ Settings › Startup.
+
+## Fixed
+- **Clicking a notification** brings Operant to the front on that tile, switching window and workspace if needed. That now also works when you click it later from the Action Center. It used to do nothing at times, or leave Operant behind other windows.
+
+---
+
 # Operant 1.3.0
 
 Media controls in the top bar, like Spotify's. Tiles also no longer close while their agent is still working, or before you've seen that it finished.

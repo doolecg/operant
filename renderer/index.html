@@ -12,6 +12,7 @@
 
   <header id="bar">
     <div class="bar-left">
+      <button class="icon-btn" id="btn-sidebar"><svg viewBox="0 0 16 16"><path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9A1.5 1.5 0 0 1 2.5 2zm0 1.3a.2.2 0 0 0-.2.2v9c0 .1.1.2.2.2H6V3.3zm4.8 0v9.4h6.2a.2.2 0 0 0 .2-.2v-9a.2.2 0 0 0-.2-.2z"/></svg></button>
       <span class="logo">◈</span><span class="brand">Operant</span>
       <div id="workspaces"></div>
     </div>
@@ -46,6 +47,18 @@
       </div>
     </div>
   </header>
+
+  <aside id="sidebar">
+    <div class="side-head">
+      <span class="side-title">Projects</span>
+      <button class="side-btn" id="side-add" title="Add a project folder">＋</button>
+      <button class="side-btn" id="side-refresh" title="Refresh">⟳</button>
+      <button class="side-btn" id="side-hide" title="Hide sidebar">«</button>
+    </div>
+    <div class="side-body" id="side-body"></div>
+    <div class="side-grip" id="side-grip"></div>
+  </aside>
+  <div id="side-menu" class="hidden"></div>
 
   <main id="desktop"></main>
 

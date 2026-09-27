@@ -1,6 +1,6 @@
 {
   "name": "operant",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenAI Codex, OpenCode, Gemini CLI and more",
   "main": "main.js",
   "scripts": {
@@ -48,7 +48,8 @@
     ],
     "asarUnpack": [
       "node_modules/@lydell/**",
-      "media-helper.ps1"
+      "media-helper.ps1",
+      "build/icon.png"
     ],
     "win": {
       "target": [

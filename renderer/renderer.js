@@ -216,6 +216,7 @@
     };
     for (const [k, v] of Object.entries(vars)) root.setProperty(k, v);
     document.body.className = `wp-${cfg.wallpaper} border-${cfg.borderAnimation}`;
+    applySidebar();
     for (const w of wins.values()) Object.assign(w.term.options, termOptions(w.kind));
     workspaces.forEach((_, i) => layout(i, i !== current));
   }
@@ -349,7 +350,7 @@
   }, 1000);
 
   operant.on('focus-tile', id => {
-    const w = wins.get(id);
+    const w = wins.get(Number(id));
     if (!w || !w.alive) return;
     if (w.ws !== current) switchWorkspace(w.ws);
     focusWin(w);
@@ -628,6 +629,8 @@
     fullscreen: toggleFullscreen,
     toggleSplit,
     closeDoneAgents,
+    toggleSidebar,
+    newWindow: () => operant.newWindow(),
     toggleLayout,
     promoteMaster,
     focusLeft: () => focusWin(neighbour('Left')), focusRight: () => focusWin(neighbour('Right')),
@@ -696,7 +699,7 @@
     const was = openPanel();
     closePanels(was === name);
     if (was === name) return;
-    if (name === 'keys') renderKeys(); else if (name === 'launcher') renderLauncher(); else renderSettings();
+    if (name === 'keys') { keysTarget = $('#keys-body'); renderKeys(); } else if (name === 'launcher') renderLauncher(); else renderSettings();
     $('#' + name).classList.remove('hidden');
     $('#' + name + ' .card-body').scrollTop = 0;
     document.activeElement?.blur();
@@ -724,10 +727,13 @@
     $('#launcher-body').innerHTML = cfg.agents.map((a, i) => `<button class="launch-row" data-i="${i}">
       <span class="ico">${esc(a.icon || '●')}</span><span class="nm">${esc(a.name)}<small>${esc([a.command, ...[].concat(a.args || [])].join(' '))}</small></span>
       ${a.id === cfg.defaultAgent && !welcome ? '<span class="def">default</span>' : ''}${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}</button>`).join('')
-      + (welcome ? '' : `<button class="launch-row" data-shell><span class="ico">❯</span><span class="nm">Shell<small>${esc(cfg.shell)}</small></span>${k('newShell')}</button>`);
+      + (welcome ? '' : `<button class="launch-row" data-shell><span class="ico">❯</span><span class="nm">Shell<small>${esc(cfg.shell)}</small></span>${k('newShell')}</button>`
+        + `<button class="launch-row" data-window><span class="ico">◈</span><span class="nm">New Operant window<small>Its own workspaces and tiles</small></span>${k('newWindow')}</button>`);
     $('#launcher-body').querySelectorAll('[data-i]').forEach(b => b.onclick = e => launch(+b.dataset.i, e.shiftKey));
     const sh = $('#launcher-body [data-shell]');
     if (sh) sh.onclick = () => { closePanels(false); newTerminal('shell'); };
+    const nw = $('#launcher-body [data-window]');
+    if (nw) nw.onclick = () => { closePanels(false); operant.newWindow(); };
   }
   const k = a => bindLabel(a) ? `<kbd>${esc(Panels.pretty(bindLabel(a)))}</kbd>` : '';
   async function launch(i, pickDir) {
@@ -760,10 +766,18 @@
     if (LIVE_LAYOUT.has(key)) for (const ws of workspaces) if (!ws.tree) { ws.layout = cfg.defaultLayout; ws.mfact = cfg.masterRatio; }
     if (key === 'agents' || key === 'defaultAgent') renderHints();
     if (key === 'mediaControls') renderMedia();
+    if (key === 'sidebarHiddenFiles') dirCache.clear();
     if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
   }
-  const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder);
+  let updateStatus = null;
+  const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, {
+    renderKeys: el => { keysTarget = el; renderKeys(); },
+    update: () => ({ version, status: updateStatus }),
+    checkUpdate: () => operant.checkUpdate(),
+    installUpdate: () => operant.installUpdate(),
+    openReleases: () => operant.openReleases(),
+  });
   $('#set-json').onclick = () => operant.openConfig();
   const resetBtn = $('#set-reset');
   resetBtn.onclick = () => {
@@ -780,6 +794,7 @@
 
   // Keybinds: only the ones that differ from the defaults are saved.
   let recording = null;
+  let keysTarget = null; // the keybinds popup, or the Keybinds tab in Settings
   function saveKeybinds() {
     const diff = {};
     for (const [a, v] of Object.entries(cfg.keybinds)) if (JSON.stringify(v) !== JSON.stringify(defaults.keybinds[a])) diff[a] = v;
@@ -787,7 +802,7 @@
     rebuildBinds(); renderHints(); renderKeys();
   }
   function renderKeys() {
-    Panels.renderKeys($('#keys-body'), cfg.keybinds, recording, {
+    Panels.renderKeys(keysTarget || $('#keys-body'), cfg.keybinds, recording, {
       onAdd: a => { recording = recording === a ? null : a; renderKeys(); },
       onRemove: (a, i) => { cfg.keybinds[a] = [].concat(cfg.keybinds[a]).filter((_, j) => j !== i); saveKeybinds(); },
     });
@@ -831,6 +846,7 @@
     const f = focused();
     $('#bar-title').textContent = f ? f.title : '';
     refreshStats();
+    sidebarChanged();
   }
 
   // Agent CLI tiles (the master among them) count as running while output is streaming, idle otherwise.
@@ -868,6 +884,195 @@
 
   let resizeT;
   window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => workspaces.forEach((_, i) => layout(i, true)), 60); });
+
+  // ------------------------------------------------------------ sidebar
+  // Pinned projects and the folders open tiles run in, each a lazily loaded folder tree.
+  // Selecting a folder makes it where new tiles open; right-click for more.
+
+  const sideBody = $('#side-body'), sideMenu = $('#side-menu');
+  const dirCache = new Map();          // folder -> entries (null = unreadable)
+  // Folders you opened, and projects you closed (projects start open). Remembered per profile.
+  let expanded = new Set(), collapsed = new Set(), selected = null, sideSig = '';
+  try {
+    expanded = new Set(JSON.parse(localStorage.getItem('operant.sidebar.expanded') || '[]'));
+    collapsed = new Set(JSON.parse(localStorage.getItem('operant.sidebar.collapsed') || '[]'));
+  } catch {}
+  const saveExpanded = () => { try {
+    localStorage.setItem('operant.sidebar.expanded', JSON.stringify([...expanded]));
+    localStorage.setItem('operant.sidebar.collapsed', JSON.stringify([...collapsed]));
+  } catch {} };
+  const isOpen = (p, project) => project ? !collapsed.has(p) : expanded.has(p);
+
+  const normPath = p => String(p || '').replace(/[\\/]+$/, '').toLowerCase();
+  const isUnder = (p, rootDir) => { const a = normPath(p), b = normPath(rootDir); return a === b || a.startsWith(b + '\\') || a.startsWith(b + '/'); };
+  const baseName = p => String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+  const tileDirs = () => [...wins.values()].filter(w => w.cwd && w.kind !== 'agent').map(w => w.cwd);
+
+  function applySidebar() {
+    document.body.classList.toggle('side-open', !!cfg.sidebar);
+    root.setProperty('--side-w', cfg.sidebarWidth + 'px');
+    $('#btn-sidebar').title = `${cfg.sidebar ? 'Hide' : 'Show'} the projects sidebar${bindLabel('toggleSidebar') ? ` (${Panels.pretty(bindLabel('toggleSidebar'))})` : ''}`;
+    if (cfg.sidebar) renderSidebar();
+  }
+
+  async function loadDir(dir, force = false) {
+    if (!force && dirCache.has(dir)) return dirCache.get(dir);
+    const list = await operant.listDir(dir, cfg.sidebarHiddenFiles);
+    dirCache.set(dir, list);
+    return list;
+  }
+
+  function roots() {
+    const projects = cfg.projects.filter(Boolean);
+    const others = [];
+    for (const d of tileDirs()) if (!projects.some(p => isUnder(d, p)) && !others.some(o => normPath(o) === normPath(d))) others.push(d);
+    return { projects, others };
+  }
+
+  function nodeHtml(entry, depth, project = false) {
+    const p = entry.path, open = entry.dir && isOpen(p, project);
+    const f = focused();
+    const count = project ? tileDirs().filter(d => isUnder(d, p)).length : 0;
+    const cls = ['node-row', entry.dir ? 'dir' : 'file', open ? 'open' : '', project ? 'project' : '',
+      project && f?.cwd && isUnder(f.cwd, p) ? 'active' : '', selected && normPath(selected) === normPath(p) ? 'sel' : ''].filter(Boolean).join(' ');
+    const agent = defaultAgent();
+    let html = `<div class="${cls}" data-path="${esc(p)}" data-dir="${entry.dir ? 1 : ''}" data-project="${project ? 1 : ''}" title="${esc(p)}" style="padding-left:${4 + depth * 12}px">`
+      + `<span class="tw">${entry.dir ? '▶' : ''}</span>`
+      + (project ? '<span class="fi">◈</span>' : entry.dir ? '' : '<span class="fi">·</span>')
+      + `<span class="nm">${esc(entry.name)}</span>`
+      + (count ? `<span class="count" title="${count} open tile${count === 1 ? '' : 's'}">${count}</span>` : '')
+      + (entry.dir ? `<span class="acts"><button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
+      + '</div>';
+    if (open) {
+      const kids = dirCache.get(p);
+      if (kids === undefined) html += `<div class="side-empty" style="padding-left:${16 + depth * 12}px">…</div>`;
+      else if (kids === null) html += `<div class="side-empty" style="padding-left:${16 + depth * 12}px">Can't read this folder</div>`;
+      else if (!kids.length) html += `<div class="side-empty" style="padding-left:${16 + depth * 12}px">Empty</div>`;
+      else for (const k of kids) html += nodeHtml(k, depth + 1);
+    }
+    return html;
+  }
+
+  // Loads every expanded folder that isn't cached yet, then draws. force re-reads them all.
+  async function renderSidebar(force = false) {
+    if (!cfg.sidebar) return;
+    const { projects, others } = roots();
+    const draw = () => {
+      let html = '';
+      if (projects.length) html += projects.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
+      else html += `<div class="side-empty">Pin folders here with ＋, or right-click a folder below and choose <i>Pin as project</i>.</div>`
+        + nodeHtml({ name: baseName(cfg.defaultCwd), path: cfg.defaultCwd, dir: true }, 0, true);
+      if (others.length) html += `<div class="side-group">OPEN IN TILES</div>` + others.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
+      const top = sideBody.scrollTop;
+      sideBody.innerHTML = html;
+      sideBody.scrollTop = top;
+    };
+    if (force) dirCache.clear();
+    draw();
+    const visibleOpen = () => [...sideBody.querySelectorAll('.node-row.open')].map(r => r.dataset.path).filter(p => !dirCache.has(p));
+    for (let missing = visibleOpen(); missing.length; missing = visibleOpen()) {
+      await Promise.all(missing.map(p => loadDir(p)));
+      draw();
+    }
+  }
+
+  // Redraw when the projects, the open tiles' folders or the focused tile change.
+  function sidebarChanged() {
+    const sig = JSON.stringify([cfg.projects, tileDirs(), focused()?.cwd, cfg.defaultAgent]);
+    if (sig !== sideSig) { sideSig = sig; renderSidebar(); }
+  }
+
+  function toggleSidebar() { setSetting('sidebar', !cfg.sidebar); }
+  $('#btn-sidebar').onclick = toggleSidebar;
+  $('#side-hide').onclick = toggleSidebar;
+  $('#side-refresh').onclick = () => renderSidebar(true);
+  $('#side-add').onclick = async () => { const d = await operant.pickFolder(); if (d) pinProject(d); };
+  window.addEventListener('focus', () => { if (cfg.sidebar) renderSidebar(true); });
+
+  function pinProject(p) {
+    if (cfg.projects.some(x => normPath(x) === normPath(p))) return;
+    setSetting('projects', [...cfg.projects, p]);
+    collapsed.delete(p); saveExpanded();
+  }
+  const unpinProject = p => setSetting('projects', cfg.projects.filter(x => normPath(x) !== normPath(p)));
+
+  function openHere(dir, what) {
+    lastCwd = dir;
+    if (what === 'agent') newTerminal('ai', dir);
+    else if (what === 'shell') newTerminal('shell', dir);
+    else if (what === 'pick') togglePanel('launcher');
+  }
+
+  sideBody.addEventListener('click', e => {
+    const row = e.target.closest('.node-row');
+    if (!row) return;
+    const p = row.dataset.path;
+    const act = e.target.closest('[data-act]');
+    if (act) return openHere(p, act.dataset.act);
+    selected = p;
+    if (row.dataset.dir) {
+      lastCwd = p;
+      const set = row.dataset.project ? collapsed : expanded;
+      if (set.has(p)) set.delete(p); else set.add(p);
+      saveExpanded();
+    }
+    renderSidebar();
+  });
+  sideBody.addEventListener('dblclick', e => {
+    const row = e.target.closest('.node-row');
+    if (row && !row.dataset.dir) operant.openPath(row.dataset.path);
+  });
+
+  function showMenu(x, y, items) {
+    sideMenu.innerHTML = items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}"><span class="ico">${it[0]}</span>${esc(it[1])}</button>`).join('');
+    sideMenu.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { hideMenu(); items[+b.dataset.i][2](); });
+    sideMenu.classList.remove('hidden');
+    const r = sideMenu.getBoundingClientRect();
+    sideMenu.style.left = Math.min(x, innerWidth - r.width - 6) + 'px';
+    sideMenu.style.top = Math.min(y, innerHeight - r.height - 6) + 'px';
+  }
+  const hideMenu = () => sideMenu.classList.add('hidden');
+  window.addEventListener('mousedown', e => { if (!sideMenu.contains(e.target)) hideMenu(); }, true);
+  window.addEventListener('blur', hideMenu);
+
+  sideBody.addEventListener('contextmenu', e => {
+    const row = e.target.closest('.node-row');
+    if (!row) return;
+    e.preventDefault();
+    const p = row.dataset.path;
+    const copy = ['⧉', 'Copy path', () => navigator.clipboard.writeText(p)];
+    if (!row.dataset.dir) return showMenu(e.clientX, e.clientY, [['↗', 'Open', () => operant.openPath(p)], ['▤', 'Show in Explorer', () => operant.reveal(p)], copy]);
+    const pinned = cfg.projects.some(x => normPath(x) === normPath(p));
+    const agent = defaultAgent();
+    showMenu(e.clientX, e.clientY, [
+      [esc(agent?.icon || '✻'), `New ${agent?.name || 'agent'} here`, () => openHere(p, 'agent')],
+      ['☰', 'Pick an agent here…', () => openHere(p, 'pick')],
+      ['❯', 'New shell here', () => openHere(p, 'shell')],
+      '-',
+      ['▤', 'Open in Explorer', () => operant.openPath(p)],
+      copy,
+      '-',
+      pinned ? ['✕', 'Remove from projects', () => unpinProject(p)] : ['◈', 'Pin as project', () => pinProject(p)],
+    ]);
+  });
+
+  // Drag the right edge to resize; the tiles follow.
+  $('#side-grip').addEventListener('mousedown', e => {
+    e.preventDefault();
+    const grip = e.currentTarget;
+    grip.classList.add('drag'); document.body.classList.add('side-resizing');
+    const move = ev => {
+      cfg.sidebarWidth = Math.round(Math.min(600, Math.max(160, ev.clientX)));
+      root.setProperty('--side-w', cfg.sidebarWidth + 'px');
+      layout(current, true);
+    };
+    const up = () => {
+      grip.classList.remove('drag'); document.body.classList.remove('side-resizing');
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      setSetting('sidebarWidth', cfg.sidebarWidth);
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  });
 
   // ------------------------------------------------------------ media
   // What Windows is playing (Spotify, a browser tab, ...), from the helper in main. The volume is
@@ -934,14 +1139,18 @@
 
   const pill = $('#update-pill');
   const version = await operant.version();
+  updateStatus = await operant.updateState();
   operant.on('update:status', s => {
+    const wasReady = updateStatus?.state === 'ready';
+    updateStatus = s;
+    if (openPanel() === 'settings' && Panels.settingsTab() === 'Updates') renderSettings();
     pill.classList.toggle('hidden', s.state !== 'downloading' && s.state !== 'ready');
     pill.classList.toggle('ready', s.state === 'ready');
     if (s.state === 'downloading') { pill.textContent = `↓ Downloading v${s.version}…`; pill.title = ''; }
     if (s.state === 'ready') {
       pill.textContent = `↑ Update to v${s.version}`;
       pill.title = `v${version} → v${s.version}. Click to install and restart (or it installs when you quit).\n\n${s.notes}`;
-      toast(`<b>Update ready</b> v${esc(s.version)}. Click the pill in the bar to restart.`);
+      if (!wasReady) toast(`<b>Update ready</b> v${esc(s.version)}. Click the pill in the bar to restart.`);
     }
   });
   pill.onclick = () => { if (pill.classList.contains('ready')) operant.installUpdate(); };
@@ -959,4 +1168,11 @@
     renderLauncher();
   } else if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
+  // A setting changed in another Operant window.
+  operant.on('config:changed', c => {
+    Object.assign(cfg, c);
+    applyAppearance(); rebuildBinds(); renderHints(); renderMedia();
+    if (openPanel() === 'settings') renderSettings();
+    if (openPanel() === 'keys') renderKeys();
+  });
 })();

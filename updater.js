@@ -23,10 +23,14 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
   let ready = null;      // { version, file, notes }
   let busy = false;
   let installing = false;
+  let status = null;     // the last thing reported, for the Settings › Updates tab
+  const report = s => { status = { ...s, at: Date.now() }; send('update:status', status); };
 
   async function check() {
-    if (busy || ready) return;
+    if (ready) return report({ state: 'ready', version: ready.version, notes: ready.notes, url: ready.url });
+    if (busy) return;
     busy = true;
+    report({ state: 'checking' });
     try {
       const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
         headers: { 'User-Agent': 'operant', Accept: 'application/vnd.github+json' },
@@ -34,13 +38,13 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
       const rel = await res.json();
       const version = rel.tag_name.replace(/^v/, '');
-      if (!newer(version, currentVersion)) { send('update:status', { state: 'current', version: currentVersion }); return; }
+      if (!newer(version, currentVersion)) { report({ state: 'current', version: currentVersion }); return; }
       const asset = rel.assets.find(a => a.name.toLowerCase().endsWith('.msi'));
-      if (!asset) return;
+      if (!asset) { report({ state: 'error', message: `${version} has no installer yet, try again in a few minutes` }); return; }
 
       const file = path.join(os.tmpdir(), `Operant-${version}.msi`);
       if (!fs.existsSync(file) || fs.statSync(file).size !== asset.size) {
-        send('update:status', { state: 'downloading', version });
+        report({ state: 'downloading', version });
         const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
         if (!dl.ok) throw new Error(`download ${dl.status}`);
         const tmp = file + '.part';
@@ -48,10 +52,10 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
         if (fs.statSync(tmp).size !== asset.size) throw new Error('download size mismatch');
         fs.renameSync(tmp, file);
       }
-      ready = { version, file, notes: rel.body || '' };
-      send('update:status', { state: 'ready', version, notes: ready.notes, url: rel.html_url });
+      ready = { version, file, notes: rel.body || '', url: rel.html_url };
+      report({ state: 'ready', version, notes: ready.notes, url: rel.html_url });
     } catch (e) {
-      send('update:status', { state: 'error', message: String(e.message || e) });
+      report({ state: 'error', message: String(e.message || e) });
     } finally {
       busy = false;
     }
@@ -80,7 +84,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
       `Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','${encoded}'`,
     ], { windowsHide: true, stdio: 'ignore', timeout: 30000 });
     if (r.status !== 0) {
-      send('update:status', { state: 'error', message: `couldn't start the installer (${r.error ? r.error.message : `exit ${r.status}`})` });
+      report({ state: 'error', message: `couldn't start the installer (${r.error ? r.error.message : `exit ${r.status}`})` });
       return false;
     }
     installing = true;
@@ -95,7 +99,7 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
     app.on('will-quit', () => { if (ready && !installing && app.isPackaged) install(false); });
   }
 
-  return { start, check, install: () => install(true), get ready() { return ready; } };
+  return { start, check, install: () => install(true), get ready() { return ready; }, get status() { return status; } };
 }
 
 module.exports = { createUpdater, newer };
