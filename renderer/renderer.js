@@ -343,6 +343,7 @@
       if (!w.busySince || now - w.lastOut < cfg.notifyWhenIdleSeconds * 1000) continue;
       const worked = w.lastOut - w.busySince;
       w.busySince = null;
+      if (worked >= 2500) w.unchecked = true;
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) notify(w, `${w.agentName} is waiting for you`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
     }
   }, 1000);
@@ -396,6 +397,7 @@
     touch(w);
     if (w.status === 'done' && !w.doneMarked) {
       w.doneMarked = true;
+      w.unchecked = true;
       w.term.write('\x1b[38;2;156;184;138m✓ finished\x1b[0m\r\n\r\n');
       if (cfg.notifySubagents) notify(w, `✓ ${w.info.agentType} finished`, w.info.description);
     }
@@ -405,7 +407,7 @@
   });
 
   function updateBadge(w) {
-    const closing = w.closeIn != null ? ` · closing ${w.closeIn}s` : '';
+    const closing = w.closeIn != null ? ` · closing ${w.closeIn}s` : w.unchecked ? ' · new' : '';
     if (w.kind !== 'agent') {
       setBadge(w, `${w.master ? 'master · ' : ''}${w.cwd ? shortPath(w.cwd) : ''}${closing}`);
       return;
@@ -420,21 +422,28 @@
   // ------------------------------------------------------------ idle reaper
   // A tile closes once nothing has happened in it for its limit: no output, no typing,
   // no transcript lines, and not being looked at. The master and focused tiles are exempt.
+  // Nothing that is still working closes, and nothing that finished closes before you've seen
+  // it: a finished tile counts as checked once it's on screen while Operant has focus, and its
+  // countdown starts from then.
 
   const touch = w => { w.lastActivity = Date.now(); };
 
   function idleLimit(w) {
-    if (w.kind === 'agent') return (w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds : cfg.idleCloseAgentSeconds) * 1000;
+    if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
+    if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
+
+  const onScreen = w => w.ws === current && document.hasFocus() && !document.hidden;
 
   setInterval(() => {
     const now = Date.now();
     for (const w of [...wins.values()]) {
+      if (w.unchecked && onScreen(w)) { w.unchecked = false; touch(w); updateBadge(w); }
       const limit = idleLimit(w);
       const isFocused = w.ws === current && workspaces[w.ws].focused === w.id;
       let closeIn = null;
-      if (limit && !w.master && !isFocused) {
+      if (limit && !w.master && !isFocused && !w.unchecked) {
         const left = limit - (now - w.lastActivity);
         if (left <= 0) { closeWin(w); continue; }
         if (left <= 30000) closeIn = Math.ceil(left / 1000);
@@ -631,6 +640,10 @@
     settings: () => togglePanel('settings'),
     openConfig: () => operant.openConfig(),
     devtools: () => operant.devtools(),
+    mediaPlayPause: () => operant.media('toggle'),
+    mediaNext: () => operant.media('next'),
+    mediaPrev: () => operant.media('prev'),
+    mediaShuffle: () => operant.media('shuffle'),
   };
   const bindMap = new Map();
   for (let i = 1; i <= WS_COUNT; i++) {
@@ -746,6 +759,7 @@
     save({ [key]: value });
     if (LIVE_LAYOUT.has(key)) for (const ws of workspaces) if (!ws.tree) { ws.layout = cfg.defaultLayout; ws.mfact = cfg.masterRatio; }
     if (key === 'agents' || key === 'defaultAgent') renderHints();
+    if (key === 'mediaControls') renderMedia();
     if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
   }
@@ -854,6 +868,67 @@
 
   let resizeT;
   window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => workspaces.forEach((_, i) => layout(i, true)), 60); });
+
+  // ------------------------------------------------------------ media
+  // What Windows is playing (Spotify, a browser tab, ...), from the helper in main. The volume is
+  // that app's own mixer volume, or the system volume when the app has no audio session of its own.
+
+  const mediaEl = $('#media'), volEl = $('#media-volume');
+  let mediaState = { active: false }, volDragUntil = 0, volSendT = null, volBeforeMute = 0.5;
+
+  function renderMedia(s = mediaState) {
+    mediaState = s;
+    const show = !!(cfg.mediaControls && s.active && (s.title || s.artist));
+    mediaEl.classList.toggle('hidden', !show);
+    $('.bar-center').classList.toggle('has-media', show);
+    if (!show) return;
+    const art = $('#media-art');
+    if (s.art) { if (art.getAttribute('src') !== s.art) art.src = s.art; art.classList.remove('none'); }
+    else { art.removeAttribute('src'); art.classList.add('none'); }
+    $('#media-title').textContent = s.title || '';
+    $('#media-artist').textContent = s.artist || '';
+    const app = String(s.app || '').replace(/\.exe$/i, '').split('!').pop();
+    mediaEl.title = [s.title, s.artist, s.album].filter(Boolean).join(' · ') + (app ? `\n${app}` : '');
+    mediaEl.classList.toggle('playing', !!s.playing);
+    $('#media-play').title = s.playing ? 'Pause' : 'Play';
+    $('#media-play').disabled = !s.canPlayPause;
+    $('#media-prev').disabled = !s.canPrev;
+    $('#media-next').disabled = !s.canNext;
+    const shuffle = $('#media-shuffle');
+    shuffle.disabled = !s.canShuffle;
+    shuffle.classList.toggle('on', !!s.shuffle);
+    shuffle.title = s.shuffle ? 'Shuffle is on' : 'Shuffle';
+    const hasVol = s.volume >= 0;
+    $('.media-vol').style.display = hasVol ? '' : 'none';
+    if (hasVol && Date.now() > volDragUntil) showVolume(s.volume);
+    volEl.title = `${s.appVolume ? app || 'App' : 'System'} volume: ${Math.round((s.volume || 0) * 100)}%`;
+  }
+
+  function showVolume(v) {
+    volEl.value = v;
+    volEl.style.setProperty('--v', v * 100 + '%');
+    mediaEl.classList.toggle('muted', v <= 0.001);
+  }
+
+  function setVolume(v) {
+    v = Math.min(1, Math.max(0, Math.round(v * 100) / 100));
+    if (v > 0) volBeforeMute = v;
+    showVolume(v);
+    volDragUntil = Date.now() + 1500; // the helper's next report may still carry the old level
+    clearTimeout(volSendT);
+    volSendT = setTimeout(() => operant.media('vol ' + v), 40);
+  }
+
+  const mediaCmd = cmd => { operant.media(cmd); if (cmd === 'toggle') mediaEl.classList.toggle('playing'); };
+  $('#media-play').onclick = () => mediaCmd('toggle');
+  $('#media-prev').onclick = () => mediaCmd('prev');
+  $('#media-next').onclick = () => mediaCmd('next');
+  $('#media-shuffle').onclick = () => { $('#media-shuffle').classList.toggle('on'); mediaCmd('shuffle'); };
+  $('#media-mute').onclick = () => setVolume(+volEl.value > 0.001 ? 0 : volBeforeMute || 0.5);
+  volEl.oninput = () => setVolume(+volEl.value);
+  $('.media-vol').addEventListener('wheel', e => { e.preventDefault(); setVolume(+volEl.value + (e.deltaY < 0 ? 0.05 : -0.05)); }, { passive: false });
+  operant.on('media:state', s => renderMedia(s));
+  operant.mediaState().then(renderMedia);
 
   // ------------------------------------------------------------ updates
 

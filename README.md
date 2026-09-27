@@ -44,13 +44,17 @@ Claude Code writes each subagent's transcript to
 ## Idle closing
 A tile closes when nothing has happened in it for a while: no output, no typing, no new transcript lines, and you're not looking at it. The badge counts down the last 30 seconds. The focused tile and the master are never closed.
 
+Nothing closes while it's still working: a subagent stays open until it says it's finished, and an agent terminal stays open while its agent is busy. A tile that has finished also waits until you've seen it. That means it has been on screen while Operant is the active window, and until then its badge reads *new*. The countdown starts from that moment, so a finished subagent closes 15 seconds after you first see it.
+
 | config key | default |
 |---|---|
 | `autoCloseDoneAgentsSeconds` | 15 |
-| `idleCloseAgentSeconds` | 90 |
 | `idleCloseTerminalMinutes` | 10 |
 
 Set any of them to `0` to disable it.
+
+## Media controls
+The top bar shows whatever Windows is playing, whether that's Spotify, a browser tab or any other player that shows up in Windows' volume flyout. You get the cover, the track and artist, and **shuffle**, **previous**, **play/pause** and **next** buttons. There's also a **volume** slider: drag it or scroll over it, and click the speaker to mute. The slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Turn it off in Settings › Media. Play/pause, next, previous and shuffle can each get a key in the keybinds popup.
 
 ## Settings and themes
 `Alt+,` (or the ⚙ in the top bar) opens **Settings**. Changes apply straight away and are saved. You can change:
@@ -58,7 +62,7 @@ Set any of them to `0` to disable it.
 - **Theme:** 16 dark themes: Obsidian (default), Void, Ember, Graphite, Claude, Midnight, Terminal, Nord, Dracula, Tokyo Night, Catppuccin, Gruvbox, Rosé Pine, Everforest, Solarized and One Dark. Most bring their own terminal colors. You can also pick an accent color.
 - **Look:** wallpaper, the animated border, its speed, tile opacity and blur, rounding, border width and gaps.
 - **Terminal:** font, size, line height, cursor, scrollback.
-- **Agents, notifications, layout, idle closing and startup:** everything above, plus the default folder and the shell.
+- **Agents, notifications, layout, idle closing, media controls and startup:** everything above, plus the default folder and the shell.
 
 ## Keys (Alt is the "Super" key; Alt+K shows them all)
 `Alt+K` (or the ⌨ in the top bar) opens the **keybinds** popup. Hover a row and click **+** to add a key, or **✕** to remove one. A key that's already used moves to the new action.

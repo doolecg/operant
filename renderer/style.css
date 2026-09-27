@@ -45,7 +45,38 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 #bar button, #workspaces, .pill { -webkit-app-region: no-drag; }
 .bar-left, .bar-right { display: flex; align-items: center; gap: 10px; flex: 1; }
 .bar-right { justify-content: flex-end; }
-.bar-center { flex: 2; text-align: center; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.bar-center { flex: 2; min-width: 0; display: flex; justify-content: center; align-items: center; color: var(--dim); font-size: 12.5px; }
+#bar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-center.has-media #bar-title { display: none; }
+
+/* Media controls: whatever Windows is playing, Spotify-style. */
+#media { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; height: 30px; padding: 0 12px 0 3px;
+  border-radius: 8px; background: rgba(var(--ink-rgb), .05); -webkit-app-region: no-drag; }
+#media.hidden { display: none; }
+#media-art { width: 24px; height: 24px; border-radius: 5px; object-fit: cover; flex: none; background: rgba(var(--ink-rgb), .1); }
+#media-art.none { visibility: hidden; width: 4px; }
+.media-text { display: flex; flex-direction: column; min-width: 0; max-width: 210px; line-height: 1.15; }
+#media-title { color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#media-artist { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.media-btns, .media-vol { display: flex; align-items: center; gap: 2px; flex: none; }
+.media-btn { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 99px; color: var(--dim); position: relative; }
+.media-btn svg { width: 12px; height: 12px; fill: currentColor; }
+.media-btn:hover { color: var(--text); }
+.media-btn:disabled { opacity: .3; pointer-events: none; }
+.media-btn.play { width: 24px; margin: 0 3px; background: var(--text); color: var(--bg); }
+.media-btn.play:hover { transform: scale(1.06); color: var(--bg); }
+.media-btn.play svg { width: 10px; height: 10px; }
+#media .i-pause, #media.playing .i-play { display: none; }
+#media.playing .i-pause { display: inline; }
+#media-shuffle.on { color: var(--accent); }
+#media-shuffle.on::after { content: ''; position: absolute; bottom: 1px; width: 3px; height: 3px; border-radius: 50%; background: var(--accent); }
+#media .i-muted, #media.muted .i-wave { display: none; }
+#media.muted .i-muted { display: inline; }
+#media-volume { -webkit-appearance: none; appearance: none; width: 78px; height: 4px; border-radius: 99px; outline: none; cursor: pointer;
+  background: linear-gradient(to right, var(--text) var(--v, 100%), rgba(var(--ink-rgb), .18) var(--v, 100%)); }
+#media-volume:hover { background: linear-gradient(to right, var(--accent) var(--v, 100%), rgba(var(--ink-rgb), .18) var(--v, 100%)); }
+#media-volume::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: var(--text); opacity: 0; transition: opacity .15s; }
+#media-volume:hover::-webkit-slider-thumb { opacity: 1; }
 .logo { color: var(--accent); font-size: 19px; line-height: 1; }
 .brand { font-family: var(--serif); font-size: 15px; color: var(--text); margin: 0 6px 0 -2px; }
 

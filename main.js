@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
+const { createMedia } = require('./media');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 
@@ -45,6 +46,8 @@ const DEFAULT_KEYBINDS = {
   settings: ['Alt+Comma'],
   openConfig: [],
   devtools: ['Ctrl+Shift+I'],
+  // Media keys on the keyboard already work everywhere; these are for keyboards without them.
+  mediaPlayPause: [], mediaNext: [], mediaPrev: [], mediaShuffle: [],
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
 
@@ -66,8 +69,7 @@ const DEFAULT_CONFIG = {
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
   masterRatio: 0.55,
   // Idle reaping (0 disables each). The focused tile and the master terminal are never reaped.
-  autoCloseDoneAgentsSeconds: 15, // finished agent tiles
-  idleCloseAgentSeconds: 90,      // agent tiles whose transcript has gone quiet without finishing
+  autoCloseDoneAgentsSeconds: 15, // finished agent tiles, counted from when you first see them
   idleCloseTerminalMinutes: 10,   // Claude/shell tiles with no output and no typing
   maxTilesPerWorkspace: 6,        // new agents spill onto the next workspace past this
   gapsIn: 5,
@@ -89,6 +91,7 @@ const DEFAULT_CONFIG = {
   borderAnimationSeconds: 8,
   autoUpdate: true,               // check GitHub releases and install new versions
   explorerContextMenu: true,      // "Open in Operant" when right-clicking a folder
+  mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
   // Windows notifications
   notifications: true,
   notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long is waiting for you
@@ -121,6 +124,7 @@ ipcMain.handle('config:set', (_e, patch) => {
   if ('explorerContextMenu' in patch && app.isPackaged) {
     if (config.explorerContextMenu) shellIntegration.register(process.execPath); else shellIntegration.unregister();
   }
+  if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
   return config;
 });
 ipcMain.handle('config:defaults', () => DEFAULT_CONFIG);
@@ -256,6 +260,12 @@ const updater = createUpdater({ send });
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.on('update:check', () => updater.check());
 ipcMain.on('update:install', () => { if (updater.install()) app.quit(); });
+
+// -------------------------------------------------------------------- media
+
+const media = createMedia({ send });
+ipcMain.handle('media:state', () => media.state());
+ipcMain.on('media:command', (_e, cmd) => media.command(String(cmd)));
 
 // ---------------------------------------------------------- subagent watcher
 // Layout on disk: projects/<project>/<sessionId>/subagents/agent-<id>.jsonl (+ .meta.json)
@@ -395,6 +405,7 @@ function createWindow() {
   win.webContents.once('did-finish-load', () => {
     startWatcher();
     if (config.autoUpdate) updater.start();
+    if (config.mediaControls) media.start();
   });
 }
 

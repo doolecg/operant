@@ -1,3 +1,19 @@
+# Operant 1.3.0
+
+Media controls in the top bar, like Spotify's. Tiles also no longer close while their agent is still working, or before you've seen that it finished.
+
+**Install:** download `Operant-1.3.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Media controls:** the middle of the top bar shows whatever Windows is playing (Spotify, a browser tab, any player in Windows' volume flyout). You get the cover, the track and artist, and shuffle, previous, play/pause and next buttons. The volume slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Drag it, scroll over it, or click the speaker to mute. Turn it off in ⚙ Settings › Media.
+- **Media keybinds:** play/pause, next, previous and shuffle can each get a key in the keybinds popup (default `Alt+K`). None are bound by default, since keyboard media keys already work.
+
+## Changed
+- **Nothing closes while it's working:** a subagent tile stays open until the subagent says it's finished, and an agent terminal stays open while its agent is busy. The *Close quiet agents after* setting is gone, because it closed agents that hadn't finished.
+- **Finished tiles wait for you:** a subagent that finished, or an agent terminal that finished a turn, stays open until you've seen it. That means it has been on screen while Operant is the active window. Until then its badge reads *new*. The *Close finished agents after* countdown (15 seconds by default) starts from that moment.
+
+---
+
 # Operant 1.2.0
 
 The status pill in the top bar now counts your agent terminals too, including the master, so you can see how many are working and how many are idle.

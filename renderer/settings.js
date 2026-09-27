@@ -54,10 +54,12 @@ const Panels = (() => {
     ]],
     ['Subagents & idle closing', [
       { key: 'showExternalAgents', label: 'Show subagents from other Claude sessions', hint: 'Your IDE, other terminals', type: 'toggle' },
-      { key: 'autoCloseDoneAgentsSeconds', label: 'Close finished agents after', hint: 'Seconds · 0 = never', type: 'number', min: 0, max: 86400 },
-      { key: 'idleCloseAgentSeconds', label: 'Close quiet agents after', hint: 'Seconds · 0 = never', type: 'number', min: 0, max: 86400 },
+      { key: 'autoCloseDoneAgentsSeconds', label: 'Close finished agents after', hint: 'Seconds after you first see them · running agents never close · 0 = never', type: 'number', min: 0, max: 86400 },
       { key: 'idleCloseTerminalMinutes', label: 'Close idle terminals after', hint: 'Minutes · 0 = never · the master and focused tile stay', type: 'number', min: 0, max: 1440 },
       { key: 'agentLookbackSeconds', label: 'Pick up agents started before launch', hint: 'Seconds · ' + RESTART, type: 'number', min: 0, max: 3600 },
+    ]],
+    ['Media', [
+      { key: 'mediaControls', label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },
     ]],
     ['Startup & shell', [
       { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
@@ -168,6 +170,7 @@ const Panels = (() => {
       swapLeft: 'Swap ←', swapRight: 'Swap →', swapUp: 'Swap ↑', swapDown: 'Swap ↓' }],
     ['Layout', { toggleLayout: 'Master ⇄ dwindle layout', toggleSplit: 'Flip split direction',
       resizeLeft: 'Resize ←', resizeRight: 'Resize →', resizeUp: 'Resize ↑', resizeDown: 'Resize ↓' }],
+    ['Media', { mediaPlayPause: 'Play / pause', mediaNext: 'Next track', mediaPrev: 'Previous track', mediaShuffle: 'Shuffle' }],
     ['Workspaces', { prevWorkspace: 'Previous workspace', nextWorkspace: 'Next workspace' }],
     ['App', { help: 'Keybinds (this popup)', settings: 'Settings', openConfig: 'Edit config.json', devtools: 'DevTools' }],
   ];

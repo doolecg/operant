@@ -20,5 +20,7 @@ contextBridge.exposeInMainWorld('operant', {
   startupFolder: () => ipcRenderer.invoke('startup-folder'),
   checkUpdate: () => ipcRenderer.send('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
+  mediaState: () => ipcRenderer.invoke('media:state'),
+  media: cmd => ipcRenderer.send('media:command', cmd),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
 });
