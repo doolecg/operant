@@ -68,13 +68,18 @@ The left side shows your **projects**, each with a folder tree you can expand, p
 ## Media controls
 The top bar shows whatever Windows is playing, whether that's Spotify, a browser tab or any other player that shows up in Windows' volume flyout. You get the cover, the track and artist, and **shuffle**, **previous**, **play/pause** and **next** buttons. There's also a **volume** slider: drag it or scroll over it, and click the speaker to mute. The slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Turn it off in Settings › Media. Play/pause, next, previous and shuffle can each get a key in the keybinds popup.
 
+## Token usage
+The top bar shows how many tokens Claude Code has used today, across every session (Operant's tiles, other terminals, your IDE and subagents). Hover it for the breakdown and the last hour. Click it, or press `Alt+U`, for a graph over the last 5 hours, 24 hours, 7 days or 30 days, with totals by type and by project. Hover a bar for its numbers.
+
+The numbers come from Claude Code's own transcripts in `~/.claude/projects`, so they cover what those still hold (Claude Code clears out old ones after 30 days by default). By default the bar counts input, output and cache-write tokens. Cache reads are usually far bigger than the rest, so they're left out. Click a type on the graph, or use Settings › Usage, to count it or leave it out. Turn the pill off in Settings › Usage.
+
 ## Settings and themes
 `Alt+,` (or the ⚙ in the top bar) opens **Settings**, with a tab for each area down the left and a search box that finds any setting. It reopens on the tab you used last. Changes apply straight away and are saved. You can change:
 
 - **Theme:** 16 dark themes: Obsidian (default), Void, Ember, Graphite, Claude, Midnight, Terminal, Nord, Dracula, Tokyo Night, Catppuccin, Gruvbox, Rosé Pine, Everforest, Solarized and One Dark. Most bring their own terminal colors. You can also pick an accent color.
 - **Look:** wallpaper, the animated border, its speed, tile opacity and blur, rounding, border width and gaps.
 - **Terminal:** font, size, line height, cursor, scrollback.
-- **Agents, notifications, layout, idle closing, sidebar, media controls and startup:** everything above, plus the default folder and the shell.
+- **Agents, notifications, layout, idle closing, sidebar, media controls, token usage and startup:** everything above, plus the default folder and the shell.
 - **Keybinds:** the same editor as the keybinds popup.
 - **Updates:** your version, **Check for updates**, and *Update automatically*. When a new version has downloaded, this is where you see what's new and can restart to install it.
 
@@ -89,6 +94,7 @@ The top bar shows whatever Windows is playing, whether that's Spotify, a browser
 | `Alt+Q` | close tile |
 | `Alt+M` / `Alt+Shift+M` | master ⇄ dwindle layout / make focused tile the master |
 | `Alt+K` / `Alt+,` | keybinds / settings |
+| `Alt+U` | token usage graph |
 | `Alt+←↑→↓` or `Alt+H`, `Alt+J`, `Alt+L` | move focus |
 | `Alt+Shift+arrows` | swap tiles |
 | `Ctrl+Alt+arrows` | resize |

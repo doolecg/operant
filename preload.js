@@ -32,5 +32,7 @@ contextBridge.exposeInMainWorld('operant', {
   codegraphVersion: () => ipcRenderer.invoke('codegraph:version'),
   mediaState: () => ipcRenderer.invoke('media:state'),
   media: cmd => ipcRenderer.send('media:command', cmd),
+  usageSummary: () => ipcRenderer.invoke('usage:summary'),
+  usageSeries: range => ipcRenderer.invoke('usage:series', range),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
 });

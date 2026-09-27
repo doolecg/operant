@@ -5,6 +5,9 @@
 const IDES = [['code', 'VS Code'], ['cursor', 'Cursor'], ['windsurf', 'Windsurf'], ['zed', 'Zed'],
   ['idea', 'IntelliJ IDEA'], ['rider', 'Rider'], ['subl', 'Sublime Text'], ['custom', 'Custom command']];
 
+// Token usage series: [config key, name]. Their colors are .s-<key> in style.css.
+const USAGE_SERIES = [['input', 'Input'], ['output', 'Output'], ['cacheWrite', 'Cache write'], ['cacheRead', 'Cache read']];
+
 const Panels = (() => {
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
   const pct = v => Math.round(v * 100) + '%';
@@ -72,6 +75,10 @@ const Panels = (() => {
     ['Media', [
       { key: 'mediaControls', label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },
     ]],
+    ['Usage', [
+      { key: 'tokenUsage', label: 'Token usage in the top bar', hint: 'Claude Code tokens used today, from its transcripts · click it (or Alt+U) for a graph over time', type: 'toggle' },
+      { key: 'usageSeries', label: 'Count these tokens', hint: 'In the bar and the graph · cache reads are usually most of the total', type: 'series' },
+    ]],
     ['Startup', [
       { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
       { key: 'defaultCwd', label: 'Default folder', type: 'folder' },
@@ -93,7 +100,7 @@ const Panels = (() => {
     ]],
   ];
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', Media: '♫', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
+    Sidebar: '▌', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -102,6 +109,7 @@ const Panels = (() => {
       case 'toggle': return `<button class="toggle${v ? ' on' : ''}" data-key="${it.key}"></button>`;
       case 'select': return `<select data-key="${it.key}">${(typeof it.options === 'function' ? it.options(cfg) : it.options).map(([o, n]) => `<option value="${esc(o)}"${o === v ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
       case 'list': return `<input type="text" data-key="${it.key}" value="${esc([].concat(v).join(' '))}">`;
+      case 'series': return `<div class="series-picks">${USAGE_SERIES.map(([k, n]) => `<button class="chip-toggle${[].concat(v).includes(k) ? ' on' : ''}" data-series="${k}"><i class="sw s-${k}"></i>${n}</button>`).join('')}</div>`;
       case 'folder': return `<input type="text" data-key="${it.key}" value="${esc(v)}"><button class="btn" data-browse="${it.key}">Browse…</button>`;
       case 'accent': {
         const auto = !v;
@@ -250,6 +258,11 @@ const Panels = (() => {
         else ext.openReleases();
       });
       pane.querySelectorAll('[data-link]').forEach(a => a.onclick = e => { e.preventDefault(); ext.openLink(a.dataset.link); });
+      pane.querySelectorAll('[data-series]').forEach(b => b.onclick = () => {
+        const on = new Set(cfg.usageSeries); const k = b.dataset.series;
+        if (on.has(k)) { if (on.size > 1) on.delete(k); } else on.add(k);
+        set('usageSeries', USAGE_SERIES.map(s => s[0]).filter(s => on.has(s))); draw();
+      });
       pane.querySelectorAll('[data-theme]').forEach(b => b.onclick = () => { set('theme', b.dataset.theme); currentTheme = cfg.theme; draw(); });
       pane.querySelectorAll('[data-accent]').forEach(b => b.onclick = () => { set('accent', b.dataset.accent); draw(); });
       pane.querySelectorAll('[data-browse]').forEach(b => b.onclick = async () => {
@@ -308,7 +321,7 @@ const Panels = (() => {
       resizeLeft: 'Resize ←', resizeRight: 'Resize →', resizeUp: 'Resize ↑', resizeDown: 'Resize ↓' }],
     ['Media', { mediaPlayPause: 'Play / pause', mediaNext: 'Next track', mediaPrev: 'Previous track', mediaShuffle: 'Shuffle' }],
     ['Workspaces', { prevWorkspace: 'Previous workspace', nextWorkspace: 'Next workspace' }],
-    ['App', { help: 'Keybinds (this popup)', settings: 'Settings', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools' }],
+    ['App', { help: 'Keybinds (this popup)', settings: 'Settings', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools' }],
   ];
   const actionName = a => GROUPS.map(g => g[1][a]).find(Boolean) || a;
 

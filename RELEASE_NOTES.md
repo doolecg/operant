@@ -1,3 +1,18 @@
+# Operant 1.7.0
+
+Token usage in the top bar: see how many tokens Claude Code has used today, and click for a graph of them over time.
+
+**Install:** download `Operant-1.7.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Token usage pill:** the top bar shows Claude Code's tokens used today, across every session: Operant's tiles, other terminals, your IDE and subagents. Hover it for input, output, cache write and cache read, and the last hour.
+- **Token usage graph:** click the pill (default `Alt+U`) for stacked bars over the last 5 hours, 24 hours, 7 days or 30 days. Hover a bar for its numbers. It also shows totals by token type and which projects used the most, and it updates live.
+- **Choose what counts:** click a token type on the graph, or use ⚙ Settings › Usage, to count it or leave it out. Cache reads are left out by default because they're usually far bigger than everything else. ⚙ Settings › Usage also turns the pill off.
+
+The numbers come from Claude Code's transcripts in `~/.claude/projects`, so they go back as far as those do.
+
+---
+
 # Operant 1.6.1
 
 Readable release notes: what's new in an update now shows formatted in Settings › Updates.

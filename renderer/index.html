@@ -35,6 +35,7 @@
     </div>
     <div class="bar-right">
       <button class="pill update hidden" id="update-pill"></button>
+      <button class="pill tokens hidden" id="usage-pill"></button>
       <span class="pill" id="stat-agents" title="Agents working / idle, subagents finished"></span>
       <span class="pill" id="clock"></span>
       <button class="icon-btn" id="btn-new" title="New agent (Alt+N)">＋</button>
@@ -86,6 +87,19 @@
         <span class="grow" id="settings-note"></span>
         <button class="btn" id="set-json">Open config.json</button>
         <button class="btn warn" id="set-reset">Reset to defaults</button>
+        <button class="btn primary" data-close>Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="usage" class="overlay hidden">
+    <div class="card">
+      <div class="card-head"><h2><span class="logo">◈</span> Token usage</h2>
+        <div class="seg" id="usage-range"><button data-range="5h">5 hours</button><button data-range="24h">24 hours</button><button data-range="7d">7 days</button><button data-range="30d">30 days</button></div>
+      </div>
+      <div class="card-body" id="usage-body"></div>
+      <div class="card-foot">
+        <span class="grow">Claude Code, from its transcripts in ~/.claude/projects · click a series to leave it out of the graph and the bar</span>
         <button class="btn primary" data-close>Done</button>
       </div>
     </div>

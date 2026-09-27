@@ -11,6 +11,7 @@ const { spawn, spawnSync } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
 const { createMedia } = require('./media');
+const { createUsage } = require('./usage');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 
@@ -50,6 +51,7 @@ const DEFAULT_KEYBINDS = {
   devtools: ['Ctrl+Shift+I'],
   // Media keys on the keyboard already work everywhere; these are for keyboards without them.
   mediaPlayPause: [], mediaNext: [], mediaPrev: [], mediaShuffle: [],
+  tokenUsage: ['Alt+U'], // the token usage graph
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
 
@@ -102,6 +104,8 @@ const DEFAULT_CONFIG = {
   ide: 'code',                    // "Open in IDE": a command that takes the folder, or 'custom' for ideCommand
   ideCommand: '',
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
+  tokenUsage: true,               // Claude Code's tokens today in the top bar; click for the graph
+  usageSeries: ['input', 'output', 'cacheWrite'], // what the pill and graph count; cache reads would swamp the rest
   codegraphButtons: true,         // "Index with CodeGraph" buttons in the sidebar
   // Windows notifications
   notifications: true,
@@ -136,6 +140,7 @@ ipcMain.handle('config:set', (e, patch) => {
     if (config.explorerContextMenu) shellIntegration.register(process.execPath); else shellIntegration.unregister();
   }
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
+  if ('tokenUsage' in patch) { if (config.tokenUsage) usage.start(); else usage.stop(); }
   // Other Operant windows pick the change up live.
   for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
   return config;
@@ -387,6 +392,12 @@ const media = createMedia({ send: broadcast });
 ipcMain.handle('media:state', () => media.state());
 ipcMain.on('media:command', (_e, cmd) => media.command(String(cmd)));
 
+// -------------------------------------------------------------------- usage
+
+const usage = createUsage({ projectsDir: PROJECTS_DIR, send: broadcast });
+ipcMain.handle('usage:summary', () => usage.summary());
+ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
+
 // ---------------------------------------------------------- subagent watcher
 // Layout on disk: projects/<project>/<sessionId>/subagents/agent-<id>.jsonl (+ .meta.json)
 
@@ -546,6 +557,7 @@ function createWindow(startDir = null) {
     startWatcher();
     if (config.autoUpdate) updater.start();
     if (config.mediaControls) media.start();
+    if (config.tokenUsage) usage.start();
   });
   return w;
 }

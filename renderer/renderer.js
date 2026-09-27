@@ -647,6 +647,7 @@
     mediaNext: () => operant.media('next'),
     mediaPrev: () => operant.media('prev'),
     mediaShuffle: () => operant.media('shuffle'),
+    tokenUsage: () => togglePanel('usage'),
   };
   const bindMap = new Map();
   for (let i = 1; i <= WS_COUNT; i++) {
@@ -684,7 +685,7 @@
     const action = bindMap.get(eventCombo(e));
     if (!action) return;
     // With a panel open only the panel keys work, so nothing happens to the tiles behind it.
-    if (panel && action !== 'help' && action !== 'settings' && action !== 'pickAgent') return;
+    if (panel && action !== 'help' && action !== 'settings' && action !== 'pickAgent' && action !== 'tokenUsage') return;
     e.preventDefault(); e.stopPropagation();
     if (!e.repeat || action.startsWith('resize')) actions[action]();
   }, true);
@@ -693,13 +694,13 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
     const was = openPanel();
     closePanels(was === name);
     if (was === name) return;
-    if (name === 'keys') { keysTarget = $('#keys-body'); renderKeys(); } else if (name === 'launcher') renderLauncher(); else renderSettings();
+    if (name === 'keys') { keysTarget = $('#keys-body'); renderKeys(); } else if (name === 'launcher') renderLauncher(); else if (name === 'usage') { usageHover = -1; renderUsage(); } else renderSettings();
     $('#' + name).classList.remove('hidden');
     $('#' + name + ' .card-body').scrollTop = 0;
     document.activeElement?.blur();
@@ -766,6 +767,7 @@
     if (LIVE_LAYOUT.has(key)) for (const ws of workspaces) if (!ws.tree) { ws.layout = cfg.defaultLayout; ws.mfact = cfg.masterRatio; }
     if (key === 'agents' || key === 'defaultAgent') renderHints();
     if (key === 'mediaControls') renderMedia();
+    if (key === 'tokenUsage' || key === 'usageSeries') { renderUsagePill(); drawUsage(); }
     if (key === 'sidebarHiddenFiles') dirCache.clear();
     if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
@@ -905,7 +907,7 @@
   $('#wc-min').onclick = operant.minimize; $('#wc-max').onclick = operant.maximize; $('#wc-close').onclick = operant.close;
 
   let resizeT;
-  window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => workspaces.forEach((_, i) => layout(i, true)), 60); });
+  window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { workspaces.forEach((_, i) => layout(i, true)); drawUsage(); }, 60); });
 
   // ------------------------------------------------------------ sidebar
   // Pinned projects and the folders open tiles run in, each a lazily loaded folder tree.
@@ -1289,6 +1291,141 @@
   operant.on('media:state', s => renderMedia(s));
   operant.mediaState().then(renderMedia);
 
+  // ------------------------------------------------------------ token usage
+  // Claude Code's tokens today in the bar, and a stacked graph of them over time. Main reads the
+  // transcripts; the series ticked in Settings › Usage (or on the graph) are the ones counted.
+
+  const usagePill = $('#usage-pill'), usageBody = $('#usage-body');
+  let usageSum = null, usageData = null, usageHover = -1;
+  let usageRange = '24h';
+  try { usageRange = localStorage.getItem('operant.usage.range') || usageRange; } catch {}
+  const counted = () => USAGE_SERIES.filter(([k]) => [].concat(cfg.usageSeries || []).includes(k));
+  const countOf = o => counted().reduce((n, [k]) => n + (o[k] || 0), 0);
+  const fmtTok = n => n >= 1e9 ? +(n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + 'B' : n >= 1e6 ? +(n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M'
+    : n >= 1e3 ? +(n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k' : String(n);
+  const fullTok = n => Math.round(n).toLocaleString();
+
+  function renderUsagePill(s = usageSum) {
+    usageSum = s;
+    const show = !!(cfg.tokenUsage && s?.ready);
+    usagePill.classList.toggle('hidden', !show);
+    if (!show) return;
+    usagePill.innerHTML = `<svg viewBox="0 0 16 16"><path d="M2 13.5h12v1.3H2zM3 8h2.3v4.5H3zm3.8-5h2.3v9.5H6.8zm3.9 3h2.3v6.5h-2.3z"/></svg>${fmtTok(countOf(s.today))} <span class="dim">today</span>`;
+    usagePill.title = 'Claude Code tokens today\n'
+      + USAGE_SERIES.map(([k, n]) => `${n}: ${fullTok(s.today[k])}${counted().some(c => c[0] === k) ? '' : ' (not counted)'}`).join('\n')
+      + `\nLast hour: ${fmtTok(countOf(s.hour))}\nClick for the graph`;
+  }
+  usagePill.onclick = () => togglePanel('usage');
+  operant.on('usage:changed', s => {
+    renderUsagePill(s);
+    if (openPanel() === 'usage') loadUsage();
+  });
+  operant.usageSummary().then(renderUsagePill);
+
+  async function loadUsage() {
+    usageData = await operant.usageSeries(usageRange);
+    drawUsage();
+  }
+  function renderUsage() {
+    $('#usage-range').querySelectorAll('[data-range]').forEach(b => b.classList.toggle('on', b.dataset.range === usageRange));
+    if (!usageData || usageData.range !== usageRange) usageBody.innerHTML = '<div class="usage-empty">Reading transcripts…</div>';
+    loadUsage();
+  }
+  $('#usage-range').querySelectorAll('[data-range]').forEach(b => b.onclick = () => {
+    usageRange = b.dataset.range;
+    try { localStorage.setItem('operant.usage.range', usageRange); } catch {}
+    usageHover = -1;
+    renderUsage();
+  });
+  function toggleSeries(k) {
+    const on = new Set(cfg.usageSeries);
+    if (on.has(k)) { if (on.size > 1) on.delete(k); } else on.add(k);
+    setSetting('usageSeries', USAGE_SERIES.map(s => s[0]).filter(s => on.has(s)));
+  }
+
+  // Time labels for the x axis (short) and the tooltip (the whole bucket).
+  function usageTime(t, step, long) {
+    const d = new Date(t);
+    const hm = x => x.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (step >= 86400e3) return d.toLocaleDateString([], long ? { weekday: 'short', day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short' });
+    const day = step >= 3600e3 ? d.toLocaleDateString([], { weekday: 'short' }) + ' ' : '';
+    return long ? `${day}${hm(d)}–${hm(new Date(t + step))}` : day + hm(d);
+  }
+  const niceStep = v => { const p = 10 ** Math.floor(Math.log10(v || 1)); return [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= v); };
+
+  function drawUsage() {
+    const d = usageData;
+    if (!d || openPanel() !== 'usage') return;
+    const series = counted();
+    const on = new Set(series.map(s => s[0]));
+    const total = countOf(d.totals);
+    const tiles = `<div class="usage-tiles"><div class="u-tile total"><span class="u-lbl">Counted</span><span class="u-val">${fmtTok(total)}</span><span class="u-sub">${fullTok(total)}</span></div>`
+      + USAGE_SERIES.map(([k, n]) => `<button class="u-tile${on.has(k) ? '' : ' off'}" data-series="${k}" title="${on.has(k) ? 'Leave out' : 'Count'} ${n.toLowerCase()} tokens">`
+        + `<span class="u-lbl"><i class="sw s-${k}"></i>${n}</span><span class="u-val">${fmtTok(d.totals[k])}</span><span class="u-sub">${fullTok(d.totals[k])}</span></button>`).join('') + '</div>';
+    const projects = d.projects.map(p => ({ name: p.name, n: countOf(p) })).filter(p => p.n > 0).sort((a, b) => b.n - a.n);
+    const top = projects.slice(0, 8), rest = projects.slice(8).reduce((n, p) => n + p.n, 0);
+    if (rest) top.push({ name: `${projects.length - 8} more`, n: rest, other: true });
+    const maxP = Math.max(1, ...top.map(p => p.n));
+    const list = top.length ? `<h3>By project</h3><div class="usage-projects">${top.map(p => `<div class="up-row${p.other ? ' other' : ''}"><span class="up-nm" title="${esc(p.name)}">${esc(p.name)}</span>`
+      + `<span class="up-bar"><i style="width:${(p.n / maxP * 100).toFixed(1)}%"></i></span><span class="up-val">${fmtTok(p.n)}</span></div>`).join('')}</div>` : '';
+    usageBody.innerHTML = tiles + '<div class="usage-chart"><div class="u-tip hidden"></div></div>' + list;
+    usageBody.querySelectorAll('[data-series]').forEach(b => b.onclick = () => toggleSeries(b.dataset.series));
+    const chart = usageBody.querySelector('.usage-chart');
+    if (!total) chart.insertAdjacentHTML('afterbegin', '<div class="usage-empty">No Claude Code tokens in this range.</div>');
+    else drawUsageChart(chart, d, series);
+  }
+
+  // Stacked bars, one per bucket, in USAGE_SERIES order from the bottom; hover a column for its numbers.
+  function drawUsageChart(el, d, series) {
+    const W = el.clientWidth || 760, H = 230, L = 52, R = 8, T = 10, B = 24;
+    const pw = W - L - R, ph = H - T - B, n = d.buckets.length;
+    const peak = Math.max(...d.buckets.map(countOf));
+    const step = niceStep(peak / 4);
+    const max = step * Math.max(1, Math.ceil(peak / step));
+    const y = v => T + ph - v / max * ph;
+    const band = pw / n, bw = Math.max(2, band - Math.min(8, Math.max(2, band * 0.28)));
+    let svg = `<svg class="u-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+    for (let v = 0; v <= max + 1e-9; v += step) {
+      svg += `<line class="u-grid${v ? '' : ' base'}" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="u-axis" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${fmtTok(v)}</text>`;
+    }
+    svg += `<rect class="u-hover" x="0" y="${T}" width="${band}" height="${ph}" visibility="hidden"/>`;
+    const every = Math.ceil(n / Math.max(2, Math.floor(pw / 90)));
+    d.buckets.forEach((b, i) => {
+      const x = L + i * band + (band - bw) / 2;
+      if ((n - 1 - i) % every === 0) svg += `<text class="u-axis" x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(usageTime(b.t, d.step))}</text>`;
+      const segs = series.map(([k]) => [k, b[k]]).filter(s => s[1] > 0);
+      let base = 0;
+      segs.forEach(([k, v], j) => {
+        const y0 = y(base) - (j ? 1 : 0), y1 = y(base + v); // a hairline of surface between stacked segments
+        base += v;
+        const h = y0 - y1;
+        if (h <= 0.4) return;
+        if (j < segs.length - 1) return svg += `<rect class="s-${k}" x="${x}" y="${y1}" width="${bw}" height="${h}"/>`;
+        const r = Math.min(4, bw / 2, h);
+        svg += `<path class="s-${k}" d="M${x} ${y0}V${y1 + r}Q${x} ${y1} ${x + r} ${y1}H${x + bw - r}Q${x + bw} ${y1} ${x + bw} ${y1 + r}V${y0}Z"/>`;
+      });
+    });
+    svg += d.buckets.map((_, i) => `<rect class="u-hit" data-i="${i}" x="${L + i * band}" y="0" width="${band}" height="${T + ph}"/>`).join('') + '</svg>';
+    el.insertAdjacentHTML('beforeend', svg);
+    const tip = el.querySelector('.u-tip'), hover = el.querySelector('.u-hover');
+    const show = i => {
+      usageHover = i;
+      const b = d.buckets[i];
+      if (!b) { tip.classList.add('hidden'); hover.setAttribute('visibility', 'hidden'); return; }
+      hover.setAttribute('x', L + i * band); hover.setAttribute('visibility', 'visible');
+      tip.innerHTML = `<div class="t-head">${esc(usageTime(b.t, d.step, true))}</div>`
+        + [...series].reverse().map(([k, nm]) => `<div class="t-row"><i class="sw s-${k}"></i><span>${nm}</span><b>${fullTok(b[k])}</b></div>`).join('')
+        + (series.length > 1 ? `<div class="t-row t-total"><span>Total</span><b>${fullTok(countOf(b))}</b></div>` : '');
+      tip.classList.remove('hidden');
+      const cx = L + (i + 0.5) * band, tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, cx + 14 + tw > W ? cx - 14 - tw : cx + 14) + 'px';
+      tip.style.top = T + 'px';
+    };
+    el.querySelectorAll('.u-hit').forEach(r => r.onmouseenter = () => show(+r.dataset.i));
+    el.querySelector('.u-svg').onmouseleave = () => show(-1);
+    if (usageHover >= 0) show(usageHover);
+  }
+
   // ------------------------------------------------------------ updates
 
   const pill = $('#update-pill');
@@ -1325,7 +1462,7 @@
   // A setting changed in another Operant window.
   operant.on('config:changed', c => {
     Object.assign(cfg, c);
-    applyAppearance(); rebuildBinds(); renderHints(); renderMedia();
+    applyAppearance(); rebuildBinds(); renderHints(); renderMedia(); renderUsagePill(); drawUsage();
     if (openPanel() === 'settings') renderSettings();
     if (openPanel() === 'keys') renderKeys();
   });
