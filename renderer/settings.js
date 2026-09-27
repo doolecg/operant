@@ -1,0 +1,193 @@
+// The Settings and Keybinds panels. They only draw and report changes;
+// renderer.js owns the config, applies it and saves it.
+
+const Panels = (() => {
+  const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  const pct = v => Math.round(v * 100) + '%';
+  const px = v => v + 'px';
+  const KEY_NAMES = { Comma: ',', Period: '.', Slash: '/', Backslash: '\\',Semicolon: ';', Quote: "'", Backquote: '`',
+    Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']' };
+  const pretty = combo => combo.replace(/[A-Za-z]+$/, k => KEY_NAMES[k] || k);
+
+  const RESTART = 'Applies after a restart';
+  const NEW_TILES = 'Applies to new tiles';
+
+  const SECTIONS = [
+    ['Appearance', [
+      { key: 'theme', type: 'theme' },
+      { key: 'accent', label: 'Accent color', type: 'accent' },
+      { key: 'wallpaper', label: 'Wallpaper', type: 'select', options: [['glow-dots', 'Glow + dots'], ['glow', 'Glow'], ['plain', 'Plain']] },
+      { key: 'borderAnimation', label: 'Animated border', hint: 'Only the border moves, never the tile behind it', type: 'select',
+        options: [['active', 'Focused + running agents'], ['focused', 'Focused tile only'], ['off', 'Off']] },
+      { key: 'borderAnimationSeconds', label: 'Border animation cycle', hint: 'Lower is faster', type: 'range', min: 2, max: 20, step: 1, fmt: v => v + 's' },
+      { key: 'opacity', label: 'Tile opacity', type: 'range', min: 0.4, max: 1, step: 0.01, fmt: pct },
+      { key: 'blur', label: 'Tile blur', type: 'range', min: 0, max: 40, step: 1, fmt: px },
+      { key: 'rounding', label: 'Corner rounding', type: 'range', min: 0, max: 24, step: 1, fmt: px },
+      { key: 'borderSize', label: 'Border width', type: 'range', min: 1, max: 6, step: 1, fmt: px },
+      { key: 'gapsIn', label: 'Gap between tiles', type: 'range', min: 0, max: 24, step: 1, fmt: px },
+      { key: 'gapsOut', label: 'Gap at screen edges', type: 'range', min: 0, max: 48, step: 1, fmt: px },
+    ]],
+    ['Terminal', [
+      { key: 'fontFamily', label: 'Font', type: 'text' },
+      { key: 'fontSize', label: 'Font size', type: 'range', min: 9, max: 24, step: 1, fmt: px },
+      { key: 'lineHeight', label: 'Line height', type: 'range', min: 1, max: 1.6, step: 0.05, fmt: v => (+v).toFixed(2) },
+      { key: 'cursorStyle', label: 'Cursor', type: 'select', options: [['block', 'Block'], ['bar', 'Bar'], ['underline', 'Underline']] },
+      { key: 'cursorBlink', label: 'Blinking cursor', type: 'toggle' },
+      { key: 'scrollback', label: 'Scrollback lines', type: 'number', min: 1000, max: 200000, step: 1000 },
+    ]],
+    ['Layout', [
+      { key: 'defaultLayout', label: 'Default layout', hint: 'For empty workspaces; Alt+M switches the current one',
+        type: 'select', options: [['master', 'Master + stack'], ['dwindle', 'Dwindle']] },
+      { key: 'masterRatio', label: 'Master width', hint: 'For empty workspaces', type: 'range', min: 0.2, max: 0.85, step: 0.01, fmt: pct },
+      { key: 'maxTilesPerWorkspace', label: 'Tiles per workspace', hint: 'New agents spill onto the next workspace past this', type: 'number', min: 1, max: 16 },
+    ]],
+    ['Agents', [
+      { key: 'agents', type: 'agents' },
+      { key: 'defaultAgent', label: 'Default agent', hint: 'Alt+Enter, the master tile and Explorer\'s entry open this', type: 'select',
+        options: cfg => cfg.agents.map(a => [a.id, a.name]) },
+    ]],
+    ['Notifications', [
+      { key: 'notifications', label: 'Windows notifications', type: 'toggle' },
+      { key: 'notifyWhenIdleSeconds', label: 'Agent is waiting for you', hint: 'Notify when a working agent goes quiet for this many seconds · 0 = off', type: 'number', min: 0, max: 600 },
+      { key: 'notifySubagents', label: 'Claude subagent finished', type: 'toggle' },
+      { key: 'notifyOnlyUnfocused', label: 'Only when I\'m not looking at it', hint: 'Skip it for the focused tile while AgentLand is in front', type: 'toggle' },
+    ]],
+    ['Subagents & idle closing', [
+      { key: 'showExternalAgents', label: 'Show subagents from other Claude sessions', hint: 'Your IDE, other terminals', type: 'toggle' },
+      { key: 'autoCloseDoneAgentsSeconds', label: 'Close finished agents after', hint: 'Seconds · 0 = never', type: 'number', min: 0, max: 86400 },
+      { key: 'idleCloseAgentSeconds', label: 'Close quiet agents after', hint: 'Seconds · 0 = never', type: 'number', min: 0, max: 86400 },
+      { key: 'idleCloseTerminalMinutes', label: 'Close idle terminals after', hint: 'Minutes · 0 = never · the master and focused tile stay', type: 'number', min: 0, max: 1440 },
+      { key: 'agentLookbackSeconds', label: 'Pick up agents started before launch', hint: 'Seconds · ' + RESTART, type: 'number', min: 0, max: 3600 },
+    ]],
+    ['Startup & shell', [
+      { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
+      { key: 'defaultCwd', label: 'Default folder', type: 'folder' },
+      { key: 'shell', label: 'Shell', hint: 'PowerShell runs the agents · ' + NEW_TILES, type: 'text' },
+      { key: 'explorerContextMenu', label: 'Explorer right-click entry', hint: '"Open in AgentLand" on folders (installed app)', type: 'toggle' },
+      { key: 'autoUpdate', label: 'Auto-update', hint: RESTART, type: 'toggle' },
+    ]],
+  ];
+
+  function control(it, v, cfg) {
+    switch (it.type) {
+      case 'range': return `<input type="range" data-key="${it.key}" min="${it.min}" max="${it.max}" step="${it.step}" value="${v}"><span class="val">${esc(it.fmt(v))}</span>`;
+      case 'number': return `<input type="number" data-key="${it.key}" min="${it.min}" max="${it.max}" step="${it.step || 1}" value="${v}">`;
+      case 'toggle': return `<button class="toggle${v ? ' on' : ''}" data-key="${it.key}"></button>`;
+      case 'select': return `<select data-key="${it.key}">${(typeof it.options === 'function' ? it.options(cfg) : it.options).map(([o, n]) => `<option value="${esc(o)}"${o === v ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+      case 'list': return `<input type="text" data-key="${it.key}" value="${esc([].concat(v).join(' '))}">`;
+      case 'folder': return `<input type="text" data-key="${it.key}" value="${esc(v)}"><button class="btn" data-browse="${it.key}">Browse…</button>`;
+      case 'accent': {
+        const auto = !v;
+        return `<div class="accents"><button class="accent-dot auto${auto ? ' on' : ''}" data-accent="" title="Theme default"></button>`
+          + ACCENTS.map(([c, n]) => `<button class="accent-dot${v === c ? ' on' : ''}" data-accent="${c}" title="${n}" style="background:${c}"></button>`).join('')
+          + `<input type="color" data-key="accent" value="${v || THEMES[currentTheme]?.accent || '#d97757'}" title="Custom color"></div>`;
+      }
+      default: return `<input type="text" data-key="${it.key}" value="${esc(v)}">`;
+    }
+  }
+
+  function themeCards(v) {
+    return `<div class="themes">${Object.entries(THEMES).map(([id, t]) => `
+      <button class="theme-card${id === v ? ' on' : ''}" data-theme="${id}">
+        <div class="sw" style="background: radial-gradient(ellipse at 50% 130%, ${t.glow}, ${t.bg} 70%)">
+          <div class="t" style="background: rgb(${t.glass}); color: ${t.accent}; --tx: ${t.text}; box-shadow: 0 0 0 1px ${t.inactive}"></div>
+        </div>
+        <div class="nm">${t.name}<small>${t.note}</small></div>
+      </button>`).join('')}</div>`;
+  }
+
+  let currentTheme = 'obsidian';
+
+  // The agent CLIs: icon, name, command and arguments, one row each.
+  function agentsEditor(list) {
+    return `<div class="agent-list"><div class="agent-row agent-head"><span></span><span>Name</span><span>Command</span><span>Arguments</span><span></span></div>`
+      + list.map((a, i) => `<div class="agent-row" data-agent="${i}">
+        <input class="icon" data-f="icon" value="${esc(a.icon || '')}" maxlength="2" title="Icon">
+        <input data-f="name" value="${esc(a.name)}" placeholder="Name">
+        <input data-f="command" value="${esc(a.command)}" placeholder="command" spellcheck="false">
+        <input data-f="args" value="${esc([].concat(a.args || []).join(' '))}" placeholder="--flags" spellcheck="false">
+        <button class="rm" data-agent-rm="${i}" title="Remove">✕</button></div>`).join('')
+      + `</div><div class="set-row"><div class="lbl"><span class="hint">Any command that runs in a terminal works. Claude Code tiles also get their subagents as tiles. ${NEW_TILES}.</span></div>
+        <div class="ctl"><button class="btn" data-agent-add>+ Add agent</button></div></div>`;
+  }
+
+  // set(key, value) applies and saves one setting.
+  function renderSettings(body, cfg, set, pickFolder) {
+    currentTheme = cfg.theme;
+    body.innerHTML = SECTIONS.map(([title, items]) => `<div class="set-section"><h3>${title}</h3>${items.map(it => it.type === 'theme'
+      ? themeCards(cfg.theme)
+      : it.type === 'agents' ? agentsEditor(cfg.agents)
+      : `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}</div><div class="ctl">${control(it, cfg[it.key], cfg)}</div></div>`).join('')}</div>`).join('');
+
+    const item = key => SECTIONS.flatMap(s => s[1]).find(i => i.key === key);
+    const rerender = () => { const top = body.scrollTop; renderSettings(body, cfg, set, pickFolder); body.scrollTop = top; };
+
+    body.querySelectorAll('[data-theme]').forEach(b => b.onclick = () => { set('theme', b.dataset.theme); rerender(); });
+    body.querySelectorAll('[data-accent]').forEach(b => b.onclick = () => { set('accent', b.dataset.accent); rerender(); });
+    body.querySelectorAll('[data-browse]').forEach(b => b.onclick = async () => {
+      const d = await pickFolder();
+      if (d) { set(b.dataset.browse, d); rerender(); }
+    });
+    const setAgents = list => { set('agents', list); if (!list.some(a => a.id === cfg.defaultAgent) && list[0]) set('defaultAgent', list[0].id); };
+    body.querySelectorAll('[data-agent] input').forEach(el => el.onchange = () => {
+      const i = +el.closest('[data-agent]').dataset.agent, f = el.dataset.f;
+      const list = cfg.agents.map(a => ({ ...a }));
+      list[i][f] = f === 'args' ? el.value.split(/\s+/).filter(Boolean) : el.value.trim();
+      if (f === 'name' && !list[i].name) list[i].name = list[i].command || 'Agent';
+      setAgents(list);
+      if (f === 'name') rerender();
+    });
+    body.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); rerender(); });
+    const add = body.querySelector('[data-agent-add]');
+    if (add) add.onclick = () => {
+      setAgents([...cfg.agents, { id: 'agent-' + Date.now().toString(36), name: 'New agent', command: '', args: [], icon: '●' }]);
+      rerender();
+      body.querySelector('.agent-row:last-of-type [data-f="command"]')?.focus();
+    };
+    body.querySelectorAll('[data-key]').forEach(el => {
+      const it = item(el.dataset.key) || { type: 'text' };
+      if (it.type === 'toggle') return el.onclick = () => { set(it.key, !cfg[it.key]); el.classList.toggle('on', cfg[it.key]); };
+      if (el.type === 'color') return el.oninput = () => { set('accent', el.value); body.querySelectorAll('.accent-dot').forEach(d => d.classList.remove('on')); };
+      if (it.type === 'range') return el.oninput = () => { set(it.key, +el.value); el.nextElementSibling.textContent = it.fmt(+el.value); };
+      el.onchange = () => {
+        if (it.type === 'number') {
+          const n = Math.min(it.max, Math.max(it.min, Math.round(+el.value || 0)));
+          el.value = n; set(it.key, n);
+        } else if (it.type === 'list') set(it.key, el.value.split(/\s+/).filter(Boolean));
+        else set(it.key, el.type === 'text' ? el.value.trim() : el.value);
+      };
+    });
+  }
+
+  // ------------------------------------------------------------ keybinds
+
+  const GROUPS = [
+    ['Tiles', { newAgent: 'New default agent', pickAgent: 'Pick an agent…', newAgentIn: 'New agent in folder…', newShell: 'New shell', close: 'Close tile',
+      fullscreen: 'Fullscreen tile', promoteMaster: 'Make focused tile the master', closeDoneAgents: 'Close finished subagents' }],
+    ['Focus & swap', { focusLeft: 'Focus ←', focusRight: 'Focus →', focusUp: 'Focus ↑', focusDown: 'Focus ↓',
+      swapLeft: 'Swap ←', swapRight: 'Swap →', swapUp: 'Swap ↑', swapDown: 'Swap ↓' }],
+    ['Layout', { toggleLayout: 'Master ⇄ dwindle layout', toggleSplit: 'Flip split direction',
+      resizeLeft: 'Resize ←', resizeRight: 'Resize →', resizeUp: 'Resize ↑', resizeDown: 'Resize ↓' }],
+    ['Workspaces', { prevWorkspace: 'Previous workspace', nextWorkspace: 'Next workspace' }],
+    ['App', { help: 'Keybinds (this popup)', settings: 'Settings', openConfig: 'Edit config.json', devtools: 'DevTools' }],
+  ];
+  const actionName = a => GROUPS.map(g => g[1][a]).find(Boolean) || a;
+
+  // recording: the action currently waiting for a key, or null.
+  function renderKeys(body, keybinds, recording, { onAdd, onRemove }) {
+    const chips = a => [].concat(keybinds[a] || []).map((k, i) => `<span class="chip">${esc(pretty(k))}<button class="rm" data-rm="${a}" data-i="${i}" title="Remove">✕</button></span>`).join('')
+      + `<button class="chip add${recording === a ? ' recording' : ''}" data-add="${a}">${recording === a ? 'press keys… (Esc cancels)' : '+'}</button>`;
+    body.innerHTML = GROUPS.map(([title, acts]) => `<div class="kb-group"><h3>${title}</h3><div class="kb-grid">${
+      Object.entries(acts).map(([a, n]) => `<div class="kb-row"><span class="name">${n}</span><span class="kb-keys">${chips(a)}</span></div>`).join('')
+      + (title === 'Workspaces' ? `<div class="kb-row"><span class="name">Go to workspace</span><span class="kb-keys"><span class="chip fixed">Alt+1…9</span></span></div>
+        <div class="kb-row"><span class="name">Move tile to workspace</span><span class="kb-keys"><span class="chip fixed">Alt+Shift+1…9</span></span></div>` : '')
+    }</div></div>`).join('')
+      + `<div class="kb-mouse"><h3>Mouse</h3>
+        Click a tile to focus · <kbd>Alt</kbd>+drag onto another tile to swap · <kbd>Alt</kbd>+right-drag to resize · <kbd>Alt</kbd>+wheel switches workspace ·
+        <kbd>Ctrl+C</kbd> copies a selection, <kbd>Ctrl+V</kbd> pastes</div>`;
+    body.querySelectorAll('[data-add]').forEach(b => b.onclick = () => onAdd(b.dataset.add));
+    body.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => onRemove(b.dataset.rm, +b.dataset.i));
+  }
+
+  return { renderSettings, renderKeys, actionName, pretty };
+})();

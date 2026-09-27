@@ -1,0 +1,24 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('agentland', {
+  config: () => ipcRenderer.invoke('config'),
+  setConfig: patch => ipcRenderer.invoke('config:set', patch),
+  defaults: () => ipcRenderer.invoke('config:defaults'),
+  createPty: opts => ipcRenderer.invoke('pty:create', opts),
+  writePty: (id, data) => ipcRenderer.send('pty:write', { id, data }),
+  resizePty: (id, cols, rows) => ipcRenderer.send('pty:resize', { id, cols, rows }),
+  killPty: id => ipcRenderer.send('pty:kill', { id }),
+  pickFolder: () => ipcRenderer.invoke('pick-folder'),
+  openConfig: () => ipcRenderer.send('open-config'),
+  minimize: () => ipcRenderer.send('win:minimize'),
+  maximize: () => ipcRenderer.send('win:maximize'),
+  close: () => ipcRenderer.send('win:close'),
+  windowFocused: () => ipcRenderer.invoke('win:focused'),
+  notify: n => ipcRenderer.send('notify', n),
+  devtools: () => ipcRenderer.send('devtools'),
+  version: () => ipcRenderer.invoke('app:version'),
+  startupFolder: () => ipcRenderer.invoke('startup-folder'),
+  checkUpdate: () => ipcRenderer.send('update:check'),
+  installUpdate: () => ipcRenderer.send('update:install'),
+  on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
+});

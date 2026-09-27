@@ -1,0 +1,101 @@
+// Auto-update from GitHub releases. electron-updater can't update MSI installs, so this
+// does it directly: find a newer release, download its .msi, then hand it to msiexec
+// (a major upgrade over the installed version) and relaunch.
+
+const { app, net } = require('electron');
+const { spawnSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
+
+const REPO = 'doolecg/agentland';
+const CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
+
+function newer(a, b) { // is version a > b
+  const pa = a.replace(/^v/, '').split(/[.-]/).map(Number), pb = b.replace(/^v/, '').split(/[.-]/).map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+}
+
+function createUpdater({ send, currentVersion = app.getVersion() }) {
+  let ready = null;      // { version, file, notes }
+  let busy = false;
+  let installing = false;
+
+  async function check() {
+    if (busy || ready) return;
+    busy = true;
+    try {
+      const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+        headers: { 'User-Agent': 'agentland', Accept: 'application/vnd.github+json' },
+      });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const rel = await res.json();
+      const version = rel.tag_name.replace(/^v/, '');
+      if (!newer(version, currentVersion)) { send('update:status', { state: 'current', version: currentVersion }); return; }
+      const asset = rel.assets.find(a => a.name.toLowerCase().endsWith('.msi'));
+      if (!asset) return;
+
+      const file = path.join(os.tmpdir(), `AgentLand-${version}.msi`);
+      if (!fs.existsSync(file) || fs.statSync(file).size !== asset.size) {
+        send('update:status', { state: 'downloading', version });
+        const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'agentland' } });
+        if (!dl.ok) throw new Error(`download ${dl.status}`);
+        const tmp = file + '.part';
+        await pipeline(Readable.fromWeb(dl.body), fs.createWriteStream(tmp));
+        if (fs.statSync(tmp).size !== asset.size) throw new Error('download size mismatch');
+        fs.renameSync(tmp, file);
+      }
+      ready = { version, file, notes: rel.body || '' };
+      send('update:status', { state: 'ready', version, notes: ready.notes, url: rel.html_url });
+    } catch (e) {
+      send('update:status', { state: 'error', message: String(e.message || e) });
+    } finally {
+      busy = false;
+    }
+  }
+
+  // A worker PowerShell waits for us to close, runs msiexec, then optionally relaunches.
+  // It must outlive us, and Node can't start it directly: with `detached` (DETACHED_PROCESS)
+  // powershell.exe exits without running anything, and without it the child dies with us.
+  // So a short-lived launcher starts the worker via Start-Process (its own console, not our
+  // child), and we wait for the launcher before quitting.
+  function install(relaunch) {
+    if (!ready || installing) return false;
+    const q = s => s.replace(/'/g, "''");
+    const exe = process.execPath;
+    const log = path.join(os.tmpdir(), `AgentLand-${ready.version}-install.log`);
+    const worker = [
+      `Wait-Process -Id ${process.pid} -Timeout 60 -ErrorAction SilentlyContinue`,
+      // Electron helpers and node-pty's console hosts can outlive the main process briefly.
+      `$dir = '${q(path.dirname(exe))}\\'`,
+      `Get-Process | Where-Object { try { $_.Path -and $_.Path.StartsWith($dir, 'OrdinalIgnoreCase') } catch { $false } } | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue`,
+      `Start-Process msiexec.exe -ArgumentList '/i "${q(ready.file)}" ${relaunch ? '/passive' : '/qn'} /norestart /l*v "${q(log)}"' -Wait`,
+      relaunch ? `Start-Process -FilePath '${q(exe)}'` : '',
+    ].join('\n');
+    const encoded = Buffer.from(worker, 'utf16le').toString('base64');
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','${encoded}'`,
+    ], { windowsHide: true, stdio: 'ignore', timeout: 30000 });
+    if (r.status !== 0) {
+      send('update:status', { state: 'error', message: `couldn't start the installer (${r.error ? r.error.message : `exit ${r.status}`})` });
+      return false;
+    }
+    installing = true;
+    return true;
+  }
+
+  function start() {
+    if (!app.isPackaged && !process.env.AGENTLAND_UPDATE_TEST) return;
+    setTimeout(check, 5000);
+    setInterval(check, CHECK_EVERY_MS);
+    // Like electron-updater's autoInstallOnAppQuit: a downloaded update goes in when the app closes.
+    app.on('will-quit', () => { if (ready && !installing && app.isPackaged) install(false); });
+  }
+
+  return { start, check, install: () => install(true), get ready() { return ready; } };
+}
+
+module.exports = { createUpdater, newer };

@@ -1,0 +1,49 @@
+# Push a version tag (plain, like 1.2.1) to build the MSI and publish it as a GitHub release,
+# with the top section of RELEASE_NOTES.md as its body. Installed copies pick it up via updater.js.
+name: release
+
+on:
+  push:
+    tags: ['[0-9]*', 'v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run dist
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The version in package.json names the release; a pushed tag must agree with it.
+          v="$(node -p "require('./package.json').version")"
+          tag="$v"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+            if [ "$tag" != "$v" ] && [ "$tag" != "v$v" ]; then
+              echo "Tag $tag doesn't match package.json ($v)"; exit 1
+            fi
+          fi
+          # Release body: everything above the first '---' line of RELEASE_NOTES.md, which must be this version's section.
+          awk '/^---[[:space:]]*$/ { exit } { print }' RELEASE_NOTES.md > notes.md
+          if ! head -1 notes.md | tr -d '\r' | grep -qx "# AgentLand $v"; then
+            echo "RELEASE_NOTES.md must start with '# AgentLand $v'"; exit 1
+          fi
+          msi=$(ls dist/*.msi)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$msi" --clobber
+          else
+            gh release create "$tag" "$msi" --title "AgentLand $v" --notes-file notes.md --latest
+          fi

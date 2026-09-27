@@ -1,0 +1,72 @@
+{
+  "name": "agentland",
+  "version": "1.0.0",
+  "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenAI Codex, OpenCode, Gemini CLI and more",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --check main.js && node --check updater.js && node --check renderer/renderer.js && node --check renderer/settings.js && node --check renderer/themes.js && node --check shell-integration.js",
+    "dist": "electron-builder --win msi --x64"
+  },
+  "author": {
+    "name": "doolecg",
+    "email": "doolecg@gmail.com"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.15",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0"
+  },
+  "productName": "AgentLand",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/doolecg/agentland.git"
+  },
+  "homepage": "https://github.com/doolecg/agentland",
+  "build": {
+    "appId": "com.doolecg.agentland",
+    "productName": "AgentLand",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "updater.js",
+      "renderer/**",
+      "build/icon.png",
+      "package.json",
+      "shell-integration.js"
+    ],
+    "asarUnpack": [
+      "node_modules/@lydell/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "msi",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "msi": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AgentLand",
+      "artifactName": "AgentLand-${version}.msi"
+    },
+    "publish": null
+  }
+}

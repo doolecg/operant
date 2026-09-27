@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>AgentLand</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="wallpaper"></div>
+
+  <header id="bar">
+    <div class="bar-left">
+      <span class="logo">◈</span><span class="brand">AgentLand</span>
+      <div id="workspaces"></div>
+    </div>
+    <div class="bar-center" id="bar-title"></div>
+    <div class="bar-right">
+      <button class="pill update hidden" id="update-pill"></button>
+      <span class="pill" id="stat-agents" title="Subagents running / finished"></span>
+      <span class="pill" id="clock"></span>
+      <button class="icon-btn" id="btn-new" title="New agent (Alt+N)">＋</button>
+      <button class="icon-btn" id="btn-keys" title="Keybinds">⌨</button>
+      <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
+      <div class="wc">
+        <button id="wc-min" title="Minimize">─</button>
+        <button id="wc-max" title="Maximize">□</button>
+        <button id="wc-close" title="Close">✕</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="desktop"></main>
+
+  <div id="toasts"></div>
+
+  <div id="keys" class="overlay hidden">
+    <div class="card">
+      <div class="card-head"><h2><span class="logo">◈</span> Keybinds</h2><span class="sub">Hover a row: + adds a key, ✕ removes one</span></div>
+      <div class="card-body" id="keys-body"></div>
+      <div class="card-foot">
+        <span class="grow">Esc closes · changes save as you make them</span>
+        <button class="btn" id="keys-reset">Reset to defaults</button>
+        <button class="btn primary" data-close>Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings" class="overlay hidden">
+    <div class="card">
+      <div class="card-head"><h2><span class="logo">◈</span> Settings</h2><span class="sub">Changes apply and save immediately</span></div>
+      <div class="card-body" id="settings-body"></div>
+      <div class="card-foot">
+        <span class="grow" id="settings-note"></span>
+        <button class="btn" id="set-json">Open config.json</button>
+        <button class="btn warn" id="set-reset">Reset to defaults</button>
+        <button class="btn primary" data-close>Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="launcher" class="overlay hidden">
+    <div class="card narrow">
+      <div class="card-head"><h2><span class="logo">◈</span> New agent</h2><span class="sub">1–9 opens one · Shift picks a folder first</span></div>
+      <div class="card-body" id="launcher-body"></div>
+      <div class="card-foot">
+        <span class="grow">Add or change agents in Settings › Agents</span>
+        <button class="btn primary" data-close>Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="themes.js"></script>
+  <script src="render-agent.js"></script>
+  <script src="settings.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
