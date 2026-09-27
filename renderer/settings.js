@@ -83,13 +83,17 @@ const Panels = (() => {
     ['Keybinds', [
       { type: 'keys', label: 'Keybinds shortcuts keys' },
     ]],
+    ['CodeGraph', [
+      { type: 'codegraph', label: 'CodeGraph install index init version' },
+      { key: 'codegraphButtons', label: 'CodeGraph buttons in the sidebar', hint: '◇ on each project, in the header for all of them and in the folder right-click menu', type: 'toggle' },
+    ]],
     ['Updates', [
       { type: 'updates', label: 'Check for updates version release' },
       { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and every 3 hours, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
     ]],
   ];
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', Media: '♫', Startup: '⏻', Keybinds: '⌨', Updates: '↻' };
+    Sidebar: '▌', Media: '♫', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -164,12 +168,13 @@ const Panels = (() => {
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
+    if (it.type === 'codegraph') return '<div class="cg-card"></div>';
     if (it.type === 'updates') return updatesCard(ext.update());
     return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}</div><div class="ctl">${control(it, cfg[it.key], cfg)}</div></div>`;
   }
 
   // Tabs down the left, one section at a time; typing in the search box shows matches from all of them.
-  // set(key, value) applies and saves one setting. ext: { renderKeys(el), update(), checkUpdate(), installUpdate(), openReleases() }
+  // set(key, value) applies and saves one setting. ext: { renderKeys(el), renderCodegraph(el), update(), checkUpdate(), installUpdate(), openReleases() }
   function renderSettings(body, cfg, set, pickFolder, ext) {
     currentTheme = cfg.theme;
     if (!SECTIONS.some(s => s[0] === tab)) tab = SECTIONS[0][0];
@@ -203,6 +208,8 @@ const Panels = (() => {
       const item = key => SECTIONS.flatMap(s => s[1]).find(i => i.key === key);
       const keysEl = pane.querySelector('.set-keys');
       if (keysEl) ext.renderKeys(keysEl);
+      const cgEl = pane.querySelector('.cg-card');
+      if (cgEl) ext.renderCodegraph(cgEl);
       pane.querySelectorAll('[data-update]').forEach(b => b.onclick = () => {
         const a = b.dataset.update;
         if (a === 'check') { ext.checkUpdate(); b.disabled = true; b.textContent = 'Checking…'; }

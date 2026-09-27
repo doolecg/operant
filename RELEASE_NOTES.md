@@ -1,3 +1,16 @@
+# Operant 1.6.0
+
+Project groups in the sidebar, and CodeGraph built in: install it and index your projects from Operant.
+
+**Install:** download `Operant-1.6.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Project groups:** sort your pinned projects into named groups in the sidebar. Click ▣ in the sidebar header to make one and type its name. Right-click a project to move it into a group or out of one, or use a group's ＋ to add a folder. Click a group to fold it, double-click to rename it, and right-click it to rename or remove it. Removing a group keeps its projects pinned.
+- **CodeGraph:** a code index your agents query instead of searching files. ⚙ Settings › CodeGraph shows whether it's installed, with a button to install or update it. Installing also connects it to your agents.
+- **Index with CodeGraph:** ◇ on a project indexes it, ◇ on a group indexes the whole group, and ◇ in the sidebar header indexes all your projects. It also appears when you right-click a folder. The indexing runs in a terminal tile, so you can watch it. Folders that are already indexed are brought up to date. You can hide these buttons in ⚙ Settings › CodeGraph.
+
+---
+
 # Operant 1.5.0
 
 Open a project in your IDE straight from the sidebar.

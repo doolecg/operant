@@ -243,15 +243,15 @@
   const defaultAgent = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
 
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
-  async function newTerminal(kind, cwd, { master = false, agentId = cfg.defaultAgent } = {}) {
+  async function newTerminal(kind, cwd, { master = false, agentId = cfg.defaultAgent, run, title } = {}) {
     const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
-    const name = agent ? agent.name : 'Shell';
+    const name = title || (agent ? agent.name : 'Shell');
     const w = makeWin(kind, name, agent?.icon || '●');
     w.agentName = name;
     if (master) { w.master = true; w.el.classList.add('master'); }
     mount(w, current, null);
-    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows });
+    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run });
     w.ptyId = info.id;
     w.sessionId = info.sessionId;
     w.cwd = info.cwd;
@@ -773,11 +773,32 @@
   let updateStatus = null;
   const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, {
     renderKeys: el => { keysTarget = el; renderKeys(); },
+    renderCodegraph,
     update: () => ({ version, status: updateStatus }),
     checkUpdate: () => operant.checkUpdate(),
     installUpdate: () => operant.installUpdate(),
     openReleases: () => operant.openReleases(),
   });
+  // Settings › CodeGraph: the installed version, install/update, index everything.
+  let cgVersion; // undefined until asked, null when not installed
+  async function renderCodegraph(el) {
+    const draw = () => {
+      const known = cgVersion !== undefined;
+      el.innerHTML = `<div class="update-card"><span class="uc-logo">◇</span><div class="uc-main"><div class="uc-name">CodeGraph${cgVersion ? ' ' + esc(cgVersion) : ''}</div>`
+        + `<div class="uc-status">${!known ? 'Checking…' : cgVersion ? 'Installed' : 'Not installed'}</div></div>`
+        + `<button class="btn" data-cg="install">${cgVersion ? 'Update' : 'Install'} CodeGraph</button>`
+        + `<button class="btn" data-cg="index"${cgVersion ? '' : ' disabled'}>Index all projects</button></div>`
+        + '<div class="cg-note">A code index your agents query instead of grepping. Installing runs <code>codegraph install</code>, which connects it to your agents. Index a project with ◇ in the sidebar.</div>';
+      el.querySelector('[data-cg="install"]').onclick = () => {
+        closePanels(false); cgVersion = undefined;
+        newTerminal('shell', null, { run: 'npm i -g @colbymchenry/codegraph@latest; if ($?) { codegraph install }', title: 'CodeGraph' });
+      };
+      el.querySelector('[data-cg="index"]').onclick = () => { closePanels(false); runCodegraph(allProjects(), 'all projects'); };
+    };
+    draw();
+    cgVersion = await operant.codegraphVersion();
+    if (el.isConnected) draw();
+  }
   $('#set-json').onclick = () => operant.openConfig();
   const resetBtn = $('#set-reset');
   resetBtn.onclick = () => {
@@ -911,6 +932,7 @@
   function applySidebar() {
     document.body.classList.toggle('side-open', !!cfg.sidebar);
     root.setProperty('--side-w', cfg.sidebarWidth + 'px');
+    $('#side-cg').hidden = !cfg.codegraphButtons;
     $('#btn-sidebar').title = `${cfg.sidebar ? 'Hide' : 'Show'} the projects sidebar${bindLabel('toggleSidebar') ? ` (${Panels.pretty(bindLabel('toggleSidebar'))})` : ''}`;
     if (cfg.sidebar) renderSidebar();
   }
@@ -922,11 +944,30 @@
     return list;
   }
 
+  // Every pinned project: the ungrouped ones, then each group's.
+  const groups = () => cfg.projectGroups || [];
+  const allProjects = () => [...cfg.projects, ...groups().flatMap(g => g.projects || [])].filter(Boolean);
+  const isPinned = p => allProjects().some(x => normPath(x) === normPath(p));
+  const groupOf = p => groups().findIndex(g => (g.projects || []).some(x => normPath(x) === normPath(p)));
   function roots() {
-    const projects = cfg.projects.filter(Boolean);
+    const projects = cfg.projects.filter(Boolean), all = allProjects();
     const others = [];
-    for (const d of tileDirs()) if (!projects.some(p => isUnder(d, p)) && !others.some(o => normPath(o) === normPath(d))) others.push(d);
+    for (const d of tileDirs()) if (!all.some(p => isUnder(d, p)) && !others.some(o => normPath(o) === normPath(d))) others.push(d);
     return { projects, others };
+  }
+
+  // Group headers. editing = { i, value } while a group's name is being typed in its header.
+  let editing = null, redrawing = false;
+  const cgOn = () => cfg.codegraphButtons !== false && typeof runCodegraph === 'function';
+  function groupHtml(g, i) {
+    const open = !collapsed.has('group:' + g.name), list = (g.projects || []).filter(Boolean);
+    let html = `<div class="group-row${open ? ' open' : ''}" data-group="${i}" title="${esc(g.name)}"><span class="tw">▶</span>`
+      + (editing?.i === i ? `<input class="group-name" value="${esc(editing.value)}" spellcheck="false">` : `<span class="nm">${esc(g.name)}</span>`)
+      + `<span class="gcount">${list.length}</span>`
+      + `<span class="acts">${cgOn() ? '<button data-gact="cg" title="Index group with CodeGraph">◇</button>' : ''}<button data-gact="add" title="Add a project to this group">＋</button></span></div>`;
+    if (open) html += list.length ? list.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 1, true)).join('')
+      : `<div class="side-empty" style="padding-left:12px">Right-click a project and choose <i>Move to ${esc(g.name)}</i>, or use ＋.</div>`;
+    return html;
   }
 
   function nodeHtml(entry, depth, project = false) {
@@ -941,7 +982,7 @@
       + (project ? '<span class="fi">◈</span>' : entry.dir ? '' : '<span class="fi">·</span>')
       + `<span class="nm">${esc(entry.name)}</span>`
       + (count ? `<span class="count" title="${count} open tile${count === 1 ? '' : 's'}">${count}</span>` : '')
-      + (entry.dir ? `<span class="acts">${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
+      + (entry.dir ? `<span class="acts">${project && cfg.codegraphButtons ? '<button data-act="cg" title="Index with CodeGraph">◇</button>' : ''}${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
       + '</div>';
     if (open) {
       const kids = dirCache.get(p);
@@ -959,13 +1000,16 @@
     const { projects, others } = roots();
     const draw = () => {
       let html = '';
-      if (projects.length) html += projects.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
-      else html += `<div class="side-empty">Pin folders here with ＋, or right-click a folder below and choose <i>Pin as project</i>.</div>`
+      html += projects.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
+      if (!allProjects().length) html += `<div class="side-empty">Pin folders here with ＋, or right-click a folder below and choose <i>Pin as project</i>.</div>`
         + nodeHtml({ name: baseName(cfg.defaultCwd), path: cfg.defaultCwd, dir: true }, 0, true);
+      html += groups().map(groupHtml).join('');
       if (others.length) html += `<div class="side-group">OPEN IN TILES</div>` + others.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
-      const top = sideBody.scrollTop;
-      sideBody.innerHTML = html;
+      const top = sideBody.scrollTop, old = sideBody.querySelector('.group-name'), sel = old && [old.selectionStart, old.selectionEnd];
+      redrawing = true; sideBody.innerHTML = html; redrawing = false;
       sideBody.scrollTop = top;
+      const input = editing && sideBody.querySelector('.group-name');
+      if (input) { input.focus(); if (sel) input.setSelectionRange(...sel); else input.select(); }
     };
     if (force) dirCache.clear();
     draw();
@@ -978,7 +1022,7 @@
 
   // Redraw when the projects, the open tiles' folders or the focused tile change.
   function sidebarChanged() {
-    const sig = JSON.stringify([cfg.projects, tileDirs(), focused()?.cwd, cfg.defaultAgent]);
+    const sig = JSON.stringify([cfg.projects, cfg.projectGroups, tileDirs(), focused()?.cwd, cfg.defaultAgent]);
     if (sig !== sideSig) { sideSig = sig; renderSidebar(); }
   }
 
@@ -987,14 +1031,65 @@
   $('#side-hide').onclick = toggleSidebar;
   $('#side-refresh').onclick = () => renderSidebar(true);
   $('#side-add').onclick = async () => { const d = await operant.pickFolder(); if (d) pinProject(d); };
+  $('#side-cg').onclick = () => runCodegraph(allProjects(), 'all projects');
+  $('#side-group').onclick = () => newGroup();
   window.addEventListener('focus', () => { if (cfg.sidebar) renderSidebar(true); });
 
   function pinProject(p) {
-    if (cfg.projects.some(x => normPath(x) === normPath(p))) return;
+    if (isPinned(p)) return;
     setSetting('projects', [...cfg.projects, p]);
     collapsed.delete(p); saveExpanded();
   }
-  const unpinProject = p => setSetting('projects', cfg.projects.filter(x => normPath(x) !== normPath(p)));
+  const without = (list, p) => (list || []).filter(x => normPath(x) !== normPath(p));
+  function unpinProject(p) {
+    setSetting('projects', without(cfg.projects, p));
+    setSetting('projectGroups', groups().map(g => ({ ...g, projects: without(g.projects, p) })));
+    renderSidebar();
+  }
+
+  // Groups: gi is a group's index, -1 for the ungrouped projects.
+  function moveToGroup(p, gi) {
+    setSetting('projects', gi < 0 ? [...without(cfg.projects, p), p] : without(cfg.projects, p));
+    setSetting('projectGroups', groups().map((g, i) => ({ ...g, projects: [...without(g.projects, p), ...(i === gi ? [p] : [])] })));
+    collapsed.delete(p); saveExpanded();
+    renderSidebar();
+  }
+  function newGroup(p) {
+    let name = 'New group';
+    for (let k = 2; groups().some(g => g.name === name); k++) name = `New group ${k}`;
+    if (p) setSetting('projects', without(cfg.projects, p));
+    const gs = groups().map(g => ({ ...g, projects: p ? without(g.projects, p) : [...(g.projects || [])] }));
+    setSetting('projectGroups', [...gs, { name, projects: p ? [p] : [] }]);
+    collapsed.delete('group:' + name); saveExpanded();
+    editing = { i: gs.length, value: name };
+    renderSidebar();
+  }
+  function commitGroupName(keep) {
+    if (!editing) return;
+    const { i, value } = editing, g = groups()[i], name = value.trim();
+    editing = null;
+    if (keep && g && name && name !== g.name && !groups().some(x => x.name === name)) {
+      if (collapsed.delete('group:' + g.name)) { collapsed.add('group:' + name); saveExpanded(); }
+      setSetting('projectGroups', groups().map((x, j) => j === i ? { ...x, name } : x));
+    }
+    renderSidebar();
+  }
+  function removeGroup(i) {
+    const g = groups()[i];
+    if (!g) return;
+    const back = (g.projects || []).filter(p => p && !cfg.projects.some(x => normPath(x) === normPath(p)));
+    setSetting('projects', [...cfg.projects, ...back]);
+    setSetting('projectGroups', groups().filter((_, j) => j !== i));
+    collapsed.delete('group:' + g.name); saveExpanded();
+    renderSidebar();
+  }
+  async function groupAct(i, act) {
+    const g = groups()[i];
+    if (!g) return;
+    if (act === 'cg') return runCodegraph((g.projects || []).filter(Boolean), g.name);
+    if (act === 'rename') { editing = { i, value: g.name }; return renderSidebar(); }
+    if (act === 'add') { const d = await operant.pickFolder(); if (d) moveToGroup(d, i); }
+  }
 
   const ideName = () => cfg.ide === 'custom' ? 'IDE' : (IDES.find(i => i[0] === cfg.ide)?.[1] || cfg.ide);
   async function openInIde(dir) {
@@ -1008,9 +1103,31 @@
     if (what === 'agent') newTerminal('ai', dir);
     else if (what === 'shell') newTerminal('shell', dir);
     else if (what === 'pick') togglePanel('launcher');
+    else if (what === 'cg') runCodegraph([dir]);
+  }
+
+  // One shell tile that indexes each folder with CodeGraph: sync if it has a .codegraph, init otherwise.
+  function runCodegraph(dirs, label) {
+    dirs = (dirs || []).filter(Boolean);
+    if (!dirs.length) return toast('No projects to index. Pin a folder first.');
+    const q = s => `'${String(s).replace(/'/g, "''")}'`;
+    const steps = dirs.map(d => `Write-Host ''; Write-Host ${q('== ' + d)} -ForegroundColor Cyan; `
+      + `if (Test-Path -LiteralPath (Join-Path ${q(d)} '.codegraph')) { codegraph sync ${q(d)} } else { codegraph init -y ${q(d)} }`);
+    const run = `if (-not (Get-Command codegraph -ErrorAction SilentlyContinue)) { Write-Host 'CodeGraph is not installed. Install it from Settings > CodeGraph.' -ForegroundColor Yellow } else { `
+      + steps.join('; ') + `; Write-Host ''; Write-Host 'CodeGraph done for ${dirs.length} project(s)' -ForegroundColor Green }`;
+    newTerminal('shell', dirs[0], { run, title: `CodeGraph · ${label || baseName(dirs[0])}` });
   }
 
   sideBody.addEventListener('click', e => {
+    const grow = e.target.closest('.group-row');
+    if (grow && !e.target.closest('.group-name')) {
+      const i = +grow.dataset.group, gact = e.target.closest('[data-gact]');
+      if (gact) return groupAct(i, gact.dataset.gact);
+      const k = 'group:' + groups()[i]?.name;
+      if (collapsed.has(k)) collapsed.delete(k); else collapsed.add(k);
+      saveExpanded();
+      return renderSidebar();
+    }
     const row = e.target.closest('.node-row');
     if (!row) return;
     const p = row.dataset.path;
@@ -1026,9 +1143,17 @@
     renderSidebar();
   });
   sideBody.addEventListener('dblclick', e => {
+    const grow = e.target.closest('.group-row');
+    if (grow && !e.target.closest('.group-name, [data-gact]')) return groupAct(+grow.dataset.group, 'rename');
     const row = e.target.closest('.node-row');
     if (row && !row.dataset.dir) operant.openPath(row.dataset.path);
   });
+  sideBody.addEventListener('input', e => { if (editing && e.target.matches('.group-name')) editing.value = e.target.value; });
+  sideBody.addEventListener('keydown', e => {
+    if (!e.target.matches('.group-name')) return;
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); commitGroupName(e.key === 'Enter'); }
+  });
+  sideBody.addEventListener('focusout', e => { if (!redrawing && e.target.matches('.group-name')) commitGroupName(true); });
 
   function showMenu(x, y, items) {
     sideMenu.innerHTML = items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}"><span class="ico">${it[0]}</span>${esc(it[1])}</button>`).join('');
@@ -1043,13 +1168,31 @@
   window.addEventListener('blur', hideMenu);
 
   sideBody.addEventListener('contextmenu', e => {
+    const grow = e.target.closest('.group-row');
+    if (grow) {
+      if (e.target.closest('.group-name')) return;
+      e.preventDefault();
+      const i = +grow.dataset.group;
+      return showMenu(e.clientX, e.clientY, [
+        ['✎', 'Rename', () => groupAct(i, 'rename')],
+        ...(cgOn() ? [['◇', 'Index group with CodeGraph', () => groupAct(i, 'cg')]] : []),
+        ['＋', 'Add project…', () => groupAct(i, 'add')],
+        '-',
+        ['✕', 'Remove group', () => removeGroup(i)],
+      ]);
+    }
     const row = e.target.closest('.node-row');
     if (!row) return;
     e.preventDefault();
     const p = row.dataset.path;
     const copy = ['⧉', 'Copy path', () => navigator.clipboard.writeText(p)];
     if (!row.dataset.dir) return showMenu(e.clientX, e.clientY, [['↗', 'Open', () => operant.openPath(p)], ['▤', 'Show in Explorer', () => operant.reveal(p)], copy]);
-    const pinned = cfg.projects.some(x => normPath(x) === normPath(p));
+    const pinned = isPinned(p), gi = groupOf(p);
+    const grouping = !pinned ? [] : [
+      ...groups().map((g, i) => i === gi ? null : ['▣', `Move to ${g.name}`, () => moveToGroup(p, i)]).filter(Boolean),
+      ['▣', 'Move to new group…', () => newGroup(p)],
+      ...(gi >= 0 ? [['↩', 'Remove from group', () => moveToGroup(p, -1)]] : []),
+    ];
     const agent = defaultAgent();
     showMenu(e.clientX, e.clientY, [
       [esc(agent?.icon || '✻'), `New ${agent?.name || 'agent'} here`, () => openHere(p, 'agent')],
@@ -1058,8 +1201,10 @@
       '-',
       ['⌨', `Open in ${ideName()}`, () => openInIde(p)],
       ['▤', 'Open in Explorer', () => operant.openPath(p)],
+      ...(cfg.codegraphButtons ? [['◇', 'Index with CodeGraph', () => runCodegraph([p])]] : []),
       copy,
       '-',
+      ...grouping,
       pinned ? ['✕', 'Remove from projects', () => unpinProject(p)] : ['◈', 'Pin as project', () => pinProject(p)],
     ]);
   });

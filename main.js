@@ -98,9 +98,11 @@ const DEFAULT_CONFIG = {
   sidebarWidth: 250,
   sidebarHiddenFiles: false,      // show dotfiles and the like in the tree
   projects: [],                   // folders pinned at the top of the sidebar
+  projectGroups: [],              // named groups of pinned projects: [{ name, projects: [folders] }]
   ide: 'code',                    // "Open in IDE": a command that takes the folder, or 'custom' for ideCommand
   ideCommand: '',
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
+  codegraphButtons: true,         // "Index with CodeGraph" buttons in the sidebar
   // Windows notifications
   notifications: true,
   notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long is waiting for you
@@ -206,7 +208,7 @@ const findAgent = id => config.agents.find(a => a.id === id) || config.agents.fi
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
 const isClaude = agent => /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim());
 
-ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows }) => {
+ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows, run }) => {
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
   const sessionId = agent && isClaude(agent) ? crypto.randomUUID() : null;
@@ -215,7 +217,7 @@ ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows }) => {
   // Run the agent through the shell (PATH lookup, .cmd shims). The tile closes when it
   // exits cleanly; on failure it waits so the error stays readable.
   let command = config.shell;
-  let args = ['-NoLogo'];
+  let args = run && !agent ? ['-NoLogo', '-NoExit', '-Command', run] : ['-NoLogo'];
   if (agent) {
     const q = a => `'${String(a).replace(/'/g, "''")}'`;
     const quoted = [...[].concat(agent.args || []), ...(sessionId ? ['--session-id', sessionId] : [])].map(q).join(' ');
@@ -304,6 +306,10 @@ function ideCommand() {
   const found = IDE_PATHS[cmd]().find(p => fs.existsSync(p));
   return found ? `"${found}"` : cmd;
 }
+ipcMain.handle('codegraph:version', () => {
+  const r = spawnSync('codegraph', ['--version'], { shell: true, env: withFreshPath({ ...process.env }), windowsHide: true, encoding: 'utf8' });
+  return r.status === 0 && (r.stdout || '').trim() || null;
+});
 // Runs the IDE through cmd so .cmd launchers like code and cursor work. Resolves to an error message, or null.
 ipcMain.handle('ide:open', (_e, dir) => new Promise(resolve => {
   const cmd = ideCommand();
