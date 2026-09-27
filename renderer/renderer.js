@@ -941,7 +941,7 @@
       + (project ? '<span class="fi">◈</span>' : entry.dir ? '' : '<span class="fi">·</span>')
       + `<span class="nm">${esc(entry.name)}</span>`
       + (count ? `<span class="count" title="${count} open tile${count === 1 ? '' : 's'}">${count}</span>` : '')
-      + (entry.dir ? `<span class="acts"><button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
+      + (entry.dir ? `<span class="acts">${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
       + '</div>';
     if (open) {
       const kids = dirCache.get(p);
@@ -996,7 +996,14 @@
   }
   const unpinProject = p => setSetting('projects', cfg.projects.filter(x => normPath(x) !== normPath(p)));
 
+  const ideName = () => cfg.ide === 'custom' ? 'IDE' : (IDES.find(i => i[0] === cfg.ide)?.[1] || cfg.ide);
+  async function openInIde(dir) {
+    const err = await operant.openInIde(dir);
+    if (err) toast(`<b>Couldn't open ${esc(ideName())}</b><br>${esc(err)}`);
+  }
+
   function openHere(dir, what) {
+    if (what === 'ide') return openInIde(dir);
     lastCwd = dir;
     if (what === 'agent') newTerminal('ai', dir);
     else if (what === 'shell') newTerminal('shell', dir);
@@ -1049,6 +1056,7 @@
       ['☰', 'Pick an agent here…', () => openHere(p, 'pick')],
       ['❯', 'New shell here', () => openHere(p, 'shell')],
       '-',
+      ['⌨', `Open in ${ideName()}`, () => openInIde(p)],
       ['▤', 'Open in Explorer', () => operant.openPath(p)],
       copy,
       '-',

@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('operant', {
   isDir: p => ipcRenderer.invoke('fs:is-dir', p),
   openPath: p => ipcRenderer.send('fs:open', p),
   reveal: p => ipcRenderer.send('fs:reveal', p),
+  openInIde: p => ipcRenderer.invoke('ide:open', p),
   mediaState: () => ipcRenderer.invoke('media:state'),
   media: cmd => ipcRenderer.send('media:command', cmd),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),

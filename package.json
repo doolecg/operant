@@ -1,6 +1,6 @@
 {
   "name": "operant",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenAI Codex, OpenCode, Gemini CLI and more",
   "main": "main.js",
   "scripts": {

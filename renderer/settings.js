@@ -1,6 +1,10 @@
 // The Settings and Keybinds panels. They only draw and report changes;
 // renderer.js owns the config, applies it and saves it.
 
+// The sidebar's "Open in IDE": [command, name]. The folder is passed as the command's argument.
+const IDES = [['code', 'VS Code'], ['cursor', 'Cursor'], ['windsurf', 'Windsurf'], ['zed', 'Zed'],
+  ['idea', 'IntelliJ IDEA'], ['rider', 'Rider'], ['subl', 'Sublime Text'], ['custom', 'Custom command']];
+
 const Panels = (() => {
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
   const pct = v => Math.round(v * 100) + '%';
@@ -62,6 +66,8 @@ const Panels = (() => {
       { key: 'sidebar', label: 'Projects sidebar', hint: 'Pinned projects and a folder tree on the left · the ▭ in the bar or Alt+B toggles it', type: 'toggle' },
       { key: 'sidebarWidth', label: 'Sidebar width', hint: 'Or drag its right edge', type: 'range', min: 160, max: 600, step: 10, fmt: px },
       { key: 'sidebarHiddenFiles', label: 'Show hidden files', hint: 'Dotfiles like .git and .claude', type: 'toggle' },
+      { key: 'ide', label: 'IDE', hint: 'What a folder\'s "Open in IDE" button opens it in', type: 'select', options: IDES },
+      { key: 'ideCommand', label: 'Custom IDE command', hint: 'When IDE is Custom command · the folder is added at the end, e.g. "C:\\Tools\\IDE\\bin\\ide64.exe"', type: 'text' },
     ]],
     ['Media', [
       { key: 'mediaControls', label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },

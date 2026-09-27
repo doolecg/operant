@@ -1,3 +1,14 @@
+# Operant 1.5.0
+
+Open a project in your IDE straight from the sidebar.
+
+**Install:** download `Operant-1.5.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Open in IDE:** hover a project in the sidebar and click ⌨ to open it in your IDE. Right-clicking any folder in the tree also has *Open in …*. Choose the IDE in ⚙ Settings › Sidebar: VS Code (default), Cursor, Windsurf, Zed, IntelliJ IDEA, Rider, Sublime Text, or a custom command. Operant finds the IDE even when it isn't on your PATH, as long as it's in its usual install folder.
+
+---
+
 # Operant 1.4.1
 
 Safer automatic updates. An update that ran while Operant was still open, or at the same time as another update, could leave Operant unable to start.

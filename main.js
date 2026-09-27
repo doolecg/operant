@@ -7,7 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
 const { createMedia } = require('./media');
@@ -98,6 +98,8 @@ const DEFAULT_CONFIG = {
   sidebarWidth: 250,
   sidebarHiddenFiles: false,      // show dotfiles and the like in the tree
   projects: [],                   // folders pinned at the top of the sidebar
+  ide: 'code',                    // "Open in IDE": a command that takes the folder, or 'custom' for ideCommand
+  ideCommand: '',
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
   // Windows notifications
   notifications: true,
@@ -281,6 +283,39 @@ ipcMain.handle('fs:list', async (_e, { dir, hidden }) => {
 ipcMain.handle('fs:is-dir', (_e, p) => isDir(p));
 ipcMain.on('fs:open', (_e, p) => shell.openPath(p));
 ipcMain.on('fs:reveal', (_e, p) => shell.showItemInFolder(p));
+// Where the IDE presets install when their launcher isn't on PATH (JetBrains never adds itself). Newest version first.
+const inDirs = (parent, prefix, rel) => { try {
+  return fs.readdirSync(parent).filter(n => n.startsWith(prefix)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map(n => path.join(parent, n, rel));
+} catch { return []; } };
+const LOCAL = process.env.LOCALAPPDATA || '', PF = process.env.ProgramFiles || 'C:\\Program Files';
+const IDE_PATHS = {
+  code: () => [path.join(LOCAL, 'Programs', 'Microsoft VS Code', 'bin', 'code.cmd'), path.join(PF, 'Microsoft VS Code', 'bin', 'code.cmd')],
+  cursor: () => [path.join(LOCAL, 'Programs', 'cursor', 'resources', 'app', 'bin', 'cursor.cmd')],
+  windsurf: () => [path.join(LOCAL, 'Programs', 'Windsurf', 'bin', 'windsurf.cmd')],
+  zed: () => [path.join(LOCAL, 'Programs', 'Zed', 'bin', 'zed.exe'), path.join(LOCAL, 'Programs', 'Zed', 'zed.exe')],
+  idea: () => [path.join(LOCAL, 'JetBrains', 'Toolbox', 'scripts', 'idea.cmd'), ...inDirs(path.join(PF, 'JetBrains'), 'IntelliJ IDEA', 'bin\\idea64.exe')],
+  rider: () => [path.join(LOCAL, 'JetBrains', 'Toolbox', 'scripts', 'rider.cmd'), ...inDirs(path.join(PF, 'JetBrains'), 'Rider', 'bin\\rider64.exe'), ...inDirs(path.join(PF, 'JetBrains'), 'JetBrains Rider', 'bin\\rider64.exe')],
+  subl: () => [path.join(PF, 'Sublime Text', 'subl.exe'), path.join(PF, 'Sublime Text 3', 'subl.exe')],
+};
+function ideCommand() {
+  if (config.ide === 'custom') return (config.ideCommand || '').trim();
+  const cmd = config.ide || 'code';
+  if (!IDE_PATHS[cmd] || spawnSync('where', [cmd], { windowsHide: true }).status === 0) return cmd;
+  const found = IDE_PATHS[cmd]().find(p => fs.existsSync(p));
+  return found ? `"${found}"` : cmd;
+}
+// Runs the IDE through cmd so .cmd launchers like code and cursor work. Resolves to an error message, or null.
+ipcMain.handle('ide:open', (_e, dir) => new Promise(resolve => {
+  const cmd = ideCommand();
+  if (!cmd) return resolve('Set a custom IDE command in Settings › Sidebar');
+  let child;
+  try { child = spawn(`${cmd} "${dir}"`, { shell: true, cwd: dir, detached: true, stdio: 'ignore', windowsHide: true }); }
+  catch (err) { return resolve(err.message); }
+  // Launchers hand off and exit 0 at once; "not recognized" exits non-zero. A GUI exe that keeps running is fine.
+  const timer = setTimeout(() => { child.unref(); resolve(null); }, 4000);
+  child.on('error', err => { clearTimeout(timer); resolve(err.message); });
+  child.on('exit', code => { clearTimeout(timer); resolve(code ? `"${cmd}" didn't start (exit ${code}). Is it installed and on PATH?` : null); });
+}));
 
 ipcMain.on('win:minimize', e => winOf(e)?.minimize());
 ipcMain.on('win:maximize', e => { const w = winOf(e); if (w?.isMaximized()) w.unmaximize(); else w?.maximize(); });
