@@ -225,6 +225,14 @@
     insert(w, wsIndex, target);
     w.term.open(w.el.querySelector('.term'));
     w.term.textarea?.addEventListener('focus', () => { if (workspaces[w.ws].focused !== w.id) focusWin(w, false); });
+    // Keys never fall into nothing: if the focused tile loses the keyboard to no other control
+    // (a tile closing, a redraw, a click on empty space), it takes it straight back.
+    w.term.textarea?.addEventListener('blur', e => {
+      if (e.relatedTarget) return;
+      setTimeout(() => {
+        if (focused() === w && document.hasFocus() && document.activeElement === document.body && !openPanel()) w.term.focus();
+      });
+    });
     // Start at the spot the tile will occupy so it scales in place.
     layout(wsIndex, false);
     // Force a style flush so the scale-in transition runs; rAF would stall while the window is hidden.
@@ -259,7 +267,7 @@
     updateBadge(w);
     setTitle(w, name);
     ptyWins.set(info.id, w);
-    w.term.onData(d => { touch(w); w.lastInput = Date.now(); w.typed = true; w.busySince = null; operant.writePty(info.id, d); });
+    w.term.onData(d => { touch(w); w.lastInput = lastKey = Date.now(); w.typed = true; w.busySince = null; operant.writePty(info.id, d); });
     // The shell sets its own path as the title; only keep titles the agent sets.
     w.term.onTitleChange(t => t && !/\.exe$/i.test(t.trim()) && setTitle(w, t));
     w.term.onBell(() => { if (kind === 'ai') notify(w, `${name} needs your attention`, shortPath(w.cwd || '')); });
@@ -308,6 +316,7 @@
     ws.focused = w.id;
     for (const o of wins.values()) if (o.ws === w.ws) o.el.classList.toggle('focused', o === w);
     if (w.ws !== current) return refreshBar();
+    flushBacklog(w);
     if (grabKeyboard) w.term.focus();
     refreshBar();
   }
@@ -324,8 +333,36 @@
     w.lastActivity = now;
     // Output well after the last keystroke is the agent working (not echo of typing).
     if (w.kind === 'ai' && w.typed && now - w.lastInput > 1500) { w.busySince ??= now; w.lastOut = now; }
-    w.term.write(data);
+    output(w, data);
   });
+
+  // The tile you're typing in comes first. Its output is written the moment it arrives; every
+  // other tile's is gathered and written in the gaps, one batch per tile at a time and less
+  // often while you type, so busy terminals elsewhere never hold up your keys.
+  const backlog = new Map(); // win -> pending output
+  let lastKey = 0, drainT = null;
+  function output(w, data) {
+    if (w.ws === current && workspaces[current].focused === w.id) { flushBacklog(w); w.term.write(data); return; }
+    backlog.set(w, (backlog.get(w) || '') + data);
+    drainT ??= setTimeout(drain, Date.now() - lastKey < 1000 ? 250 : 33);
+  }
+  function flushBacklog(w) {
+    const data = backlog.get(w);
+    if (data == null) return;
+    backlog.delete(w);
+    if (w.alive) w.term.write(data);
+  }
+  function drain() {
+    drainT = null;
+    for (const [w, data] of backlog) {
+      if (!w.alive) { backlog.delete(w); continue; }
+      if (w.writing) continue; // still parsing its last batch
+      backlog.delete(w);
+      w.writing = true;
+      w.term.write(data, () => { w.writing = false; });
+    }
+    if (backlog.size) drainT = setTimeout(drain, Date.now() - lastKey < 1000 ? 250 : 33);
+  }
 
   // ------------------------------------------------------------ notifications
   // An agent that worked for a while and has now gone quiet is done or waiting for an answer.
@@ -394,12 +431,12 @@
       if (e.role === 'assistant') w.status = e.stop === 'end_turn' ? 'done' : 'running';
       else if (e.blocks.some(b => b.type === 'text')) w.status = 'running';
     }
-    if (text) w.term.write(text);
+    if (text) output(w, text);
     touch(w);
     if (w.status === 'done' && !w.doneMarked) {
       w.doneMarked = true;
       w.unchecked = true;
-      w.term.write('\x1b[38;2;156;184;138m✓ finished\x1b[0m\r\n\r\n');
+      output(w, '\x1b[38;2;156;184;138m✓ finished\x1b[0m\r\n\r\n');
       if (cfg.notifySubagents) notify(w, `✓ ${w.info.agentType} finished`, w.info.description);
     }
     if (w.status !== 'done') w.doneMarked = false;

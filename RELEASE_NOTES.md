@@ -1,3 +1,18 @@
+# Operant 1.7.1
+
+Smoother typing: busy terminals in other tiles no longer hold up what you type in the one you're using.
+
+**Install:** download `Operant-1.7.1.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## Changed
+- **The tile you're typing in comes first:** its output still shows the moment it arrives. Other tiles catch up a few times a second, and a little less often while you type.
+
+## Fixed
+- **Typing stalled while other tiles were busy:** with several agents working at once, keys could stop showing up in the focused tile until they calmed down. Now they go through straight away.
+- **Keys going nowhere:** if the focused tile loses the keyboard without anything else taking it, for example when another tile closes, it takes it straight back.
+
+---
+
 # Operant 1.7.0
 
 Token usage in the top bar: see how many tokens Claude Code has used today, and click for a graph of them over time.
