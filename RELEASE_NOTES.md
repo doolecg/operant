@@ -1,3 +1,14 @@
+# Operant 1.15.1
+
+Fixes 1.15.0 crashing on startup with "Cannot find module './backup'".
+
+**Install:** download `Operant-1.15.1.msi` and run it. It installs per-user, so there's no admin prompt. If you have 1.15.0 installed, it can't update itself because it crashes on launch, so install this one by hand. Other versions from 1.1.0 on update to this by themselves.
+
+## Fixed
+- **Startup crash in 1.15.0:** the installer left out the skills backup module, so Operant showed a JavaScript error and closed on launch. It's included now and Operant starts normally, and the release build now checks that every part of the app is in the installer before publishing.
+
+---
+
 # Operant 1.15.0
 
 You can now back up your agent skills and rules to your own private git repos, from Settings.
