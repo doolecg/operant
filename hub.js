@@ -101,15 +101,15 @@ function mdTargets({ claudeDir, hubDir, memoryDirs }, localSkills) {
 
 // Lines of a Markdown file tagged raw when they sit in frontmatter or a code fence, which are never rewritten.
 function mdLines(text) {
-  const lines = text.split(/\r?\n/);
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
   let fence = null, front = lines[0] === '---';
   return lines.map((line, i) => {
     let raw = front || !!fence;
     if (front && i > 0 && line === '---') front = false;
     else if (!front) {
-      const m = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+      const m = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
       if (m && !fence) { fence = m[1]; raw = true; }
-      else if (m && fence && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+      else if (m && fence && !m[2].trim() && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
     }
     return { line, raw };
   }).concat(fence ? [{ unclosed: true }] : []);
@@ -214,12 +214,13 @@ function mdAudit(args, localSkills, add) {
     if (broken.length) agentFix(`md-links:${t.file}`, 'broken-link', `${name} links to ${broken.length === 1 ? 'a missing file' : broken.length + ' missing files'}: ${broken.slice(0, 3).join(', ')}`);
 
     if (t.role === 'skill') {
-      const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-      const desc = m && /^description:\s*(.*)$/m.exec(m[1]);
+      const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text.replace(/^﻿/, ''));
+      const desc = m && /^description:[ \t]*(.*)$/m.exec(m[1]);
       if (!m || !/^name:/m.test(m[1]) || !desc || !desc[1].trim().replace(/^["']|["']$/g, '')) agentFix(`skill-meta:${t.skill}`, 'index', `Skill "${t.skill}" has no name or description in its frontmatter, so agents can't tell when to load it`);
       else if (desc[1].length > MAX_DESCRIPTION) agentFix(`skill-desc:${t.skill}`, 'index', `Skill "${t.skill}" description is ${desc[1].length} characters; Claude Code cuts it at ${MAX_DESCRIPTION}`);
     }
-    if (t.role === 'memory' && !/^---[\s\S]*?^description:[ \t]*\S/m.test(text)) agentFix(`memory-meta:${t.file}`, 'index', `${name} has no description, so its index line says nothing useful`);
+    const memFront = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text.replace(/^﻿/, ''));
+    if (t.role === 'memory' && !(memFront && /^description:[ \t]*\S/m.test(memFront[1]))) agentFix(`memory-meta:${t.file}`, 'index', `${name} has no description, so its index line says nothing useful`);
     if (t.role === 'memory-index') {
       const lines = text.split(/\r?\n/).filter(Boolean);
       if (lines.length > MAX_INDEX_LINES) agentFix(`index-long:${t.file}`, 'index', `${name} has ${lines.length} lines; only the first ${MAX_INDEX_LINES} are loaded`);
@@ -436,7 +437,7 @@ function runFix(fix, { claudeDir, hubDir }, bk) {
     }
     case 'agent-optimise': {
       // Backed up here and rewritten by the agent tile the renderer starts, so undo puts the original back.
-      bk.save(fix.file);
+      bk.save(fix.file); bk.save(optimisedPath(hubDir));
       const done = readOptimised(hubDir);
       done[fix.file] = { size: fix.size, at: new Date().toISOString() };
       fs.mkdirSync(hubDir, { recursive: true });

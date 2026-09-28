@@ -146,3 +146,11 @@ test('markdown findings: tidy applies and undoes, agent rewrites are offered but
   hub.undo(f);
   assert.equal(fs.readFileSync(claudeMd, 'utf8'), rules);
 });
+
+test('tidyMd keeps a fence open past an info-string fence line, and indented fences stay raw', () => {
+  const src = 'intro\n\n````\n```js\n\n\n\nx  \n````\n\n- item\n\n    ```\n    a\n\n\n    b\n    ```\n';
+  const r = hub.tidyMd(src);
+  assert.ok(r.text.includes('```js\n\n\n\nx  \n````'));
+  assert.ok(r.text.includes('    a\n\n\n    b'));
+  assert.deepEqual(hub.mdStructure('~~~\n```\n~~~ x\n'), ['a code block is never closed']);
+});

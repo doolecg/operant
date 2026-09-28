@@ -384,7 +384,7 @@ body.anim-off .win::before,
 .hub-pick { cursor: pointer; }
 .hub-pick:hover { text-decoration: underline; }
 .hub-dot { flex: none; width: 13px; text-align: center; color: var(--dim); }
-#hub-undo.hidden { display: none; }
+#hub-undo.hidden, #hub-all.hidden, #hub-apply.hidden, #tour-skip.hidden { display: none; }
 #hub-body { padding: 4px 14px 10px; }
 #hub-note { color: var(--dim); font-size: 11.5px; }
 #hub-apply:disabled { opacity: .45; }
