@@ -144,7 +144,7 @@ team mode (33). In order of how much each should save:
       OpenCode events the context badge and token pill use), next to the context badge; hover for the breakdown
       and cost-free/paid split. Resumed agents count from when the tile opened, not the whole session. Also in
       `operant tiles` and `operant status`.
-- [ ] **43. Every agent gets the rules from its first message, master included:** today the skill only loads when
+- [x] **43. Every agent gets the rules from its first message, master included:** today the skill only loads when
       the agent decides to use it, so the master terminal can start working without it. Operant passes a short
       brief at launch to every agent tile (master, `operant agent` workers, reopened/resumed agents): Claude Code via
       `--append-system-prompt`, OpenCode via an `instructions` file in its per-process config (like the theme's

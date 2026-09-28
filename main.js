@@ -18,6 +18,7 @@ const { createCodex, createGemini } = require('./otherAgents');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
+const agentBrief = require('./agent-brief');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
@@ -58,6 +59,9 @@ process.on('unhandledRejection', err => logLine(`unhandledRejection ${err?.stack
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 // Lives in %APPDATA%/Operant so it survives updates (the install dir is replaced).
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
+// The file OpenCode's per-process `instructions` config points at (item 43); Claude Code gets the
+// same text inline via --append-system-prompt.
+const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
 
 // Alt is the "Super" key here: Windows reserves most Win+ combos for itself.
 const DEFAULT_KEYBINDS = {
@@ -113,6 +117,7 @@ const DEFAULT_CONFIG = {
   showExternalAgents: true,       // subagents from Claude sessions not started inside Operant
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
+  briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
@@ -206,7 +211,10 @@ const DEFAULT_CONFIG = {
 
 // Only what the user changed is stored, so new defaults reach existing installs.
 let user = {};
-try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')); } catch {} // a BOM from Notepad or PowerShell would fail the parse
+try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')); } catch (e) {
+  // Keep a config that doesn't parse, so the next save (which writes only what changed) can't lose it.
+  if (e.code !== 'ENOENT') try { fs.copyFileSync(CONFIG_PATH, CONFIG_PATH.replace(/\.json$/, '.broken.json')); } catch {}
+} // a BOM from Notepad or PowerShell would fail the parse
 const merged = () => ({ ...DEFAULT_CONFIG, ...user, keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) } });
 const config = merged();
 // Read before the app is ready, so it only changes on a restart.
@@ -657,7 +665,11 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Claude Code and Codex take the prompt positionally, OpenCode as --prompt, Gemini as -i;
     // anything else (a custom agent) also gets it positional, appended after the other args.
     const promptArgs = !prompt ? [] : isOpenCode(agent) ? ['--prompt', prompt] : exeBase === 'gemini' ? ['-i', prompt] : [prompt];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
+    // Item 43: Claude Code gets the brief on every launch, including resumed/reopened tiles —
+    // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
+    // own env below; Codex and Gemini CLI have no equivalent flag, so they're skipped.
+    const briefArgs = config.briefAgents && isClaude(agent) ? ['--append-system-prompt', agentBrief.BRIEF] : [];
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -689,6 +701,9 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // Selects the operant.json theme (renderer/themes.js) for just this OpenCode process, without
   // touching the user's own ~/.config/opencode/tui.json.
   if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
+  // Item 43: the brief as an `instructions` file, through OpenCode's own per-process config env var
+  // (merged with the user's real opencode.json/opencode.jsonc, never replacing it).
+  if (isOc && config.briefAgents) envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(BRIEF_PATH);
   const env = await withFreshPath(envBase);
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];
