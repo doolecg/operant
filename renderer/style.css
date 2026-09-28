@@ -146,15 +146,15 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 @keyframes pulse { 50% { opacity: .25; } }
 
 .pill { padding: 3px 10px; border-radius: 99px; background: rgba(var(--ink-rgb), .06); font-size: 12px; color: var(--text); white-space: nowrap; }
-.pill.git { cursor: pointer; }
-.pill.git:hover { background: rgba(var(--ink-rgb), .12); }
-.pill.git.hidden { display: none; }
 #stat-agents .run { color: var(--agent); }
 #stat-agents .ok { color: var(--done); }
 #stat-agents .idle { color: var(--dim); }
-.icon-btn { width: 26px; height: 24px; border-radius: 7px; color: var(--dim); font-size: 14px; line-height: 1; }
+.icon-btn { position: relative; width: 26px; height: 24px; border-radius: 7px; color: var(--dim); font-size: 14px; line-height: 1; }
 .icon-btn:hover { color: var(--text); background: rgba(var(--ink-rgb), .08); }
-#btn-save-quit svg { width: 14px; height: 14px; vertical-align: middle; }
+#btn-notifs svg { width: 14px; height: 14px; vertical-align: middle; fill: currentColor; }
+.badge { position: absolute; top: 1px; right: 1px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 99px; background: var(--accent);
+  color: var(--bg); font: 700 9px var(--mono); line-height: 13px; text-align: center; }
+.badge.hidden { display: none; }
 .wc { display: flex; height: var(--bar-h); }
 .wc button { width: 44px; height: 100%; color: var(--dim); font-size: 12px; }
 .wc button:hover { background: rgba(var(--ink-rgb), .08); color: var(--text); }
@@ -493,6 +493,14 @@ mark.hit.cur { background: rgba(227, 178, 122, .55); box-shadow: 0 0 0 1.5px var
   background: rgba(0, 0, 0, .55); backdrop-filter: blur(6px); transition: opacity .2s; contain: paint; }
 .overlay.hidden { opacity: 0; pointer-events: none; }
 .overlay.top { align-items: flex-start; padding-top: 12vh; }
+/* Anchored dropdowns (quick menu, notifications): no dimmed backdrop, hug the top-right under the bar,
+   slide down like the other panels' cards. Clicking the invisible full-screen overlay still counts as
+   an outside click and closes it, same as the dimmed panels above. */
+.overlay.anchor { background: transparent; backdrop-filter: none; align-items: flex-start; justify-content: flex-end;
+  padding: calc(var(--bar-h) + 8px) 14px 0 0; }
+body.anim-fast .overlay.anchor { transition-duration: .1s; }
+body.anim-fast .overlay.anchor .card { transition-duration: .12s; }
+body.anim-off .overlay.anchor, body.anim-off .overlay.anchor .card { transition: none; }
 .card { width: min(820px, 94vw); max-height: 86vh; display: flex; flex-direction: column; border-radius: 16px;
   background: rgba(var(--card-rgb), .98); border: 1px solid rgba(var(--ink-rgb), .09); box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
   transform: translateY(0); transition: transform .25s var(--ease); }
@@ -582,6 +590,39 @@ mark.hit.cur { background: rgba(227, 178, 122, .55); box-shadow: 0 0 0 1.5px var
 .pick-row .nm small { display: block; color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-row kbd { flex: none; }
 .pick-row.on { background: var(--accent-tint); color: var(--text); }
+
+/* quick menu (gear): a row of big rounded tiles, then a Settings… row down into full Settings. */
+.qm-card { width: 232px; box-shadow: 0 16px 44px rgba(0, 0, 0, .5); }
+.qm-body { padding: 12px; }
+.qm-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+.qm-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 64px; padding: 6px 4px;
+  border-radius: 14px; background: rgba(var(--ink-rgb), .06); text-align: center; }
+.qm-tile:hover { background: rgba(var(--ink-rgb), .12); }
+.qm-tile.hidden { display: none; }
+.qm-ico { font-size: 18px; line-height: 1; color: var(--accent); }
+.qm-ico svg { width: 16px; height: 16px; vertical-align: middle; }
+.qm-lbl { font-size: 10.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.qm-row { display: flex; align-items: center; width: 100%; padding: 9px 10px; border-radius: 10px; color: var(--text); font-size: 12.5px; }
+.qm-row span:first-child { flex: 1; text-align: left; }
+.qm-row:hover { background: rgba(var(--ink-rgb), .08); }
+.qm-chev { color: var(--dim); }
+
+/* notifications panel */
+.notif-card { width: 340px; max-height: 70vh; }
+.notif-head { padding: 14px 16px 10px; }
+.notif-head h2 { font: 400 16px var(--serif); margin: 0; flex: 1; }
+.notif-head .link { font-size: 11.5px; }
+#notif-body { padding: 4px 8px 10px; }
+.notif-row { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 8px; margin: 1px 0; border-radius: 10px; text-align: left; color: var(--text); }
+.notif-row:hover { background: rgba(var(--ink-rgb), .06); }
+.notif-row.unread { background: var(--accent-tint); }
+.notif-row.unread:hover { background: color-mix(in srgb, var(--accent-tint) 150%, transparent); }
+.notif-ico { flex: none; width: 22px; text-align: center; font-size: 14px; color: var(--accent); margin-top: 1px; }
+.notif-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.notif-title { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-tile { font-size: 10.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-body { font-size: 11.5px; color: var(--dim); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-time { flex: none; font-size: 10.5px; color: var(--dim); white-space: nowrap; margin-top: 1px; }
 
 /* agent launcher */
 .card.narrow { width: min(520px, 94vw); }

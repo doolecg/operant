@@ -39,11 +39,9 @@
       <button class="pill update hidden" id="update-pill"></button>
       <button class="pill tokens hidden" id="usage-pill"></button>
       <span class="pill" id="stat-agents" title="Agents working / idle, subagents finished"></span>
-      <button class="pill git hidden" id="git-pill"></button>
       <button class="icon-btn" id="btn-new" title="New agent (Alt+N)">＋</button>
-      <button class="icon-btn" id="btn-keys" title="Keybinds">⌨</button>
-      <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
-      <button class="icon-btn" id="btn-save-quit" title="Save and quit (Alt+Shift+Q): everything reopens next time"><svg viewBox="0 0 16 16"><path d="M8 1v7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M4.2 3.4a5.5 5.5 0 1 0 7.6 0" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg></button>
+      <button class="icon-btn" id="btn-notifs" title="Notifications (Alt+I)"><svg viewBox="0 0 16 16"><path d="M8 1.3a4.3 4.3 0 0 0-4.3 4.3v2.1c0 .5-.2 1-.5 1.5l-.9 1.2a.9.9 0 0 0 .7 1.4h9.9a.9.9 0 0 0 .7-1.4l-.9-1.2a2.6 2.6 0 0 1-.5-1.5V5.6A4.3 4.3 0 0 0 8 1.3z" fill="currentColor"/><path d="M6.3 12.8a1.7 1.7 0 0 0 3.4 0z" fill="currentColor"/></svg><span class="badge hidden" id="notif-badge"></span></button>
+      <button class="icon-btn" id="btn-gear" title="Quick menu">⚙</button>
       <div class="wc">
         <button id="wc-min" title="Minimize">─</button>
         <button id="wc-max" title="Maximize">□</button>
@@ -81,6 +79,26 @@
         <button class="btn" id="keys-reset">Reset to defaults</button>
         <button class="btn primary" data-close>Done</button>
       </div>
+    </div>
+  </div>
+
+  <div id="quickmenu" class="overlay anchor hidden">
+    <div class="card qm-card">
+      <div class="card-body qm-body">
+        <div class="qm-tiles">
+          <button class="qm-tile git hidden" id="git-pill"></button>
+          <button class="qm-tile" id="btn-keys" title="Keybinds (Alt+K)"><span class="qm-ico">⌨</span><span class="qm-lbl">Shortcuts</span></button>
+          <button class="qm-tile" id="btn-save-quit" title="Save and quit (Alt+Shift+Q): everything reopens next time"><span class="qm-ico"><svg viewBox="0 0 16 16"><path d="M8 1v7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M4.2 3.4a5.5 5.5 0 1 0 7.6 0" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg></span><span class="qm-lbl">Save &amp; quit</span></button>
+        </div>
+        <button class="qm-row" id="qm-settings"><span>Settings…</span><span class="qm-chev">›</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="notifications" class="overlay anchor hidden">
+    <div class="card qm-card notif-card">
+      <div class="card-head notif-head"><h2>Notifications</h2><button class="link" id="notif-clear">Clear all</button></div>
+      <div class="card-body" id="notif-body"></div>
     </div>
   </div>
 

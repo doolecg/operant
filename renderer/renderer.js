@@ -1510,12 +1510,64 @@
   // An agent that worked for a while and has now gone quiet is done or waiting for an answer.
 
   async function notify(w, title, body) {
-    if (!cfg.notifications || !w.alive) return;
+    if (!w.alive) return;
     if (w.lastNotified && Date.now() - w.lastNotified < 5000) return;
+    logNotification(w, title, body); // kept for the bell panel even when the Windows toast below is off
+    if (!cfg.notifications) return;
     if (cfg.notifyOnlyUnfocused && w.ws === current && workspaces[w.ws].focused === w.id && await operant.windowFocused()) return;
     w.lastNotified = Date.now();
     operant.notify({ title, body, tileId: w.id });
   }
+
+  // The bell panel's log: newest first, capped at 100, kept only in memory.
+  const notifLog = [];
+  let notifId = 0;
+  function logNotification(w, title, body) {
+    const icon = w.el?.querySelector('.ico')?.textContent || '🔔';
+    notifLog.unshift({ id: ++notifId, tileId: w.id, ws: w.ws, icon, tileTitle: w.title, title, body, at: Date.now(), read: false });
+    notifLog.length = Math.min(notifLog.length, 100);
+    updateNotifBadge();
+    if (openPanel() === 'notifications') renderNotifications();
+  }
+  function updateNotifBadge() {
+    const n = notifLog.filter(x => !x.read).length;
+    $('#notif-badge').textContent = n > 99 ? '99+' : n || '';
+    $('#notif-badge').classList.toggle('hidden', !n);
+  }
+  function markAllNotifsRead() {
+    if (!notifLog.some(n => !n.read)) return;
+    notifLog.forEach(n => n.read = true);
+    updateNotifBadge();
+    renderNotifications();
+  }
+  function relTime(at) {
+    const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+    if (s < 5) return 'just now';
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60); if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  }
+  function renderNotifications() {
+    const body = $('#notif-body');
+    body.innerHTML = notifLog.length ? notifLog.map(n => `<button class="notif-row${n.read ? '' : ' unread'}" data-id="${n.id}">
+      <span class="notif-ico">${esc(n.icon)}</span>
+      <span class="notif-txt"><span class="notif-title">${esc(n.title)}</span>${n.tileTitle ? `<span class="notif-tile">${esc(n.tileTitle)}</span>` : ''}${n.body ? `<span class="notif-body">${esc(n.body)}</span>` : ''}</span>
+      <span class="notif-time">${relTime(n.at)}</span></button>`).join('')
+      : '<div class="side-empty">No notifications yet</div>';
+    body.querySelectorAll('[data-id]').forEach(b => b.onclick = () => focusNotification(+b.dataset.id));
+  }
+  function focusNotification(id) {
+    const n = notifLog.find(x => x.id === id);
+    const w = n && wins.get(n.tileId);
+    closePanels();
+    if (!w || !w.alive) return toast('That tile is closed.');
+    if (w.ws !== current) switchWorkspace(w.ws);
+    focusWin(w);
+  }
+  $('#notif-clear').onclick = () => { notifLog.length = 0; renderNotifications(); updateNotifBadge(); };
+  // Keep the relative times fresh while the panel is open, without a full re-render loop elsewhere.
+  setInterval(() => { if (openPanel() === 'notifications') renderNotifications(); }, 30000);
 
   setInterval(() => {
     const now = Date.now();
@@ -1945,6 +1997,7 @@
     findInView: () => openFind(focused()),
     showChanges: () => showChanges(),
     saveQuit: () => saveAndQuit(),
+    notifications: () => togglePanel('notifications'),
   };
   // Only for viewer and diff tiles: anywhere else the key goes on to the terminal as usual.
   const VIEW_ONLY = new Set(['findInView']);
@@ -2014,14 +2067,19 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
     if (name === 'picker') return openPicker(pick.mode || 'commands');
     const was = openPanel();
     closePanels(was === name);
     if (was === name) return;
-    if (name === 'keys') { keysTarget = $('#keys-body'); renderKeys(); } else if (name === 'launcher') renderLauncher(); else if (name === 'usage') { usageHover = -1; renderUsage(); } else renderSettings();
+    if (name === 'keys') { keysTarget = $('#keys-body'); renderKeys(); }
+    else if (name === 'launcher') renderLauncher();
+    else if (name === 'usage') { usageHover = -1; renderUsage(); }
+    else if (name === 'quickmenu') drawGitButton();
+    else if (name === 'notifications') { renderNotifications(); markAllNotifsRead(); }
+    else renderSettings();
     $('#' + name).classList.remove('hidden');
     $('#' + name + ' .card-body').scrollTop = 0;
     document.activeElement?.blur();
@@ -2034,10 +2092,15 @@
   }
   for (const p of PANELS) {
     $('#' + p).addEventListener('mousedown', e => { if (e.target.id === p) closePanels(); });
-    $('#' + p).querySelector('[data-close]').onclick = () => closePanels();
+    const closeBtn = $('#' + p).querySelector('[data-close]');
+    if (closeBtn) closeBtn.onclick = () => closePanels();
   }
   $('#btn-keys').onclick = () => togglePanel('keys');
   $('#btn-new').onclick = () => togglePanel('launcher');
+  $('#btn-gear').onclick = () => togglePanel('quickmenu');
+  $('#btn-notifs').onclick = () => togglePanel('notifications');
+  $('#qm-settings').onclick = () => togglePanel('settings');
+  $('#btn-save-quit').onclick = () => { closePanels(); saveAndQuit(); };
 
   // Agent launcher: 1-9 (or a click) opens that agent, Shift picks a folder first.
   // On first run it asks which agent to use instead; the answer becomes the default.
@@ -2071,9 +2134,6 @@
     if (pickDir) { dir = await operant.pickFolder(); if (!dir) return; lastCwd = dir; }
     newTerminal('ai', dir, { agentId: a.id });
   }
-  $('#btn-settings').onclick = () => togglePanel('settings');
-  $('#btn-save-quit').onclick = () => saveAndQuit();
-
   // Settings save a moment after the last change, so dragging a slider writes once.
   let pending = {}, saveT;
   function save(patch) {
@@ -2335,12 +2395,12 @@
     if (!st) { btn.classList.add('hidden'); return; }
     const n = gitChanges(p);
     const sync = [st.ahead ? `↑${st.ahead}` : '', st.behind ? `↓${st.behind}` : ''].filter(Boolean).join(' ');
-    btn.innerHTML = `⎇ ${esc(st.branch)}${n ? ` · ${n}` : ''}`;
+    btn.innerHTML = `<span class="qm-ico">⎇</span><span class="qm-lbl">${esc(st.branch)}${n ? ` · ${n}` : ''}</span>`;
     btn.title = `${baseName(p)} · ⎇ ${st.branch} · ${n} changed${sync ? ' · ' + sync : ''} · click to see and commit`;
     btn.dataset.dir = p;
     btn.classList.remove('hidden');
   }
-  $('#git-pill').onclick = () => showChanges($('#git-pill').dataset.dir);
+  $('#git-pill').onclick = () => { const dir = $('#git-pill').dataset.dir; closePanels(); showChanges(dir); };
 
   // The workspace buttons are rebuilt only when something they show has changed.
   let wsSig = '';

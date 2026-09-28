@@ -93,6 +93,7 @@ const DEFAULT_KEYBINDS = {
   showChanges: ['Alt+G'], // the changes tile (git) for the focused tile's project
   saveQuit: ['Alt+Shift+Q'], // save every editor tile, snapshot the session, and quit
   openBrowser: [], // browser tile
+  notifications: ['Alt+I'], // the notification panel
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
 
@@ -170,7 +171,7 @@ const DEFAULT_CONFIG = {
   clockSeconds: false,
   clockDate: true,
   barTitle: false,                // the focused tile's title beside the clock
-  gitButton: true,                // the focused project's branch and changes in the top bar · click to see and commit
+  gitButton: true,                // the Git tile in the gear's quick menu: the focused project's branch and changes · click to see and commit
   workspaceNames: [],             // names given to workspaces 1-9 (double-click one in the bar)
   editor: 'auto',                 // the editor tile's program: 'auto' | 'vim' | 'nvim' | 'micro' | 'nano' | 'edit' | 'custom'
   editorCommand: '',              // with 'custom': the command, the file is added at the end

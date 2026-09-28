@@ -120,7 +120,7 @@ const Panels = (() => {
       { key: 'clockSeconds', label: 'Show seconds', type: 'toggle' },
       { key: 'clockDate', label: 'Show the date', type: 'toggle' },
       { key: 'barTitle', label: 'Focused tile’s title beside the clock', type: 'toggle' },
-      { key: 'gitButton', label: 'Git button', hint: 'The focused project’s branch and changes · click to see and commit them', type: 'toggle' },
+      { key: 'gitButton', label: 'Git tile', hint: 'In the gear’s quick menu: the focused project’s branch and changes · click to see and commit them', type: 'toggle' },
     ]],
     ['Media', [
       { key: 'mediaControls', label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },
@@ -419,7 +419,7 @@ const Panels = (() => {
       resizeLeft: 'Resize ←', resizeRight: 'Resize →', resizeUp: 'Resize ↑', resizeDown: 'Resize ↓' }],
     ['Media', { mediaPlayPause: 'Play / pause', mediaNext: 'Next track', mediaPrev: 'Previous track', mediaShuffle: 'Shuffle' }],
     ['Workspaces', { prevWorkspace: 'Previous workspace', nextWorkspace: 'Next workspace' }],
-    ['App', { commandPalette: 'Command palette', help: 'Keybinds (this popup)', settings: 'Settings', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools', saveQuit: 'Save and quit' }],
+    ['App', { commandPalette: 'Command palette', help: 'Keybinds (this popup)', settings: 'Settings', notifications: 'Notifications', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools', saveQuit: 'Save and quit' }],
   ];
   const actionName = a => GROUPS.map(g => g[1][a]).find(Boolean) || a;
 
