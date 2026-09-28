@@ -46,9 +46,14 @@ function mainRulesText(mainAgent, launching) {
   const p = mainRules(mainAgent, launching);
   try { return p ? fs.readFileSync(p, 'utf8') : ''; } catch { return ''; }
 }
-const opencodeConfigContent = (filePath, mainAgent) => {
-  const rules = mainRules(mainAgent, 'opencode');
-  return JSON.stringify({ instructions: [filePath, ...(rules ? [rules] : [])] });
+// `pluginPath`, when given, is the long-command reroute (hooks/opencode-long-commands.mjs), in the
+// same object so everything merges into one config.
+const opencodeConfigContent = (filePath, { mainAgent, pluginPath } = {}) => {
+  const content = {};
+  const instructions = [filePath, mainRules(mainAgent, 'opencode')].filter(Boolean);
+  if (instructions.length) content.instructions = instructions;
+  if (pluginPath) content.plugin = [pluginPath];
+  return JSON.stringify(content);
 };
 
 module.exports = { BRIEF, briefPath, opencodeConfigContent, mainRulesText };
