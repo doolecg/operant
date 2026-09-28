@@ -12,6 +12,7 @@ const POSITIONAL = {
   browse: ['url'], shot: ['id'], console: ['id'], url: ['id'],
   text: ['id', 'selector'], click: ['id', 'selector'], type: ['id', 'selector', 'text'],
   ports: [], watch: ['id'],
+  plan: ['path'], board: [],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text' };
@@ -48,6 +49,10 @@ function usage() {
   url <id>                       a browser tile's current url/title
   ports                          list dev-server URLs found in this window's tiles
   watch <id> --errors [--grep p]  notify on a new matching line in a tile (--off to stop, no id to list)
+  plan <file.md>                 show a plan and wait for Approve/Change
+  task add "<text>" [--for id]   add a task to the board, prints its id
+  task claim|done|note <id> [...]  claim a task, mark it done [--note n], or add a note
+  board                          list every task: id, status, owner, text, last note
 
   --json prints the raw JSON result instead of formatted text.
   read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines.`);
@@ -104,6 +109,17 @@ function buildArgs(cmd, positionals, flags) {
   // ask/ws's first positional is a question/index, not covered by JOIN_REST.
   if (cmd === 'ask' && positionals.length) args.question = positionals.join(' ');
   if (cmd === 'ws' && positionals.length) args.index = Number(positionals[0]);
+  // task <sub> <id|text...>: the sub-command decides how the rest of the positionals are read.
+  if (cmd === 'task') {
+    args.sub = positionals[0];
+    if (args.sub === 'add') args.text = positionals.slice(1).join(' ');
+    else if (args.sub === 'note') { args.id = Number(positionals[1]); args.text = positionals.slice(2).join(' '); }
+    else args.id = Number(positionals[1]);
+  }
+  // Relative paths mean the shell's current folder, not the folder the tile started in.
+  const path = require('path');
+  for (const k of ['path', 'dir']) if (typeof args[k] === 'string' && args[k]) args[k] = path.resolve(args[k]);
+  if (cmd === 'open' && typeof args.target === 'string' && require('fs').existsSync(args.target)) args.target = path.resolve(args.target);
   return args;
 }
 
@@ -139,6 +155,12 @@ function formatResult(cmd, result) {
         ? result.watches.map(w => `${w.id}${w.errors ? '  errors' : ''}${w.grep ? `  grep:"${w.grep}"` : ''}`).join('\n')
         : '(no watches)';
       return result.off ? `stopped watching tile ${result.id}` : `watching tile ${result.id}`;
+    case 'plan': return result.approved ? 'approved' : `change: ${result.note || ''}`;
+    case 'task': return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}`;
+    case 'board': {
+      const owner = o => o ? `${o.id} ${o.title}` : '-';
+      return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${owner(t.owner)}  ${t.text}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
+    }
     case 'usage': {
       const lines = [result.max
         ? `context: ${result.tokens.toLocaleString()} / ${result.max.toLocaleString()} tokens (${result.pct}%)`

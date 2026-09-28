@@ -52,12 +52,15 @@ On long jobs, check `operant usage` now and then. Keep `.operant/progress.md` cu
 | url | `operant url 5` | a browser tile's current url/title |
 | ports | `operant ports` | dev-server URLs found in this window's tiles |
 | watch | `operant watch 7 --errors` | notify on a new error line in a tile (`--grep p`, `--off`, or no id to list) |
+| plan | `operant plan plan.md` | show a plan, block until Approve or Change (returns the note) |
+| task | `operant task add "text" [--for id]` / `claim id` / `done id [--note n]` / `note id "text"` | add/claim/finish/note a board task |
+| board | `operant board` | list every task: id, status, owner, text, last note |
 
 `--json` on any command prints raw JSON instead of formatted text. Exit codes: 0 ok, 1 error (stderr), 2 not inside Operant.
 
 ## Recipes
 
-**Show a plan or report** instead of pasting it into chat: `operant view plan.md`.
+**Show a plan for approval** instead of pasting it into chat: write the plan, `operant plan plan.md`, then act on the answer — `approved` to proceed, or `change: <note>` to revise the plan and re-run `operant plan` on the same file.
 
 **Tests/build/dev server, without blocking.**
 ```
@@ -74,6 +77,7 @@ operant wait <id1> --errors
 operant wait <id2> --errors
 ```
 Close tiles you opened once merged: `operant close <id>`.
+For bigger fan-outs, put the work on a board so the user can see it: `operant task add "<task>"` for each one, workers `operant task claim <id>` then `operant task done <id> [--note "..."]`.
 
 **Ask before a risky step:** `operant ask "Delete old migrations?" --options "Delete|Keep"` instead of guessing on destructive or ambiguous actions.
 

@@ -58,9 +58,9 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
 - [ ] **22. Browser tile:** a real in-app browser tile (Electron's own web view, no new dependency): URL bar, back,
       forward, reload, DevTools. Agents: `operant browse <url>`, `operant shot <tile>` (a PNG they can look at),
       `operant console <tile> [--errors]`, `operant click`/`type` for simple flows.
-- [ ] **23. Plan approval:** `operant plan plan.md` shows the plan in a viewer with Approve / Change and waits for the
+- [x] **23. Plan approval:** `operant plan plan.md` shows the plan in a viewer with Approve / Change and waits for the
       answer (Change returns the user's note).
-- [ ] **24. Task board:** a shared board tile for fanned-out agents: `operant task add|claim|done|note`, `operant board`;
+- [x] **24. Task board:** a shared board tile for fanned-out agents: `operant task add|claim|done|note`, `operant board`;
       the user sees every task, owner and status in one tile.
 - [x] **25. `operant usage`:** the agent's own context size and the plan limits, so it can compact or hand off in time.
 - [x] **26. Dev servers:** `operant ports` lists servers started in tiles with their URLs, spotted in their output.

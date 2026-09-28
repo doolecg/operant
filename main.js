@@ -424,7 +424,8 @@ function startControlServer() {
           return reply(200, { ok: true, result: { ...r.result, limits: await fetchLimits() }, warn: r.warn });
         }
         const owner = ownerForTile(tile);
-        const timeoutMs = cmd === 'wait' ? (Number(args.timeout) || 600) * 1000 + 5000 : 20000;
+        // plan: waits on the user, same as ask, so it gets an ask-length leash rather than the 20s default.
+        const timeoutMs = cmd === 'wait' ? (Number(args.timeout) || 600) * 1000 + 5000 : cmd === 'plan' ? 7 * 24 * 3600 * 1000 : 20000;
         const r = await forwardControl(owner, cmd, args, tile, timeoutMs);
         return reply(r.ok ? 200 : 400, r);
       } catch (e) { return reply(400, { ok: false, error: e.message }); }

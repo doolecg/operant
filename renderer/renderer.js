@@ -664,9 +664,13 @@
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">▤</span><span class="title"></span><span class="badge"></span>
       <span class="view-acts"><button data-v="source" title="Show the Markdown source">Source</button><button data-v="edit" title="Edit">✎</button>
       <button data-v="open" title="Open with Windows">↗</button></span><button class="x" title="Close">✕</button></div>
+      <div class="plan-bar hidden"><span class="plan-msg">Review this plan</span><span class="plan-actions">
+        <button class="btn primary" data-p="approve">Approve</button><button class="btn" data-p="change">Change</button></span>
+        <div class="plan-change hidden"><input class="plan-note" type="text" placeholder="What should change?">
+        <button class="btn primary" data-p="send">Send</button></div></div>
       <div class="view-wrap"><div class="view-page" tabindex="-1"><div class="view-body"></div></div>${FIND_BAR}</div></div>`;
     const w = { id, kind: 'view', el, term: null, file, title: baseName(file), alive: true, ws, lastActivity: Date.now(), closeIn: null,
-      cwd: dirOf(file), page: el.querySelector('.view-page'), source: false, mtime: null };
+      cwd: dirOf(file), page: el.querySelector('.view-page'), source: false, mtime: null, planQueue: [] };
     el.querySelector('.title').textContent = w.title;
     el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
     el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
@@ -677,6 +681,11 @@
       else if (b.dataset.v === 'edit') openEditor(w.file, { ws: w.ws });
       else operant.openPath(w.file);
     });
+    const planBar = el.querySelector('.plan-bar'), planNote = el.querySelector('.plan-note');
+    planBar.querySelector('[data-p="approve"]').onclick = () => resolvePlan(w, true, null);
+    planBar.querySelector('[data-p="change"]').onclick = () => { planBar.querySelector('.plan-change').classList.remove('hidden'); planNote.focus(); };
+    planBar.querySelector('[data-p="send"]').onclick = () => resolvePlan(w, false, planNote.value.trim());
+    planNote.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); planBar.querySelector('[data-p="send"]').click(); } });
     w.page.addEventListener('click', e => {
       const a = e.target.closest('[data-href]');
       if (!a) return;
@@ -746,6 +755,24 @@
       w.file = target; w.cwd = dirOf(target); setTitle(w, baseName(target)); updateBadge(w); w.page.scrollTop = 0;
       operant.watchFile(w.id, w.file); loadView(w); saveSession();
     });
+  }
+
+  // Plan approval bar on a viewer tile: `operant plan` queues a resolver per pending request
+  // (usually just one) and shows the bar; Approve/Change/Send (or the tile closing) resolves the
+  // oldest one and moves on to the next queued request, if any.
+  function showPlanBar(w) {
+    if (!w.alive) return;
+    const bar = w.el.querySelector('.plan-bar');
+    bar.querySelector('.plan-change').classList.add('hidden');
+    bar.querySelector('.plan-note').value = '';
+    bar.classList.remove('hidden');
+  }
+  function resolvePlan(w, approved, note) {
+    const resolve = w.planQueue?.shift();
+    if (!resolve) return;
+    resolve({ approved, note: approved ? null : (note || '') });
+    if (w.planQueue.length) showPlanBar(w);
+    else w.el.querySelector('.plan-bar').classList.add('hidden');
   }
 
   async function loadView(w) {
@@ -1104,6 +1131,55 @@
     return w;
   }
 
+  // Task board: one per window. `operant task add` opens it (without stealing focus) if none is open
+  // yet; `operant task claim/done/note` and `operant board` all read/write the same w.tasks array.
+  function getBoard() { return [...wins.values()].find(x => x.kind === 'board' && x.alive) || null; }
+  function fmtOwner(id) {
+    if (id == null) return null;
+    const t = wins.get(id);
+    return { id, title: t && t.alive ? t.title : `tile ${id} (closed)` };
+  }
+  function openBoard({ ws = current, focus = false, near = null, tasks = [] } = {}) {
+    const id = nextId++;
+    const el = document.createElement('div');
+    el.className = 'win board opening';
+    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">☰</span><span class="title">Task board</span><span class="badge"></span>
+      <button class="x" title="Close">✕</button></div>
+      <div class="view-wrap"><div class="view-page board-page" tabindex="-1"><div class="board-body"></div></div></div></div>`;
+    const w = { id, kind: 'board', el, term: null, title: 'Task board', alive: true, ws, lastActivity: Date.now(), closeIn: null,
+      cwd: near?.cwd || lastCwd, page: el.querySelector('.board-page'), tasks: tasks.map(t => ({ ...t })) };
+    w.nextTaskId = Math.max(0, ...w.tasks.map(t => t.id)) + 1;
+    el.querySelector('.title').textContent = w.title;
+    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
+    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
+    w.page.querySelector('.board-body').addEventListener('click', e => {
+      const b = e.target.closest('[data-owner]');
+      if (!b) return;
+      const t = wins.get(Number(b.dataset.owner));
+      if (t?.alive) { if (t.ws !== current) switchWorkspace(t.ws); focusWin(t); }
+    });
+    wins.set(id, w);
+    mount(w, ws, near, { focus });
+    renderBoard(w);
+    saveSession();
+    return w;
+  }
+  function renderBoard(w) {
+    if (!w.alive) return;
+    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['done', 'Done']];
+    const row = t => {
+      const owner = fmtOwner(t.owner);
+      return `<div class="board-row"><span class="board-id">#${t.id}</span><span class="board-text">${esc(t.text)}</span>`
+        + (owner ? `<button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : '<span class="board-owner unassigned">unassigned</span>')
+        + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '') + '</div>';
+    };
+    w.page.querySelector('.board-body').innerHTML = groups.map(([k, label]) => {
+      const items = w.tasks.filter(t => t.status === k);
+      return `<div class="board-group"><h3>${label} (${items.length})</h3>${items.length ? items.map(row).join('') : '<div class="board-empty">—</div>'}</div>`;
+    }).join('');
+    setBadge(w, `${w.tasks.filter(t => t.status !== 'done').length} open`);
+  }
+
   function markAll(w) {
     const n = w.files.filter(f => !w.skip.has(f.path)).length, box = w.el.querySelector('.diff-all input');
     box.checked = n === w.files.length && n > 0;
@@ -1259,7 +1335,8 @@
         const w = n.win;
         tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master,
           sessionId: w.sessionId && !w.sessionId.startsWith('oc:') ? w.sessionId : undefined,
-          ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.kind === 'browser' ? { url: w.url } : {}), ...(w.edit ? { edit: w.edit } : {}) });
+          ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.kind === 'browser' ? { url: w.url } : {}), ...(w.edit ? { edit: w.edit } : {}),
+          ...(w.kind === 'board' ? { tasks: w.tasks } : {}) });
         w.snapIndex = tiles.length - 1;
         return { tile: w.snapIndex };
       }
@@ -1296,6 +1373,7 @@
       if (t.kind === 'view') return openViewer(t.file, { ws, focus: false });
       if (t.kind === 'diff') return openDiff(t.cwd, { ws, focus: false });
       if (t.kind === 'browser') return openBrowser(t.url, { ws, focus: false });
+      if (t.kind === 'board') return openBoard({ ws, focus: false, tasks: t.tasks || [] });
       if (t.edit) return openEditor(t.edit, { ws, focus: false });
       return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws, focus: false });
     }));
@@ -1331,6 +1409,7 @@
   function closeWin(w) {
     if (!w.alive) return;
     w.alive = false;
+    if (w.planQueue?.length) { w.planQueue.forEach(r => r({ approved: false, note: '(closed without an answer)' })); w.planQueue = []; }
     const wsIndex = w.ws;
     const wasFocused = workspaces[wsIndex].focused === w.id;
     const neighbour = wasFocused ? nearestAfterClose(w) : null;
@@ -1574,8 +1653,8 @@
 
   function idleLimit(w) {
     if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
-    // Viewers, diffs and browsers are read, not run; an editor with unsaved changes would lose them.
-    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'browser' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
+    // Viewers, diffs, browsers and the task board are read, not run; an editor with unsaved changes would lose them.
+    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'browser' || w.kind === 'board' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
     if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
@@ -3743,6 +3822,38 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           renderHints(); refreshBar();
         }
         return { current: current + 1 };
+      }
+      case 'plan': {
+        if (!args.path) throw new Error('path required');
+        const file = resolvePath(self?.cwd || lastCwd, args.path);
+        let w = [...wins.values()].find(x => x.kind === 'view' && x.alive && normPath(x.file) === normPath(file));
+        if (w) { if (normPath(w.file) !== normPath(file)) showFile(w, file); } else w = openViewer(file, { ws: self?.ws ?? current, near: self, focus: false });
+        if (w.ws !== current) switchWorkspace(w.ws);
+        focusWin(w);
+        return new Promise(resolve => { w.planQueue.push(resolve); showPlanBar(w); });
+      }
+      case 'task': {
+        const w = getBoard() || openBoard({ ws: self?.ws ?? current, near: self, focus: false });
+        if (args.sub === 'add') {
+          if (!args.text) throw new Error('text required');
+          const id = w.nextTaskId++;
+          w.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null });
+          renderBoard(w); saveSession();
+          return { id, sub: 'add' };
+        }
+        const id = Number(args.id);
+        const t = w.tasks.find(x => x.id === id);
+        if (!t) throw new Error(`no task ${id}`);
+        if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
+        else if (args.sub === 'done') { t.status = 'done'; if (args.note != null) t.note = String(args.note); }
+        else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
+        else throw new Error(`unknown task command "${args.sub}"`);
+        renderBoard(w); saveSession();
+        return { id: t.id, status: t.status, note: t.note, sub: args.sub };
+      }
+      case 'board': {
+        const w = getBoard();
+        return { tasks: w ? w.tasks.map(t => ({ id: t.id, status: t.status, text: t.text, note: t.note, owner: fmtOwner(t.owner) })) : [] };
       }
       default:
         throw new Error(`unknown command "${cmd}"`);
