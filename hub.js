@@ -302,4 +302,4 @@ function undo({ hubDir }) {
   return { restored: b.manifest.entries.length, backup: b.name };
 }
 
-module.exports = { audit, apply, undo, lastBackup, importLine, hubRules, LINK_NAME };
+module.exports = { audit, apply, undo, lastBackup, importLine, hubRules, hubSkills, LINK_NAME };

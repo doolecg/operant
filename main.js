@@ -12,6 +12,7 @@ const { spawn, execFile } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
 const hub = require('./hub');
+const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
 const { createUsage } = require('./usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
@@ -152,6 +153,7 @@ const DEFAULT_CONFIG = {
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   cacheTtlMinutes: 5,              // Claude's prompt cache lifetime; 60 if your setup uses the 1-hour cache (Settings > Agents)
+  skillsBackup: { enabled: false, repos: [], auto: false }, // back up skills and rules to private git repos (Settings > Skills backup)
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
@@ -1278,13 +1280,36 @@ const hubState = () => ({ ...hub.audit(hubArgs()), canUndo: !!hub.lastBackup(HUB
 function hubCheck() { try { broadcast('hub:drift', hubState()); } catch (e) { logLine('hub audit failed: ' + e.message); } }
 ipcMain.handle('hub:audit', () => hubState());
 ipcMain.handle('hub:apply', (_e, ids) => {
-  try { const r = hub.apply({ ...hubArgs(), ids: Array.isArray(ids) ? ids : [] }); return { ...r, state: hubState() }; }
+  try {
+    const r = hub.apply({ ...hubArgs(), ids: Array.isArray(ids) ? ids : [] });
+    if (r.done?.length && !r.errors?.length) backupRun(true);
+    return { ...r, state: hubState() };
+  }
   catch (e) { return { done: [], errors: [{ error: String(e.message || e) }], state: hubState() }; }
 });
 ipcMain.handle('hub:undo', () => {
   try { const r = hub.undo({ hubDir: HUB_DIR }); return { ...r, state: hubState() }; }
   catch (e) { return { errors: [{ error: String(e.message || e) }], state: hubState() }; }
 });
+
+// Skills backup (backup.js): skills and rules copied into private git repos, committed and pushed.
+// Runs on demand, after a Tidy agents Apply and every 6 hours, the last two only when "Automatic" is on.
+let backupLast = null, backupBusy = null;
+const backupCfg = () => ({ enabled: false, repos: [], auto: false, ...(config.skillsBackup || {}) });
+function backupRun(onlyAuto) {
+  const c = backupCfg();
+  if (onlyAuto && !(c.enabled && c.auto)) return Promise.resolve(backupLast);
+  if (backupBusy) return backupBusy;
+  const repos = (Array.isArray(c.repos) ? c.repos : []).filter(r => r && typeof r.path === 'string' && r.path);
+  backupBusy = skillsBackup.backupAll({ repos, hubDir: HUB_DIR, claudeDir: HUB_CLAUDE_DIR })
+    .then(results => ({ at: Date.now(), results: results.length ? results : [{ path: '', status: 'error', message: 'No repositories added' }] }))
+    .catch(e => ({ at: Date.now(), results: [{ path: '', status: 'error', message: String(e.message || e) }] }))
+    .then(r => { backupLast = r; backupBusy = null; broadcast('backup:result', r); return r; });
+  return backupBusy;
+}
+ipcMain.handle('backup:run', () => backupRun(false));
+ipcMain.handle('backup:state', () => ({ last: backupLast, running: !!backupBusy }));
+ipcMain.handle('backup:check-repo', async (_e, dir) => (await skillsBackup.checkRepo(dir)).error || '');
 
 // -------------------------------------------------------------------- media
 
@@ -1749,6 +1774,7 @@ function createWindow(startDir = null, restore = null) {
     if (config.autoUpdate) updater.start();
     setTimeout(hubCheck, 8000);
     setInterval(hubCheck, 3 * 60 * 60 * 1000);
+    setInterval(() => backupRun(true), 6 * 60 * 60 * 1000);
     if (config.mediaControls) media.start();
     if (config.tokenUsage) usage.start();
     opencode.start();

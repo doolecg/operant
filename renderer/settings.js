@@ -175,13 +175,16 @@ const Panels = (() => {
       { key: 'codegraphChangedFiles', label: 'Lots of changes means', hint: 'Files added, changed or removed since the project was last indexed', type: 'number', min: 1, max: 100000 },
       { key: 'codegraphButtons', label: 'CodeGraph buttons in the sidebar', hint: '◇ on each project, in the header for all of them and in the folder right-click menu', type: 'toggle' },
     ]],
+    ['Skills backup', [
+      { type: 'skillsBackup', label: 'Skills backup private git repos rules push commit' },
+    ]],
     ['Updates', [
       { type: 'updates', label: 'Check for updates version release' },
       { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and every 3 hours, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
     ]],
   ];
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', Updates: '↻' };
+    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', 'Skills backup': '⤒', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -326,7 +329,32 @@ const Panels = (() => {
       <div class="set-row"><div class="lbl">Top tier allowed<span class="hint">Workers can't be started on a tier above this</span></div><div class="ctl"><select data-team-top>${Object.keys(tiers).map(n => `<option value="${esc(n)}"${n === (team.maxTier || Object.keys(tiers).pop()) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div></div>`;
   }
 
+  // Settings › Skills backup: the repos skills and rules are pushed to, the two switches, Back up now and the last result.
+  const BACKUP_LABEL = { pushed: 'pushed', nothing: 'nothing to back up', error: 'error' };
+  function backupEditor(cfg, ext) {
+    const b = { enabled: false, repos: [], auto: false, ...(cfg.skillsBackup || {}) };
+    const { last, running } = ext.backupStatus();
+    const name = p => p.split(/[\\/]/).filter(Boolean).pop() || p;
+    const repos = b.repos.length
+      ? b.repos.map((r, i) => `<div class="set-row"><div class="lbl"><span title="${esc(r.path)}">${esc(name(r.path))}</span><span class="hint">${esc(r.path)}</span></div><div class="ctl"><button class="btn" data-backup-rm="${i}">Remove</button></div></div>`).join('')
+      : '<div class="set-none">No repositories yet. Add a local clone of a private repo that has a remote.</div>';
+    const line = running ? 'Backing up…'
+      : !last ? 'Not run yet this session'
+      : `${new Date(last.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ` + last.results.map(r => (r.path ? name(r.path) + ': ' : '') + (r.status === 'error' ? r.message : BACKUP_LABEL[r.status])).join(' · ');
+    const bad = !running && last && last.results.some(r => r.status === 'error');
+    return `<div class="set-row"><div class="lbl">Back up skills and rules<span class="hint">Copies your skills (Operant's hub and ~/.claude/skills) and your rules into each repo's skills/ folder and rules.md, commits and pushes the current branch · .env, *.key, *.pem and credentials* files are left out · never forces a push</span></div>
+        <div class="ctl"><button class="toggle${b.enabled ? ' on' : ''}" data-backup-enabled></button></div></div>
+      <div class="set-row"><div class="lbl">Automatic<span class="hint">After Tidy agents applies fixes and every 6 hours while Operant is open</span></div>
+        <div class="ctl"><button class="toggle${b.auto ? ' on' : ''}" data-backup-auto></button></div></div>
+      ${repos}
+      <div class="set-row"><div class="lbl">Add a repository<span class="hint" data-backup-err></span></div>
+        <div class="ctl"><input type="text" data-backup-path placeholder="Folder of a local clone" spellcheck="false"><button class="btn" data-backup-browse>Browse…</button><button class="btn" data-backup-add>Add</button></div></div>
+      <div class="set-row"><div class="lbl">Back up now<span class="hint uc-status${bad ? ' error' : ''}" data-backup-status>${esc(line)}</span></div>
+        <div class="ctl"><button class="btn primary" data-backup-run${running || !b.repos.length ? ' disabled' : ''}>Back up now</button></div></div>`;
+  }
+
   function rowHtml(it, cfg, ext) {
+    if (it.type === 'skillsBackup') return backupEditor(cfg, ext);
     if (it.type === 'projects') return projectsEditor(cfg);
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
@@ -415,6 +443,25 @@ const Panels = (() => {
         if (Object.keys(v).length) all[p] = v; else delete all[p];
         set('projectDefaults', all);
       });
+      const setBackup = patch => set('skillsBackup', { enabled: false, repos: [], auto: false, ...(cfg.skillsBackup || {}), ...patch });
+      pane.querySelectorAll('[data-backup-enabled]').forEach(b => b.onclick = () => { setBackup({ enabled: !cfg.skillsBackup?.enabled }); draw(); });
+      pane.querySelectorAll('[data-backup-auto]').forEach(b => b.onclick = () => { setBackup({ auto: !cfg.skillsBackup?.auto }); draw(); });
+      pane.querySelectorAll('[data-backup-rm]').forEach(b => b.onclick = () => { setBackup({ repos: cfg.skillsBackup.repos.filter((_, j) => j !== +b.dataset.backupRm) }); draw(); });
+      pane.querySelectorAll('[data-backup-browse]').forEach(b => b.onclick = async () => {
+        const d = await pickFolder();
+        if (d) { pane.querySelector('[data-backup-path]').value = d; pane.querySelector('[data-backup-add]').click(); }
+      });
+      pane.querySelectorAll('[data-backup-add]').forEach(b => b.onclick = async () => {
+        const input = pane.querySelector('[data-backup-path]'), err = pane.querySelector('[data-backup-err]');
+        const p = input.value.trim();
+        if (!p) return;
+        const msg = await ext.checkBackupRepo(p);
+        if (msg) { err.textContent = msg; err.classList.add('uc-status', 'error'); return; }
+        const repos = cfg.skillsBackup?.repos || [];
+        if (!repos.some(r => r.path.toLowerCase() === p.toLowerCase())) setBackup({ repos: [...repos, { path: p }] });
+        draw();
+      });
+      pane.querySelectorAll('[data-backup-run]').forEach(b => b.onclick = () => { b.disabled = true; ext.backupRun(); });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
       pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {

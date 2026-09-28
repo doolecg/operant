@@ -1,3 +1,14 @@
+# Operant 1.15.0
+
+You can now back up your agent skills and rules to your own private git repos, from Settings.
+
+**Install:** download `Operant-1.15.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Skills backup:** ⚙ Settings › Skills backup lets you add one or more local clones of your private git repos. **Back up now** copies your skills (Operant's hub and `~/.claude/skills`, with links resolved) and your rules into each repo, commits and pushes the current branch, and shows the result for each repo. It never force-pushes, never touches other branches or remotes, and skips `.env`, key and credential files. Turn on **Automatic** to also back up after Tidy agents applies fixes and every 6 hours while Operant is open. A failed backup shows up in the bell.
+
+---
+
 # Operant 1.14.0
 
 Operant now keeps your agent skills and rules in one place it owns, the task board moves into a dropdown, and worker agents notify you only when they hand a result back.

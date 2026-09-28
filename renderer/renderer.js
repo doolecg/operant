@@ -2463,11 +2463,23 @@
     if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
   }
+  // Skills backup: main runs it (manually, after Tidy Apply, every 6 hours) and broadcasts each result.
+  let backupLast = null, backupRunning = false;
+  operant.backupState().then(s => { backupLast = s.last; backupRunning = s.running; });
+  operant.on('backup:result', res => {
+    backupLast = res; backupRunning = false;
+    const bad = res.results.find(x => x.status === 'error');
+    if (bad) logNotification({ id: 0, ws: current, title: 'Skills backup' }, 'Skills backup failed', (bad.path ? bad.path + ': ' : '') + bad.message);
+    if (openPanel() === 'settings') renderSettings();
+  });
   let updateStatus = null;
   const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, {
     renderKeys: el => { keysTarget = el; renderKeys(); },
     renderCodegraph,
     renderMemory,
+    backupStatus: () => ({ last: backupLast, running: backupRunning }),
+    checkBackupRepo: dir => operant.backupCheckRepo(dir),
+    backupRun: () => { backupRunning = true; operant.backupRun(); },
     update: () => ({ version, status: updateStatus }),
     checkUpdate: () => operant.checkUpdate(),
     installUpdate: () => operant.installUpdate(),
