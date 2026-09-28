@@ -27,6 +27,10 @@ function briefPath(userDataDir) {
 // OPENCODE_CONFIG_CONTENT is merged by OpenCode with the user's own opencode.json/opencode.jsonc
 // (models, providers, keys, mcp servers) rather than replacing it — confirmed with
 // `opencode debug config`.
-const opencodeConfigContent = filePath => JSON.stringify({ instructions: [filePath] });
+// OpenCode skips ~/.claude/CLAUDE.md once a global AGENTS.md exists, so it's listed explicitly:
+// OpenCode tiles follow the same personal rules as Claude Code tiles.
+const CLAUDE_RULES = path.join(require('os').homedir(), '.claude', 'CLAUDE.md');
+const opencodeConfigContent = filePath =>
+  JSON.stringify({ instructions: [filePath, ...(fs.existsSync(CLAUDE_RULES) ? [CLAUDE_RULES] : [])] });
 
 module.exports = { BRIEF, briefPath, opencodeConfigContent };

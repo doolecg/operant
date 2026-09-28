@@ -6,9 +6,15 @@ A Hyprland-style tiling window manager for terminal AI agents on Windows. Run **
 Operant is built so agents don't have to read their own noise. A few things do that work:
 
 - **Long commands run in their own tile.** `operant run "npm test" --title tests` starts a test, build, install or dev server in a tile and returns right away. The agent reads back only what it needs with `operant wait <id> --errors`, `operant read <id> --new` or `operant read <id> --grep "<pattern>"`. The full log stays on screen in the tile for you; only the requested part goes into the agent's context. Output is cleaned up first — colour codes stripped, repeated and progress lines collapsed — before it reaches the agent.
-- **The Operant skill installs itself** for Claude Code and OpenCode, so agents use `operant run`/`wait`/`read` without being told to.
-- **Context size on every agent tile,** like `ctx 84k`, orange at 60% and red at 85%, so you can see when to `/compact` or start a fresh session before a big context starts costing you on every message.
+- **Test and build digests:** `operant test` and `operant build` auto-detect the runner and return only the summary line plus each failure's file:line, keeping the full log on screen.
+- **Auto compact and usage:** when context hits a threshold (default 80%, configurable in Settings › Agents), Operant runs `/compact` at the next idle moment. Agents can request it themselves with `operant compact` at a clean stopping point. Check `operant usage` to see your context and plan limits.
+- **Tile info bar** shows the agent's model, context size, tokens used since the tile opened, and a cache-cold mark when idle.
+- **Launch brief** starts every agent with the essentials: use CodeGraph before grep/reading, read `.operant/progress.md` if it exists, run long commands through `operant run`/`wait`.
+- **The Operant skill installs itself** for Claude Code and OpenCode, so agents use `operant run`/`wait`/`read` without being told to. `operant help [cmd]` shows the full command reference.
+- **Optional "Reroute long commands" hook** (Settings › Agents, off by default) moves test, build and install commands from the agent's shell into tiles automatically, so savings don't depend on remembering the skill.
+- **Cheaper screenshots:** `operant shot --selector "<css>"` captures just part of the page; screenshots default to downscaled JPEG.
 - **CodeGraph:** agents query a code index instead of grepping and reading whole files. Indexing runs on startup for projects that changed.
+- **Context size on every agent tile,** like `ctx 84k`, orange at 60% and red at 85%, so you can see when to `/compact` or start a fresh session before a big context starts costing you on every message.
 - **Token usage pill** with today's total, a daily budget, and a graph over time; plan limit alerts at 80% and 95%.
 - **Subagents get their own tiles,** so you can see what one is doing without asking the agent to summarise it back to you.
 
