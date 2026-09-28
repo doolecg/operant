@@ -1,3 +1,36 @@
+# Operant 1.9.0
+
+Git inside Operant: see what changed, commit and push like in IntelliJ. Also quick open, a command palette, vim keys, resizing tiles with the mouse, and a faster app all round.
+
+**Install:** download `Operant-1.9.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Commit from Operant:** the changes tile lists what changed in a project, file by file, with the diff beside it. Tick the files, write a message and **Commit** or **Commit and Push** (`Ctrl+Enter` commits), or tick **Amend**. Its bar has **Pull**, **Push** and the branch: click the branch to switch or make a new one. Right-click a file to roll it back.
+- **Git in the sidebar:** each project shows its branch and how many files changed. Click the count to open the changes tile. Changed files are tinted (yellow changed, green new). Turn it off in ⚙ Settings › Sidebar.
+- **Quick open:** press `Ctrl+P` (default) and type part of a file name to view it. `Shift+Enter` edits it instead.
+- **Command palette:** press `Ctrl+Shift+P` (default) to run any action or change any setting from one box.
+- **Find in viewers:** press `Ctrl+F` (default) in a viewer or changes tile. Enter and Shift+Enter step through the matches. Terminals keep `Ctrl+F` for themselves.
+- **Syntax colours** in the viewer, in Markdown code blocks and in diffs.
+- **Images in the viewer:** PNG, JPEG, GIF, WebP, SVG and more, with their size.
+- **Vim keys:** turn them on in ⚙ Settings › Keybinds. `j`/`k`, `h`/`l`, `gg`/`G`, `Ctrl+D`/`Ctrl+U` and `/` work in viewers and the changes tile, and `[`/`]` changes file there. `Alt+Shift+B` (default) puts the keyboard in the sidebar, where `j`/`k` move, `l` opens, `h` closes, `e` edits, and `a`/`s` open an agent or shell. `Ctrl+J`/`Ctrl+K` move in quick open and the palette.
+- **config.json in vim:** ⚙ Settings › Files › *Edit config.json in* can open it in the editor tile.
+- **Resize tiles with the mouse:** drag the gap between two tiles.
+- **Per-project defaults:** ⚙ Settings › Projects (or right-click a project › *Project defaults…*) sets which agent a project's tiles open with, extra arguments for it, and a command that runs first in every tile opened there.
+- **Session limit alerts:** a notification at 80% and 95% of your Claude 5-hour session, and a ring on the token pill showing how much is used. Turn them off in ⚙ Settings › Usage.
+
+## Changed
+- **Faster everywhere:** opening a tile no longer stalls the other terminals, the sidebar only redraws the rows that change, the top bar only redraws what changed, and viewers wait for their file to change instead of checking it.
+- **Lighter music controls:** the music helper now reacts to Windows' change events instead of checking every 0.8 seconds, and sends the cover only when the track changes.
+
+## Fixed
+- **Closing a vim tile with unsaved edits** now asks: Save and close, Discard or Cancel.
+- **Viewer tiles no longer close after 10 idle minutes**, and neither do editor tiles with unsaved changes.
+- **Viewer and editor tiles come back after an update**, like terminals.
+- **Typing a workspace name** no longer sets off Alt shortcuts.
+- **Clicking the track finds Firefox,** and the volume slider controls Firefox's own volume.
+
+---
+
 # Operant 1.8.0
 
 View and edit files inside Operant, see your Claude plan limits, and a redesigned top bar with the clock in the middle and music beside your workspaces. Your tiles now come back after an update.

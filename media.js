@@ -1,6 +1,7 @@
 // Media controls: runs media-helper.ps1, which reads Windows' current media session (Spotify,
 // a browser tab, ...) and passes on the bar's buttons. The helper sends a JSON line whenever
-// the state changes, and a { timeline } line when the track position does; commands go back one per line.
+// the state changes, a { timeline } line when the track position does, and an { art } line when
+// the cover image does; commands go back one per line.
 
 const { app } = require('electron');
 const path = require('path');
@@ -27,9 +28,11 @@ function createMedia({ send }) {
         if (!line) continue;
         let o;
         try { o = JSON.parse(line); } catch { continue; }
-        // The track position comes as its own small line, so the state (with its cover art) isn't resent every second.
+        // The track position and cover art come as their own small lines, so the state isn't resent (with
+        // the image) on every play/pause or volume change.
         if (o.timeline !== undefined) { last = { ...last, timeline: o.timeline }; send('media:timeline', o.timeline); }
-        else { last = { ...o, timeline: o.active ? last.timeline : null }; send('media:state', last); }
+        else if (o.art !== undefined) { last = { ...last, art: o.art }; send('media:art', o.art); }
+        else { last = { ...o, art: o.active ? last.art : null, timeline: o.active ? last.timeline : null }; send('media:state', last); }
       }
     });
     proc.stderr.on('data', d => console.error('media helper:', String(d)));

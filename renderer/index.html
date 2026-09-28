@@ -108,6 +108,14 @@
     </div>
   </div>
 
+  <div id="picker" class="overlay top hidden">
+    <div class="card narrow picker-card">
+      <div class="picker-head"><input id="picker-input" spellcheck="false" autocomplete="off"></div>
+      <div class="card-body" id="picker-body"></div>
+      <div class="card-foot"><span class="grow" id="picker-foot"></span><button class="btn" data-close>Close</button></div>
+    </div>
+  </div>
+
   <div id="launcher" class="overlay hidden">
     <div class="card narrow">
       <div class="card-head"><h2><span class="logo">◈</span> <span id="launcher-title">New agent</span></h2><span class="sub" id="launcher-sub"></span></div>
@@ -124,6 +132,7 @@
   <script src="themes.js"></script>
   <script src="render-agent.js"></script>
   <script src="md-view.js"></script>
+  <script src="highlight.js"></script>
   <script src="settings.js"></script>
   <script src="renderer.js"></script>
 </body>

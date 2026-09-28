@@ -79,14 +79,20 @@ const Panels = (() => {
       { key: 'sidebar', label: 'Projects sidebar', hint: 'Pinned projects and a folder tree on the left · the ▭ in the bar or Alt+B toggles it', type: 'toggle' },
       { key: 'sidebarWidth', label: 'Sidebar width', hint: 'Or drag its right edge', type: 'range', min: 160, max: 600, step: 10, fmt: px },
       { key: 'sidebarHiddenFiles', label: 'Show hidden files', hint: 'Dotfiles like .git and .claude', type: 'toggle' },
+      { key: 'sidebarGit', label: 'Git in the sidebar', hint: 'Each project’s branch and number of changed files (click it to see the changes) · changed files tinted', type: 'toggle' },
       { key: 'ide', label: 'IDE', hint: 'What a folder\'s "Open in IDE" button opens it in', type: 'select', options: IDES },
       { key: 'ideCommand', label: 'Custom IDE command', hint: 'When IDE is Custom command · the folder is added at the end, e.g. "C:\\Tools\\IDE\\bin\\ide64.exe"', type: 'text' },
+    ]],
+    ['Projects', [
+      { type: 'projects', label: 'Project defaults agent arguments startup command per project' },
     ]],
     ['Files', [
       { key: 'fileOpens', label: 'Double-clicking a file in the sidebar', hint: 'Right-click a file for the others', type: 'select',
         options: [['view', 'Views it in Operant'], ['edit', 'Edits it in a terminal'], ['system', 'Opens it with Windows']] },
       { key: 'editor', label: 'Editor', hint: 'The terminal editor for “Edit” · Auto takes the first found: Neovim, Vim, micro, Edit, nano', type: 'select',
         options: [['auto', 'Auto'], ['vim', 'Vim'], ['nvim', 'Neovim'], ['micro', 'micro'], ['nano', 'nano'], ['edit', 'Edit (Windows)'], ['custom', 'Custom command']] },
+      { key: 'configOpensIn', label: 'Edit config.json in', hint: 'The settings file, from Settings’ Open config.json button', type: 'select',
+        options: [['system', 'Windows’ app for .json'], ['editor', 'The editor tile (vim…)']] },
       { key: 'editorCommand', label: 'Custom editor command', hint: 'When Editor is Custom command · the file is added at the end, e.g. "C:\\Tools\\hx.exe"', type: 'text' },
     ]],
     ['Top bar', [
@@ -103,6 +109,7 @@ const Panels = (() => {
       { key: 'tokenUsage', label: 'Token usage in the top bar', hint: 'Claude Code tokens used today, from its transcripts · click it (or Alt+U) for a graph over time', type: 'toggle' },
       { key: 'usageSeries', label: 'Count these tokens', hint: 'In the bar and the graph · cache reads are usually most of the total', type: 'series' },
       { key: 'planLimits', label: 'Plan limits when hovering the pill', hint: 'Your Claude 5-hour session and weekly limits, as Claude Code’s /usage shows them · asked of Anthropic with your Claude Code login', type: 'toggle' },
+      { key: 'planLimitAlerts', label: 'Session limit alerts', hint: 'A notification at 80% and 95% of your 5-hour session, and a ring on the pill showing how much is used', type: 'toggle' },
       { key: 'tokenBudget', label: 'Daily token budget', hint: 'Counted tokens a day, like 2M or 500k · the pill turns orange at 80% and red past it · 0 = off', type: 'tokens' },
     ]],
     ['Startup', [
@@ -114,6 +121,7 @@ const Panels = (() => {
         options: [['tile', 'A tile in the window I used last'], ['window', 'A new Operant window']] },
     ]],
     ['Keybinds', [
+      { key: 'vimKeys', label: 'Vim keys', hint: 'j/k and h/l scroll, gg/G top and end, Ctrl+D/U half a page, / finds, n/N next and previous in viewer and diff tiles ([ and ] change file); in the sidebar (Alt+Shift+B) j/k move, l opens, h closes, e edits, a and s open an agent or shell · Ctrl+J/K move in the pickers', type: 'toggle' },
       { type: 'keys', label: 'Keybinds shortcuts keys' },
     ]],
     ['CodeGraph', [
@@ -129,7 +137,7 @@ const Panels = (() => {
     ]],
   ];
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
+    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -235,7 +243,22 @@ const Panels = (() => {
   try { tab = localStorage.getItem('operant.settings.tab') || tab; } catch {}
   const settingsTab = () => (query ? '' : tab);
 
+  // Settings › Projects: per pinned project, the agent its tiles open with, extra arguments for it and a
+  // command run first in every tile opened there.
+  const pinned = cfg => [...new Set([...(cfg.projects || []), ...(cfg.projectGroups || []).flatMap(g => g.projects || [])].filter(Boolean))];
+  function projectsEditor(cfg) {
+    const list = pinned(cfg), d = cfg.projectDefaults || {};
+    if (!list.length) return '<div class="set-none">Pin a project in the sidebar first (＋ at its top).</div>';
+    return `<div class="proj-list"><div class="proj-row proj-head"><span>Project</span><span>Agent</span><span>Extra arguments</span><span>Startup command</span></div>`
+      + list.map(p => { const v = d[p] || {}; return `<div class="proj-row" data-proj="${esc(p)}"><span class="proj-nm" title="${esc(p)}">${esc(p.split(/[\\/]/).filter(Boolean).pop() || p)}</span>`
+        + `<select data-pf="agent"><option value="">Default (${esc(cfg.agents.find(a => a.id === cfg.defaultAgent)?.name || '')})</option>${cfg.agents.map(a => `<option value="${esc(a.id)}"${a.id === v.agent ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`
+        + `<input data-pf="args" value="${esc(v.args || '')}" placeholder="--flags" spellcheck="false">`
+        + `<input data-pf="startup" value="${esc(v.startup || '')}" placeholder="e.g. nvm use 22" spellcheck="false"></div>`; }).join('')
+      + '</div><div class="set-row"><div class="lbl"><span class="hint">The agent is used by ＋ in the sidebar, Alt+Enter and new tiles in that folder. The startup command runs in PowerShell before the agent or shell starts. Applies to new tiles.</span></div></div>';
+  }
+
   function rowHtml(it, cfg, ext) {
+    if (it.type === 'projects') return projectsEditor(cfg);
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
@@ -308,6 +331,13 @@ const Panels = (() => {
         setAgents(list);
         if (f === 'name') draw();
       });
+      pane.querySelectorAll('[data-pf]').forEach(el => el.onchange = () => {
+        const p = el.closest('[data-proj]').dataset.proj, all = { ...(cfg.projectDefaults || {}) };
+        const v = { ...(all[p] || {}), [el.dataset.pf]: el.value.trim() };
+        for (const k of Object.keys(v)) if (!v[k]) delete v[k];
+        if (Object.keys(v).length) all[p] = v; else delete all[p];
+        set('projectDefaults', all);
+      });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
       const add = pane.querySelector('[data-agent-add]');
       if (add) add.onclick = () => {
@@ -348,14 +378,15 @@ const Panels = (() => {
 
   const GROUPS = [
     ['Tiles', { newAgent: 'New default agent', pickAgent: 'Pick an agent…', newAgentIn: 'New agent in folder…', newShell: 'New shell', close: 'Close tile',
-      fullscreen: 'Fullscreen tile', promoteMaster: 'Make focused tile the master', closeDoneAgents: 'Close finished subagents', toggleSidebar: 'Show / hide the sidebar' }],
+      fullscreen: 'Fullscreen tile', promoteMaster: 'Make focused tile the master', closeDoneAgents: 'Close finished subagents', toggleSidebar: 'Show / hide the sidebar', focusSidebar: 'Keyboard to the sidebar',
+      quickOpen: 'Quick open a file', showChanges: 'Show changes (git diff)', findInView: 'Find in a viewer or diff tile' }],
     ['Focus & swap', { focusLeft: 'Focus ←', focusRight: 'Focus →', focusUp: 'Focus ↑', focusDown: 'Focus ↓',
       swapLeft: 'Swap ←', swapRight: 'Swap →', swapUp: 'Swap ↑', swapDown: 'Swap ↓' }],
     ['Layout', { toggleLayout: 'Master ⇄ dwindle layout', toggleSplit: 'Flip split direction',
       resizeLeft: 'Resize ←', resizeRight: 'Resize →', resizeUp: 'Resize ↑', resizeDown: 'Resize ↓' }],
     ['Media', { mediaPlayPause: 'Play / pause', mediaNext: 'Next track', mediaPrev: 'Previous track', mediaShuffle: 'Shuffle' }],
     ['Workspaces', { prevWorkspace: 'Previous workspace', nextWorkspace: 'Next workspace' }],
-    ['App', { help: 'Keybinds (this popup)', settings: 'Settings', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools' }],
+    ['App', { commandPalette: 'Command palette', help: 'Keybinds (this popup)', settings: 'Settings', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools' }],
   ];
   const actionName = a => GROUPS.map(g => g[1][a]).find(Boolean) || a;
 
@@ -375,5 +406,10 @@ const Panels = (() => {
     body.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => onRemove(b.dataset.rm, +b.dataset.i));
   }
 
-  return { renderSettings, renderKeys, actionName, pretty, settingsTab };
+  // For the command palette: every setting with a label, and ways to open Settings on one.
+  const settingsIndex = () => SECTIONS.flatMap(([t, items]) => items.filter(it => it.key && it.label).map(it => ({ tab: t, key: it.key, label: it.label, type: it.type })));
+  const showSetting = label => { query = label; };
+  const showTab = t => { tab = t; query = ''; };
+
+  return { renderSettings, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
 })();

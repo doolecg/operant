@@ -7,7 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn, spawnSync } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
 const { createMedia } = require('./media');
@@ -39,6 +39,7 @@ const DEFAULT_KEYBINDS = {
   closeDoneAgents: ['Alt+Shift+A'],
   newWindow: ['Alt+Shift+N'],
   toggleSidebar: ['Alt+B'],
+  focusSidebar: ['Alt+Shift+B'], // the keyboard to the sidebar (arrows, or vim keys), Esc gives it back
   toggleLayout: ['Alt+M'],
   promoteMaster: ['Alt+Shift+M'],
   focusLeft: ['Alt+Left', 'Alt+H'], focusRight: ['Alt+Right', 'Alt+L'],
@@ -55,6 +56,9 @@ const DEFAULT_KEYBINDS = {
   // Media keys on the keyboard already work everywhere; these are for keyboards without them.
   mediaPlayPause: [], mediaNext: [], mediaPrev: [], mediaShuffle: [],
   tokenUsage: ['Alt+U'], // the token usage graph
+  quickOpen: ['Ctrl+P'], commandPalette: ['Ctrl+Shift+P'],
+  findInView: ['Ctrl+F'], // only in viewer and diff tiles; terminals keep the key
+  showChanges: [],        // the diff tile for the focused tile's project
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
 
@@ -107,12 +111,15 @@ const DEFAULT_CONFIG = {
   sidebarHiddenFiles: false,      // show dotfiles and the like in the tree
   projects: [],                   // folders pinned at the top of the sidebar
   projectGroups: [],              // named groups of pinned projects: [{ name, projects: [folders] }]
+  projectDefaults: {},            // per project folder: { agent, args, startup } for tiles opened in it
+  sidebarGit: true,               // each project's branch and changed files in the sidebar
   ide: 'code',                    // "Open in IDE": a command that takes the folder, or 'custom' for ideCommand
   ideCommand: '',
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
   tokenUsage: true,               // Claude Code's tokens today in the top bar; click for the graph
   usageSeries: ['input', 'output', 'cacheWrite'], // what the pill and graph count; cache reads would swamp the rest
   planLimits: true,               // Claude plan limits (5-hour session, week) in the token pill's tooltip
+  planLimitAlerts: true,          // a notification at 80% and 95% of the 5-hour session, and its ring on the pill
   tokenBudget: 0,                // counted tokens a day; the pill turns orange near it and red past it · 0 = off
   clockFormat: 'auto',            // the bar's clock: 'auto' (from Windows) | '24' | '12'
   clockSeconds: false,
@@ -121,6 +128,8 @@ const DEFAULT_CONFIG = {
   workspaceNames: [],             // names given to workspaces 1-9 (double-click one in the bar)
   editor: 'auto',                 // the editor tile's program: 'auto' | 'vim' | 'nvim' | 'micro' | 'nano' | 'edit' | 'custom'
   editorCommand: '',              // with 'custom': the command, the file is added at the end
+  configOpensIn: 'system',        // "Edit config.json": 'system' (Windows' app for .json) | 'editor' (the editor tile)
+  vimKeys: false,                 // j/k, h/l, gg/G, Ctrl+D/U and / in viewers, diffs and the sidebar
   fileOpens: 'view',              // double-clicking a file in the sidebar: 'view' (viewer tile) | 'edit' (editor tile) | 'system'
   codegraphButtons: true,        // "Index with CodeGraph" buttons in the sidebar
   codegraphOnStartup: 'changed',  // index pinned projects when Operant starts: 'changed' (lots of changes) | 'all' | 'off'
@@ -159,6 +168,7 @@ ipcMain.handle('config:set', (e, patch) => {
   }
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
   if ('tokenUsage' in patch) { if (config.tokenUsage) usage.start(); else usage.stop(); }
+  if ('planLimits' in patch || 'planLimitAlerts' in patch || 'tokenUsage' in patch) pollLimits();
   // Other Operant windows pick the change up live.
   for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
   return config;
@@ -207,25 +217,39 @@ ipcMain.handle('startup-folder', e => startDirs.get(e.sender.id) || null);
 // The PATH Windows would give a freshly started program: machine + user entries from the
 // registry. Our own process.env.PATH can be stale (Operant was started before an agent CLI was
 // installed, or by a parent with an old environment), so tiles couldn't find the command.
+// Read without blocking the main process (every terminal's output passes through it), and kept for a minute.
+let regPath = null; // { at, value: Promise<string> }
 function registryPath() {
-  const read = key => {
-    const r = spawnSync('reg.exe', ['query', key, '/v', 'Path'], { encoding: 'utf8', windowsHide: true });
-    const m = /^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.*)$/mi.exec(r.stdout || '');
+  if (regPath && Date.now() - regPath.at < 60000) return regPath.value;
+  const read = key => run('reg.exe', ['query', key, '/v', 'Path']).then(r => {
+    const m = /^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.*)$/mi.exec(r.stdout);
     return m ? m[1].trim().replace(/%([^%]+)%/g, (s, v) => process.env[v] ?? s) : '';
-  };
-  return [read('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'), read('HKCU\\Environment')]
-    .filter(Boolean).join(';');
+  });
+  const value = Promise.all([read('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'), read('HKCU\\Environment')])
+    .then(parts => parts.filter(Boolean).join(';'));
+  regPath = { at: Date.now(), value };
+  return value;
 }
 
-function withFreshPath(env) {
+// A child process's output and exit code, never rejecting (a missing program gives code -1).
+function run(cmd, args, opts = {}) {
+  return new Promise(resolve => {
+    execFile(cmd, args, { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, ...opts }, (err, stdout, stderr) => {
+      resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: stdout || '', stderr: stderr || '' });
+    });
+  });
+}
+
+async function withFreshPath(env) {
   if (process.platform !== 'win32') return env;
   const key = Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'Path';
   const seen = new Set();
-  env[key] = [...(env[key] || '').split(';'), ...registryPath().split(';')]
+  env[key] = [...(env[key] || '').split(';'), ...(await registryPath()).split(';')]
     .filter(p => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()))
     .join(';');
   return env;
 }
+const freshEnv = () => withFreshPath({ ...process.env });
 
 const findAgent = id => config.agents.find(a => a.id === id) || config.agents.find(a => a.id === config.defaultAgent) || config.agents[0];
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
@@ -240,44 +264,61 @@ const hasTranscript = id => {
 // The editor tile's program: Settings › Files › Editor, or the first one found. Git for Windows brings
 // vim and nano without putting them on PATH, so its usr\bin is looked in too.
 const GIT_BIN = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin');
+let editorFound = null; // { at, key, value: Promise<string|null> }
 function editorCommand() {
-  if (config.editor === 'custom') return (config.editorCommand || '').trim() || null;
-  const onPath = c => spawnSync('where', [c], { windowsHide: true, env: withFreshPath({ ...process.env }) }).status === 0;
-  const find = c => onPath(c) ? c : fs.existsSync(path.join(GIT_BIN, c + '.exe')) ? path.join(GIT_BIN, c + '.exe') : null;
-  const order = config.editor && config.editor !== 'auto' ? [config.editor] : ['nvim', 'vim', 'micro', 'edit', 'nano'];
-  for (const c of order) { const f = find(c); if (f) return f; }
-  return null;
+  if (config.editor === 'custom') return Promise.resolve((config.editorCommand || '').trim() || null);
+  const key = config.editor || 'auto';
+  if (editorFound && editorFound.key === key && Date.now() - editorFound.at < 60000) return editorFound.value;
+  const value = (async () => {
+    const env = await freshEnv();
+    const order = key !== 'auto' ? [key] : ['nvim', 'vim', 'micro', 'edit', 'nano'];
+    const found = await Promise.all(order.map(async c => (await run('where', [c], { env })).code === 0 ? c
+      : fs.existsSync(path.join(GIT_BIN, c + '.exe')) ? path.join(GIT_BIN, c + '.exe') : null));
+    return found.find(Boolean) || null;
+  })();
+  editorFound = { at: Date.now(), key, value };
+  return value;
 }
-ipcMain.handle('editor:name', () => { const c = editorCommand(); return c ? path.basename(c).replace(/\.exe$/i, '') : null; });
+ipcMain.handle('editor:name', async () => { const c = await editorCommand(); return c ? path.basename(c).replace(/\.exe$/i, '') : null; });
 
-ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows, run, resume, edit }) => {
+// Settings › Projects: the defaults of the project a folder is in (the innermost, if they nest).
+const projectOf = dir => Object.keys(config.projectDefaults || {})
+  .filter(p => { const a = path.resolve(dir).toLowerCase(), b = path.resolve(p).toLowerCase(); return a === b || a.startsWith(b.replace(/[\\/]$/, '') + path.sep); })
+  .sort((a, b) => b.length - a.length)[0];
+
+ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit }) => {
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
   const resuming = !!(agent && isClaude(agent) && /^[0-9a-f-]{36}$/i.test(resume || '') && hasTranscript(resume));
   const sessionId = agent && isClaude(agent) ? (resuming ? resume : crypto.randomUUID()) : null;
   const dir = cwd && fs.existsSync(cwd) ? cwd : config.defaultCwd;
+  const proj = config.projectDefaults?.[projectOf(dir)] || {};
+  const startup = String(proj.startup || '').trim();
 
   // Run the agent through the shell (PATH lookup, .cmd shims). The tile closes when it
   // exits cleanly; on failure it waits so the error stays readable.
   let command = config.shell;
-  let args = run && !agent ? ['-NoLogo', '-NoExit', '-Command', run] : ['-NoLogo'];
+  let args = run && !agent ? ['-NoLogo', '-NoExit', '-Command', run] : startup && !edit ? ['-NoLogo', '-NoExit', '-Command', startup] : ['-NoLogo'];
   // An editor tile: the editor on that file, and the tile closes when you quit it.
   if (edit && !agent) {
     const q = a => `'${String(a).replace(/'/g, "''")}'`;
-    const ed = editorCommand();
+    const ed = await editorCommand();
     // Vim gets line numbers, and no swap file (it would be left beside the file whenever the tile is closed with vim still open).
-    const noSwap = ed && /(^|[\\/])n?vim(\.exe)?$/i.test(ed) ? " -n -c 'set number'" : '';
+    // Its title carries vim's modified flag ([+]), which is how the tile knows to ask before closing.
+    const noSwap = ed && /(^|[\\/])n?vim(\.exe)?$/i.test(ed) ? " -n -c 'set number title titlestring=%t%m'" : '';
     args = ['-NoLogo', '-Command', ed ? `& ${config.editor === 'custom' ? ed : q(ed)}${noSwap} ${q(edit)}`
       : `Write-Host 'No editor found. Install vim, neovim, micro or nano, or set one in Settings > Files.' -ForegroundColor Yellow; Read-Host 'Press Enter to close'`];
   }
   if (agent) {
     const q = a => `'${String(a).replace(/'/g, "''")}'`;
-    const quoted = [...[].concat(agent.args || []), ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : [])].map(q).join(' ');
+    const extra = String(proj.args || '').trim().split(/\s+/).filter(Boolean);
+    const quoted = [...[].concat(agent.args || []), ...extra, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : [])].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
     const exe = String(agent.command).trim().split(/\s+/)[0];
     args = ['-NoLogo', '-Command', [
+      ...(startup ? [startup] : []),
       `if (-not (Get-Command ${q(exe)} -ErrorAction SilentlyContinue)) { Write-Host ${q(missing)} -ForegroundColor Yellow; Read-Host 'Press Enter to close'; exit }`,
       `& ${agent.command} ${quoted}; if (-not $?) { Read-Host ${q(`${agent.name} exited with an error, press Enter to close`)} }`,
     ].join('; ')];
@@ -286,7 +327,7 @@ ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows, run, resume, 
   // If Operant was itself started from inside a Claude session, don't let the
   // child claude think it's nested: that turns off transcript saving, which the
   // subagent tiles depend on.
-  const env = withFreshPath({ ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' });
+  const env = await withFreshPath({ ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' });
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];
   }
@@ -319,6 +360,7 @@ ipcMain.handle('pick-folder', async e => {
   const r = await dialog.showOpenDialog(winOf(e), { properties: ['openDirectory'], defaultPath: config.defaultCwd });
   return r.canceled ? null : r.filePaths[0];
 });
+ipcMain.handle('config:path', () => { if (!fs.existsSync(CONFIG_PATH)) saveUser(); return CONFIG_PATH; });
 ipcMain.on('open-config', () => {
   if (!fs.existsSync(CONFIG_PATH)) saveUser();
   shell.openPath(CONFIG_PATH);
@@ -337,16 +379,171 @@ ipcMain.handle('fs:list', async (_e, { dir, hidden }) => {
 });
 ipcMain.handle('fs:is-dir', (_e, p) => isDir(p));
 // The viewer tile: a file's text (up to 5 MB), or why it can't be shown.
+const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml', avif: 'image/avif' };
 ipcMain.handle('fs:read', async (_e, p) => {
   try {
     const st = await fs.promises.stat(p);
+    const type = IMAGE_TYPES[path.extname(p).slice(1).toLowerCase()];
+    if (type) {
+      if (st.size > 30 * 1024 * 1024) return { mtime: st.mtimeMs, error: 'This image is over 30 MB' };
+      return { mtime: st.mtimeMs, image: `data:${type};base64,${(await fs.promises.readFile(p)).toString('base64')}`, size: st.size };
+    }
     if (st.size > 5 * 1024 * 1024) return { mtime: st.mtimeMs, error: 'This file is over 5 MB' };
     const buf = await fs.promises.readFile(p);
     if (buf.subarray(0, 8000).includes(0)) return { mtime: st.mtimeMs, error: 'This isn’t a text file' };
     return { mtime: st.mtimeMs, text: buf.toString('utf8').replace(/^﻿/, '') };
   } catch (e) { return { error: e.code === 'ENOENT' ? 'The file is gone' : e.message }; }
 });
-ipcMain.handle('fs:mtime', async (_e, p) => { try { return (await fs.promises.stat(p)).mtimeMs; } catch { return null; } });
+// Viewer tiles follow their file: its folder is watched (editors save by replacing the file, which a
+// watch on the file itself would lose), one watcher per folder for every tile looking into it.
+const dirWatches = new Map(); // folder (lower case) -> { watcher, files: Map<file lower case, Set<{ w, key }>> }
+function watchFile(w, key, file) {
+  const dir = path.dirname(file), dk = dir.toLowerCase(), fk = file.toLowerCase();
+  let d = dirWatches.get(dk);
+  if (!d) {
+    d = { files: new Map(), timers: new Map() };
+    try {
+      d.watcher = fs.watch(dir, (_ev, name) => {
+        const targets = name ? [path.join(dir, String(name)).toLowerCase()] : [...d.files.keys()];
+        for (const t of targets) {
+          if (!d.files.has(t)) continue;
+          clearTimeout(d.timers.get(t));
+          d.timers.set(t, setTimeout(() => { for (const s of d.files.get(t) || []) sendTo(s.w, 'fs:changed', s.key); }, 120));
+        }
+      });
+      d.watcher.on('error', () => {});
+    } catch { return; }
+    dirWatches.set(dk, d);
+  }
+  if (!d.files.has(fk)) d.files.set(fk, new Set());
+  d.files.get(fk).add({ w, key });
+}
+function unwatchFile(w, key) {
+  for (const [dk, d] of dirWatches) {
+    for (const [fk, subs] of d.files) {
+      for (const s of subs) if (s.w === w && (key == null || s.key === key)) subs.delete(s);
+      if (!subs.size) { d.files.delete(fk); clearTimeout(d.timers.get(fk)); }
+    }
+    if (!d.files.size) { try { d.watcher.close(); } catch {} dirWatches.delete(dk); }
+  }
+}
+ipcMain.on('fs:watch', (e, { key, file }) => { const w = winOf(e); unwatchFile(w, key); if (file) watchFile(w, key, file); });
+
+// Every file in a folder, for Quick open: git's list (tracked + untracked, minus ignored) in a repository,
+// otherwise a walk that skips the usual build and dependency folders. Kept for 20 seconds.
+const SKIP_DIRS = new Set(['node_modules', '.git', '.hg', '.svn', 'dist', 'build', 'out', 'target', '.gradle', '.idea', '.vs', '.next', '.nuxt',
+  '__pycache__', '.venv', 'venv', '.cache', 'bin', 'obj', '.codegraph', 'coverage']);
+const fileLists = new Map(); // folder -> { at, value: Promise<string[]> }
+async function listFiles(root) {
+  const git = await run('git', ['-C', root, 'ls-files', '-co', '--exclude-standard', '-z']);
+  if (git.code === 0) return git.stdout.split('\0').filter(Boolean).slice(0, 50000);
+  const out = [];
+  async function walk(dir, rel, depth) {
+    if (out.length >= 50000 || depth > 12) return;
+    let ents;
+    try { ents = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const d of ents) {
+      if (d.isDirectory()) { if (!SKIP_DIRS.has(d.name) && !d.name.startsWith('.')) await walk(path.join(dir, d.name), rel + d.name + '/', depth + 1); }
+      else if (d.isFile()) out.push(rel + d.name);
+    }
+  }
+  await walk(root, '', 0);
+  return out;
+}
+ipcMain.handle('fs:files', (_e, root) => {
+  const c = fileLists.get(root);
+  if (c && Date.now() - c.at < 20000) return c.value;
+  const value = listFiles(root);
+  fileLists.set(root, { at: Date.now(), value });
+  return value;
+});
+
+// Git in the sidebar and the diff tile. Status: the branch, and each changed path (relative to the
+// repository's top folder, with / separators) with its two-letter porcelain code.
+ipcMain.handle('git:status', async (_e, dir) => {
+  const top = await run('git', ['-C', dir, 'rev-parse', '--show-toplevel']);
+  if (top.code !== 0) return null;
+  const r = await run('git', ['-C', dir, 'status', '--porcelain=v1', '-b', '-z', '-uall']);
+  if (r.code !== 0) return null;
+  const parts = r.stdout.split('\0');
+  let branch = '', ahead = 0, behind = 0;
+  const files = [];
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (!p) continue;
+    if (p.startsWith('## ')) {
+      const h = p.slice(3).replace(/^No commits yet on /, '');
+      branch = h.startsWith('HEAD (no branch)') ? 'detached' : h.split('...')[0].split(' ')[0];
+      ahead = +(/ahead (\d+)/.exec(p)?.[1] || 0); behind = +(/behind (\d+)/.exec(p)?.[1] || 0);
+      continue;
+    }
+    const code = p.slice(0, 2), file = p.slice(3);
+    // The old name follows a rename.
+    files.push({ code, path: file, ...(code[0] === 'R' || code[0] === 'C' ? { orig: parts[++i] } : {}) });
+  }
+  return { root: top.stdout.trim().replace(/\//g, path.sep), branch, ahead, behind, files };
+});
+// One file's changes against HEAD (staged and not), as a unified diff. An untracked file is all added lines.
+ipcMain.handle('git:diff', async (_e, { root, file, code }) => {
+  if (code === '??') {
+    try {
+      const buf = await fs.promises.readFile(path.join(root, file));
+      if (buf.subarray(0, 8000).includes(0)) return { binary: true };
+      if (buf.length > 2 * 1024 * 1024) return { error: 'This file is over 2 MB' };
+      const lines = buf.toString('utf8').replace(/\r/g, '').split('\n');
+      if (lines.at(-1) === '') lines.pop();
+      return { text: `@@ -0,0 +1,${lines.length} @@ new file\n` + lines.map(l => '+' + l).join('\n') };
+    } catch (e) { return { error: e.message }; }
+  }
+  const head = await run('git', ['-C', root, 'rev-parse', '--verify', '-q', 'HEAD']);
+  const r = await run('git', ['-C', root, 'diff', '--no-color', '--no-ext-diff', '-M', head.code === 0 ? 'HEAD' : '--cached', '--', file]);
+  if (r.code !== 0) return { error: r.stderr.trim() || 'git diff failed' };
+  if (/^Binary files /m.test(r.stdout)) return { binary: true };
+  return { text: r.stdout.replace(/^[\s\S]*?(?=^@@)/m, '') };
+});
+
+// Committing from the diff tile. Git never waits on a prompt (it would hang with no terminal); a login it
+// needs comes from Git Credential Manager's own window. Each resolves to { ok, out } with git's messages.
+const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
+const git = async (root, args) => {
+  const r = await run('git', ['-C', root, ...args], { env: gitEnv, timeout: 120000 });
+  return { ok: r.code === 0, out: (r.stdout + r.stderr).trim() };
+};
+// files: [{ path, orig }] relative to root. Only those are committed; anything else staged stays staged.
+ipcMain.handle('git:commit', async (_e, { root, files, message, amend, push }) => {
+  const paths = [...new Set(files.flatMap(f => [f.path, f.orig].filter(Boolean)))];
+  let r = await git(root, ['add', '-A', '--', ...paths]);
+  if (!r.ok) return r;
+  r = await git(root, ['commit', ...(amend ? ['--amend'] : []), '-m', message, '--', ...paths]);
+  if (!r.ok || !push) return r;
+  const p = await pushBranch(root);
+  return { ok: p.ok, out: `${r.out}\n\n${p.out}`, pushed: p.ok };
+});
+async function pushBranch(root) {
+  const up = await git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  return git(root, up.ok ? ['push'] : ['push', '-u', 'origin', 'HEAD']);
+}
+ipcMain.handle('git:push', (_e, root) => pushBranch(root));
+ipcMain.handle('git:pull', (_e, root) => git(root, ['pull']));
+// Roll back: a tracked file goes back to its last commit; a new one is deleted.
+ipcMain.handle('git:rollback', async (_e, { root, file }) => {
+  const full = path.join(root, file.path);
+  if (file.code === '??' || file.code[0] === 'A') {
+    if (file.code[0] === 'A') await git(root, ['rm', '--cached', '-q', '--', file.path]);
+    try { await fs.promises.rm(full, { force: true }); return { ok: true, out: '' }; } catch (e) { return { ok: false, out: e.message }; }
+  }
+  return git(root, ['restore', '--source=HEAD', '--staged', '--worktree', '--', file.path, ...(file.orig ? [file.orig] : [])]);
+});
+ipcMain.handle('git:branches', async (_e, root) => {
+  const r = await git(root, ['branch', '--format=%(refname:short)']);
+  return r.ok ? r.out.split(/\r?\n/).filter(Boolean) : [];
+});
+ipcMain.handle('git:checkout', (_e, { root, branch, create }) => git(root, create ? ['switch', '-c', branch] : ['switch', branch]));
+ipcMain.handle('git:last-message', async (_e, root) => (await git(root, ['log', '-1', '--format=%B'])).out);
+
+// A question with buttons, as a Windows dialog over the window that asks. Resolves to the button's index.
+ipcMain.handle('ask', (e, { message, detail, buttons, cancelId }) =>
+  dialog.showMessageBox(winOf(e), { type: 'question', title: 'Operant', message, detail, buttons, defaultId: 0, cancelId, noLink: true }).then(r => r.response));
 ipcMain.on('fs:open', (_e, p) => shell.openPath(p));
 ipcMain.on('fs:reveal', (_e, p) => shell.showItemInFolder(p));
 // Where the IDE presets install when their launcher isn't on PATH (JetBrains never adds itself). Newest version first.
@@ -363,24 +560,25 @@ const IDE_PATHS = {
   rider: () => [path.join(LOCAL, 'JetBrains', 'Toolbox', 'scripts', 'rider.cmd'), ...inDirs(path.join(PF, 'JetBrains'), 'Rider', 'bin\\rider64.exe'), ...inDirs(path.join(PF, 'JetBrains'), 'JetBrains Rider', 'bin\\rider64.exe')],
   subl: () => [path.join(PF, 'Sublime Text', 'subl.exe'), path.join(PF, 'Sublime Text 3', 'subl.exe')],
 };
-function ideCommand() {
+async function ideCommand() {
   if (config.ide === 'custom') return (config.ideCommand || '').trim();
   const cmd = config.ide || 'code';
-  if (!IDE_PATHS[cmd] || spawnSync('where', [cmd], { windowsHide: true }).status === 0) return cmd;
+  if (!IDE_PATHS[cmd] || (await run('where', [cmd])).code === 0) return cmd;
   const found = IDE_PATHS[cmd]().find(p => fs.existsSync(p));
   return found ? `"${found}"` : cmd;
 }
-ipcMain.handle('codegraph:version', () => {
-  const r = spawnSync('codegraph', ['--version'], { shell: true, env: withFreshPath({ ...process.env }), windowsHide: true, encoding: 'utf8' });
-  return r.status === 0 && (r.stdout || '').trim() || null;
-});
+const codegraphVersion = async () => {
+  const r = await run('codegraph', ['--version'], { shell: true, env: await freshEnv() });
+  return r.code === 0 && r.stdout.trim() || null;
+};
+ipcMain.handle('codegraph:version', codegraphVersion);
 // Which pinned projects to index as Operant starts, asked once per run (the first window gets the answer):
 // with 'changed', indexed projects with at least codegraphChangedFiles files changed since their last index;
 // with 'all', every pinned project, including ones CodeGraph hasn't set up yet.
 let codegraphStartupDone = false;
-const codegraphPending = dir => new Promise(resolve => {
+const codegraphPending = async dir => { const env = await freshEnv(); return new Promise(resolve => {
   let out = '';
-  const p = spawn('codegraph', ['status', '--json', `"${dir}"`], { shell: true, env: withFreshPath({ ...process.env }), windowsHide: true });
+  const p = spawn('codegraph', ['status', '--json', `"${dir}"`], { shell: true, env, windowsHide: true });
   const timer = setTimeout(() => { try { p.kill(); } catch {} resolve(0); }, 30000);
   p.stdout.on('data', d => { out += d; });
   p.on('error', () => { clearTimeout(timer); resolve(0); });
@@ -388,22 +586,21 @@ const codegraphPending = dir => new Promise(resolve => {
     clearTimeout(timer);
     try { const c = JSON.parse(out).pendingChanges || {}; resolve((c.added || 0) + (c.modified || 0) + (c.removed || 0)); } catch { resolve(0); }
   });
-});
+}); };
 ipcMain.handle('codegraph:startup', async () => {
   if (codegraphStartupDone || config.codegraphOnStartup === 'off') return [];
   codegraphStartupDone = true;
   const seen = new Set();
   const projects = [...config.projects, ...(config.projectGroups || []).flatMap(g => g.projects || [])]
     .filter(p => p && isDir(p) && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
-  if (!projects.length || spawnSync('codegraph', ['--version'], { shell: true, env: withFreshPath({ ...process.env }), windowsHide: true }).status !== 0) return [];
+  if (!projects.length || !await codegraphVersion()) return [];
   if (config.codegraphOnStartup === 'all') return projects;
   const indexed = projects.filter(p => fs.existsSync(path.join(p, '.codegraph')));
   const counts = await Promise.all(indexed.map(codegraphPending));
   return indexed.filter((_, i) => counts[i] >= Math.max(1, config.codegraphChangedFiles || 1));
 });
 // Runs the IDE through cmd so .cmd launchers like code and cursor work. Resolves to an error message, or null.
-ipcMain.handle('ide:open', (_e, dir) => new Promise(resolve => {
-  const cmd = ideCommand();
+ipcMain.handle('ide:open', async (_e, dir) => { const cmd = await ideCommand(); return new Promise(resolve => {
   if (!cmd) return resolve('Set a custom IDE command in Settings › Sidebar');
   let child;
   try { child = spawn(`${cmd} "${dir}"`, { shell: true, cwd: dir, detached: true, stdio: 'ignore', windowsHide: true }); }
@@ -412,7 +609,7 @@ ipcMain.handle('ide:open', (_e, dir) => new Promise(resolve => {
   const timer = setTimeout(() => { child.unref(); resolve(null); }, 4000);
   child.on('error', err => { clearTimeout(timer); resolve(err.message); });
   child.on('exit', code => { clearTimeout(timer); resolve(code ? `"${cmd}" didn't start (exit ${code}). Is it installed and on PATH?` : null); });
-}));
+}); });
 
 ipcMain.on('win:minimize', e => winOf(e)?.minimize());
 ipcMain.on('win:maximize', e => { const w = winOf(e); if (w?.isMaximized()) w.unmaximize(); else w?.maximize(); });
@@ -492,9 +689,16 @@ ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 // Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, at most once a minute.
 // Operant never refreshes that login; Claude Code does whenever it runs.
 let limitsCache = null;
-ipcMain.handle('usage:limits', async () => {
+async function fetchLimits() {
   if (!config.planLimits) return null;
   if (limitsCache && Date.now() - limitsCache.at < 60000) return limitsCache;
+  const got = await askLimits();
+  broadcast('usage:limits', got);
+  limitAlerts(got);
+  return got;
+}
+ipcMain.handle('usage:limits', () => fetchLimits());
+async function askLimits() {
   let token;
   try { token = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8')).claudeAiOauth?.accessToken; } catch {}
   if (!token) return (limitsCache = { at: Date.now(), error: 'Sign in to Claude Code to see your plan limits' });
@@ -511,7 +715,30 @@ ipcMain.handle('usage:limits', async () => {
   } catch (e) {
     return (limitsCache = { at: Date.now(), error: `Couldn't read plan limits (${e.name === 'TimeoutError' ? 'timed out' : e.message})` });
   }
-});
+}
+
+// Plan-limit alerts: a notification when the 5-hour session passes 80% and 95%, once each per session window.
+// The limits are asked for every 2 minutes while the pill or the alerts want them.
+const alerted = new Set(); // "<resets>|<threshold>"
+function limitAlerts(l) {
+  const s = l?.session;
+  if (!config.planLimitAlerts || !config.notifications || !s || !Notification.isSupported()) return;
+  const hit = [95, 80].find(t => s.used >= t);
+  if (!hit || alerted.has(`${s.resets}|${hit}`)) return;
+  [80, 95].filter(t => t <= hit).forEach(t => alerted.add(`${s.resets}|${t}`));
+  const at = s.resets ? new Date(s.resets).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const n = new Notification({ title: `Claude session limit ${Math.round(s.used)}% used`, body: at ? `It resets at ${at}` : 'Your 5-hour session is nearly used up', icon: ICON });
+  liveNotes.add(n);
+  n.on('click', () => bringUp(primary()));
+  n.show();
+}
+let limitsT = null;
+function pollLimits() {
+  clearInterval(limitsT); limitsT = null;
+  if (!config.planLimits || !(config.tokenUsage || config.planLimitAlerts)) return;
+  fetchLimits();
+  limitsT = setInterval(fetchLimits, 120000);
+}
 
 // ---------------------------------------------------------- subagent watcher
 // Layout on disk: projects/<project>/<sessionId>/subagents/agent-<id>.jsonl (+ .meta.json)
@@ -705,6 +932,7 @@ function createWindow(startDir = null, restore = null) {
     if (lastFocused === w) lastFocused = null;
     // Its terminals go with it.
     for (const [id, p] of ptys) if (p.owner === w) { try { p.kill(); } catch {} ptys.delete(id); }
+    unwatchFile(w);
   });
   w.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   w.webContents.once('did-finish-load', () => {
@@ -714,6 +942,7 @@ function createWindow(startDir = null, restore = null) {
     if (config.autoUpdate) updater.start();
     if (config.mediaControls) media.start();
     if (config.tokenUsage) usage.start();
+    pollLimits();
   });
   return w;
 }
@@ -775,6 +1004,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
+    editorCommand(); // warms the PATH and editor lookups before the first tile needs them
     createWindow(folderArg(process.argv), toRestore[0]);
     for (const s of toRestore.slice(1)) createWindow(null, s);
     // Restore once after an update; the next start is a normal one.

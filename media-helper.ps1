@@ -1,6 +1,7 @@
 # Operant media helper: reports what Windows is playing (the same session the volume flyout shows)
-# and runs the bar's media buttons. Started by media.js; one JSON line per change on stdout,
-# one command per line on stdin: toggle | next | prev | shuffle | focus | vol <0..1>.
+# and runs the bar's media buttons. Started by media.js; one JSON line per change on stdout (state,
+# { timeline }, or { art } when the cover changes), one command per line on stdin:
+# toggle | next | prev | shuffle | focus | vol <0..1>.
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -134,19 +135,31 @@ namespace OperantMedia {
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 
-    public static bool Focus(string app) {
-      if (string.IsNullOrEmpty(app)) return false;
-      foreach (var p in Process.GetProcesses()) {
-        string name = p.ProcessName.ToLowerInvariant();
-        if (!(name == app || app.StartsWith(name) || name.StartsWith(app))) continue;
-        IntPtr h = p.MainWindowHandle;
-        if (h == IntPtr.Zero) continue;
-        if (IsIconic(h)) ShowWindow(h, 9);
-        // Windows only lets the foreground app hand over the foreground; a tap of Alt counts as input and lifts that.
-        keybd_event(0x12, 0, 0, UIntPtr.Zero);
-        keybd_event(0x12, 0, 2, UIntPtr.Zero);
-        SetForegroundWindow(h);
-        return true;
+    static bool Raise(IntPtr h) {
+      if (h == IntPtr.Zero) return false;
+      if (IsIconic(h)) ShowWindow(h, 9);
+      // Windows only lets the foreground app hand over the foreground; a tap of Alt counts as input and lifts that.
+      keybd_event(0x12, 0, 0, UIntPtr.Zero);
+      keybd_event(0x12, 0, 2, UIntPtr.Zero);
+      SetForegroundWindow(h);
+      return true;
+    }
+
+    public static bool Focus(string app, string title) {
+      if (!string.IsNullOrEmpty(app)) {
+        foreach (var p in Process.GetProcesses()) {
+          string name = p.ProcessName.ToLowerInvariant();
+          if (!(name == app || app.StartsWith(name) || name.StartsWith(app))) continue;
+          if (Raise(p.MainWindowHandle)) return true;
+        }
+      }
+      // No process name matched (e.g. an unmapped AUMID): fall back to the window whose title has the track.
+      if (!string.IsNullOrEmpty(title)) {
+        foreach (var p in Process.GetProcesses()) {
+          if (p.MainWindowHandle == IntPtr.Zero) continue;
+          if (p.MainWindowTitle.IndexOf(title, StringComparison.OrdinalIgnoreCase) < 0) continue;
+          if (Raise(p.MainWindowHandle)) return true;
+        }
       }
       return false;
     }
@@ -169,11 +182,24 @@ function Await($op, [Type]$type) {
 $ns = 'Windows.Media.Control.GlobalSystemMediaTransportControlsSession'
 $manager = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Type]"${ns}Manager")
 
-# The media app's name as a process name: 'Spotify.exe' -> 'spotify', 'SpotifyAB.SpotifyMusic_x!Spotify' -> 'spotify'.
+# The media app's name as a process name: 'Spotify.exe' -> 'spotify', 'SpotifyAB.SpotifyMusic_x!Spotify' -> 'spotify',
+# a bare hex AUMID (Firefox's build) -> 'firefox'.
 function AppKey($aumid) {
   if (-not $aumid) { return '' }
+  if ($aumid -match '^[0-9A-Fa-f]{16}$') { return 'firefox' }
   $k = ($aumid -split '!')[-1] -replace '\.exe$', ''
   return $k.ToLowerInvariant()
+}
+
+# A friendly display name for the app key ('spotify' -> 'Spotify').
+function AppName($key) {
+  switch ($key) {
+    'firefox' { return 'Firefox' }
+    'spotify' { return 'Spotify' }
+    'chrome' { return 'Chrome' }
+    'msedge' { return 'Edge' }
+    default { if (-not $key) { return '' } return (Get-Culture).TextInfo.ToTitleCase($key) }
+  }
 }
 
 function Thumbnail($props) {
@@ -192,7 +218,19 @@ function Thumbnail($props) {
   } catch { return $null }
 }
 
-$lastTrack = $null; $lastArt = $null; $lastJson = ''
+$lastTrack = $null; $lastArt = $null; $artChanged = $false; $lastJson = ''
+$lastVol = -1.0; $lastVolIsApp = $false; $lastVolCheck = [DateTime]::MinValue
+
+# Volume has no session event, so it's only re-read (via the COM audio enumeration) every few seconds.
+function CheckVolume($app, [switch]$Force) {
+  if (-not $Force -and (Get-Date) -lt $script:lastVolCheck.AddSeconds(3)) { return }
+  $script:lastVolCheck = Get-Date
+  $isApp = $false
+  $vol = -1
+  try { $vol = [OperantMedia.Volume]::Get($app, [ref]$isApp) } catch {}
+  $script:lastVol = [math]::Round($vol, 3)
+  $script:lastVolIsApp = $isApp
+}
 
 function State {
   $session = $manager.GetCurrentSession()
@@ -201,26 +239,28 @@ function State {
   $props = Await ($session.TryGetMediaPropertiesAsync()) ([Type]"${ns}MediaProperties")
   $app = AppKey $session.SourceAppUserModelId
   $track = "$app|$($props.Title)|$($props.Artist)|$($props.AlbumTitle)"
-  if ($track -ne $script:lastTrack) { $script:lastTrack = $track; $script:lastArt = Thumbnail $props }
-  $isApp = $false
-  $vol = -1
-  try { $vol = [OperantMedia.Volume]::Get($app, [ref]$isApp) } catch {}
+  if ($track -ne $script:lastTrack) {
+    $script:lastTrack = $track; $script:lastArt = Thumbnail $props; $script:artChanged = $true
+    CheckVolume $app -Force
+  } else {
+    CheckVolume $app
+  }
   $c = $info.Controls
   return @{
     active = $true
     app = $session.SourceAppUserModelId
+    appName = AppName $app
     title = $props.Title
     artist = $props.Artist
     album = $props.AlbumTitle
-    art = $script:lastArt
     playing = ($info.PlaybackStatus -eq 'Playing')
     shuffle = [bool]$info.IsShuffleActive
     canShuffle = [bool]$c.IsShuffleEnabled
     canPrev = [bool]$c.IsPreviousEnabled
     canNext = [bool]$c.IsNextEnabled
     canPlayPause = [bool]($c.IsPlayPauseToggleEnabled -or $c.IsPlayEnabled -or $c.IsPauseEnabled)
-    volume = [math]::Round($vol, 3)
-    appVolume = $isApp
+    volume = $script:lastVol
+    appVolume = $script:lastVolIsApp
   }
 }
 
@@ -239,12 +279,15 @@ function Timeline {
   }
 }
 
+function Out-Line($line) { [Console]::Out.WriteLine($line); [Console]::Out.Flush() }
+
 $lastTimeline = ''
 function Emit {
   $json = (State) | ConvertTo-Json -Compress
-  if ($json -ne $script:lastJson) { $script:lastJson = $json; [Console]::Out.WriteLine($json); [Console]::Out.Flush() }
+  if ($json -ne $script:lastJson) { $script:lastJson = $json; Out-Line $json }
+  if ($script:artChanged) { $script:artChanged = $false; Out-Line ((@{ art = $script:lastArt }) | ConvertTo-Json -Compress) }
   $tl = @{ timeline = (Timeline) } | ConvertTo-Json -Compress
-  if ($tl -ne $script:lastTimeline) { $script:lastTimeline = $tl; [Console]::Out.WriteLine($tl); [Console]::Out.Flush() }
+  if ($tl -ne $script:lastTimeline) { $script:lastTimeline = $tl; Out-Line $tl }
 }
 
 function Run($line) {
@@ -256,26 +299,71 @@ function Run($line) {
     'next' { [void](Await ($session.TrySkipNextAsync()) ([bool])) }
     'prev' { [void](Await ($session.TrySkipPreviousAsync()) ([bool])) }
     'shuffle' { [void](Await ($session.TryChangeShuffleActiveAsync(-not [bool]$session.GetPlaybackInfo().IsShuffleActive)) ([bool])) }
-    'focus' { [void][OperantMedia.Window]::Focus((AppKey $session.SourceAppUserModelId)) }
+    'focus' {
+      $props = Await ($session.TryGetMediaPropertiesAsync()) ([Type]"${ns}MediaProperties")
+      [void][OperantMedia.Window]::Focus((AppKey $session.SourceAppUserModelId), $props.Title)
+    }
     'vol' { [OperantMedia.Volume]::Set((AppKey $session.SourceAppUserModelId), [float][math]::Min([double]1, [math]::Max([double]0, [double]$parts[1]))) }
   }
 }
 
-# stdin is read asynchronously so the state keeps polling between commands; the helper exits when Operant closes stdin.
+# Rather than polling on a timer, subscribe to the session manager and current session so Emit only
+# runs on a real change. If Register-ObjectEvent can't hook these WinRT events on some system,
+# $eventsOk drops the helper back to a cheap 1s poll instead.
+$eventsOk = $true
+
+function Unsubscribe-Session {
+  foreach ($id in 'OperantMediaProps', 'OperantPlaybackInfo', 'OperantTimeline') {
+    Get-EventSubscriber -SourceIdentifier $id -ErrorAction SilentlyContinue | Unregister-Event
+  }
+}
+
+function Subscribe-Session($session) {
+  Unsubscribe-Session
+  if (-not $session) { return }
+  try {
+    Register-ObjectEvent -InputObject $session -EventName MediaPropertiesChanged -SourceIdentifier OperantMediaProps | Out-Null
+    Register-ObjectEvent -InputObject $session -EventName PlaybackInfoChanged -SourceIdentifier OperantPlaybackInfo | Out-Null
+    Register-ObjectEvent -InputObject $session -EventName TimelinePropertiesChanged -SourceIdentifier OperantTimeline | Out-Null
+  } catch { $script:eventsOk = $false }
+}
+
+try {
+  Register-ObjectEvent -InputObject $manager -EventName CurrentSessionChanged -SourceIdentifier OperantSessionChanged | Out-Null
+} catch { $eventsOk = $false }
+Subscribe-Session ($manager.GetCurrentSession())
+
+# stdin is read asynchronously so events keep being handled between commands; the helper exits when Operant closes stdin.
 $stdin = New-Object System.IO.StreamReader ([Console]::OpenStandardInput())
 $pending = $stdin.ReadLineAsync()
-$nextPoll = [DateTime]::MinValue
+$commandDue = [DateTime]::MinValue
+$fallbackPoll = [DateTime]::MinValue # only used if $eventsOk goes false
+$volPoll = [DateTime]::MinValue
+Emit
 while ($true) {
   if ($pending.IsCompleted) {
     $line = $pending.Result
     if ($null -eq $line) { break }
     try { Run $line } catch { [Console]::Error.WriteLine("command '$line' failed: $_") }
     $pending = $stdin.ReadLineAsync()
-    $nextPoll = (Get-Date).AddMilliseconds(150) # let the player catch up, then report
+    $commandDue = (Get-Date).AddMilliseconds(150) # let the player catch up, then report
   }
-  if ((Get-Date) -ge $nextPoll) {
-    try { Emit } catch { [Console]::Out.WriteLine((@{ active = $false; error = "$_" } | ConvertTo-Json -Compress)); [Console]::Out.Flush() }
-    $nextPoll = (Get-Date).AddMilliseconds(800)
+
+  $due = (Get-Date) -ge $commandDue
+  if ($due) { $commandDue = [DateTime]::MaxValue }
+  $events = Get-Event -ErrorAction SilentlyContinue
+  foreach ($e in $events) {
+    if ($e.SourceIdentifier -eq 'OperantSessionChanged') { Subscribe-Session ($manager.GetCurrentSession()) }
+    Remove-Event -EventIdentifier $e.EventIdentifier
+    $due = $true
+  }
+  if (-not $eventsOk -and (Get-Date) -ge $fallbackPoll) { $due = $true; $fallbackPoll = (Get-Date).AddSeconds(1) }
+  if ((Get-Date) -ge $volPoll) { $due = $true; $volPoll = (Get-Date).AddSeconds(3) }
+
+  if ($due) {
+    try { Emit } catch { Out-Line (@{ active = $false; error = "$_" } | ConvertTo-Json -Compress) }
   }
   Start-Sleep -Milliseconds 50
 }
+Unsubscribe-Session
+Unregister-Event -SourceIdentifier OperantSessionChanged -ErrorAction SilentlyContinue

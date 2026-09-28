@@ -143,7 +143,66 @@
       scheduleFit(w, instant ? 0 : 440);
     }
     ws.hint.style.opacity = ws.tree ? 0 : 1;
+    drawSplitters(i);
     refreshBar();
+  }
+
+  // The gaps between tiles are handles: drag one to resize the tiles on either side.
+  function drawSplitters(i) {
+    const ws = workspaces[i], A = area(), gap = cfg.gapsIn * 2, list = [];
+    if (ws.tree && ws.fullscreen == null) {
+      if (ws.layout === 'master') {
+        if (wsWins(i).length > 1) { const mw = (A.w - gap) * ws.mfact; list.push({ axis: 'h', x: A.x + mw, y: A.y, w: gap, h: A.h, r: A, master: true }); }
+      } else {
+        const walk = (n, r) => {
+          if (!n || n.win) return;
+          if (n.split === 'h') {
+            const w1 = (r.w - gap) * n.ratio;
+            list.push({ axis: 'h', x: r.x + w1, y: r.y, w: gap, h: r.h, r, node: n });
+            walk(n.a, { x: r.x, y: r.y, w: w1, h: r.h }); walk(n.b, { x: r.x + w1 + gap, y: r.y, w: r.w - w1 - gap, h: r.h });
+          } else {
+            const h1 = (r.h - gap) * n.ratio;
+            list.push({ axis: 'v', x: r.x, y: r.y + h1, w: r.w, h: gap, r, node: n });
+            walk(n.a, { x: r.x, y: r.y, w: r.w, h: h1 }); walk(n.b, { x: r.x, y: r.y + h1 + gap, w: r.w, h: r.h - h1 - gap });
+          }
+        };
+        walk(ws.tree, A);
+      }
+    }
+    const els = [...ws.el.querySelectorAll(':scope > .splitter')];
+    list.forEach((s, k) => {
+      let el = els[k];
+      if (!el) { el = document.createElement('div'); ws.el.appendChild(el); el.addEventListener('mousedown', e => startSplit(e, i, el)); }
+      el.className = `splitter ${s.axis}`;
+      el.split = s;
+      // At least 8px to grab, however small the gap.
+      const pad = Math.max(0, (8 - (s.axis === 'h' ? s.w : s.h)) / 2);
+      Object.assign(el.style, s.axis === 'h'
+        ? { left: s.x - pad + 'px', top: s.y + 'px', width: s.w + 2 * pad + 'px', height: s.h + 'px' }
+        : { left: s.x + 'px', top: s.y - pad + 'px', width: s.w + 'px', height: s.h + 2 * pad + 'px' });
+    });
+    els.slice(list.length).forEach(el => el.remove());
+  }
+  function startSplit(e, i, el) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const ws = workspaces[i], gap = cfg.gapsIn * 2, box = desktop.getBoundingClientRect(), s = el.split;
+    document.body.classList.add(s.axis === 'h' ? 'split-h' : 'split-v');
+    el.classList.add('drag');
+    const move = ev => {
+      const x = ev.clientX - box.left, y = ev.clientY - box.top;
+      if (s.master) ws.mfact = Math.min(0.85, Math.max(0.2, (x - s.r.x - gap / 2) / (s.r.w - gap)));
+      else if (s.axis === 'h') s.node.ratio = Math.min(0.9, Math.max(0.1, (x - s.r.x - gap / 2) / (s.r.w - gap)));
+      else s.node.ratio = Math.min(0.9, Math.max(0.1, (y - s.r.y - gap / 2) / (s.r.h - gap)));
+      layout(i, true);
+    };
+    const up = () => {
+      document.body.classList.remove('split-h', 'split-v');
+      el.classList.remove('drag');
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      focusKeys(focused());
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   }
 
   function scheduleFit(w, delay) {
@@ -171,7 +230,7 @@
     term.loadAddon(fit);
     const w = { id, kind, el, term, fit, title, alive: true, ws: current, lastActivity: Date.now(), closeIn: null };
     el.querySelector('.title').textContent = title;
-    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); closeWin(w); });
+    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
     el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
     term.attachCustomKeyEventHandler(e => handleTermKey(e, w));
     wins.set(id, w);
@@ -245,14 +304,26 @@
     try { w.fit?.fit(); } catch {}
   }
 
-  function setTitle(w, t) { w.title = t; w.el.querySelector('.title').textContent = t; if (w.el.classList.contains('focused')) refreshBar(); }
+  // Agents retitle their tiles many times a second while working, so only the title itself is redrawn.
+  function setTitle(w, t) {
+    if (w.title === t) return;
+    w.title = t; w.el.querySelector('.title').textContent = t;
+    if (focused() === w) drawBarTitle();
+  }
   function setBadge(w, html) { w.el.querySelector('.badge').innerHTML = html; }
 
   const defaultAgent = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
+  // Settings › Projects: what tiles opened in a project start with (the innermost project, if they nest).
+  function projectDefaults(dir) {
+    const d = cfg.projectDefaults || {};
+    const k = Object.keys(d).filter(p => dir && isUnder(dir, p)).sort((a, b) => b.length - a.length)[0];
+    return (k && d[k]) || {};
+  }
 
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
-  async function newTerminal(kind, cwd, { master = false, agentId = cfg.defaultAgent, run, title, resume, ws = current, focus = true, edit, icon } = {}) {
+  async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon } = {}) {
+    agentId ??= projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent;
     const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
     const name = title || (agent ? agent.name : 'Shell');
@@ -270,8 +341,18 @@
     setTitle(w, name);
     ptyWins.set(info.id, w);
     w.term.onData(d => { touch(w); w.lastInput = lastKey = Date.now(); w.typed = true; w.busySince = null; operant.writePty(info.id, d); });
-    // The shell sets its own path as the title; only keep titles the agent sets.
-    w.term.onTitleChange(t => t && !/\.exe$/i.test(t.trim()) && setTitle(w, t));
+    // The shell sets its own path as the title; only keep titles the agent sets. Vim's title ends in [+]
+    // while the file has unsaved changes (main sets its titlestring).
+    w.term.onTitleChange(t => {
+      if (edit) {
+        if (!t || /\.exe$/i.test(t.trim())) return;
+        w.tracksDirty = true;
+        const dirty = /\[\+\]\s*$/.test(t);
+        if (dirty !== w.dirty) { w.dirty = dirty; setTitle(w, name + (dirty ? ' ●' : '')); }
+        return;
+      }
+      if (t && !/\.exe$/i.test(t.trim())) setTitle(w, t);
+    });
     w.term.onBell(() => { if (kind === 'ai') notify(w, `${name} needs your attention`, shortPath(w.cwd || '')); });
     scheduleFit(w, 50);
     saveSession();
@@ -283,7 +364,8 @@
   // it), or in the viewer tile: Markdown rendered, other text with line numbers, reloaded when it changes.
 
   let editorName = null;
-  const refreshEditorName = () => operant.editorName().then(n => { editorName = n; });
+  let editorReady = null;
+  const refreshEditorName = () => (editorReady = operant.editorName().then(n => { editorName = n; }));
   refreshEditorName();
   const dirOf = p => String(p).replace(/[\\/][^\\/]*$/, '');
   const isMarkdown = p => /\.(md|markdown|mdx|mdown)$/i.test(p);
@@ -293,28 +375,52 @@
     [':q!', 'quit, no save'], ['u', 'undo'], ['Ctrl+R', 'redo'], ['/text', 'find'], ['n', 'next'], ['dd', 'cut line'], ['yy', 'copy line'], ['p', 'paste'],
     ['gg / G', 'top / end']].map(([k, d]) => `<span><kbd>${k}</kbd>${d}</span>`).join('') + '</div>';
 
-  function openEditor(file, near) {
-    return newTerminal('shell', dirOf(file), { edit: file, title: `${editorName || 'Editor'} · ${baseName(file)}`, icon: '✎', ws: near?.ws ?? current });
+  async function openEditor(file, { ws = current, focus = true } = {}) {
+    await editorReady;
+    return newTerminal('shell', dirOf(file), { edit: file, title: `${editorName || 'Editor'} · ${baseName(file)}`, icon: '✎', ws, focus });
   }
 
-  function openViewer(file) {
+  // Keys that save and quit each editor, for "Save and close". Vim's title tells Operant when its file
+  // has unsaved changes; with other editors, typing in the tile counts.
+  const SAVE_QUIT = { vim: '\x1b:wq\r', nvim: '\x1b:wq\r', nano: '\x0f\r\x18', micro: '\x13\x11', edit: '\x13\x11' };
+  async function requestClose(w) {
+    if (!w?.alive) return;
+    if (w.edit && w.ptyId && (w.tracksDirty ? w.dirty : w.typed)) {
+      const keys = cfg.editor === 'custom' ? null : SAVE_QUIT[String(editorName || '').toLowerCase()];
+      const buttons = keys ? ['Save and close', 'Discard', 'Cancel'] : ['Discard and close', 'Cancel'];
+      const r = await operant.ask({
+        message: w.tracksDirty ? `${baseName(w.edit)} has unsaved changes` : `${baseName(w.edit)} may have unsaved changes`,
+        detail: w.tracksDirty ? 'Closing the tile ends the editor.' : 'You typed in this editor. Closing the tile ends it without saving.',
+        buttons, cancelId: buttons.length - 1,
+      });
+      if (!w.alive || r === buttons.length - 1) return;
+      // The tile closes by itself when the editor quits; if saving fails, the editor stays open to say why.
+      if (keys && r === 0) { operant.writePty(w.ptyId, keys); return; }
+    }
+    closeWin(w);
+  }
+
+  const FIND_BAR = '<div class="find-bar hidden"><input placeholder="Find" spellcheck="false"><span class="find-n"></span>'
+    + '<button data-f="prev" title="Previous (Shift+Enter)">↑</button><button data-f="next" title="Next (Enter)">↓</button><button data-f="close" title="Close (Esc)">✕</button></div>';
+
+  function openViewer(file, { ws = current, focus = true } = {}) {
     const id = nextId++;
     const el = document.createElement('div');
     el.className = 'win view opening';
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">▤</span><span class="title"></span><span class="badge"></span>
       <span class="view-acts"><button data-v="source" title="Show the Markdown source">Source</button><button data-v="edit" title="Edit">✎</button>
       <button data-v="open" title="Open with Windows">↗</button></span><button class="x" title="Close">✕</button></div>
-      <div class="view-page" tabindex="-1"><div class="view-body"></div></div></div>`;
-    const w = { id, kind: 'view', el, term: null, file, title: baseName(file), alive: true, ws: current, lastActivity: Date.now(), closeIn: null,
+      <div class="view-wrap"><div class="view-page" tabindex="-1"><div class="view-body"></div></div>${FIND_BAR}</div></div>`;
+    const w = { id, kind: 'view', el, term: null, file, title: baseName(file), alive: true, ws, lastActivity: Date.now(), closeIn: null,
       cwd: dirOf(file), page: el.querySelector('.view-page'), source: false, mtime: null };
     el.querySelector('.title').textContent = w.title;
-    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); closeWin(w); });
+    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
     el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
     el.querySelector('.view-acts').addEventListener('click', e => {
       const b = e.target.closest('[data-v]');
       if (!b) return;
       if (b.dataset.v === 'source') { w.source = !w.source; drawView(w); }
-      else if (b.dataset.v === 'edit') openEditor(w.file, w);
+      else if (b.dataset.v === 'edit') openEditor(w.file, { ws: w.ws });
       else operant.openPath(w.file);
     });
     w.page.addEventListener('click', e => {
@@ -325,11 +431,17 @@
       if (/^https?:\/\//i.test(href)) return operant.openLink(href);
       if (href.startsWith('#')) return w.page.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ behavior: 'smooth' });
       const target = resolvePath(dirOf(w.file), decodeURIComponent(href.split('#')[0]));
-      operant.isDir(target).then(d => { if (d) return; w.file = target; w.cwd = dirOf(target); setTitle(w, baseName(target)); updateBadge(w); w.page.scrollTop = 0; loadView(w); });
+      operant.isDir(target).then(d => {
+        if (d) return;
+        w.file = target; w.cwd = dirOf(target); setTitle(w, baseName(target)); updateBadge(w); w.page.scrollTop = 0;
+        operant.watchFile(w.id, w.file); loadView(w); saveSession();
+      });
     });
+    findBar(w);
     wins.set(id, w);
-    mount(w, current, null);
+    mount(w, ws, null, { focus });
     updateBadge(w);
+    operant.watchFile(w.id, w.file);
     loadView(w);
     saveSession();
     return w;
@@ -345,44 +457,365 @@
   async function loadView(w) {
     const r = await operant.readFile(w.file);
     if (!w.alive) return;
-    w.mtime = r.mtime ?? null; w.text = r.text; w.error = r.error;
+    Object.assign(w, { mtime: r.mtime ?? null, text: r.text, image: r.image, size: r.size, error: r.error });
     drawView(w);
   }
 
+  const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' bytes';
   function drawView(w) {
-    const body = w.el.querySelector('.view-body'), md = isMarkdown(w.file) && !w.source, top = w.page.scrollTop;
+    const body = w.el.querySelector('.view-body'), md = isMarkdown(w.file) && !w.source, top = w.page.scrollTop, left = w.page.scrollLeft;
     const btn = w.el.querySelector('[data-v="source"]');
     btn.hidden = !isMarkdown(w.file);
     btn.textContent = w.source ? 'Rendered' : 'Source';
     btn.title = w.source ? 'Show it rendered' : 'Show the Markdown source';
+    w.el.querySelector('[data-v="edit"]').hidden = !!w.image;
     w.el.classList.toggle('md', md);
     if (w.error) body.innerHTML = `<div class="view-msg">${esc(w.error)}<br><button class="btn" data-v2="open">Open with Windows</button></div>`;
-    else if (md) body.innerHTML = `<article class="md-doc">${MdView.render(w.text)}</article>`;
-    else {
+    else if (w.image) {
+      body.innerHTML = `<div class="view-img"><img alt=""><div class="view-cap"></div></div>`;
+      const img = body.querySelector('img');
+      img.onload = () => { body.querySelector('.view-cap').textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${fmtBytes(w.size || 0)}`; };
+      img.src = w.image;
+    } else if (md) {
+      body.innerHTML = `<article class="md-doc">${MdView.render(w.text)}</article>`;
+      body.querySelectorAll('pre.md-code[data-lang]').forEach(pre => {
+        const l = Highlight.lang(pre.dataset.lang);
+        if (l) pre.firstChild.innerHTML = Highlight.lines(pre.textContent, l).join('\n');
+      });
+    } else {
       const lines = w.text.split('\n'), shown = lines.slice(0, 20000);
-      body.innerHTML = `<pre class="view-src">${shown.map((l, i) => `<span class="ln">${i + 1}</span>${esc(l.replace(/\r$/, ''))}`).join('\n')}</pre>`
+      const l = w.text.length < 3e6 && Highlight.lang(w.file);
+      const html = l ? Highlight.lines(shown.join('\n'), l) : shown.map(x => esc(x.replace(/\r$/, '')));
+      body.innerHTML = `<pre class="view-src">${html.map((x, i) => `<span class="ln">${i + 1}</span>${x}`).join('\n')}</pre>`
         + (lines.length > shown.length ? `<div class="view-msg">Showing the first ${shown.length.toLocaleString()} of ${lines.length.toLocaleString()} lines</div>` : '');
     }
     body.querySelector('[data-v2="open"]')?.addEventListener('click', () => operant.openPath(w.file));
-    w.page.scrollTop = top;
+    w.page.scrollTop = top; w.page.scrollLeft = left;
+    if (w.find?.q) runFind(w, true);
   }
 
-  // Viewers follow their file as it changes (an agent writing it, or the editor tile saving it).
-  setInterval(async () => {
-    for (const w of wins.values()) {
-      if (w.kind !== 'view' || !w.alive || w.loading) continue;
-      w.loading = true;
-      const m = await operant.fileMtime(w.file);
-      w.loading = false;
-      if (m !== w.mtime) loadView(w);
+  // Viewers follow their file as it changes (an agent writing it, or the editor tile saving it): main
+  // watches the file's folder and says when it changed.
+  operant.on('fs:changed', key => { const w = wins.get(Number(key)); if (w?.alive && w.kind === 'view') loadView(w); });
+
+  // ------------------------------------------------------------- find in page
+  // Ctrl+F in a viewer or diff tile: every match marked, Enter and Shift+Enter step through them.
+
+  function findBar(w) {
+    const bar = w.el.querySelector('.find-bar'), input = bar.querySelector('input');
+    w.find = { bar, input, q: '', k: 0, n: 0 };
+    input.addEventListener('input', () => { w.find.q = input.value; w.find.k = 0; runFind(w); });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); stepFind(w, e.shiftKey ? -1 : 1); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind(w); }
+    });
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-f]');
+      if (!b) return;
+      if (b.dataset.f === 'close') closeFind(w); else stepFind(w, b.dataset.f === 'prev' ? -1 : 1);
+    });
+  }
+  function openFind(w) {
+    if (!w?.find) return;
+    w.find.bar.classList.remove('hidden');
+    w.find.input.focus(); w.find.input.select();
+    if (w.find.input.value) { w.find.q = w.find.input.value; runFind(w, true); }
+  }
+  function closeFind(w) {
+    w.find.bar.classList.add('hidden');
+    w.find.q = '';
+    clearMarks(w);
+    focusKeys(w);
+  }
+  const findRoot = w => w.el.querySelector(w.kind === 'diff' ? '.diff-body' : '.view-body');
+  function clearMarks(w) {
+    const root = findRoot(w);
+    const marks = root.querySelectorAll('mark.hit');
+    if (!marks.length) return;
+    marks.forEach(m => m.replaceWith(...m.childNodes));
+    root.normalize();
+  }
+  function runFind(w, keepPlace = false) {
+    clearMarks(w);
+    const f = w.find, q = f.q.toLowerCase(), root = findRoot(w);
+    f.n = 0;
+    if (q) {
+      // Matches can span elements (a highlighted keyword and the bracket after it), so the text nodes are
+      // searched as one string and each node wraps its own share of each match.
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT,
+        { acceptNode: n => n.parentElement.closest('.ln, .dl-n') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+      const nodes = [];
+      let text = '';
+      for (let n; (n = walker.nextNode());) { nodes.push([n, text.length]); text += n.data; }
+      const low = text.toLowerCase(), hits = [];
+      for (let i = low.indexOf(q); i >= 0 && hits.length < 5000; i = low.indexOf(q, i + q.length)) hits.push(i);
+      f.n = hits.length;
+      let m0 = 0;
+      for (const [node, start] of nodes) {
+        const end = start + node.data.length;
+        while (m0 < hits.length && hits[m0] + q.length <= start) m0++;
+        const segs = [];
+        for (let m = m0; m < hits.length && hits[m] < end; m++) segs.push([Math.max(hits[m], start) - start, Math.min(hits[m] + q.length, end) - start, m]);
+        for (const [a, b, m] of segs.reverse()) {
+          const mid = node.splitText(a);
+          mid.splitText(b - a);
+          const mark = document.createElement('mark');
+          mark.className = 'hit'; mark.dataset.m = m;
+          mid.replaceWith(mark); mark.appendChild(mid);
+        }
+      }
     }
-  }, 1500);
+    if (!keepPlace || f.k >= f.n) f.k = 0;
+    showFind(w, !keepPlace);
+  }
+  function stepFind(w, d) {
+    const f = w.find;
+    if (!f.n) return;
+    f.k = (f.k + d + f.n) % f.n;
+    showFind(w, true);
+  }
+  function showFind(w, scroll) {
+    const f = w.find, root = findRoot(w);
+    root.querySelectorAll('mark.hit.cur').forEach(m => m.classList.remove('cur'));
+    const cur = root.querySelectorAll(`mark.hit[data-m="${f.k}"]`);
+    cur.forEach(m => m.classList.add('cur'));
+    if (scroll) cur[0]?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    f.bar.querySelector('.find-n').textContent = !f.q ? '' : f.n ? `${f.k + 1} of ${f.n}${f.n >= 5000 ? '+' : ''}` : 'No matches';
+  }
+
+  // ------------------------------------------------------------- diff tile
+  // What changed in a project since the last commit, file by file: staged, unstaged and new files.
+
+  // A porcelain status code -> [letter, class]: modified, added (new, renamed), deleted, conflict.
+  function gitKind(code) {
+    if (code === '??') return ['U', 'a'];
+    if (/U|AA|DD/.test(code)) return ['!', 'c'];
+    if (code.includes('D')) return ['D', 'd'];
+    if (code.includes('A')) return ['A', 'a'];
+    if (code.includes('R') || code.includes('C')) return ['R', 'a'];
+    return ['M', 'm'];
+  }
+  const GIT_NAMES = { U: 'New, not added to git yet', A: 'Added', D: 'Deleted', R: 'Renamed', M: 'Modified', '!': 'Conflict' };
+
+  // IntelliJ-style committing: tick the files (all are ticked to start), write a message, Commit or
+  // Commit and Push (Ctrl+Enter commits). The bar has the branch (click to switch), Pull and Push.
+  function openDiff(dir, { ws = current, focus = true } = {}) {
+    const open = [...wins.values()].find(x => x.kind === 'diff' && x.alive && normPath(x.cwd) === normPath(dir));
+    if (open && focus) { if (open.ws !== current) switchWorkspace(open.ws); focusWin(open); loadDiff(open); return open; }
+    const id = nextId++;
+    const el = document.createElement('div');
+    el.className = 'win diff opening';
+    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">±</span><span class="title"></span><span class="badge"></span>
+      <span class="view-acts"><button data-v="branch" class="git-branch" title="Switch branch"></button><button data-v="pull" title="Pull from the remote">↓ Pull</button>
+      <button data-v="push" title="Push commits to the remote">↑ Push</button><button data-v="refresh" title="Refresh">⟳</button></span><button class="x" title="Close">✕</button></div>
+      <div class="diff-wrap"><div class="diff-side"><label class="diff-all"><input type="checkbox" checked><span></span></label><div class="diff-files"></div>
+        <div class="commit-box"><textarea class="commit-msg" placeholder="Commit message" spellcheck="true"></textarea>
+        <div class="commit-row"><label class="commit-amend" title="Change the last commit instead of making a new one"><input type="checkbox"> Amend</label><span class="commit-status"></span></div>
+        <div class="commit-row"><button class="btn primary" data-c="commit" title="Ctrl+Enter">Commit</button><button class="btn" data-c="push">Commit and Push</button></div></div></div>
+      <div class="view-wrap"><div class="view-page diff-page" tabindex="-1"><div class="diff-body"></div></div>${FIND_BAR}</div></div></div>`;
+    const w = { id, kind: 'diff', el, term: null, title: `Changes · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
+      cwd: dir, page: el.querySelector('.diff-page'), files: [], sel: null, skip: new Set() };
+    el.querySelector('.title').textContent = w.title;
+    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
+    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
+    el.querySelector('.view-acts').addEventListener('click', e => {
+      const b = e.target.closest('[data-v]');
+      if (!b) return;
+      if (b.dataset.v === 'refresh') loadDiff(w);
+      else if (b.dataset.v === 'branch') branchMenu(w, b);
+      else gitOp(w, b.dataset.v);
+    });
+    const list = el.querySelector('.diff-files');
+    list.addEventListener('click', e => {
+      const b = e.target.closest('[data-file]');
+      if (!b) return;
+      if (e.target.matches('.df-check')) { if (e.target.checked) w.skip.delete(b.dataset.file); else w.skip.add(b.dataset.file); return markAll(w); }
+      w.sel = b.dataset.file;
+      el.querySelectorAll('.df-row').forEach(r => r.classList.toggle('on', r === b));
+      showDiffFile(w);
+    });
+    const fullOf = f => w.status.root + '\\' + f.replace(/\//g, '\\');
+    list.addEventListener('dblclick', e => {
+      const b = e.target.closest('[data-file]');
+      if (b && w.status && !e.target.matches('.df-check')) openViewer(fullOf(b.dataset.file), { ws: w.ws });
+    });
+    list.addEventListener('contextmenu', e => {
+      const b = e.target.closest('[data-file]');
+      if (!b || !w.status) return;
+      e.preventDefault();
+      const f = w.files.find(x => x.path === b.dataset.file), full = fullOf(f.path), gone = f.code.includes('D');
+      showMenu(e.clientX, e.clientY, [
+        ...(gone ? [] : [['▤', 'View', () => openViewer(full, { ws: w.ws })], ['✎', `Edit in ${editorName || 'editor'}`, () => openEditor(full, { ws: w.ws })],
+          ['▤', 'Show in Explorer', () => operant.reveal(full)]]),
+        '-',
+        ['↶', 'Roll back…', () => rollback(w, f)],
+      ]);
+    });
+    el.querySelector('.diff-all input').onchange = e => {
+      if (e.target.checked) w.skip.clear(); else w.files.forEach(f => w.skip.add(f.path));
+      list.querySelectorAll('.df-check').forEach(c => { c.checked = e.target.checked; });
+      markAll(w);
+    };
+    const msg = el.querySelector('.commit-msg');
+    msg.addEventListener('keydown', e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); commit(w, e.shiftKey); } });
+    el.querySelector('.commit-amend input').onchange = async e => {
+      if (e.target.checked && !msg.value.trim() && w.status) msg.value = (await operant.git('last-message', w.status.root)).trim();
+    };
+    el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => commit(w, b.dataset.c === 'push'));
+    findBar(w);
+    wins.set(id, w);
+    mount(w, ws, null, { focus });
+    loadDiff(w);
+    saveSession();
+    return w;
+  }
+
+  function markAll(w) {
+    const n = w.files.filter(f => !w.skip.has(f.path)).length, box = w.el.querySelector('.diff-all input');
+    box.checked = n === w.files.length && n > 0;
+    box.indeterminate = n > 0 && n < w.files.length;
+    w.el.querySelector('.diff-all span').textContent = w.files.length ? `${n} of ${w.files.length} file${w.files.length === 1 ? '' : 's'} to commit` : 'Nothing to commit';
+  }
+
+  // Git's own words when something goes wrong (a rejected push, a merge conflict, a hook).
+  const gitSaid = (what, out) => operant.ask({ message: what, detail: out || 'Git gave no reason.', buttons: ['OK'], cancelId: 0 });
+  function gitBusy(w, text) {
+    w.gitBusy = !!text;
+    w.el.querySelector('.commit-status').textContent = text || '';
+    w.el.querySelectorAll('[data-c], [data-v="pull"], [data-v="push"], [data-v="branch"]').forEach(b => { b.disabled = !!text; });
+  }
+
+  async function commit(w, push) {
+    if (w.gitBusy || !w.status) return;
+    const msg = w.el.querySelector('.commit-msg'), amend = w.el.querySelector('.commit-amend input');
+    const files = w.files.filter(f => !w.skip.has(f.path));
+    if (!msg.value.trim()) { msg.focus(); return toast('Write a commit message first'); }
+    if (!files.length && !amend.checked) return toast('Tick the files to commit');
+    gitBusy(w, push ? 'Committing and pushing…' : 'Committing…');
+    const r = await operant.git('commit', { root: w.status.root, files: files.map(f => ({ path: f.path, orig: f.orig })), message: msg.value.trim(), amend: amend.checked, push });
+    gitBusy(w, null);
+    if (!w.alive) return;
+    const committed = r.ok || (push && r.pushed === false);
+    if (committed) { toast(`<b>${amend.checked ? 'Amended' : 'Committed'}</b> ${files.length} file${files.length === 1 ? '' : 's'}${r.pushed ? ' and pushed' : ''}`); msg.value = ''; amend.checked = false; gitChanged(); }
+    if (!r.ok) gitSaid(committed ? 'Committed, but the push failed' : 'Git couldn’t commit', r.out);
+  }
+
+  async function gitOp(w, op) {
+    if (w.gitBusy || !w.status) return;
+    gitBusy(w, op === 'pull' ? 'Pulling…' : 'Pushing…');
+    const r = await operant.git(op, w.status.root);
+    gitBusy(w, null);
+    if (!r.ok) return gitSaid(op === 'pull' ? 'Git couldn’t pull' : 'Git couldn’t push', r.out);
+    toast(op === 'pull' ? `<b>Pulled</b> ${esc(r.out.split('\n').pop() || '')}` : '<b>Pushed</b>');
+    gitChanged();
+  }
+
+  async function rollback(w, f) {
+    const isNew = f.code === '??' || f.code[0] === 'A';
+    const r = await operant.ask({ message: `Roll back ${f.path.split('/').pop()}?`,
+      detail: isNew ? 'It’s a new file, so rolling it back deletes it.' : 'Its changes since the last commit are lost.', buttons: ['Roll back', 'Cancel'], cancelId: 1 });
+    if (r !== 0) return;
+    const res = await operant.git('rollback', { root: w.status.root, file: f });
+    if (!res.ok) return gitSaid('Git couldn’t roll it back', res.out);
+    gitChanged();
+  }
+
+  async function branchMenu(w, btn) {
+    if (w.gitBusy || !w.status) return;
+    const list = await operant.git('branches', w.status.root), r = btn.getBoundingClientRect();
+    const to = async (branch, create) => {
+      gitBusy(w, 'Switching…');
+      const res = await operant.git('checkout', { root: w.status.root, branch, create });
+      gitBusy(w, null);
+      if (!res.ok) return gitSaid(`Git couldn’t switch to ${branch}`, res.out);
+      toast(`On <b>${esc(branch)}</b>`);
+      gitChanged();
+    };
+    showMenu(r.left, r.bottom + 4, [
+      ...list.map(b => [b === w.status.branch ? '●' : '⎇', b, () => b !== w.status.branch && to(b)]),
+      '-',
+      ['＋', 'New branch…', () => {
+        const input = document.createElement('input');
+        input.className = 'branch-name'; input.placeholder = 'new-branch-name'; input.spellcheck = false;
+        btn.replaceWith(input); input.focus();
+        let done = false;
+        const finish = keep => { if (done) return; done = true; input.replaceWith(btn); const n = input.value.trim(); if (keep && n) to(n, true); };
+        input.onkeydown = e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(e.key === 'Enter'); } };
+        input.onblur = () => finish(false);
+      }],
+    ]);
+  }
+
+  async function loadDiff(w) {
+    if (w.loading) return;
+    w.loading = true;
+    const st = await operant.gitStatus(w.cwd);
+    w.loading = false;
+    if (!w.alive) return;
+    w.status = st; w.loadedAt = Date.now();
+    const list = w.el.querySelector('.diff-files'), body = w.el.querySelector('.diff-body');
+    w.el.classList.toggle('no-git', !st);
+    if (!st) { w.files = []; list.innerHTML = ''; markAll(w); body.innerHTML = `<div class="view-msg">${esc(baseName(w.cwd))} isn't in a git repository</div>`; return setBadge(w, ''); }
+    // Only the project's own files, when it's a folder inside a bigger repository.
+    const inside = f => isUnder(st.root + '\\' + f.path.replace(/\//g, '\\'), w.cwd);
+    w.files = st.files.filter(inside);
+    for (const p of [...w.skip]) if (!w.files.some(f => f.path === p)) w.skip.delete(p);
+    setBadge(w, `${w.files.length} changed`);
+    w.el.querySelector('[data-v="branch"]').textContent = `⎇ ${st.branch}`;
+    w.el.querySelector('[data-v="push"]').textContent = `↑ Push${st.ahead ? ` ${st.ahead}` : ''}`;
+    w.el.querySelector('[data-v="pull"]').textContent = `↓ Pull${st.behind ? ` ${st.behind}` : ''}`;
+    if (!w.files.some(f => f.path === w.sel)) w.sel = w.files[0]?.path || null;
+    list.innerHTML = w.files.map(f => {
+      const [letter, cls] = gitKind(f.code), name = f.path.split('/').pop(), dir = f.path.slice(0, -name.length - 1);
+      return `<div class="df-row${f.path === w.sel ? ' on' : ''}" data-file="${esc(f.path)}" title="${esc(GIT_NAMES[letter])} · ${esc(f.path)}">`
+        + `<input type="checkbox" class="df-check"${w.skip.has(f.path) ? '' : ' checked'}>`
+        + `<span class="df-code git-${cls}">${letter}</span><span class="df-nm">${esc(name)}</span><span class="df-dir">${esc(dir)}</span></div>`;
+    }).join('');
+    markAll(w);
+    if (!w.files.length) { body.innerHTML = '<div class="view-msg">No changes since the last commit</div>'; return; }
+    showDiffFile(w);
+  }
+
+  async function showDiffFile(w) {
+    const f = w.files.find(x => x.path === w.sel), body = w.el.querySelector('.diff-body');
+    if (!f) return;
+    const r = await operant.gitDiff({ root: w.status.root, file: f.path, code: f.code });
+    if (!w.alive || w.sel !== f.path) return;
+    const head = `<div class="diff-head">${esc(f.path)}</div>`;
+    if (r.error) body.innerHTML = head + `<div class="view-msg">${esc(r.error)}</div>`;
+    else if (r.binary) body.innerHTML = head + '<div class="view-msg">A binary file changed</div>';
+    else if (!r.text.trim()) body.innerHTML = head + `<div class="view-msg">${f.code.includes('D') ? 'Deleted' : 'No line changes (only its mode or name)'}</div>`;
+    else {
+      const l = Highlight.lang(f.path);
+      let a = 0, b = 0, html = '';
+      for (const line of r.text.replace(/\n$/, '').split('\n')) {
+        const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
+        if (m) { a = +m[1]; b = +m[2]; html += `<div class="dl hunk"><span class="dl-n"></span><span class="dl-n"></span><span class="dl-t">${esc(line)}</span></div>`; continue; }
+        if (line.startsWith('\\')) continue; // "No newline at end of file"
+        const t = line[0], rest = line.slice(1);
+        const code = l && rest.length < 2000 ? Highlight.lines(rest, l)[0] : esc(rest);
+        if (t === '+') html += `<div class="dl add"><span class="dl-n"></span><span class="dl-n">${b++}</span><span class="dl-t">${code}</span></div>`;
+        else if (t === '-') html += `<div class="dl del"><span class="dl-n">${a++}</span><span class="dl-n"></span><span class="dl-t">${code}</span></div>`;
+        else html += `<div class="dl"><span class="dl-n">${a++}</span><span class="dl-n">${b++}</span><span class="dl-t">${code}</span></div>`;
+      }
+      body.innerHTML = head + `<div class="diff-lines">${html}</div>`;
+    }
+    w.page.scrollTop = 0;
+    if (w.find?.q) runFind(w, true);
+  }
+
+  // The focused tile's project (its pinned project, or its own folder).
+  const projectDir = dir => allProjects().filter(p => isUnder(dir, p)).sort((x, y) => y.length - x.length)[0] || dir;
+  function showChanges(dir = focused()?.cwd || lastCwd) {
+    if (!dir) return toast('Open a tile in a project first');
+    openDiff(projectDir(dir));
+  }
 
   // ------------------------------------------------------------- session
   // Main keeps each window's tiles and layout so they can be reopened after an update. Subagent
   // tiles and one-off command tiles (CodeGraph) aren't kept.
 
-  const keepTile = w => w.alive && w.kind !== 'agent' && w.kind !== 'view' && !w.run && !w.edit;
+  const keepTile = w => w.alive && w.kind !== 'agent' && !w.run;
   function snapshot() {
     const tiles = [];
     const ser = n => {
@@ -390,7 +823,8 @@
       if (n.win) {
         if (!keepTile(n.win)) return null;
         const w = n.win;
-        tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master, sessionId: w.sessionId });
+        tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master, sessionId: w.sessionId,
+          ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.edit ? { edit: w.edit } : {}) });
         w.snapIndex = tiles.length - 1;
         return { tile: w.snapIndex };
       }
@@ -416,8 +850,11 @@
   // Reopens a snapshot's tiles in their workspaces, then puts back each layout exactly.
   async function restore(snap) {
     const made = await Promise.all(snap.tiles.map((t, i) => {
-      const ws = snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`));
-      return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws: Math.max(ws, 0), focus: false });
+      const ws = Math.max(snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`)), 0);
+      if (t.kind === 'view') return openViewer(t.file, { ws, focus: false });
+      if (t.kind === 'diff') return openDiff(t.cwd, { ws, focus: false });
+      if (t.edit) return openEditor(t.edit, { ws, focus: false });
+      return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws, focus: false });
     }));
     const build = n => {
       if (!n) return null;
@@ -458,6 +895,8 @@
     if (w.ptyId) { operant.killPty(w.ptyId); ptyWins.delete(w.ptyId); }
     if (w.sessionId) sessionWin.delete(w.sessionId);
     if (w.agentId) agentWin.delete(w.agentId);
+    if (w.kind === 'view') operant.watchFile(w.id, null);
+    backlog.delete(w);
     w.el.classList.add('closing');
     setTimeout(() => { w.term?.dispose(); w.el.remove(); }, 320);
     wins.delete(w.id);
@@ -556,7 +995,7 @@
       if (!w.busySince || now - w.lastOut < cfg.notifyWhenIdleSeconds * 1000) continue;
       const worked = w.lastOut - w.busySince;
       w.busySince = null;
-      if (worked >= 2500) w.unchecked = true;
+      if (worked >= 2500) { w.unchecked = true; gitChanged(); }
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) notify(w, `${w.agentName} is waiting for you`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
     }
   }, 1000);
@@ -567,7 +1006,7 @@
     if (w.ws !== current) switchWorkspace(w.ws);
     focusWin(w);
   });
-  operant.on('pty:exit', ({ id }) => { const w = ptyWins.get(id); if (w) closeWin(w); });
+  operant.on('pty:exit', ({ id }) => { const w = ptyWins.get(id); if (w) { closeWin(w); gitChanged(); } });
 
   // ------------------------------------------------------------- subagents
 
@@ -643,6 +1082,8 @@
 
   function idleLimit(w) {
     if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
+    // Viewers and diffs are read, not run; an editor with unsaved changes would lose them.
+    if (w.kind === 'view' || w.kind === 'diff' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
     if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
@@ -837,7 +1278,7 @@
     newAgentIn: async () => { const d = await operant.pickFolder(); if (d) { lastCwd = d; newTerminal('ai', d); } },
     pickAgent: () => togglePanel('launcher'),
     newShell: () => newTerminal('shell'),
-    close: () => { const f = focused(); if (f) closeWin(f); },
+    close: () => requestClose(focused()),
     fullscreen: toggleFullscreen,
     toggleSplit,
     closeDoneAgents,
@@ -853,14 +1294,22 @@
     prevWorkspace: () => switchWorkspace(current - 1), nextWorkspace: () => switchWorkspace(current + 1),
     help: () => togglePanel('keys'),
     settings: () => togglePanel('settings'),
-    openConfig: () => operant.openConfig(),
+    openConfig: () => openConfig(),
+    focusSidebar: () => focusSidebar(),
     devtools: () => operant.devtools(),
     mediaPlayPause: () => operant.media('toggle'),
     mediaNext: () => operant.media('next'),
     mediaPrev: () => operant.media('prev'),
     mediaShuffle: () => operant.media('shuffle'),
     tokenUsage: () => togglePanel('usage'),
+    quickOpen: () => openPicker('files'),
+    commandPalette: () => openPicker('commands'),
+    findInView: () => openFind(focused()),
+    showChanges: () => showChanges(),
   };
+  // Only for viewer and diff tiles: anywhere else the key goes on to the terminal as usual.
+  const VIEW_ONLY = new Set(['findInView']);
+  const forView = () => ['view', 'diff'].includes(focused()?.kind);
   const bindMap = new Map();
   for (let i = 1; i <= WS_COUNT; i++) {
     actions[`ws${i}`] = () => switchWorkspace(i - 1);
@@ -876,7 +1325,8 @@
 
   function handleTermKey(e, w) {
     if (e.type !== 'keydown') return true;
-    if (bindMap.has(eventCombo(e))) return false;
+    const bound = bindMap.get(eventCombo(e));
+    if (bound && !VIEW_ONLY.has(bound)) return false;
     // Windows-style clipboard: Ctrl+C copies when there's a selection, Ctrl+V pastes.
     if (e.ctrlKey && !e.altKey && e.code === 'KeyC' && w.term.hasSelection()) {
       navigator.clipboard.writeText(w.term.getSelection()); w.term.clearSelection(); return false;
@@ -894,10 +1344,14 @@
     if (panel === 'launcher' && !e.ctrlKey && !e.altKey && /^(Digit|Numpad)[1-9]$/.test(e.code)) {
       e.preventDefault(); return launch(+e.code.at(-1) - 1, e.shiftKey);
     }
+    // Typing in a text box (a workspace or group name, a search) never sets off a shortcut.
+    const t = e.target;
+    if (t?.matches?.('input, textarea, select, [contenteditable="true"]') && !t.classList.contains('xterm-helper-textarea')) return;
     const action = bindMap.get(eventCombo(e));
     if (!action) return;
+    if (VIEW_ONLY.has(action) && !forView()) return;
     // With a panel open only the panel keys work, so nothing happens to the tiles behind it.
-    if (panel && action !== 'help' && action !== 'settings' && action !== 'pickAgent' && action !== 'tokenUsage') return;
+    if (panel && !['help', 'settings', 'pickAgent', 'tokenUsage', 'quickOpen', 'commandPalette'].includes(action)) return;
     e.preventDefault(); e.stopPropagation();
     if (!e.repeat || action.startsWith('resize')) actions[action]();
   }, true);
@@ -906,9 +1360,10 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher', 'usage'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
+    if (name === 'picker') return openPicker(pick.mode || 'commands');
     const was = openPanel();
     closePanels(was === name);
     if (was === name) return;
@@ -983,6 +1438,8 @@
     if (key.startsWith('clock')) tick();
     if (key === 'barTitle' || key === 'workspaceNames') { refreshBar(); renderHints(); }
     if (key === 'sidebarHiddenFiles') dirCache.clear();
+    if (key === 'sidebarGit') { if (cfg.sidebarGit) loadGit(true); else decorateGit(); }
+    if (key === 'planLimits' || key === 'planLimitAlerts') renderUsagePill();
     if (key === 'editor' || key === 'editorCommand') refreshEditorName();
     if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
@@ -1017,7 +1474,13 @@
     cgVersion = await operant.codegraphVersion();
     if (el.isConnected) draw();
   }
-  $('#set-json').onclick = () => operant.openConfig();
+  // config.json opens with Windows, or in the editor tile (Settings › Files).
+  async function openConfig() {
+    if (cfg.configOpensIn !== 'editor') return operant.openConfig();
+    closePanels(false);
+    openEditor(await operant.configPath());
+  }
+  $('#set-json').onclick = () => openConfig();
   const resetBtn = $('#set-reset');
   resetBtn.onclick = () => {
     if (!resetBtn.dataset.armed) {
@@ -1067,21 +1530,130 @@
   }
   $('#keys-reset').onclick = () => { cfg.keybinds = structuredClone(defaults.keybinds); recording = null; saveKeybinds(); toast('Keybinds reset to defaults.'); };
 
+  // ------------------------------------------------------------ pickers
+  // Quick open (a file from the projects, by part of its name) and the command palette (every action
+  // and setting), in one box: type to filter, ↑↓ or Ctrl+J/K to move, Enter to run.
+
+  const pickInput = $('#picker-input'), pickBody = $('#picker-body');
+  let pick = { mode: null, items: [], shown: [], k: 0 };
+
+  // How well a query matches a text: its letters in order, more for runs and word starts; -1 if not all there.
+  function fuzzy(q, t) {
+    t = t.toLowerCase();
+    let ti = 0, s = 0, last = -2;
+    for (const ch of q) {
+      const i = t.indexOf(ch, ti);
+      if (i < 0) return -1;
+      s += i === last + 1 ? 3 : 1;
+      if (i === 0 || /[\\/ ._\-·]/.test(t[i - 1])) s += 2;
+      last = i; ti = i + 1;
+    }
+    return s - t.length * 0.01;
+  }
+
+  async function openPicker(mode) {
+    if (openPanel() === 'picker' && pick.mode === mode) return closePanels();
+    if (openPanel()) closePanels(false);
+    pick = { mode, items: [], shown: [], k: 0 };
+    pickInput.value = '';
+    pickInput.placeholder = mode === 'files' ? 'Open a file by name…' : 'Run an action or change a setting…';
+    $('#picker-foot').textContent = mode === 'files' ? 'Enter views it · Shift+Enter edits it · Esc closes' : 'Enter runs it · Esc closes';
+    $('#picker').classList.remove('hidden');
+    pickInput.focus();
+    if (mode === 'commands') pick.items = commandItems();
+    else { pickBody.innerHTML = '<div class="side-empty">Listing files…</div>'; pick.items = await fileItems(); }
+    if (openPanel() === 'picker' && pick.mode === mode) filterPicker();
+  }
+
+  async function fileItems() {
+    const f = focused(), here = f?.cwd ? projectDir(f.cwd) : null;
+    const rootsList = [...new Set([here, ...allProjects(), ...tileDirs().map(projectDir)].filter(Boolean).map(p => p.replace(/[\\/]+$/, '')))];
+    const lists = await Promise.all(rootsList.map(r => operant.listFiles(r).catch(() => [])));
+    const items = [];
+    rootsList.forEach((root, i) => {
+      for (const rel of lists[i]) {
+        const name = rel.split('/').pop(), full = root + '\\' + rel.replace(/\//g, '\\');
+        items.push({ label: name, sub: `${baseName(root)} · ${rel.slice(0, -name.length - 1) || '.'}`, text: rel, bonus: i === 0 && here ? 1 : 0,
+          run: () => openViewer(full), alt: () => openEditor(full) });
+      }
+    });
+    return items;
+  }
+
+  function commandItems() {
+    const items = [];
+    for (const [group, acts] of Panels.GROUPS) for (const [a, name] of Object.entries(acts)) {
+      if (a === 'commandPalette' || !actions[a]) continue;
+      items.push({ label: name, sub: group, text: `${name} ${group}`, key: bindLabel(a), run: actions[a] });
+    }
+    for (let i = 1; i <= WS_COUNT; i++) items.push({ label: `Go to ${wsName(i - 1) || `workspace ${i}`}`, sub: 'Workspaces', text: `go to workspace ${i} ${wsName(i - 1)}`, key: `Alt+${i}`, run: () => switchWorkspace(i - 1) });
+    for (const it of Panels.settingsIndex()) {
+      const toggle = it.type === 'toggle';
+      items.push({ label: toggle ? `${cfg[it.key] ? 'Turn off' : 'Turn on'}: ${it.label}` : it.label, sub: `Setting · ${it.tab}`, text: `${it.label} ${it.tab} setting`,
+        run: toggle ? () => setSetting(it.key, !cfg[it.key]) : () => { togglePanel('settings'); Panels.showSetting(it.label); renderSettings(); } });
+    }
+    return items;
+  }
+
+  function filterPicker() {
+    const q = pickInput.value.trim().toLowerCase().replace(/\s+/g, ' ');
+    let shown;
+    if (!q) shown = pick.items.slice(0, 60);
+    else {
+      const scored = [];
+      for (const it of pick.items) {
+        const s = Math.max(fuzzy(q, it.label) * 2, fuzzy(q, it.text));
+        if (s >= 0) scored.push([s + (it.bonus || 0) * 5, it]);
+      }
+      shown = scored.sort((a, b) => b[0] - a[0]).slice(0, 60).map(x => x[1]);
+    }
+    pick.shown = shown; pick.k = 0;
+    pickBody.innerHTML = shown.length ? shown.map((it, i) => `<button class="pick-row" data-i="${i}"><span class="nm">${esc(it.label)}<small>${esc(it.sub)}</small></span>`
+      + (it.key ? `<kbd>${esc(Panels.pretty(it.key))}</kbd>` : '') + '</button>').join('')
+      : `<div class="side-empty">${pick.items.length ? 'Nothing matches' : pick.mode === 'files' ? 'No files. Pin a project in the sidebar first.' : ''}</div>`;
+    markPick();
+  }
+  function markPick() {
+    pickBody.querySelectorAll('.pick-row').forEach((r, i) => r.classList.toggle('on', i === pick.k));
+    pickBody.querySelector('.pick-row.on')?.scrollIntoView({ block: 'nearest' });
+  }
+  function runPick(i, alt) {
+    const it = pick.shown[i];
+    if (!it) return;
+    closePanels(false);
+    (alt && it.alt ? it.alt : it.run)();
+  }
+  pickInput.addEventListener('input', filterPicker);
+  pickInput.addEventListener('keydown', e => {
+    const move = e.key === 'ArrowDown' || (e.ctrlKey && e.code === 'KeyJ') ? 1 : e.key === 'ArrowUp' || (e.ctrlKey && e.code === 'KeyK') ? -1 : 0;
+    if (move) { e.preventDefault(); if (pick.shown.length) { pick.k = (pick.k + move + pick.shown.length) % pick.shown.length; markPick(); } }
+    else if (e.key === 'Enter') { e.preventDefault(); runPick(pick.k, e.shiftKey || e.ctrlKey); }
+  });
+  pickBody.addEventListener('click', e => { const r = e.target.closest('.pick-row'); if (r) runPick(+r.dataset.i, e.shiftKey || e.ctrlKey); });
+
   // ------------------------------------------------------------ bar
 
   const wsBar = $('#workspaces');
   let wsEditing = null; // the workspace whose name is being typed in the bar
   function refreshBar() {
     if (wsEditing == null) drawWorkspaces();
-    const f = focused();
-    $('#bar-title').textContent = f ? f.title : '';
-    $('#bar-title').classList.toggle('hidden', !cfg.barTitle || !f);
+    drawBarTitle();
     refreshStats();
     sidebarChanged();
     saveSession();
   }
+  function drawBarTitle() {
+    const f = focused(), el = $('#bar-title'), t = f ? f.title : '';
+    if (el.textContent !== t) el.textContent = t;
+    el.classList.toggle('hidden', !cfg.barTitle || !f);
+  }
 
-  function drawWorkspaces() {
+  // The workspace buttons are rebuilt only when something they show has changed.
+  let wsSig = '';
+  function drawWorkspaces(force = false) {
+    const sig = JSON.stringify([current, cfg.workspaceNames, workspaces.map((_, i) => { const l = wsWins(i); return [l.length, l.some(isWorking)]; })]);
+    if (sig === wsSig && !force) return;
+    wsSig = sig;
     wsBar.innerHTML = '';
     for (let i = 0; i < WS_COUNT; i++) {
       const list = wsWins(i), name = wsName(i);
@@ -1106,7 +1678,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   const wsName = i => String(cfg.workspaceNames?.[i] || '').trim();
   function editWsName(i) {
     wsEditing = i;
-    drawWorkspaces();
+    drawWorkspaces(true);
     const input = document.createElement('input');
     input.className = 'ws-name'; input.value = wsName(i); input.placeholder = `Workspace ${i + 1}`; input.spellcheck = false; input.maxLength = 40;
     const btn = wsBar.querySelector(`[data-ws="${i}"]`);
@@ -1115,7 +1687,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     let done = false;
     const finish = keep => {
       if (done) return;
-      done = true; wsEditing = null;
+      done = true; wsEditing = null; wsSig = '';
       if (keep) {
         const names = Array.from({ length: WS_COUNT }, (_, j) => wsName(j));
         names[i] = input.value.trim();
@@ -1290,58 +1862,174 @@ Double-click to ${name ? 'rename' : 'name'} it`;
 
   function nodeHtml(entry, depth, project = false) {
     const p = entry.path, open = entry.dir && isOpen(p, project);
-    const f = focused();
     const count = project ? tileDirs().filter(d => isUnder(d, p)).length : 0;
     const cls = ['node-row', entry.dir ? 'dir' : 'file', open ? 'open' : '', project ? 'project' : '',
-      project && f?.cwd && isUnder(f.cwd, p) ? 'active' : '', selected && normPath(selected) === normPath(p) ? 'sel' : ''].filter(Boolean).join(' ');
+      project && isActive(p) ? 'active' : '', selected && normPath(selected) === normPath(p) ? 'sel' : '', gitClass(p, entry.dir)].filter(Boolean).join(' ');
     const agent = defaultAgent();
-    let html = `<div class="${cls}" data-path="${esc(p)}" data-dir="${entry.dir ? 1 : ''}" data-project="${project ? 1 : ''}" title="${esc(p)}" style="padding-left:${4 + depth * 12}px">`
+    let html = `<div class="${cls}" data-path="${esc(p)}" data-dir="${entry.dir ? 1 : ''}" data-project="${project ? 1 : ''}" data-depth="${depth}" title="${esc(p)}" style="padding-left:${4 + depth * 12}px">`
       + `<span class="tw">${entry.dir ? '▶' : ''}</span>`
       + (project ? `<span class="fi" data-jump title="${count ? 'Go to its master terminal' : 'No tiles open here'}">◈</span>` : entry.dir ? '' : '<span class="fi">·</span>')
       + `<span class="nm">${esc(entry.name)}</span>`
+      + (project ? `<span class="git-info">${gitInfoHtml(p)}</span>` : '')
       + (count ? `<span class="count" title="${count} open tile${count === 1 ? '' : 's'}">${count}</span>` : '')
       + (entry.dir ? `<span class="acts">${project && cfg.codegraphButtons ? '<button data-act="cg" title="Index with CodeGraph">◇</button>' : ''}${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
       + '</div>';
-    if (open) {
-      const kids = dirCache.get(p);
-      if (kids === undefined) html += `<div class="side-empty" style="padding-left:${16 + depth * 12}px">…</div>`;
-      else if (kids === null) html += `<div class="side-empty" style="padding-left:${16 + depth * 12}px">Can't read this folder</div>`;
-      else if (!kids.length) html += `<div class="side-empty" style="padding-left:${16 + depth * 12}px">Empty</div>`;
-      else for (const k of kids) html += nodeHtml(k, depth + 1);
-    }
+    if (open) html += kidsHtml(p, depth);
     return html;
+  }
+  // An open folder's contents, in their own box so opening, closing or reloading one folder only redraws that box.
+  function kidsHtml(p, depth) {
+    const kids = dirCache.get(p), pad = `style="padding-left:${16 + depth * 12}px"`;
+    let html = `<div class="kids" data-kids="${esc(p)}">`;
+    if (kids === undefined) html += `<div class="side-empty" ${pad}>…</div>`;
+    else if (kids === null) html += `<div class="side-empty" ${pad}>Can't read this folder</div>`;
+    else if (!kids.length) html += `<div class="side-empty" ${pad}>Empty</div>`;
+    else for (const k of kids) html += nodeHtml(k, depth + 1);
+    return html + '</div>';
+  }
+  const rowOf = p => sideBody.querySelectorAll(`.node-row[data-path="${CSS.escape(p)}"]`);
+  // Redraws one open folder's box in every place it shows (a project can also show under OPEN IN TILES).
+  function redrawKids(p) {
+    for (const row of rowOf(p)) {
+      const box = row.nextElementSibling;
+      if (!box?.classList.contains('kids')) continue;
+      box.outerHTML = kidsHtml(p, +row.dataset.depth);
+    }
+  }
+  // Loads the open folders that aren't cached yet, drawing each as it arrives.
+  async function loadMissing() {
+    for (let missing = [...new Set([...sideBody.querySelectorAll('.node-row.open')].map(r => r.dataset.path).filter(p => !dirCache.has(p)))];
+      missing.length; missing = [...new Set([...sideBody.querySelectorAll('.node-row.open')].map(r => r.dataset.path).filter(p => !dirCache.has(p)))]) {
+      await Promise.all(missing.map(async p => { await loadDir(p); redrawKids(p); }));
+    }
   }
 
   // Loads every expanded folder that isn't cached yet, then draws. force re-reads them all.
   async function renderSidebar(force = false) {
     if (!cfg.sidebar) return;
     const { projects, others } = roots();
-    const draw = () => {
-      let html = '';
-      html += projects.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
-      if (!allProjects().length) html += `<div class="side-empty">Pin folders here with ＋, or right-click a folder below and choose <i>Pin as project</i>.</div>`
-        + nodeHtml({ name: baseName(cfg.defaultCwd), path: cfg.defaultCwd, dir: true }, 0, true);
-      html += groups().map(groupHtml).join('');
-      if (others.length) html += `<div class="side-group">OPEN IN TILES</div>` + others.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
-      const top = sideBody.scrollTop, old = sideBody.querySelector('.group-name'), sel = old && [old.selectionStart, old.selectionEnd];
-      redrawing = true; sideBody.innerHTML = html; redrawing = false;
-      sideBody.scrollTop = top;
-      const input = editing && sideBody.querySelector('.group-name');
-      if (input) { input.focus(); if (sel) input.setSelectionRange(...sel); else input.select(); }
-    };
+    let html = '';
+    html += projects.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
+    if (!allProjects().length) html += `<div class="side-empty">Pin folders here with ＋, or right-click a folder below and choose <i>Pin as project</i>.</div>`
+      + nodeHtml({ name: baseName(cfg.defaultCwd), path: cfg.defaultCwd, dir: true }, 0, true);
+    html += groups().map(groupHtml).join('');
+    if (others.length) html += `<div class="side-group">OPEN IN TILES</div>` + others.map(p => nodeHtml({ name: baseName(p), path: p, dir: true }, 0, true)).join('');
+    const top = sideBody.scrollTop, old = sideBody.querySelector('.group-name'), sel = old && [old.selectionStart, old.selectionEnd];
     if (force) dirCache.clear();
-    draw();
-    const visibleOpen = () => [...sideBody.querySelectorAll('.node-row.open')].map(r => r.dataset.path).filter(p => !dirCache.has(p));
-    for (let missing = visibleOpen(); missing.length; missing = visibleOpen()) {
-      await Promise.all(missing.map(p => loadDir(p)));
-      draw();
-    }
+    redrawing = true; sideBody.innerHTML = html; redrawing = false;
+    sideBody.scrollTop = top;
+    const input = editing && sideBody.querySelector('.group-name');
+    if (input) { input.focus(); if (sel) input.setSelectionRange(...sel); else input.select(); }
+    if (force) for (const row of sideBody.querySelectorAll('.node-row.open')) redrawKids(row.dataset.path);
+    loadGit(force);
+    await loadMissing();
   }
 
-  // Redraw when the projects, the open tiles' folders or the focused tile change.
+  // Redraw when the projects or the open tiles' folders change; the focused tile only moves the highlight.
   function sidebarChanged() {
-    const sig = JSON.stringify([cfg.projects, cfg.projectGroups, tileDirs(), focused()?.cwd, cfg.defaultAgent]);
+    const sig = JSON.stringify([cfg.projects, cfg.projectGroups, tileDirs(), cfg.defaultAgent]);
     if (sig !== sideSig) { sideSig = sig; renderSidebar(); }
+    else markActive();
+  }
+  const isActive = p => { const f = focused(); return !!(f?.cwd && isUnder(f.cwd, p)); };
+  function markActive() {
+    for (const row of sideBody.querySelectorAll('.node-row.project')) row.classList.toggle('active', isActive(row.dataset.path));
+  }
+  function setSelected(p) {
+    selected = p;
+    sideBody.querySelectorAll('.node-row.sel').forEach(r => r.classList.remove('sel'));
+    rowOf(p).forEach(r => r.classList.add('sel'));
+  }
+  function toggleRow(row) {
+    const p = row.dataset.path, project = !!row.dataset.project, open = !isOpen(p, project);
+    const set = project ? collapsed : expanded;
+    if (open === project) set.delete(p); else set.add(p);
+    saveExpanded();
+    for (const r of rowOf(p)) {
+      r.classList.toggle('open', open);
+      if (r.nextElementSibling?.classList.contains('kids')) r.nextElementSibling.remove();
+      if (open) r.insertAdjacentHTML('afterend', kidsHtml(p, +r.dataset.depth));
+    }
+    if (open) loadMissing();
+  }
+
+  // Coming back to Operant re-reads the open folders and redraws only the ones whose contents changed.
+  async function refreshDirs() {
+    const open = [...new Set([...sideBody.querySelectorAll('.node-row.open')].map(r => r.dataset.path))];
+    for (const p of [...dirCache.keys()]) if (!open.includes(p)) dirCache.delete(p);
+    await Promise.all(open.map(async p => {
+      const before = JSON.stringify(dirCache.get(p));
+      await loadDir(p, true);
+      if (JSON.stringify(dirCache.get(p)) !== before) redrawKids(p);
+    }));
+    await loadMissing();
+  }
+
+  // ------------------------------------------------------------ git in the sidebar
+  // Each project's branch and number of changed files; changed files are tinted, and so are the
+  // folders they're in. Read when the sidebar draws, when Operant comes back to the front, and when
+  // an agent finishes working.
+
+  const gitState = new Map(); // project -> { at, status } (status null: not a repository)
+  const gitFiles = new Map(); // lower-case path -> class, for every changed file and every folder above one
+  function indexGit() {
+    gitFiles.clear();
+    for (const { status } of gitState.values()) {
+      if (!status) continue;
+      for (const f of status.files) {
+        const [, cls] = gitKind(f.code);
+        let p = (status.root + '\\' + f.path.replace(/\//g, '\\')).toLowerCase();
+        gitFiles.set(p, cls);
+        while ((p = p.replace(/\\[^\\]*$/, '')) && p.length > status.root.length) if (!gitFiles.has(p)) gitFiles.set(p, 'dir');
+      }
+    }
+  }
+  const gitClass = (p, dir) => {
+    if (!cfg.sidebarGit) return '';
+    const c = gitFiles.get(normPath(p));
+    return !c ? '' : dir ? (c === 'dir' ? 'git-dir' : '') : `git-${c}`;
+  };
+  function gitChanges(p) {
+    const st = gitState.get(p)?.status;
+    return st ? st.files.filter(f => isUnder(st.root + '\\' + f.path.replace(/\//g, '\\'), p)).length : 0;
+  }
+  function gitInfoHtml(p) {
+    const st = cfg.sidebarGit && gitState.get(p)?.status;
+    if (!st) return '';
+    const n = gitChanges(p), sync = (st.ahead ? ` ↑${st.ahead}` : '') + (st.behind ? ` ↓${st.behind}` : '');
+    return `<span class="git-br" title="Branch ${esc(st.branch)}${st.ahead ? ` · ${st.ahead} commit${st.ahead === 1 ? '' : 's'} to push` : ''}${st.behind ? ` · ${st.behind} to pull` : ''}">⎇ ${esc(st.branch)}${sync}</span>`
+      + (n ? `<span class="git-n" data-changes title="${n} changed file${n === 1 ? '' : 's'} · click to see what changed">${n}</span>` : '');
+  }
+  let gitLoading = false;
+  async function loadGit(force = false) {
+    if (!cfg.sidebarGit || gitLoading) return;
+    gitLoading = true;
+    const dirs = [...new Set([...sideBody.querySelectorAll('.node-row.project')].map(r => r.dataset.path))];
+    const stale = dirs.filter(p => force || !gitState.has(p) || Date.now() - gitState.get(p).at > 15000);
+    await Promise.all(stale.map(async p => { gitState.set(p, { at: Date.now(), status: await operant.gitStatus(p) }); }));
+    gitLoading = false;
+    if (!stale.length) return;
+    indexGit();
+    decorateGit();
+  }
+  // Puts the git tints and project info on the rows already drawn.
+  function decorateGit() {
+    for (const row of sideBody.querySelectorAll('.node-row')) {
+      const want = gitClass(row.dataset.path, !!row.dataset.dir);
+      for (const c of [...row.classList]) if (c.startsWith('git-') && c !== want) row.classList.remove(c);
+      if (want) row.classList.add(want);
+      const info = row.querySelector('.git-info');
+      if (info) { const h = gitInfoHtml(row.dataset.path); if (info.innerHTML !== h) info.innerHTML = h; }
+    }
+  }
+  // Files changed (an agent finished, Operant came back to the front): the sidebar and the diff tiles catch up.
+  let gitT = null;
+  function gitChanged() {
+    clearTimeout(gitT);
+    gitT = setTimeout(() => {
+      if (cfg.sidebar) loadGit(true);
+      for (const w of wins.values()) if (w.kind === 'diff' && w.alive) loadDiff(w);
+    }, 400);
   }
 
   function toggleSidebar() { setSetting('sidebar', !cfg.sidebar); }
@@ -1351,7 +2039,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   $('#side-add').onclick = async () => { const d = await operant.pickFolder(); if (d) pinProject(d); };
   $('#side-cg').onclick = () => runCodegraph(allProjects(), 'all projects');
   $('#side-group').onclick = () => newGroup();
-  window.addEventListener('focus', () => { if (cfg.sidebar) renderSidebar(true); });
+  window.addEventListener('focus', () => { if (cfg.sidebar) refreshDirs(); gitChanged(); });
 
   function pinProject(p) {
     if (isPinned(p)) return;
@@ -1426,7 +2114,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     return true;
   }
 
-  let fileClick = {};
   function openFile(p, how) {
     if (how === 'edit') return openEditor(p);
     if (how === 'view') return openViewer(p);
@@ -1470,24 +2157,15 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const act = e.target.closest('[data-act]');
     if (act) return openHere(p, act.dataset.act);
     if (e.target.closest('[data-jump]') && jumpToProject(p)) return;
-    // A file's double-click, counted here: the first click redraws the tree, so no dblclick event follows.
-    if (!row.dataset.dir) {
-      const now = Date.now(), again = fileClick.p === p && now - fileClick.t < 500;
-      fileClick = again ? {} : { p, t: now };
-      if (again) return openFile(p, cfg.fileOpens);
-    }
-    selected = p;
-    if (row.dataset.dir) {
-      lastCwd = p;
-      const set = row.dataset.project ? collapsed : expanded;
-      if (set.has(p)) set.delete(p); else set.add(p);
-      saveExpanded();
-    }
-    renderSidebar();
+    if (e.target.closest('[data-changes]')) return showChanges(p);
+    setSelected(p);
+    if (row.dataset.dir) { lastCwd = p; toggleRow(row); }
   });
   sideBody.addEventListener('dblclick', e => {
     const grow = e.target.closest('.group-row');
     if (grow && !e.target.closest('.group-name, [data-gact]')) return groupAct(+grow.dataset.group, 'rename');
+    const row = e.target.closest('.node-row');
+    if (row && !row.dataset.dir && !e.target.closest('[data-act]')) openFile(row.dataset.path, cfg.fileOpens);
   });
   sideBody.addEventListener('input', e => { if (editing && e.target.matches('.group-name')) editing.value = e.target.value; });
   sideBody.addEventListener('keydown', e => {
@@ -1495,6 +2173,97 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); commitGroupName(e.key === 'Enter'); }
   });
   sideBody.addEventListener('focusout', e => { if (!redrawing && e.target.matches('.group-name')) commitGroupName(true); });
+
+  // ------------------------------------------------------------ vim keys
+  // Settings › Keybinds › Vim keys: j/k, h/l, gg/G, Ctrl+D/U and / in viewer and diff tiles and in
+  // the sidebar (focusSidebar puts the keyboard there; Esc gives it back to the tile).
+
+  let vimG = 0; // when g was pressed, for gg
+  const isGG = e => { if (e.key !== 'g' || e.ctrlKey || e.altKey) return false; const again = Date.now() - vimG < 600; vimG = again ? 0 : Date.now(); return again; };
+
+  function vimView(e, w) {
+    if (!cfg.vimKeys || e.altKey || e.target.closest('.find-bar')) return;
+    const page = w.page, line = 40, half = page.clientHeight / 2;
+    const k = e.ctrlKey ? 'C-' + e.key.toLowerCase() : e.key;
+    const go = {
+      j: () => page.scrollBy(0, line), k: () => page.scrollBy(0, -line), l: () => page.scrollBy(line, 0), h: () => page.scrollBy(-line, 0),
+      'C-d': () => page.scrollBy(0, half), 'C-u': () => page.scrollBy(0, -half),
+      G: () => { page.scrollTop = page.scrollHeight; }, '/': () => openFind(w),
+      n: () => w.find?.n && stepFind(w, 1), N: () => w.find?.n && stepFind(w, -1),
+      ']': () => w.kind === 'diff' && stepDiffFile(w, 1), '[': () => w.kind === 'diff' && stepDiffFile(w, -1),
+    }[k];
+    if (isGG(e)) { page.scrollTop = 0; e.preventDefault(); return; }
+    if (!go) return;
+    e.preventDefault();
+    go();
+  }
+  function stepDiffFile(w, d) {
+    const i = w.files.findIndex(f => f.path === w.sel), f = w.files[i + d];
+    if (!f) return;
+    w.sel = f.path;
+    w.el.querySelectorAll('.df-row').forEach(r => r.classList.toggle('on', r.dataset.file === f.path));
+    w.el.querySelector('.df-row.on')?.scrollIntoView({ block: 'nearest' });
+    showDiffFile(w);
+  }
+  desktop.addEventListener('keydown', e => {
+    const el = e.target.closest?.('.win');
+    const w = el && [...wins.values()].find(x => x.el === el);
+    if (w && (w.kind === 'view' || w.kind === 'diff') && e.target === w.page) vimView(e, w);
+  });
+
+  // The sidebar's keyboard cursor.
+  sideBody.tabIndex = -1;
+  let sideCur = null; // path of the row with the cursor
+  const sideRows = () => [...sideBody.querySelectorAll('.node-row')].filter(r => r.offsetParent);
+  function markCursor(row) {
+    sideBody.querySelectorAll('.node-row.cur').forEach(r => r.classList.remove('cur'));
+    if (!row) return;
+    row.classList.add('cur');
+    sideCur = row.dataset.path;
+    row.scrollIntoView({ block: 'nearest' });
+  }
+  function focusSidebar() {
+    if (!cfg.sidebar) setSetting('sidebar', true);
+    sideBody.focus({ preventScroll: true });
+    const rows = sideRows();
+    markCursor(rows.find(r => r.dataset.path === sideCur) || rows.find(r => r.classList.contains('sel')) || rows[0]);
+  }
+  sideBody.addEventListener('blur', () => sideBody.querySelectorAll('.node-row.cur').forEach(r => r.classList.remove('cur')));
+  sideBody.addEventListener('keydown', e => {
+    if (e.target !== sideBody) return;
+    const rows = sideRows(), row = rows.find(r => r.classList.contains('cur')), i = rows.indexOf(row);
+    const vim = cfg.vimKeys, k = e.ctrlKey ? 'C-' + e.key.toLowerCase() : e.key;
+    const move = to => { e.preventDefault(); markCursor(rows[Math.max(0, Math.min(rows.length - 1, to))]); };
+    if (e.key === 'Escape') { e.preventDefault(); sideBody.blur(); return focusKeys(focused()); }
+    if (vim && isGG(e)) return move(0);
+    if (k === 'ArrowDown' || (vim && k === 'j')) return move(i + 1);
+    if (k === 'ArrowUp' || (vim && k === 'k')) return move(i - 1);
+    if (vim && k === 'G') return move(rows.length - 1);
+    if (vim && k === 'C-d') return move(i + 10);
+    if (vim && k === 'C-u') return move(i - 10);
+    if (vim && k === '/') { e.preventDefault(); return openPicker('files'); }
+    if (!row) return;
+    const p = row.dataset.path, dir = !!row.dataset.dir, open = row.classList.contains('open');
+    if (k === 'Enter' || k === 'ArrowRight' || (vim && (k === 'l' || k === 'o'))) {
+      e.preventDefault();
+      setSelected(p);
+      if (!dir) return openFile(p, k === 'Enter' ? cfg.fileOpens : 'view');
+      if (open && k !== 'Enter') return move(i + 1);
+      toggleRow(row);
+      return markCursor(rowOf(p)[0]);
+    }
+    if (k === 'ArrowLeft' || (vim && k === 'h')) {
+      e.preventDefault();
+      if (dir && open) { toggleRow(row); return markCursor(rowOf(p)[0]); }
+      // Up to the folder it's in.
+      const box = row.closest('.kids');
+      if (box) markCursor(box.previousElementSibling);
+      return;
+    }
+    if (vim && k === 'e' && !dir) { e.preventDefault(); return openFile(p, 'edit'); }
+    if (vim && k === 'a' && dir) { e.preventDefault(); return openHere(p, 'agent'); }
+    if (vim && k === 's' && dir) { e.preventDefault(); return openHere(p, 'shell'); }
+  });
 
   function showMenu(x, y, items) {
     sideMenu.innerHTML = items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}"><span class="ico">${it[0]}</span>${esc(it[1])}</button>`).join('');
@@ -1545,9 +2314,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       ['⌨', `Open in ${ideName()}`, () => openInIde(p)],
       ['▤', 'Open in Explorer', () => operant.openPath(p)],
       ...(cfg.codegraphButtons ? [['◇', 'Index with CodeGraph', () => runCodegraph([p])]] : []),
+      ['±', 'Show changes', () => showChanges(p)],
       copy,
       '-',
       ...grouping,
+      ...(pinned ? [['⚙', 'Project defaults…', () => { togglePanel('settings'); Panels.showTab('Projects'); renderSettings(); }]] : []),
       pinned ? ['✕', 'Remove from projects', () => unpinProject(p)] : ['◈', 'Pin as project', () => pinProject(p)],
     ]);
   });
@@ -1587,7 +2358,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     else { art.removeAttribute('src'); art.classList.add('none'); }
     $('#media-title').textContent = s.title || '';
     $('#media-artist').textContent = s.artist || '';
-    const app = String(s.app || '').replace(/\.exe$/i, '').split('!').pop();
+    const app = s.appName || String(s.app || '').replace(/\.exe$/i, '').split('!').pop();
     mediaEl.title = [s.title, s.artist, s.album].filter(Boolean).join(' · ') + (app ? `\n${app}` : '');
     $('.media-text').title = `${mediaEl.title}${app ? `\nClick to open ${app}` : ''}`;
     mediaEl.classList.toggle('playing', !!s.playing);
@@ -1639,6 +2410,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   }
   setInterval(() => { if (mediaState.playing) drawProgress(); }, 500);
   operant.on('media:timeline', tl => { mediaState = { ...mediaState, timeline: tl }; drawProgress(); });
+  operant.on('media:art', art => renderMedia({ ...mediaState, art }));
   $('.media-text').onclick = () => operant.media('focus');
 
   const mediaCmd = cmd => { operant.media(cmd); if (cmd === 'toggle') mediaEl.classList.toggle('playing'); };
@@ -1674,7 +2446,12 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const used = countOf(s.today), budget = +cfg.tokenBudget || 0, share = budget ? used / budget : 0;
     usagePill.classList.toggle('warn', budget > 0 && share >= 0.8 && share < 1);
     usagePill.classList.toggle('over', budget > 0 && share >= 1);
-    usagePill.innerHTML = `<svg viewBox="0 0 16 16"><path d="M2 13.5h12v1.3H2zM3 8h2.3v4.5H3zm3.8-5h2.3v9.5H6.8zm3.9 3h2.3v6.5h-2.3z"/></svg>${fmtTok(used)} <span class="dim">${budget ? `/ ${fmtTok(budget)}` : 'today'}</span>`;
+    // The ring: how much of the 5-hour Claude session is used.
+    const sess = cfg.planLimits && cfg.planLimitAlerts && limits?.session, C = 2 * Math.PI * 5.5;
+    const ring = sess ? `<svg class="ring${pctClass(sess.used)}" viewBox="0 0 16 16"><circle class="ring-bg" cx="8" cy="8" r="5.5"/>`
+      + `<circle class="ring-fg" cx="8" cy="8" r="5.5" stroke-dasharray="${(Math.min(100, sess.used) / 100 * C).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 8 8)"/></svg>` : '';
+    usagePill.innerHTML = `<svg viewBox="0 0 16 16"><path d="M2 13.5h12v1.3H2zM3 8h2.3v4.5H3zm3.8-5h2.3v9.5H6.8zm3.9 3h2.3v6.5h-2.3z"/></svg>${fmtTok(used)} <span class="dim">${budget ? `/ ${fmtTok(budget)}` : 'today'}</span>${ring}`;
+    usagePill.title = sess ? `Claude session ${Math.round(sess.used)}% used` : '';
     if (!usageCard.classList.contains('hidden')) drawUsageCard();
   }
 
@@ -1731,6 +2508,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   usageCard.onmouseleave = () => hideUsageCard();
   window.addEventListener('blur', () => hideUsageCard(0));
   usagePill.onclick = () => togglePanel('usage');
+  operant.on('usage:limits', l => { limits = l; renderUsagePill(); });
   operant.on('usage:changed', s => {
     renderUsagePill(s);
     if (openPanel() === 'usage') loadUsage();
