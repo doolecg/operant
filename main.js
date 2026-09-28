@@ -810,7 +810,14 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   if (isOc) { try { ocPort = await opencode.freePort(); } catch {} }
   if (agent) {
     // PowerShell single-quoted string: '' escapes a literal quote, and newlines pass through as-is.
-    const q = a => `'${String(a).replace(/'/g, "''")}'`;
+    // Windows PowerShell (not pwsh 7.3+) hands a native exe its args without escaping embedded double
+    // quotes, so the exe splits the arg there (the brief's `"<symbols or question>"` became a prompt "or").
+    const legacyPs = !/pwsh/i.test(config.shell);
+    const q = a => {
+      let s = String(a);
+      if (legacyPs) s = s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\s.*?)(\\+)$/s, '$1$2$2');
+      return `'${s.replace(/'/g, "''")}'`;
+    };
     const extra = String(proj.args || '').trim().split(/\s+/).filter(Boolean);
     // Claude Code and Codex take the prompt positionally, OpenCode as --prompt, Gemini as -i;
     // anything else (a custom agent) also gets it positional, appended after the other args.
