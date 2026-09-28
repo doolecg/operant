@@ -294,7 +294,7 @@
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
+      <span class="title"></span><span class="waiting"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -1518,6 +1518,7 @@
     // Output well after the last keystroke is the agent working (not echo of typing).
     if (w.kind === 'ai' && w.typed && now - w.lastInput > 1500) { w.busySince ??= now; w.lastOut = now; }
     output(w, data);
+    if (w.kind === 'ai' && now - (w.lastPromptScan || 0) > 250) { w.lastPromptScan = now; checkClaudeWaiting(w); }
   });
 
   // The tile you're typing in comes first. Its output is written the moment it arrives; every
@@ -1551,10 +1552,12 @@
   // ------------------------------------------------------------ notifications
   // An agent that worked for a while and has now gone quiet is done or waiting for an answer.
 
-  async function notify(w, title, body) {
+  // action (optional): { label, ... } shown as an extra link in the bell panel row; showAlwaysAllowCard
+  // reads the rest of it (see the permission-prompt section below).
+  async function notify(w, title, body, action) {
     if (!w.alive) return;
     if (w.lastNotified && Date.now() - w.lastNotified < 5000) return;
-    logNotification(w, title, body); // kept for the bell panel even when the Windows toast below is off
+    logNotification(w, title, body, action); // kept for the bell panel even when the Windows toast below is off
     if (!cfg.notifications) return;
     if (cfg.notifyOnlyUnfocused && w.ws === current && workspaces[w.ws].focused === w.id && await operant.windowFocused()) return;
     w.lastNotified = Date.now();
@@ -1564,9 +1567,9 @@
   // The bell panel's log: newest first, capped at 100, kept only in memory.
   const notifLog = [];
   let notifId = 0;
-  function logNotification(w, title, body) {
+  function logNotification(w, title, body, action) {
     const icon = w.el?.querySelector('.ico')?.textContent || '🔔';
-    notifLog.unshift({ id: ++notifId, tileId: w.id, ws: w.ws, icon, tileTitle: w.title, title, body, at: Date.now(), read: false });
+    notifLog.unshift({ id: ++notifId, tileId: w.id, ws: w.ws, icon, tileTitle: w.title, title, body, at: Date.now(), read: false, action: action || null });
     notifLog.length = Math.min(notifLog.length, 100);
     updateNotifBadge();
     if (openPanel() === 'notifications') renderNotifications();
@@ -1594,10 +1597,11 @@
     const body = $('#notif-body');
     body.innerHTML = notifLog.length ? notifLog.map(n => `<button class="notif-row${n.read ? '' : ' unread'}" data-id="${n.id}">
       <span class="notif-ico">${esc(n.icon)}</span>
-      <span class="notif-txt"><span class="notif-title">${esc(n.title)}</span>${n.tileTitle ? `<span class="notif-tile">${esc(n.tileTitle)}</span>` : ''}${n.body ? `<span class="notif-body">${esc(n.body)}</span>` : ''}</span>
+      <span class="notif-txt"><span class="notif-title">${esc(n.title)}</span>${n.tileTitle ? `<span class="notif-tile">${esc(n.tileTitle)}</span>` : ''}${n.body ? `<span class="notif-body">${esc(n.body)}</span>` : ''}${n.action ? `<span class="notif-action" data-action="${n.id}">${esc(n.action.label)}</span>` : ''}</span>
       <span class="notif-time">${relTime(n.at)}</span></button>`).join('')
       : '<div class="side-empty">No notifications yet</div>';
     body.querySelectorAll('[data-id]').forEach(b => b.onclick = () => focusNotification(+b.dataset.id));
+    body.querySelectorAll('[data-action]').forEach(b => b.onclick = e => { e.stopPropagation(); showAlwaysAllowCard(+b.dataset.action); });
   }
   function focusNotification(id) {
     const n = notifLog.find(x => x.id === id);
@@ -1890,6 +1894,121 @@
       if (now - w.busySince >= cfg.runawayMinutes * 60000) flagRunaway(w, 'time', `Working without a break for ${cfg.runawayMinutes} min`);
     }
   }, 60000);
+
+  // ------------------------------------------------------------ permission prompts (plan item 44)
+  // Claude Code's confirm box ("Do you want to proceed?" / "...make this edit" / "...create", with
+  // numbered 1. Yes / 2. Yes and don't ask again / 3. No) is spotted in the tile's own screen, not
+  // scrollback. OpenCode tiles get a real event instead (permission.asked/replied, forwarded from
+  // opencode.js). Either way the tile is marked "waiting for you" and notified once per prompt; if
+  // the same kind of thing keeps asking, the notification offers to show the rule to add.
+
+  const waitingCounts = new Map(); // key (cwd+kind+detail) -> how many times this session
+  const CLAUDE_QUESTION_RE = /Do you want to (?:proceed|make this edit|create)\b[^\n?]*\?/i;
+
+  function setWinWaiting(w, has) {
+    if (has === !!w.waitingEl) return;
+    w.waitingEl = has;
+    w.el.classList.toggle('waiting', has);
+    const el = w.el.querySelector('.waiting');
+    if (el) { el.textContent = has ? 'waiting for you' : ''; el.title = has ? 'This tile is waiting on a permission prompt' : ''; }
+    refreshStats();
+  }
+  function clearWaiting(w) {
+    if (!w.waitingPrompt) return;
+    w.waitingPrompt = null;
+    setWinWaiting(w, false);
+  }
+  // Fires once per distinct prompt (a new key), never on every scan tick while the same one sits there.
+  function setWaiting(w, kind, label, detail, key, extra) {
+    if (w.waitingPrompt && w.waitingPrompt.key === key) { if (extra?.id) w.waitingPrompt.id = extra.id; return; }
+    w.waitingPrompt = { kind, label, detail, key, id: extra?.id || null };
+    setWinWaiting(w, true);
+    const count = (waitingCounts.get(key) || 0) + 1;
+    waitingCounts.set(key, count);
+    const action = count >= 3 ? buildAlwaysAllowAction(w, kind, label, detail, key, count, extra) : null;
+    notify(w, `${w.agentName} is waiting for you`, `${label}${detail ? ': ' + detail : ''}`, action);
+  }
+
+  // Best-effort rule text; the user reviews and saves it themselves, Operant never writes it.
+  function claudeRuleFor(label, detail) {
+    if (/^bash/i.test(label)) {
+      const prefix = String(detail || '').trim().split(/\s+/)[0];
+      return prefix ? `Bash(${prefix} *)` : null;
+    }
+    if (/^edit/i.test(label)) return 'Edit';
+    if (/^(write|create)/i.test(label)) return 'Write';
+    return null;
+  }
+  function buildAlwaysAllowAction(w, kind, label, detail, key, count, extra) {
+    if (kind === 'opencode') {
+      if (!extra?.rule) return null;
+      const filePath = resolvePath(extra.dir || w.cwd || lastCwd, 'opencode.json');
+      return { label: 'Always allow…', filePath,
+        rule: `"permission": { "${label}": { "${extra.rule}": "allow" } }`,
+        note: `${w.agentName} has asked for "${label}" ${count}+ times. Merge this into opencode.json's "permission" block, then save.` };
+    }
+    const rule = claudeRuleFor(label, detail);
+    if (!rule) return null;
+    const filePath = resolvePath(w.cwd || lastCwd, '.claude', 'settings.local.json');
+    return { label: 'Always allow…', filePath,
+      rule: `"permissions": { "allow": ["${rule}"] }`,
+      note: `Claude has asked to ${label.toLowerCase()} ${count}+ times. Merge this into .claude/settings.local.json, then save.` };
+  }
+  async function showAlwaysAllowCard(id) {
+    const n = notifLog.find(x => x.id === id);
+    if (!n?.action) return;
+    const { rule, filePath, note } = n.action;
+    const r = await operant.ask({ message: 'Always allow this?', detail: `${note}\n\n${rule}`, buttons: ['Open settings file', 'Not now'], cancelId: 1 });
+    if (r !== 0) return;
+    closePanels();
+    await openEditor(filePath, { ws: current });
+    toast("Add the rule and save it yourself — Operant never writes permission rules.");
+  }
+
+  // Last N raw lines without walking the whole scrollback (rawLines() does, fine for on-demand reads
+  // but too much for a scan running several times a second on every busy Claude tile).
+  function lastScreenLines(w, n) {
+    if (!w.term) return [];
+    const buf = w.term.buffer.active, len = buf.length, start = Math.max(0, len - n);
+    const rows = [];
+    for (let i = start; i < len; i++) rows.push(buf.getLine(i)?.translateToString(true) ?? '');
+    return rows;
+  }
+  // Claude: scan the tile's own screen (not scrollback) for the confirm box, throttled per tile.
+  function claudePromptInLast(w) {
+    const lines = lastScreenLines(w, 24);
+    const qi = lines.findIndex(l => CLAUDE_QUESTION_RE.test(l));
+    if (qi === -1) return null;
+    const after = lines.slice(qi, Math.min(lines.length, qi + 6)).join('\n');
+    if (!/\b1\.\s*Yes\b/i.test(after) || !/\bNo\b/i.test(after)) return null;
+    const box = [];
+    for (let i = qi - 1; i >= Math.max(0, qi - 14); i--) {
+      if (/^[╭╮╰╯─═]+$/.test(lines[i].trim())) break;
+      const t = lines[i].replace(/^[│┃|]\s?|\s?[│┃|]$/g, '').trim();
+      if (t) box.unshift(t);
+    }
+    return { label: box[0] || 'permission', detail: box.slice(1).find(Boolean) || '' };
+  }
+  function checkClaudeWaiting(w) {
+    if (!isClaudeTile(w)) return;
+    const found = claudePromptInLast(w);
+    if (found) setWaiting(w, 'claude', found.label, found.detail, `${w.cwd}::${found.label}::${found.detail.split(/\s+/)[0] || ''}`);
+    else if (w.waitingPrompt?.kind === 'claude') clearWaiting(w);
+  }
+
+  // OpenCode: a real event (from opencode.js's SSE listener), so no scanning needed.
+  operant.on('oc-permission', ({ ptyId, id, permission, patterns, always, metadata }) => {
+    const w = ptyWins.get(ptyId);
+    if (!w || !w.alive) return;
+    const label = permission || 'permission';
+    const detail = String((metadata && (metadata.command || metadata.description)) || (patterns && patterns[0]) || '');
+    const key = `${w.cwd}::oc::${label}::${(always && always[0]) || detail}`;
+    setWaiting(w, 'opencode', label, detail, key, { id, rule: always && always[0], dir: w.cwd });
+  });
+  operant.on('oc-permission-cleared', ({ ptyId, id }) => {
+    const w = ptyWins.get(ptyId);
+    if (w?.waitingPrompt?.id === id) clearWaiting(w);
+  });
 
   // ------------------------------------------------------------ navigation
 
@@ -2616,7 +2735,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const ai = all.filter(w => w.kind === 'ai');
     const agRun = ag.filter(w => w.status === 'running').length;
     const aiRun = ai.filter(aiWorking).length;
-    const html = `◆ <span class="run">${agRun + aiRun} running</span> · <span class="idle">${ai.length - aiRun} idle</span> · <span class="ok">${ag.length - agRun} done</span>`;
+    const waiting = all.filter(w => w.waitingPrompt).length;
+    const html = `◆ <span class="run">${agRun + aiRun} running</span> · <span class="idle">${ai.length - aiRun} idle</span> · <span class="ok">${ag.length - agRun} done</span>${waiting ? ` · <span class="warn">${waiting} waiting</span>` : ''}`;
     if (html !== lastStats) $('#stat-agents').innerHTML = lastStats = html;
   }
   // Working state changes without any other event, so redraw the bar when a workspace's busy dot would.
@@ -3884,6 +4004,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           ws: w.ws + 1, focused: focused() === w, self: !!self && w.id === self.id, agent: w.agentConf,
           ...(w.tok ? { tokens: fmtTok(w.tok.input + w.tok.output + w.tok.cacheWrite) } : {}),
           ...(w.runaway ? { runaway: w.runaway.reason } : {}),
+          ...(w.waitingPrompt ? { waiting: true } : {}),
         }));
       case 'stop': {
         const w = needTile(args.id);

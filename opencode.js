@@ -100,6 +100,15 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
       sendTo(t.owner, 'opencode:busy', { ptyId, busy: p.status?.type === 'busy' });
       return;
     }
+    // A permission prompt on the tile's own session (plan item 44); subagent prompts aren't surfaced.
+    if (e.type === 'permission.asked' && t.roots.has(p.sessionID)) {
+      sendTo(t.owner, 'oc-permission', { ptyId, id: p.id, permission: p.permission, patterns: p.patterns, always: p.always, metadata: p.metadata });
+      return;
+    }
+    if (e.type === 'permission.replied' && t.roots.has(p.sessionID)) {
+      sendTo(t.owner, 'oc-permission-cleared', { ptyId, id: p.requestID });
+      return;
+    }
     if (e.type === 'message.updated' && t.roots.has(p.sessionID)) {
       if (p.info?.role === 'assistant') {
         const free = isFreeModel(p.info.modelID) || isFreeModel(p.info.providerID && `${p.info.providerID}/${p.info.modelID}`);

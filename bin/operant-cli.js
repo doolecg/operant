@@ -159,6 +159,7 @@ function buildArgs(cmd, positionals, flags) {
 function fmtTile(t) {
   const flags = [t.busy && 'busy', t.focused && 'focused', t.self && 'self'].filter(Boolean).map(f => `[${f}]`);
   if (t.runaway) flags.push(`[⚠ ${t.runaway}]`);
+  if (t.waiting) flags.push('[waiting]');
   return [t.id, t.kind, t.title, t.cwd, t.tokens, flags.join(' ')].filter(x => x !== undefined && x !== '').join('  ');
 }
 

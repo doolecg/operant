@@ -153,3 +153,11 @@ team mode (33). In order of how much each should save:
       before grep/reading files; if `.operant/progress.md` exists read it first; long commands through
       `operant run`/`wait --errors`. Setting: Settings › Agents › "Brief agents at launch" (on). Test on a master
       tile for both Claude Code and OpenCode: the first action on a repo with `.codegraph/` is a CodeGraph query.
+- [x] **44. Agents waiting on a permission prompt ask you:** an agent stuck on "Do you want to proceed?" (Claude
+      Code) or a permission request (OpenCode's `permission.asked` SSE event) just sits there, often in a tile
+      you're not looking at. Operant spots it (Claude: the prompt in the tile's output; OpenCode: the event), marks
+      the tile ("waiting for you" in its title and the status pill), sends a notification to the bell and Windows,
+      and clicking it focuses the tile. If the same kind of command keeps asking, the notification offers "Always
+      allow…", which shows the exact permission rule to add and opens the right settings file (Claude
+      `.claude/settings.local.json`, OpenCode `opencode.json` `permission`) in the editor tile, for the user to
+      save; Operant never writes permission rules itself.
