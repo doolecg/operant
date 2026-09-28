@@ -72,7 +72,9 @@ const HOOK_SETTINGS_PATH = path.join(app.getPath('userData'), 'hook-settings.jso
 function writeHookSettings() {
   try {
     const content = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `"${HOOK_CMD_PATH}"` }] }] },
+      // "Bash" on macOS/Linux, "PowerShell" on Windows — Claude Code's shell tool is named
+      // differently per platform, and a matcher that misses one never even calls the hook script.
+      hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `"${HOOK_CMD_PATH}"` }] }] },
     });
     let existing = null;
     try { existing = fs.readFileSync(HOOK_SETTINGS_PATH, 'utf8'); } catch {}

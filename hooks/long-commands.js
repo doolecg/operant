@@ -56,8 +56,10 @@ function titleFor(command) {
 function dq(s) { return `"${String(s).replace(/(["\\$`])/g, '\\$1')}"`; }
 
 // The rewritten command, or null if `command` isn't a long-running kind we know about (or is
-// already unsafe/already-operant, via classify).
-function rewriteCommand(command) {
+// already unsafe/already-operant, via classify). `shell` is 'bash' (default) or 'powershell' —
+// Claude Code's Windows tool is named "PowerShell", not "Bash", and the install rewrite below
+// pipes through a tiny script that only parses as one or the other.
+function rewriteCommand(command, shell = 'bash') {
   const kind = classify(command);
   if (!kind) return null;
   const cmd = String(command).trim();
@@ -65,6 +67,9 @@ function rewriteCommand(command) {
   if (kind === 'build') return `operant build ${dq(cmd)}`;
   // Installs: start it in its own tile, then wait for it with just the errors.
   const title = titleFor(cmd);
+  if (shell === 'powershell') {
+    return `$id = (operant run ${dq(cmd)} --title ${dq(title)}) -split ' ' | Select-Object -Last 1; operant wait $id --errors`;
+  }
   return `id=$(operant run ${dq(cmd)} --title ${dq(title)} | awk '{print $2}'); operant wait "$id" --errors`;
 }
 
@@ -78,9 +83,11 @@ function main() {
       // Code is run any other way, even though --settings wires the hook up unconditionally.
       if (process.env.OPERANT !== '1') return process.exit(0);
       const input = JSON.parse(raw || '{}');
-      if (input.hook_event_name !== 'PreToolUse' || input.tool_name !== 'Bash') return process.exit(0);
+      // Claude Code's shell tool is "Bash" on macOS/Linux and "PowerShell" on Windows.
+      const shell = input.tool_name === 'PowerShell' ? 'powershell' : input.tool_name === 'Bash' ? 'bash' : null;
+      if (input.hook_event_name !== 'PreToolUse' || !shell) return process.exit(0);
       const command = input.tool_input && input.tool_input.command;
-      const updated = typeof command === 'string' ? rewriteCommand(command) : null;
+      const updated = typeof command === 'string' ? rewriteCommand(command, shell) : null;
       if (!updated) return process.exit(0);
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: {
