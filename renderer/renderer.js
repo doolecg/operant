@@ -1008,94 +1008,6 @@
     f.bar.querySelector('.find-n').textContent = !f.q ? '' : f.n ? `${f.k + 1} of ${f.n}${f.n >= 5000 ? '+' : ''}` : 'No matches';
   }
 
-  // ------------------------------------------------------------- browser tile
-  // An in-app browser (<webview>, its own session, no Node/preload). Back/forward/reload/stop,
-  // a URL bar, DevTools, and opening the page in the system browser. Console messages are kept
-  // (last 500) for the control API; Alt/Ctrl keybinds are forwarded from main (see browser:key
-  // below) since the guest's keyboard never reaches this page.
-
-  const LEVEL_NAME = ['verbose', 'info', 'warning', 'error'];
-  const browserConsoleCursors = new Map(); // cursorKey(caller, tile) -> console entries already read, for `console --new`
-  function normalizeUrl(u) {
-    u = String(u || '').trim();
-    if (!u) return 'about:blank';
-    // A scheme needs "//" after it (http://, file://…) or it's just a bare host:port (localhost:3000).
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u) || u === 'about:blank') return u;
-    return 'http://' + u;
-  }
-  function urlHost(u) { try { return new URL(u).host; } catch { return ''; } }
-  function drawBrowserBar(w) {
-    const reload = w.el.querySelector('[data-b="reload"]'), back = w.el.querySelector('[data-b="back"]'), fwd = w.el.querySelector('[data-b="fwd"]');
-    if (reload) { reload.textContent = w.loading ? '✕' : '⟳'; reload.title = w.loading ? 'Stop' : 'Reload'; }
-    if (back) back.disabled = !w.webview.canGoBack();
-    if (fwd) fwd.disabled = !w.webview.canGoForward();
-  }
-  function browserNavigate(w, url) {
-    const u = normalizeUrl(url);
-    w.url = u;
-    w.urlInput.value = u === 'about:blank' ? '' : u;
-    // Before the guest has ever attached, only setting the src attribute (not loadURL) triggers the attach.
-    if (w.attached) w.webview.loadURL(u).catch(() => {});
-    else w.webview.src = u;
-  }
-  function openBrowser(url, { ws = current, focus = true, near = null } = {}) {
-    const id = nextId++;
-    const el = document.createElement('div');
-    el.className = 'win browser opening';
-    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">◎</span><span class="title">Browser</span><span class="badge"></span>
-      <span class="view-acts"><button data-b="back" title="Back">←</button><button data-b="fwd" title="Forward">→</button>
-      <button data-b="reload" title="Reload">⟳</button><button data-b="dev" title="DevTools">◫</button>
-      <button data-b="open" title="Open in the system browser">↗</button></span><button class="x" title="Close">✕</button></div>
-      <div class="browser-bar"><input class="browser-url" spellcheck="false" autocomplete="off" placeholder="Address"></div>
-      <div class="browser-wrap"><webview class="browser-view" partition="persist:operant-browser" allowpopups></webview></div></div>`;
-    const wv = el.querySelector('webview');
-    const w = { id, kind: 'browser', el, term: null, title: 'Browser', alive: true, ws, lastActivity: Date.now(), closeIn: null,
-      cwd: null, webview: wv, urlInput: el.querySelector('.browser-url'), console: [], loading: false, url: 'about:blank' };
-    el.querySelector('.title').textContent = w.title;
-    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
-    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
-    el.querySelector('.view-acts').addEventListener('click', e => {
-      const b = e.target.closest('[data-b]');
-      if (!b) return;
-      if (b.dataset.b === 'back') wv.goBack();
-      else if (b.dataset.b === 'fwd') wv.goForward();
-      else if (b.dataset.b === 'reload') { if (w.loading) wv.stop(); else wv.reload(); }
-      else if (b.dataset.b === 'dev') { if (wv.isDevToolsOpened()) wv.closeDevTools(); else wv.openDevTools(); }
-      else if (w.url) operant.openLink(w.url, true); // "open in system browser" always uses the second browser
-    });
-    w.urlInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); browserNavigate(w, w.urlInput.value); }
-      else if (e.key === 'Escape') { e.preventDefault(); w.urlInput.value = w.url === 'about:blank' ? '' : w.url; focusKeys(w); }
-    });
-    wv.addEventListener('focus', () => { if (workspaces[w.ws].focused !== w.id) focusWin(w, false); });
-    // A guest webview grabs the keyboard itself once its page is ready; a tile that opened with no
-    // URL wants the address bar instead, so it's clawed back the first time that happens.
-    wv.addEventListener('dom-ready', () => { w.attached = true; if (w.wantUrlFocus) { w.wantUrlFocus = false; w.urlInput.focus(); w.urlInput.select(); } });
-    wv.addEventListener('did-start-loading', () => { w.loading = true; drawBrowserBar(w); });
-    wv.addEventListener('did-stop-loading', () => { w.loading = false; drawBrowserBar(w); });
-    const onNav = () => { w.url = wv.getURL() || w.url; w.urlInput.value = w.url === 'about:blank' ? '' : w.url; setBadge(w, urlHost(w.url)); drawBrowserBar(w); saveSession(); };
-    wv.addEventListener('did-navigate', onNav);
-    wv.addEventListener('did-navigate-in-page', onNav);
-    wv.addEventListener('page-title-updated', e => setTitle(w, e.title || urlHost(w.url) || 'Browser'));
-    wv.addEventListener('console-message', e => {
-      w.console.push({ level: e.level, message: e.message, line: e.line, source: e.sourceId });
-      if (w.console.length > 500) w.console.shift();
-    });
-    wins.set(id, w);
-    if (focus && !url) w.wantUrlFocus = true;
-    mount(w, ws, near, { focus });
-    browserNavigate(w, url || 'about:blank');
-    saveSession();
-    return w;
-  }
-  // Alt/Ctrl keybinds forwarded from main: the guest's key events never bubble to this page.
-  operant.on('browser:key', combo => {
-    const w = focused();
-    if (!w || w.kind !== 'browser') return;
-    const action = bindMap.get(combo);
-    if (action && actions[action]) actions[action]();
-  });
-
   // ------------------------------------------------------------- diff tile
   // What changed in a project since the last commit, file by file: staged, unstaged and new files.
 
@@ -1380,7 +1292,7 @@
         const w = n.win;
         tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master,
           sessionId: w.sessionId && !w.sessionId.startsWith('oc:') ? w.sessionId : undefined,
-          ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.kind === 'browser' ? { url: w.url } : {}), ...(w.edit ? { edit: w.edit } : {}),
+          ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.edit ? { edit: w.edit } : {}),
           });
         w.snapIndex = tiles.length - 1;
         return { tile: w.snapIndex };
@@ -1421,8 +1333,7 @@
       const ws = Math.max(snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`)), 0);
       if (t.kind === 'view') return openViewer(t.file, { ws, focus: false });
       if (t.kind === 'diff') return openDiff(t.cwd, { ws, focus: false });
-      if (t.kind === 'browser') return openBrowser(t.url, { ws, focus: false });
-      if (t.kind === 'board') return null; // old sessions kept the tasks in a board tile
+      if (t.kind === 'board' || t.kind === 'browser') return null; // old sessions kept the tasks in a board tile
       if (t.edit) return openEditor(t.edit, { ws, focus: false });
       return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws, focus: false });
     }));
@@ -1518,7 +1429,7 @@
 
   const focused = () => wins.get(workspaces[current].focused);
   // The keyboard goes to a tile's terminal, or to a viewer's page so the arrow keys scroll it.
-  const focusKeys = w => { if (!w) return; if (w.term) w.term.focus(); else if (w.kind === 'browser') w.webview?.focus(); else w.page?.focus({ preventScroll: true }); };
+  const focusKeys = w => { if (!w) return; if (w.term) w.term.focus(); else w.page?.focus({ preventScroll: true }); };
 
   // ------------------------------------------------------------- pty data
 
@@ -1841,8 +1752,8 @@
 
   function idleLimit(w) {
     if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
-    // Viewers, diffs, browsers and the task board are read, not run; an editor with unsaved changes would lose them.
-    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'browser' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
+    // Viewers, diffs and the task board are read, not run; an editor with unsaved changes would lose them.
+    if (w.kind === 'view' || w.kind === 'diff' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
     if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
@@ -2217,7 +2128,6 @@
     newAgentIn: async () => { const d = await operant.pickFolder(); if (d) { lastCwd = d; newTerminal('ai', d); } },
     pickAgent: () => togglePanel('launcher'),
     newShell: () => newTerminal('shell'),
-    openBrowser: () => openBrowser(),
     close: () => requestClose(focused()),
     fullscreen: toggleFullscreen,
     toggleSplit,
@@ -3989,8 +3899,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   else if (!cfg.onboarded) { tourThen = startFresh; togglePanel('tour'); }
   else startFresh();
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
-  // linkBrowser: 'tile' sends links here instead of opening them outside Operant.
-  operant.on('browse', url => openBrowser(url, { near: focused() }));
   // Settings › CodeGraph: pinned projects with lots of new code (or all of them) are indexed in one tile at startup.
   operant.codegraphStartup().then(dirs => {
     if (!dirs.length) return;
@@ -4284,99 +4192,10 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'browse': {
         if (!args.url) throw new Error('url required');
-        if (args.id != null) {
-          const w = needTile(args.id);
-          if (w.kind !== 'browser') throw new Error('tile is not a browser');
-          browserNavigate(w, args.url);
-          if (args.focus) { if (w.ws !== current) switchWorkspace(w.ws); focusWin(w); }
-          return { id: w.id };
-        }
-        const w = openBrowser(args.url, { ws: self?.ws ?? current, near: self, focus: !!args.focus });
-        return { id: w.id };
-      }
-      case 'shot': {
-        const w = needTile(args.id);
-        if (w.kind !== 'browser') throw new Error('tile is not a browser');
-        let rect = null;
-        if (args.selector) {
-          const sel = JSON.stringify(args.selector);
-          rect = await w.webview.executeJavaScript(`(() => { const e = document.querySelector(${sel}); if (!e) return null; const b = e.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) }; })()`);
-          if (!rect) throw new Error(`no match for ${args.selector}`);
-        } else if (args.region) {
-          const p = String(args.region).split(',').map(n => parseInt(n.trim(), 10));
-          if (p.length !== 4 || p.some(Number.isNaN)) throw new Error('--region must be x,y,w,h');
-          rect = { x: p[0], y: p[1], width: p[2], height: p[3] };
-        }
-        const img = rect ? await w.webview.capturePage(rect) : await w.webview.capturePage();
-        const size = img.getSize();
-        if (args.full) return { id: w.id, png: img.toDataURL().replace(/^data:image\/png;base64,/, ''), width: size.width, height: size.height };
-        // NativeImage.resize()/toJPEG() cross the native binding and crash this sandboxed renderer -
-        // downscale and re-encode through a plain <canvas> instead (DOM-only, no native image calls).
-        const MAX_W = 1280;
-        const width = Math.min(size.width, MAX_W) || 1, height = Math.round(size.height * (width / size.width)) || 1;
-        const jpegUrl = await new Promise((resolve, reject) => {
-          const el = new (window.Image)();
-          el.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = width; canvas.height = height;
-            canvas.getContext('2d').drawImage(el, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.75));
-          };
-          el.onerror = () => reject(new Error('could not decode the capture'));
-          el.src = img.toDataURL();
-        });
-        return { id: w.id, jpeg: jpegUrl.replace(/^data:image\/jpeg;base64,/, ''), width, height };
-      }
-      case 'console': {
-        const w = needTile(args.id);
-        if (w.kind !== 'browser') throw new Error('tile is not a browser');
-        let entries = w.console;
-        if (args.new) { const last = browserConsoleCursors.get(cursorKey(self, w)) || 0; entries = entries.slice(last); }
-        browserConsoleCursors.set(cursorKey(self, w), w.console.length);
-        if (args.errors) entries = entries.filter(e => e.level >= 2);
-        const cap = Math.min(Math.max(1, +args.lines || 60), 2000);
-        const total = entries.length, shown = entries.slice(-cap);
-        const text = shown.map(e => `[${LEVEL_NAME[e.level] || e.level}] ${e.message}${e.source ? ` (${e.source}:${e.line})` : ''}`).join('\n');
-        return { id: w.id, text, total, shown: shown.length };
-      }
-      case 'text': {
-        const w = needTile(args.id);
-        if (w.kind !== 'browser') throw new Error('tile is not a browser');
-        const sel = JSON.stringify(args.selector || 'body');
-        const raw = await w.webview.executeJavaScript(`(() => { const e = document.querySelector(${sel}); return e ? e.innerText : ''; })()`).catch(e => { throw new Error(e.message || String(e)); });
-        const lines = String(raw || '').replace(/[ \t]+/g, ' ').split('\n').map(l => l.trim()).filter((l, i, a) => l || a[i - 1]);
-        const cleaned = lines.slice(0, 400);
-        const text = cleaned.join('\n');
-        return { id: w.id, text, total: cleaned.length, shown: cleaned.length };
-      }
-      case 'click': {
-        const w = needTile(args.id);
-        if (w.kind !== 'browser') throw new Error('tile is not a browser');
-        if (!args.selector) throw new Error('selector required');
-        const sel = JSON.stringify(args.selector);
-        const ok = await w.webview.executeJavaScript(`(() => { const e = document.querySelector(${sel}); if (!e) return false; e.click(); return true; })()`);
-        if (!ok) throw new Error(`no match for ${args.selector}`);
-        return { id: w.id, ok: true };
-      }
-      case 'type': {
-        const w = needTile(args.id);
-        if (w.kind !== 'browser') throw new Error('tile is not a browser');
-        if (!args.selector) throw new Error('selector required');
-        const sel = JSON.stringify(args.selector), text = JSON.stringify(String(args.text ?? ''));
-        const ok = await w.webview.executeJavaScript(`(() => {
-          const e = document.querySelector(${sel}); if (!e) return false;
-          e.focus(); e.value = ${text};
-          e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
-          return true;
-        })()`);
-        if (!ok) throw new Error(`no match for ${args.selector}`);
-        if (args.enter) { w.webview.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); w.webview.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' }); }
-        return { id: w.id, ok: true };
-      }
-      case 'url': {
-        const w = needTile(args.id);
-        if (w.kind !== 'browser') throw new Error('tile is not a browser');
-        return { id: w.id, url: w.url, title: w.title, loading: w.loading };
+        const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(args.url) ? args.url : 'http://' + args.url;
+        if (!/^https?:\/\//i.test(url)) throw new Error('browse only opens http(s) URLs');
+        operant.openLink(url);
+        return { url };
       }
       case 'run': {
         if (!args.command) throw new Error('command required');

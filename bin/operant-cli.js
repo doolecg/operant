@@ -10,15 +10,14 @@ const POSITIONAL = {
   ask: ['question'], ws: ['index'],
   read: ['id'], focus: ['id'], close: ['id'], wait: ['id'], stop: ['id'],
   send: ['id', 'text'],
-  browse: ['url'], shot: ['id'], console: ['id'], url: ['id'],
-  text: ['id', 'selector'], click: ['id', 'selector'], type: ['id', 'selector', 'text'],
+  browse: ['url'],
   ports: [], watch: ['id'],
   plan: ['path'], board: [], team: [],
   summarize: ['target', 'question'], find: ['question'],
   remember: ['text'], recall: ['query'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
-const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text', test: 'command', build: 'command',
+const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', test: 'command', build: 'command',
   summarize: 'question', find: 'question', remember: 'text', recall: 'query' };
 
 // Single source of truth for command help: group (for the grouped list) plus
@@ -45,13 +44,7 @@ const COMMANDS = {
   wait: { group: 'terminals', usage: 'operant wait <id> [--idle s] [--timeout s] [--new] [--errors] [--grep p] [--digest]', desc: 'block until a tile goes quiet or exits, then read (same read filters, or a test/build digest)', examples: ['operant wait 7 --idle 5', 'operant wait 7 --digest'] },
   stop: { group: 'terminals', usage: 'operant stop <id>', desc: "stop a tile's running agent/command", examples: ['operant stop 7'] },
 
-  browse: { group: 'browser', usage: 'operant browse <url> [--id n] [--focus]', desc: 'open (or navigate) a browser tile', examples: ['operant browse localhost:3000'] },
-  shot: { group: 'browser', usage: 'operant shot <id> [--out file] [--selector "<css>"] [--region x,y,w,h] [--full]', desc: "screenshot a browser tile's page (downscaled JPEG by default; --full for a full-size PNG)", examples: ['operant shot 5', 'operant shot 5 --selector "#app"'] },
-  console: { group: 'browser', usage: 'operant console <id> [--errors] [--new] [--lines n]', desc: "a browser tile's console output", examples: ['operant console 5 --errors'] },
-  text: { group: 'browser', usage: 'operant text <id> [selector]', desc: "a browser tile's visible page text (cheap, no image)", examples: ['operant text 5'] },
-  click: { group: 'browser', usage: 'operant click <id> <selector>', desc: 'click an element in a browser tile', examples: ['operant click 5 "#btn"'] },
-  type: { group: 'browser', usage: 'operant type <id> <selector> <text...> [--enter]', desc: 'type into an element in a browser tile', examples: ['operant type 5 "#q" hi --enter'] },
-  url: { group: 'browser', usage: 'operant url <id>', desc: "a browser tile's current url/title", examples: ['operant url 5'] },
+  browse: { group: 'browser', usage: 'operant browse <url>', desc: 'open a URL in the default browser (follows Settings › Open links in)', examples: ['operant browse localhost:3000'] },
 
   agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier xsmall|small|medium|high|max] [--model id] [--cwd c] [--title t]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier xsmall'] },
   ask: { group: 'agents & tasks', usage: 'operant ask <question...> [--options "A|B|C"] [--detail d]', desc: 'blocking dialog, returns the choice', examples: ['operant ask "Delete old migrations?" --options "Delete|Keep"'] },
@@ -233,10 +226,7 @@ function formatResult(cmd, result) {
     case 'stop': return `stopped tile ${result.id} (${result.how})`;
     case 'ask': return result.answer === null ? '(closed)' : String(result.answer);
     case 'ws': return `workspace ${result.current}`;
-    case 'browse': return `tile ${result.id}`;
-    case 'console': case 'text': return (result.text || '') + footer(result);
-    case 'click': case 'type': return result.ok ? 'ok' : JSON.stringify(result);
-    case 'url': return [result.id, result.url, result.title, result.loading ? '[loading]' : ''].filter(x => x !== undefined && x !== '').join('  ');
+    case 'browse': return `opened ${result.url}`;
     case 'ports': return (result.ports || []).length ? result.ports.map(p => `${p.id}  ${p.title}  ${p.url}`).join('\n') : '(no dev servers found)';
     case 'watch':
       if (result.watches) return result.watches.length
@@ -317,24 +307,6 @@ async function main() {
   if (!res.ok || !body || body.ok === false) {
     console.error(`operant: ${body && body.error ? body.error : `request failed (${res.status})`}`);
     process.exit(1);
-  }
-
-  if (cmd === 'shot') {
-    const fs = require('fs');
-    const os = require('os');
-    const path = require('path');
-    const { id, png, jpeg, width, height } = body.result;
-    const isJpeg = !!jpeg;
-    let out = flags.out;
-    if (!out) {
-      const dir = path.join(os.tmpdir(), 'operant-shots');
-      fs.mkdirSync(dir, { recursive: true });
-      out = path.join(dir, `tile${id}-${Date.now()}.${isJpeg ? 'jpg' : 'png'}`);
-    }
-    fs.writeFileSync(out, Buffer.from(isJpeg ? jpeg : png, 'base64'));
-    if (asJson) console.log(JSON.stringify({ id, path: out, width, height }));
-    else console.log(`${out}  ${width}x${height}`);
-    return;
   }
 
   if (asJson) console.log(JSON.stringify(body.result));

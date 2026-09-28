@@ -127,7 +127,6 @@ const DEFAULT_KEYBINDS = {
   findInView: ['Ctrl+F'], // only in viewer and diff tiles; terminals keep the key
   showChanges: ['Alt+G'], // the changes tile (git) for the focused tile's project
   saveQuit: ['Alt+Shift+Q'], // save every editor tile, snapshot the session, and quit
-  openBrowser: [], // browser tile
   notifications: ['Alt+I'], // the notification panel
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
@@ -246,10 +245,10 @@ const DEFAULT_CONFIG = {
   runawayMinutes: 60,             // busy without a break this long (checked by the renderer) · 0 = off
   runawaySubagents: 10,           // subagents running at once for one tile · 0 = off
   keybinds: DEFAULT_KEYBINDS,
-  // where links open: 'tile' (Operant's own browser tile) | 'default' (Windows' choice) | an installed browser id | 'custom'
-  linkBrowser: 'tile',
+  // where links open: 'default' (Windows' choice) | an installed browser id | 'custom'
+  linkBrowser: 'default',
   linkBrowserCommand: '',         // custom exe path, when linkBrowser is 'custom'
-  // second browser (Shift+click a link, or a browser tile's ↗): 'auto' (Zen if installed, else Windows' choice) |
+  // second browser (Shift+click a link): 'auto' (Zen if installed, else Windows' choice) |
   // 'default' | an installed browser id | 'custom'
   secondBrowser: 'auto',
   secondBrowserCommand: '',       // custom exe path, when secondBrowser is 'custom'
@@ -273,7 +272,9 @@ const dropRemoved = u => {
   const agents = u.agents.filter(a => a && a.id !== 'codex' && a.id !== 'gemini');
   return { ...u, agents, ...(u.defaultAgent === 'codex' || u.defaultAgent === 'gemini' ? { defaultAgent: 'claude' } : {}) };
 };
-const merged = () => withTiers({ ...DEFAULT_CONFIG, ...dropRemoved(user),
+// The in-app browser tile is gone: a saved 'tile' link choice means Windows' default.
+const dropTileLinks = u => u.linkBrowser === 'tile' ? { ...u, linkBrowser: 'default' } : u;
+const merged = () => withTiers({ ...DEFAULT_CONFIG, ...dropTileLinks(dropRemoved(user)),
   keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) },
   team: { ...DEFAULT_CONFIG.team, ...(user.team || {}), tiers: { ...DEFAULT_CONFIG.team.tiers, ...(user.team?.tiers || {}) } },
 });
@@ -339,39 +340,6 @@ function bringUp(w) {
   w.show();
   w.setAlwaysOnTop(true); w.focus(); w.setAlwaysOnTop(false);
 }
-
-// -------------------------------------------------------------- browser tile
-// The <webview> guest gets no preload and no Node, its own session, and only http(s) navigation.
-// Its keyboard doesn't reach the host page (before-input-event is main's only hook on it), so
-// Alt/Ctrl combos that are Operant keybinds are forwarded to the host renderer to run instead.
-const BROWSER_URL_RE = /^https?:\/\//i;
-const GUEST_NORM = c => c.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Arrow/, '').replace(/^NumpadEnter$/, 'Enter');
-function guestCombo(input) {
-  return [...(input.control ? ['Ctrl'] : []), ...(input.alt ? ['Alt'] : []), ...(input.shift ? ['Shift'] : []), GUEST_NORM(input.code)].join('+');
-}
-function boundCombos() {
-  const set = new Set();
-  for (const combos of Object.values(config.keybinds || {})) for (const c of [].concat(combos)) if (c) set.add(c);
-  for (let i = 1; i <= 9; i++) { set.add(`Alt+${i}`); set.add(`Alt+Shift+${i}`); }
-  return set;
-}
-app.on('web-contents-created', (_e, contents) => {
-  if (contents.getType() !== 'webview') return;
-  contents.on('will-navigate', (e, url) => { if (!BROWSER_URL_RE.test(url)) e.preventDefault(); });
-  // target=_blank / window.open: navigate the same tile instead of opening a new Electron window.
-  contents.setWindowOpenHandler(({ url }) => {
-    if (BROWSER_URL_RE.test(url)) contents.loadURL(url);
-    return { action: 'deny' };
-  });
-  contents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown' || (!input.alt && !input.control)) return;
-    const combo = guestCombo(input);
-    if (!boundCombos().has(combo)) return;
-    event.preventDefault();
-    const host = contents.hostWebContents;
-    if (host && !host.isDestroyed()) host.send('browser:key', combo);
-  });
-});
 
 // ------------------------------------------------------------- skill install
 // Teaches Claude Code / OpenCode the `operant` CLI command (bin/operant.cmd) via a skill file,
@@ -460,10 +428,10 @@ async function controlAsk(owner, args = {}) {
   });
   return { ok: true, result: { answer: options[r.response] ?? null } };
 }
-async function controlOpen(args = {}, owner = null) {
+async function controlOpen(args = {}) {
   const target = String(args.target || '');
   if (/^https?:\/\//i.test(target)) {
-    try { await openUrl(target, { owner }); return { ok: true, result: {} }; }
+    try { await openUrl(target); return { ok: true, result: {} }; }
     catch (e) { return { ok: false, error: e.message }; }
   }
   const full = args.cwd && !path.isAbsolute(target) ? path.join(args.cwd, target) : target;
@@ -493,7 +461,7 @@ function startControlServer() {
       try {
         if (cmd === 'version') return reply(200, { ok: true, result: { version: app.getVersion() } });
         if (cmd === 'ask') { const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r); }
-        if (cmd === 'open') { const r = await controlOpen(args, ownerForTile(tile)); return reply(r.ok ? 200 : 400, r); }
+        if (cmd === 'open') { const r = await controlOpen(args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'usage') {
           // The renderer knows the calling tile's own context size and project; main owns the Claude
           // plan limits and (item 39) computes the token breakdown from the transcripts on demand.
@@ -676,22 +644,16 @@ function detectBrowsers() {
 }
 ipcMain.handle('browsers:list', async () => (await detectBrowsers()).map(({ id, name }) => ({ id, name })));
 
-// Where a link goes: 'tile' opens Operant's own browser tile (in the asking window, or the
-// primary one); 'default' is shell.openExternal (Windows' own choice); otherwise it's a detected
+// Where a link goes: 'default' is shell.openExternal (Windows' own choice); otherwise it's a detected
 // browser id, or 'custom' (linkBrowserCommand/secondBrowserCommand). `second` picks secondBrowser
-// instead of linkBrowser (Shift+click, a browser tile's "open in system browser"). Never spawns
+// instead of linkBrowser (Shift+click). Never spawns
 // through a shell, so the URL can't inject arguments; only http(s)/file URLs go anywhere.
-async function openUrl(url, { second = false, owner = null } = {}) {
+async function openUrl(url, { second = false } = {}) {
   if (!/^(https?|file):\/\//i.test(String(url))) return;
   let choice = second ? config.secondBrowser : config.linkBrowser;
   if (choice === 'auto') { // secondBrowser's default: Zen if installed, else Windows' choice
     const browsers = await detectBrowsers();
     choice = browsers.some(b => b.id === 'zen') ? 'zen' : 'default';
-  }
-  if (choice === 'tile' && !second) {
-    const w = alive(owner) ? owner : primary();
-    if (w) return void sendTo(w, 'browse', url);
-    choice = 'default'; // no window to host a tile in
   }
   if (choice === 'default') return shell.openExternal(url);
   const exe = choice === 'custom' ? (second ? config.secondBrowserCommand : config.linkBrowserCommand)
@@ -1265,10 +1227,10 @@ const updater = createUpdater({ send: broadcast, onInstall: () => { session.rest
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.on('update:check', () => updater.check());
 ipcMain.handle('update:state', () => updater.status);
-ipcMain.on('open-releases', e => openUrl('https://github.com/doolecg/operant/releases', { owner: winOf(e) }));
+ipcMain.on('open-releases', () => openUrl('https://github.com/doolecg/operant/releases'));
 ipcMain.on('open-log-folder', () => { if (!fs.existsSync(LOG_PATH)) logLine('log started'); shell.showItemInFolder(LOG_PATH); });
 // links in release notes, and viewer/agent tile output
-ipcMain.on('open-link', (e, { url, second } = {}) => openUrl(url, { second, owner: winOf(e) }));
+ipcMain.on('open-link', (e, { url, second } = {}) => openUrl(url, { second }));
 ipcMain.on('update:install', async () => {
   // Installing quits every window, so ask once for all of them before starting the installer.
   if (!await confirmClose([...windows].filter(alive), { update: true })) return;
@@ -1705,16 +1667,10 @@ function createWindow(startDir = null, restore = null) {
     backgroundColor: (THEMES[config.theme] || THEMES.obsidian).bg,
     title: 'Operant',
     icon: path.join(__dirname, 'build', 'icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, webviewTag: true },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
     ...(process.env.OPERANT_BACKGROUND ? { show: false } : {}),
   });
   const wcId = w.webContents.id;
-  // Guest webviews (browser tiles): no preload, no Node, isolated + sandboxed, own persistent session.
-  w.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    delete webPreferences.preload; delete webPreferences.preloadURL;
-    Object.assign(webPreferences, { nodeIntegration: false, contextIsolation: true, sandbox: true, partition: 'persist:operant-browser' });
-    if (params.src && params.src !== 'about:blank' && !BROWSER_URL_RE.test(params.src)) event.preventDefault();
-  });
   // Run from source the process is electron.exe, whose icon the taskbar would show; point it at Operant's.
   if (process.platform === 'win32' && !app.isPackaged) {
     w.setAppDetails({ appId: 'com.doolecg.operant', appIconPath: path.join(__dirname, 'build', 'icon.ico'), appIconIndex: 0, relaunchDisplayName: 'Operant' });

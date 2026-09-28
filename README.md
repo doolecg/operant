@@ -12,7 +12,6 @@ Operant is built so agents don't have to read their own noise. A few things do t
 - **Launch brief** starts every agent with the essentials: use CodeGraph before grep/reading, read `.operant/progress.md` if it exists, run long commands through `operant run`/`wait`.
 - **The Operant skill installs itself** for Claude Code and OpenCode, so agents use `operant run`/`wait`/`read` without being told to. `operant help [cmd]` shows the full command reference.
 - **Optional "Reroute long commands" hook** (Settings › Agents, off by default) moves test, build and install commands from the agent's shell into tiles automatically, so savings don't depend on remembering the skill.
-- **Cheaper screenshots:** `operant shot --selector "<css>"` captures just part of the page; screenshots default to downscaled JPEG.
 - **CodeGraph:** agents query a code index instead of grepping and reading whole files. Indexing runs on startup for projects that changed.
 - **Context size on every agent tile,** like `ctx 84k`, orange at 60% and red at 85%, so you can see when to `/compact` or start a fresh session before a big context starts costing you on every message.
 - **Token usage pill** with today's total, a daily budget, and a graph over time; plan limit alerts at 80% and 95%.

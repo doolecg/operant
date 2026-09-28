@@ -525,16 +525,6 @@ mark.hit.cur { background: rgba(227, 178, 122, .55); box-shadow: 0 0 0 1.5px var
 .dl.hunk { color: var(--accent); opacity: .8; background: rgba(var(--ink-rgb), .04); }
 .dl.hunk .dl-t { color: inherit; }
 
-/* ------------------------------------------------------------- browser tile */
-.win.browser .ico { color: var(--accent); }
-.browser-bar { flex: none; padding: 5px 8px; border-bottom: 1px solid rgba(var(--ink-rgb), .06); }
-.browser-url { width: 100%; height: 24px; padding: 0 9px; border-radius: 7px; border: 1px solid transparent;
-  background: rgba(var(--ink-rgb), .06); color: var(--text); font-size: 12px; outline: none; }
-.browser-url:focus { border-color: var(--accent); background: rgba(var(--ink-rgb), .09); }
-.browser-wrap { flex: 1; min-height: 0; position: relative; }
-.browser-view { width: 100%; height: 100%; border: none; }
-.win.browser .view-acts button:disabled { opacity: .4; }
-
 /* ------------------------------------------------------------- toasts */
 #toasts { position: fixed; top: calc(var(--bar-h) + 10px); right: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 90; }
 .toast { padding: 9px 14px; border-radius: 10px; background: rgba(var(--card-rgb), .96); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
