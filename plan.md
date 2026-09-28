@@ -86,3 +86,61 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
 - [x] **30. Check after 1.10.0** (browser URL restore, crash reload and the WebGL cap pass; Alt keys inside a browser
       tile need a real keypress to test, CDP key events skip `before-input-event`): crash log (`operant.log`, Settings › Updates › Open log folder) after a day of use;
       Alt+1 while a browser tile has focus; window reload after a renderer crash; the 12-context WebGL cap.
+
+## Next: team workflow (asked for after the 1.10.1 work)
+
+- [ ] **33. Team mode (Settings › Agents › Team):** a lead agent (Claude Code by default) hands tasks to cheaper
+      workers in their own tiles, so the lead's tokens go on the hard parts.
+      - **Tiers**, each an agent + model + a one-line "use for": `small` = OpenCode with `opencode/big-pickle` (free
+        Zen: look things up, read and summarise files, renames, run tests, simple edits, docs tweaks); `medium` =
+        user's pick (e.g. OpenCode with another model, or Claude Code `--model sonnet`); hard work stays with the lead.
+        Editable in Settings, and any configured agent/model can fill a tier.
+      - **CLI:** `operant agent "<task>" --tier small` (or `--model <id>` directly) opens a worker tile with that
+        agent and model (OpenCode `-m`, Claude Code `--model`). `operant team` prints the tiers and how many workers
+        are running, so the lead knows what it can use.
+      - **Hand-off and results:** each worker task goes on the task board (item 24) with its tile as owner; the
+        worker ends with `operant task done <id> --note "<what changed, files>"`; the lead gets the note from
+        `operant wait <tile>` / `operant board` and reviews the diff before accepting (free models make mistakes).
+      - **Guardrails:** max workers at once (default 4, the runaway guard still applies); workers can't start their
+        own workers; one file per worker at a time (the board shows who has what); a worker that fails twice is
+        stopped and its task goes back to the lead.
+      - **Skill:** a short "Team" section, only acted on when `operant team` says team mode is on: what goes to
+        `small`, what to keep, write self-contained task prompts, review before merging.
+      - **UI:** a tier badge in each worker tile's title; the token pill splits free and paid tokens.
+      - **Test:** a Claude Code lead in a background instance sends two small tasks to Big Pickle tiles and one
+        to itself; both workers finish, notes come back through the board, the lead reviews and merges.
+
+## Token efficiency (make Operant the cheapest way to run agents)
+
+Already in: `run`/`wait --errors|--new|--grep`, repeated-line folding, `text` over `shot`, auto compact (32),
+team mode (33). In order of how much each should save:
+
+- [ ] **34. Test and build digests:** `operant test` / `operant build` (or `run --digest`) spot the runner (npm/vitest/
+      jest, pytest, cargo, go test, tsc, eslint, gradle/maven, dotnet) and return only the summary line plus each
+      failure with its file:line and the first project frame of the stack; everything else stays in the tile.
+      Unknown runners fall back to `--errors`.
+- [ ] **35. Cheap readers on free models:** `operant summarize <file|tile|url> ["question"]` and
+      `operant find "<question>"` hand the big read to a small-tier worker (Big Pickle by default, from 33) and
+      return a short answer with file:line references, so the lead never loads the big file, log or page itself.
+- [ ] **36. Don't let the prompt cache go cold:** Claude's cache lasts minutes; an agent left idle past it pays
+      full price to re-read its whole context on the next message. Show a "cache cold" mark on idle tiles, and an
+      option to compact big idle contexts before the cache expires (or when you leave the tile for a set time).
+- [ ] **37. Big commands never flood the context:** an optional Claude Code hook (installed with the skill, off
+      by default, Settings › Agents) that moves long-running commands (test, build, install, dev servers) from the
+      agent's own shell into `operant run` + `wait --errors` automatically, so savings don't depend on the agent
+      remembering the skill. OpenCode: the same through its plugin/config if it allows it.
+- [x] **38. Smaller skill:** keep SKILL.md to the essentials (~40 lines) and move the full command reference to
+      `operant help [cmd]`, which agents call only when they need it.
+- [ ] **39. Where the tokens go:** per-tile and per-task token counts (input, output, cache hits, free vs paid),
+      the biggest single reads, repeated reads of the same file, and each session's fixed overhead (CLAUDE.md,
+      memory, skills, MCP tool lists), with a hint when something is oversized (e.g. an MCP server that's loaded but
+      never used).
+- [ ] **40. Cheaper screenshots:** `operant shot` defaults to a downscaled JPEG, with `--selector`/`--region`
+      to capture only part of the page and `--full` for the old behaviour.
+- [x] **41. Skill nudges for the big wins:** use CodeGraph (when `.codegraph/` exists) before grep/read, read only
+      the lines needed, prefer `--new` on re-reads, and hand small tasks to the small tier.
+- [ ] **42. Tokens per tile since it opened:** every agent tile's title bar shows the tokens it has used since the
+      tile opened (input + output, cache reads counted separately, from the same Claude session files and
+      OpenCode events the context badge and token pill use), next to the context badge; hover for the breakdown
+      and cost-free/paid split. Resumed agents count from when the tile opened, not the whole session. Also in
+      `operant tiles` and `operant status`.

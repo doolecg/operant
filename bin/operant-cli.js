@@ -17,45 +17,75 @@ const POSITIONAL = {
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text' };
 
-function usage() {
-  console.log(`operant <cmd> [args] [--flag value] [--json]
+// Single source of truth for command help: group (for the grouped list) plus
+// usage/description/examples (for `operant help <cmd>`). Keeps the two in sync.
+const GROUP_ORDER = ['tiles', 'terminals', 'files', 'browser', 'agents & tasks', 'context', 'misc'];
+const COMMANDS = {
+  tiles: { group: 'tiles', usage: 'operant tiles', desc: "list this window's tiles", examples: ['operant tiles'] },
+  status: { group: 'tiles', usage: 'operant status', desc: 'info about the calling tile', examples: ['operant status'] },
+  focus: { group: 'tiles', usage: 'operant focus <id>', desc: 'focus a tile', examples: ['operant focus 7'] },
+  close: { group: 'tiles', usage: 'operant close <id> [--force]', desc: 'close a tile', examples: ['operant close 7'] },
+  ws: { group: 'tiles', usage: 'operant ws [n] [--name n]', desc: 'switch/name workspace', examples: ['operant ws 2'] },
+  title: { group: 'tiles', usage: 'operant title <text...>', desc: 'retitle the calling tile', examples: ['operant title "worker1"'] },
 
-  tiles                          list this window's tiles
-  status                         info about the calling tile
-  view <path> [--focus]          open a viewer tile
-  edit <path>                    open an editor tile
-  diff [dir]                     open a changes tile
-  run <command...> [--title t] [--cwd c] [--focus]   run a command in a new tile
-  agent <prompt...> [--agent id] [--cwd c] [--title t]  start an agent tile
-  usage                          your tile's context size and the plan limits
-  compact                        queue a progress note + compact for your tile's next idle moment
-  read <id> [--lines n] [--new] [--errors] [--grep p]  read a tile's terminal output
-  send <id> <text...> [--enter]  type into a tile
-  wait <id> [--idle s] [--timeout s] [--new] [--errors] [--grep p]   wait for a tile to go quiet
-  stop <id>                      stop a tile's running agent/command
-  notify <text...> [--title t]   Windows notification
-  title <text...>                retitle the calling tile
-  focus <id>                     focus a tile
-  close <id> [--force]           close a tile
-  ask <question...> [--options "A|B|C"] [--detail d]  ask the user
-  open <target>                  open a file/folder/URL
-  ws [n] [--name n]              switch/name workspace
-  browse <url> [--id n] [--focus]   open (or navigate) a browser tile
-  shot <id> [--out file.png] [--full]   screenshot a browser tile's page
-  console <id> [--errors] [--new] [--lines n]   a browser tile's console output
-  text <id> [selector]           a browser tile's visible page text
-  click <id> <selector>          click an element in a browser tile
-  type <id> <selector> <text...> [--enter]   type into an element in a browser tile
-  url <id>                       a browser tile's current url/title
-  ports                          list dev-server URLs found in this window's tiles
-  watch <id> --errors [--grep p]  notify on a new matching line in a tile (--off to stop, no id to list)
-  plan <file.md>                 show a plan and wait for Approve/Change
-  task add "<text>" [--for id]   add a task to the board, prints its id
-  task claim|done|note <id> [...]  claim a task, mark it done [--note n], or add a note
-  board                          list every task: id, status, owner, text, last note
+  view: { group: 'files', usage: 'operant view <path> [--focus]', desc: 'open a viewer tile (Markdown/code/images)', examples: ['operant view plan.md'] },
+  edit: { group: 'files', usage: 'operant edit <path>', desc: 'open an editor tile', examples: ['operant edit foo.js'] },
+  diff: { group: 'files', usage: 'operant diff [dir]', desc: 'open a changes tile', examples: ['operant diff'] },
+  open: { group: 'files', usage: 'operant open <target>', desc: 'open a file/folder/URL', examples: ['operant open report.pdf'] },
 
-  --json prints the raw JSON result instead of formatted text.
-  read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines.`);
+  run: { group: 'terminals', usage: 'operant run <command...> [--title t] [--cwd c] [--focus]', desc: 'run a command in a new tile, stays open', examples: ['operant run "npm run dev" --title dev'] },
+  read: { group: 'terminals', usage: 'operant read <id> [--lines n] [--new] [--errors] [--grep p]', desc: "a tile's terminal output", examples: ['operant read 7 --errors', 'operant read 7 --new'] },
+  send: { group: 'terminals', usage: 'operant send <id> <text...> [--enter]', desc: 'type into a tile', examples: ['operant send 7 "y" --enter'] },
+  wait: { group: 'terminals', usage: 'operant wait <id> [--idle s] [--timeout s] [--new] [--errors] [--grep p]', desc: 'block until a tile goes quiet or exits, then read (same read filters)', examples: ['operant wait 7 --idle 5', 'operant wait 7 --errors'] },
+  stop: { group: 'terminals', usage: 'operant stop <id>', desc: "stop a tile's running agent/command", examples: ['operant stop 7'] },
+
+  browse: { group: 'browser', usage: 'operant browse <url> [--id n] [--focus]', desc: 'open (or navigate) a browser tile', examples: ['operant browse localhost:3000'] },
+  shot: { group: 'browser', usage: 'operant shot <id> [--out file.png] [--full]', desc: "screenshot a browser tile's page", examples: ['operant shot 5'] },
+  console: { group: 'browser', usage: 'operant console <id> [--errors] [--new] [--lines n]', desc: "a browser tile's console output", examples: ['operant console 5 --errors'] },
+  text: { group: 'browser', usage: 'operant text <id> [selector]', desc: "a browser tile's visible page text (cheap, no image)", examples: ['operant text 5'] },
+  click: { group: 'browser', usage: 'operant click <id> <selector>', desc: 'click an element in a browser tile', examples: ['operant click 5 "#btn"'] },
+  type: { group: 'browser', usage: 'operant type <id> <selector> <text...> [--enter]', desc: 'type into an element in a browser tile', examples: ['operant type 5 "#q" hi --enter'] },
+  url: { group: 'browser', usage: 'operant url <id>', desc: "a browser tile's current url/title", examples: ['operant url 5'] },
+
+  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--cwd c] [--title t]', desc: 'start a new agent tile with a prompt', examples: ['operant agent "task..." --title worker'] },
+  ask: { group: 'agents & tasks', usage: 'operant ask <question...> [--options "A|B|C"] [--detail d]', desc: 'blocking dialog, returns the choice', examples: ['operant ask "Delete old migrations?" --options "Delete|Keep"'] },
+  notify: { group: 'agents & tasks', usage: 'operant notify <text...> [--title t]', desc: 'Windows notification', examples: ['operant notify "Tests pass, ready for review"'] },
+  plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'] },
+  task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | done <id> [--note n] | note <id> "<text>"', desc: 'add/claim/finish/note a board task', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --note "fixed in login.js"'] },
+  board: { group: 'agents & tasks', usage: 'operant board', desc: 'list every task: id, status, owner, text, last note', examples: ['operant board'] },
+
+  usage: { group: 'context', usage: 'operant usage', desc: "your tile's context size and the plan limits", examples: ['operant usage'] },
+  compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'] },
+
+  ports: { group: 'misc', usage: 'operant ports', desc: "list dev-server URLs found in this window's tiles", examples: ['operant ports'] },
+  watch: { group: 'misc', usage: 'operant watch <id> --errors [--grep p]', desc: 'notify (and tell the agent on its next call) on a new matching line in a tile (--off to stop, no id to list)', examples: ['operant watch 7 --errors', 'operant watch 7 --off'] },
+};
+
+function helpList() {
+  const lines = [`operant <cmd> [args] [--flag value] [--json]`, ''];
+  for (const group of GROUP_ORDER) {
+    const names = Object.keys(COMMANDS).filter(n => COMMANDS[n].group === group);
+    if (names.length) lines.push(`  ${group}: ${names.join(', ')}`);
+  }
+  lines.push('', '  operant help <cmd> for flags and examples.');
+  lines.push('  --json prints the raw JSON result instead of formatted text.');
+  lines.push('  read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines.');
+  console.log(lines.join('\n'));
+}
+
+function helpFor(cmd) {
+  const c = COMMANDS[cmd];
+  if (!c) {
+    console.error(`operant: unknown command "${cmd}"`);
+    console.error(`Commands: ${Object.keys(COMMANDS).join(', ')}`);
+    process.exit(1);
+  }
+  const lines = [c.usage, '', `  ${c.desc}`];
+  if (c.examples.length) {
+    lines.push('', 'Examples:');
+    for (const ex of c.examples) lines.push(`  ${ex}`);
+  }
+  console.log(lines.join('\n'));
 }
 
 function parseArgs(argv) {
@@ -182,7 +212,8 @@ function formatResult(cmd, result) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  if (!argv.length || argv[0] === 'help' || argv[0] === '--help') { usage(); return; }
+  if (!argv.length || argv[0] === '--help' || argv[0] === '-h') { helpList(); return; }
+  if (argv[0] === 'help') { if (argv[1]) helpFor(argv[1]); else helpList(); return; }
 
   const api = process.env.OPERANT_API;
   if (!api) {
