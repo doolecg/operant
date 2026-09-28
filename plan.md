@@ -139,8 +139,17 @@ team mode (33). In order of how much each should save:
       to capture only part of the page and `--full` for the old behaviour.
 - [x] **41. Skill nudges for the big wins:** use CodeGraph (when `.codegraph/` exists) before grep/read, read only
       the lines needed, prefer `--new` on re-reads, and hand small tasks to the small tier.
-- [ ] **42. Tokens per tile since it opened:** every agent tile's title bar shows the tokens it has used since the
+- [x] **42. Tokens per tile since it opened:** every agent tile's title bar shows the tokens it has used since the
       tile opened (input + output, cache reads counted separately, from the same Claude session files and
       OpenCode events the context badge and token pill use), next to the context badge; hover for the breakdown
       and cost-free/paid split. Resumed agents count from when the tile opened, not the whole session. Also in
       `operant tiles` and `operant status`.
+- [ ] **43. Every agent gets the rules from its first message, master included:** today the skill only loads when
+      the agent decides to use it, so the master terminal can start working without it. Operant passes a short
+      brief at launch to every agent tile (master, `operant agent` workers, reopened/resumed agents): Claude Code via
+      `--append-system-prompt`, OpenCode via an `instructions` file in its per-process config (like the theme's
+      `OPENCODE_TUI_CONFIG`, never the user's own config). The brief (a few lines, so it stays cheap and cached):
+      you're in Operant, use the `operant` skill; before anything else, if `.codegraph/` exists use CodeGraph
+      before grep/reading files; if `.operant/progress.md` exists read it first; long commands through
+      `operant run`/`wait --errors`. Setting: Settings › Agents › "Brief agents at launch" (on). Test on a master
+      tile for both Claude Code and OpenCode: the first action on a repo with `.codegraph/` is a CodeGraph query.

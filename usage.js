@@ -54,10 +54,11 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
     if (!isSubagent && sessionId) {
       const tokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
       const max = tokens > 200000 || /\[1m\]/i.test(m.model || '') ? 1000000 : 200000;
-      ctxLatest.set(sessionId, { tokens, max });
+      ctxLatest.set(sessionId, { tokens, max, model: m.model || null });
     }
     if (onTokens && t >= START) {
-      onTokens(runawaySession, (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0));
+      const breakdown = { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 };
+      onTokens(runawaySession, breakdown.input + breakdown.output + breakdown.cacheWrite + breakdown.cacheRead, breakdown, t);
     }
     if (!(t > Date.now() - KEEP_MS)) return;
     // A session in a worktree (<repo>/.claude/worktrees/<name>) counts toward its repo.
@@ -100,10 +101,10 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
     const now = Date.now();
     for (const [sessionId, v] of ctxLatest) {
       const prev = ctxSent.get(sessionId);
-      if (prev && prev.tokens === v.tokens && prev.max === v.max) continue;
+      if (prev && prev.tokens === v.tokens && prev.max === v.max && prev.model === v.model) continue;
       if (prev && now - prev.at < 2000) continue;
-      ctxSent.set(sessionId, { tokens: v.tokens, max: v.max, at: now });
-      onContext(sessionId, v.tokens, v.max);
+      ctxSent.set(sessionId, { tokens: v.tokens, max: v.max, model: v.model, at: now });
+      onContext(sessionId, v.tokens, v.max, v.model);
     }
   }
 
@@ -175,7 +176,13 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
   }
   function stop() { clearInterval(timer); timer = null; }
 
-  return { start, stop, summary, series, refresh: scan };
+  // Usage from outside a Claude Code transcript (OpenCode, Codex, Gemini CLI): same shape as a
+  // transcript entry, so it counts toward the top-bar pill and graph too. Picked up on the next scan.
+  function addEvent(t, input, output, cacheWrite, cacheRead, project) {
+    events.push([t, input || 0, output || 0, cacheWrite || 0, cacheRead || 0, project || 'other']);
+  }
+
+  return { start, stop, summary, series, refresh: scan, addEvent };
 }
 
 module.exports = { createUsage };

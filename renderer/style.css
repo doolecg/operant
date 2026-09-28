@@ -292,19 +292,35 @@ body.anim-off .win::before,
 .win.master .tbar .badge { color: var(--accent); background: var(--accent-tint); }
 .win.agent .ico { color: var(--agent); }
 .tbar .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tbar .badge:empty { display: none; }
 .tbar .badge { font-size: 10.5px; padding: 1px 8px; border-radius: 99px; background: rgba(var(--ink-rgb), .06); white-space: nowrap; }
 .win.agent.running .badge { color: var(--agent); }
 .win.agent.done .badge { color: var(--done); }
-.tbar .ctx:empty { display: none; }
-.tbar .ctx { font-size: 10.5px; padding: 1px 8px; border-radius: 99px; background: rgba(var(--ink-rgb), .06); white-space: nowrap; }
-.tbar .ctx.warn { color: #e3b27a; }
-.tbar .ctx.over { color: #f08a78; }
 .tbar .runaway:empty { display: none; }
 .tbar .runaway { font-size: 10.5px; padding: 1px 8px; border-radius: 99px; cursor: pointer;
   color: #f08a78; background: color-mix(in srgb, #f08a78 16%, transparent); }
 .tbar .runaway.time { color: #e3b27a; background: color-mix(in srgb, #e3b27a 16%, transparent); }
 .tbar .x { width: 20px; height: 20px; border-radius: 6px; color: var(--dim); font-size: 11px; }
 .tbar .x:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--text); }
+
+/* The info bar under an agent tile's title (item 42): model, context, tokens since it opened,
+   folder and branch. Never overlaps: the branch and then the folder hide first when it's tight
+   (layoutIbar in renderer.js), everything else has a fixed, always-visible width. */
+.ibar { display: none; }
+.win.ai.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
+  font-size: 10px; color: var(--dim); background: rgba(var(--bar-rgb), .35); border-bottom: 1px solid rgba(var(--ink-rgb), .06);
+  overflow: hidden; white-space: nowrap; }
+.ibar .ib-model:empty, .ibar .ib-ctx:empty, .ibar .ib-tok:empty, .ibar .ib-folder:empty, .ibar .ib-branch:empty { display: none; }
+.ibar .ib-model { flex: none; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.ibar .ib-ctx { flex: none; display: flex; align-items: center; gap: 5px; }
+.ibar .ib-bar { display: inline-block; width: 30px; height: 4px; border-radius: 99px; background: rgba(var(--ink-rgb), .12); overflow: hidden; }
+.ibar .ib-bar b { display: block; height: 100%; background: var(--dim); border-radius: 99px; }
+.ibar .ib-ctx.warn .ib-bar b { background: #e3b27a; }
+.ibar .ib-ctx.over .ib-bar b { background: #f08a78; }
+.ibar .ib-tok { flex: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.ibar .ib-sp { flex: 1; min-width: 0; }
+.ibar .ib-folder, .ibar .ib-branch { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.ibar .ib-branch { opacity: .8; }
 .spin { display: inline-block; animation: spin 1.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -599,6 +615,7 @@ body.anim-off .overlay.anchor, body.anim-off .overlay.anchor .card { transition:
   border-radius: 14px; background: rgba(var(--ink-rgb), .06); text-align: center; }
 .qm-tile:hover { background: rgba(var(--ink-rgb), .12); }
 .qm-tile.hidden { display: none; }
+.qm-tile:disabled { opacity: .45; pointer-events: none; }
 .qm-ico { font-size: 18px; line-height: 1; color: var(--accent); }
 .qm-ico svg { width: 16px; height: 16px; vertical-align: middle; }
 .qm-lbl { font-size: 10.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }

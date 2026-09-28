@@ -156,7 +156,7 @@ function buildArgs(cmd, positionals, flags) {
 function fmtTile(t) {
   const flags = [t.busy && 'busy', t.focused && 'focused', t.self && 'self'].filter(Boolean).map(f => `[${f}]`);
   if (t.runaway) flags.push(`[⚠ ${t.runaway}]`);
-  return [t.id, t.kind, t.title, t.cwd, flags.join(' ')].filter(x => x !== undefined && x !== '').join('  ');
+  return [t.id, t.kind, t.title, t.cwd, t.tokens, flags.join(' ')].filter(x => x !== undefined && x !== '').join('  ');
 }
 
 function footer(result) {
@@ -168,7 +168,7 @@ function footer(result) {
 function formatResult(cmd, result) {
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
-    case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}`;
+    case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}${result.tokens ? '  ' + result.tokens + ' tokens' : ''}`;
     case 'view': case 'edit': case 'diff': case 'run': case 'agent': return `tile ${result.id}`;
     case 'read': return (result.text || '') + footer(result);
     case 'wait': return (result.exited ? '[exited]\n' : '') + (result.text || '') + footer(result);

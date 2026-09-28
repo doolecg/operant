@@ -269,6 +269,7 @@
       if (!w.alive) return;
       if (w.term) { try { w.fit.fit(); } catch {} if (w.ptyId) operant.resizePty(w.ptyId, w.term.cols, w.term.rows); }
       else if (w.kind === 'view' && w.image && w.imgFit) drawImgSize(w);
+      if (w.kind === 'ai') layoutIbar(w);
     }, delay);
   }
 
@@ -293,7 +294,7 @@
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="ctx"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="term"></div></div>`;
+      <span class="title"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -1665,6 +1666,12 @@
 
   function updateBadge(w) {
     const closing = w.closeIn != null ? ` · closing ${w.closeIn}s` : w.unchecked ? ' · new' : '';
+    if (w.kind === 'ai') {
+      // The folder moved to the info bar below; the title bar badge is just the closing/unread marker.
+      setBadge(w, closing.replace(/^ · /, ''));
+      renderIbar(w);
+      return;
+    }
     if (w.kind !== 'agent') {
       setBadge(w, `${w.master ? 'master · ' : ''}${w.cwd ? shortPath(w.cwd) : ''}${closing}`);
       return;
@@ -1676,22 +1683,76 @@
     else setBadge(w, `✓ done · ${tools}${closing}`);
   }
 
-  // Context-size pill: how full a Claude Code / OpenCode tile's context window is.
-  function renderCtx(w) {
-    const el = w.el.querySelector('.ctx');
-    if (!el) return;
-    const ctx = w.ctx;
-    if (!cfg.contextBadge || !ctx || !ctx.max) { el.textContent = ''; el.title = ''; el.className = 'ctx'; return; }
-    const pct = ctx.tokens / ctx.max;
-    el.textContent = `ctx ${Math.round(ctx.tokens / 1000)}k`;
-    el.className = 'ctx' + (pct >= 0.85 ? ' over' : pct >= 0.6 ? ' warn' : '');
-    el.title = `${ctx.tokens.toLocaleString()} of ${ctx.max.toLocaleString()} tokens in context (${Math.round(pct * 100)}%) · /compact or start a fresh session when it gets high`;
+  // The info bar under an agent tile's title (item 42): model, how full its context is, tokens
+  // used since the tile opened, and its folder and git branch. Only for kind 'ai' tiles (Claude
+  // Code, OpenCode, other agent CLIs), gated by Settings > "Tile info bar" (cfg.tileTokens).
+  // A raw model id -> a short display name. Claude ids look like claude-opus-4-5-20250929;
+  // OpenCode ids look like opencode/big-pickle (or just the model half once the provider is known).
+  function modelName(sessionId, raw, free) {
+    if (!raw) return '';
+    if (sessionId.startsWith('oc:')) {
+      const short = raw.includes('/') ? raw.split('/').pop() : raw;
+      const name = short.split('-').map(s => s ? s[0].toUpperCase() + s.slice(1) : s).join(' ');
+      return name + (free ? ' · free' : '');
+    }
+    const m = /claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?/i.exec(raw);
+    if (!m) return raw;
+    const fam = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+    return m[3] != null ? `${fam} ${m[2]}.${m[3]}` : `${fam} ${m[2]}`;
   }
-  operant.on('context', ({ sessionId, tokens, max }) => {
+  function renderIbar(w) {
+    if (w.kind !== 'ai') return;
+    const on = !!cfg.tileTokens;
+    w.el.classList.toggle('ibar-on', on);
+    if (!on) return;
+    const bar = w.el.querySelector('.ibar');
+    if (!bar) return;
+    bar.querySelector('.ib-model').textContent = w.model || '';
+    const ctx = cfg.contextBadge ? w.ctx : null, ctxEl = bar.querySelector('.ib-ctx');
+    if (ctx && ctx.max) {
+      const pct = ctx.tokens / ctx.max;
+      ctxEl.className = 'ib-ctx' + (pct >= 0.85 ? ' over' : pct >= 0.6 ? ' warn' : '');
+      ctxEl.querySelector('b').style.width = `${Math.min(100, Math.round(pct * 100))}%`;
+      ctxEl.querySelector('.ib-ctxtxt').textContent = `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)} (${Math.round(pct * 100)}%)`;
+      ctxEl.title = `${ctx.tokens.toLocaleString()} of ${ctx.max.toLocaleString()} tokens in context · /compact or start a fresh session when it gets high`;
+      ctxEl.style.display = '';
+    } else ctxEl.style.display = 'none';
+    const t = w.tok, tokEl = bar.querySelector('.ib-tok');
+    if (t) {
+      tokEl.textContent = `in ${fmtTok(t.input)} · out ${fmtTok(t.output)} · cache ${fmtTok(t.cacheRead + t.cacheWrite)}`;
+      tokEl.title = `${t.input.toLocaleString()} in · ${t.output.toLocaleString()} out · ${t.cacheRead.toLocaleString()} cache read · ${t.cacheWrite.toLocaleString()} cache write`
+        + (t.free ? ' · free' : '') + ' · since this tile opened';
+      tokEl.style.display = '';
+    } else tokEl.style.display = 'none';
+    const folder = w.cwd ? shortPath(w.cwd) : '', folderEl = bar.querySelector('.ib-folder');
+    folderEl.textContent = folder;
+    folderEl.style.display = folder ? '' : 'none';
+    const project = w.cwd ? projectDir(w.cwd) : null;
+    const branch = project ? gitState.get(project)?.status?.branch : null, branchEl = bar.querySelector('.ib-branch');
+    branchEl.textContent = branch || '';
+    branchEl.style.display = branch ? '' : 'none';
+    layoutIbar(w, bar);
+  }
+  // Least important (rightmost) first: the branch, then the folder. Everything else always fits.
+  function layoutIbar(w, bar) {
+    bar = bar || w.el.querySelector('.ibar');
+    if (!bar || !w.el.classList.contains('ibar-on')) return;
+    const branch = bar.querySelector('.ib-branch'), folder = bar.querySelector('.ib-folder');
+    if (bar.scrollWidth > bar.clientWidth && branch.textContent) branch.style.display = 'none';
+    if (bar.scrollWidth > bar.clientWidth && folder.textContent) folder.style.display = 'none';
+  }
+  operant.on('context', ({ sessionId, tokens, max, model, free }) => {
     const w = sessionWin.get(sessionId);
     if (!w || !w.alive) return;
     w.ctx = { tokens, max };
-    renderCtx(w);
+    if (model !== undefined) w.model = modelName(sessionId, model, free);
+    renderIbar(w);
+  });
+  operant.on('tokens', ({ sessionId, input, output, cacheWrite, cacheRead, free }) => {
+    const w = sessionWin.get(sessionId);
+    if (!w || !w.alive) return;
+    w.tok = { input, output, cacheWrite, cacheRead, free };
+    renderIbar(w);
   });
 
   // ------------------------------------------------------------ idle reaper
@@ -2159,6 +2220,7 @@
     if (key === 'sidebarGit') { if (cfg.sidebarGit) loadGit(true); else decorateGit(); }
     if (key === 'planLimits' || key === 'planLimitAlerts') renderUsagePill();
     if (key === 'editor' || key === 'editorCommand') refreshEditorName();
+    if (key === 'tileTokens' || key === 'contextBadge') for (const w of wins.values()) if (w.alive) { renderIbar(w); scheduleFit(w, 0); }
     if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
   }
@@ -2392,13 +2454,20 @@
     const sig = JSON.stringify([p, st]);
     if (sig === barGitSig) return;
     barGitSig = sig;
-    if (!st) { btn.classList.add('hidden'); return; }
+    btn.classList.toggle('hidden', !cfg.gitButton);
+    if (!st) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="qm-ico">⎇</span><span class="qm-lbl">No repo</span>`;
+      btn.title = 'Focus a tile inside a git repo to see its changes';
+      delete btn.dataset.dir;
+      return;
+    }
+    btn.disabled = false;
     const n = gitChanges(p);
     const sync = [st.ahead ? `↑${st.ahead}` : '', st.behind ? `↓${st.behind}` : ''].filter(Boolean).join(' ');
     btn.innerHTML = `<span class="qm-ico">⎇</span><span class="qm-lbl">${esc(st.branch)}${n ? ` · ${n}` : ''}</span>`;
     btn.title = `${baseName(p)} · ⎇ ${st.branch} · ${n} changed${sync ? ' · ' + sync : ''} · click to see and commit`;
     btn.dataset.dir = p;
-    btn.classList.remove('hidden');
   }
   $('#git-pill').onclick = () => { const dir = $('#git-pill').dataset.dir; closePanels(); showChanges(dir); };
 
@@ -3491,7 +3560,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   operant.on('config:changed', c => {
     Object.assign(cfg, c);
     applyAppearance(); rebuildBinds(); renderHints(); renderMedia(); renderUsagePill(); drawUsage(); tick(); refreshBar();
-    for (const w of wins.values()) if (w.alive) renderCtx(w);
+    for (const w of wins.values()) if (w.alive) { renderIbar(w); scheduleFit(w, 0); }
     if (openPanel() === 'settings') renderSettings();
     if (openPanel() === 'keys') renderKeys();
   });
@@ -3693,6 +3762,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return [...wins.values()].filter(w => w.alive).map(w => ({
           id: w.id, kind: w.kind, title: w.title, cwd: w.cwd, file: w.file, busy: isWorking(w),
           ws: w.ws + 1, focused: focused() === w, self: !!self && w.id === self.id, agent: w.agentConf,
+          ...(w.tok ? { tokens: fmtTok(w.tok.input + w.tok.output + w.tok.cacheWrite) } : {}),
           ...(w.runaway ? { runaway: w.runaway.reason } : {}),
         }));
       case 'stop': {
@@ -3705,7 +3775,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         const project = projectDir(self.cwd || lastCwd);
         return { id: self.id, kind: self.kind, title: self.title, cwd: self.cwd, ws: self.ws + 1,
-          project, branch: gitState.get(project)?.status?.branch };
+          project, branch: gitState.get(project)?.status?.branch,
+          ...(self.tok ? { tokens: fmtTok(self.tok.input + self.tok.output + self.tok.cacheWrite) } : {}) };
       }
       case 'view': {
         if (!args.path) throw new Error('path required');

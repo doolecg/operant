@@ -14,6 +14,7 @@ const { createUpdater } = require('./updater');
 const { createMedia } = require('./media');
 const { createUsage } = require('./usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
+const { createCodex, createGemini } = require('./otherAgents');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
@@ -162,7 +163,8 @@ const DEFAULT_CONFIG = {
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
   mediaSize: 'compact',           // 'compact' | 'full'
   tokenUsage: true,               // Claude Code's tokens today in the top bar; click for the graph
-  contextBadge: true,             // how full each agent tile's context is, in its title bar
+  contextBadge: true,             // show context size in the agent tile info bar (needs tileTokens on)
+  tileTokens: true,               // the info bar under each agent tile: model, context, tokens since it opened, folder, branch
   usageSeries: ['input', 'output', 'cacheWrite'], // what the pill and graph count; cache reads would swamp the rest
   planLimits: true,               // Claude plan limits (5-hour session, week) in the token pill's tooltip
   planLimitAlerts: true,          // a notification at 80% and 95% of the 5-hour session, and its ring on the pill
@@ -255,7 +257,10 @@ const agentWindow = () => {
   return (alive(lastFocused) && withMaster.includes(lastFocused) && lastFocused) || withMaster[0];
 };
 const winOf = e => BrowserWindow.fromWebContents(e.sender);
-const sessionOwner = new Map(); // Claude --session-id -> window
+const sessionOwner = new Map(); // Claude --session-id -> window (also holds OpenCode's oc:<id> and Codex/Gemini's <kind>:<id>)
+const sessionOpenTime = new Map(); // same keys -> when its tile opened (tile token counting starts here)
+// Codex/Gemini CLI tiles waiting for their session file to be spotted by cwd (otherAgents.js), FIFO per kind.
+let otherAgentPending = [];
 // Windows only lets a background app take the foreground in some cases; briefly going
 // always-on-top gets the window in front even when it doesn't.
 // Test runs (OPERANT_BACKGROUND=1) open behind other windows and never take focus.
@@ -616,8 +621,14 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   await controlReady;
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
+  const exeBase = agent ? path.basename(String(agent.command).trim().split(/\s+/)[0]).replace(/\.(exe|cmd|ps1)$/i, '').toLowerCase() : null;
   const resuming = !!(agent && isClaude(agent) && /^[0-9a-f-]{36}$/i.test(resume || '') && hasTranscript(resume));
   const sessionId = agent && isClaude(agent) ? (resuming ? resume : crypto.randomUUID()) : null;
+  // Codex and Gemini CLI don't take an explicit session id from Operant, so a made-up one (like
+  // OpenCode's oc:<id>) is registered up front and matched to their own session file by cwd, once
+  // that file's token reader (otherAgents.js) sees it (see the otherAgentPending queue below).
+  const otherKind = !sessionId && !isOpenCode(agent || {}) && (exeBase === 'codex' || exeBase === 'gemini') ? exeBase : null;
+  const otherId = otherKind ? `${otherKind}:${id}` : null;
   const dir = cwd && fs.existsSync(cwd) ? cwd : config.defaultCwd;
   const proj = config.projectDefaults?.[projectOf(dir)] || {};
   const startup = String(proj.startup || '').trim();
@@ -643,7 +654,6 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // PowerShell single-quoted string: '' escapes a literal quote, and newlines pass through as-is.
     const q = a => `'${String(a).replace(/'/g, "''")}'`;
     const extra = String(proj.args || '').trim().split(/\s+/).filter(Boolean);
-    const exeBase = path.basename(String(agent.command).trim().split(/\s+/)[0]).replace(/\.(exe|cmd|ps1)$/i, '').toLowerCase();
     // Claude Code and Codex take the prompt positionally, OpenCode as --prompt, Gemini as -i;
     // anything else (a custom agent) also gets it positional, appended after the other args.
     const promptArgs = !prompt ? [] : isOpenCode(agent) ? ['--prompt', prompt] : exeBase === 'gemini' ? ['-i', prompt] : [prompt];
@@ -697,11 +707,18 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   p.tileId = tileId;
   p.label = agent ? agent.name : 'Shell';
   ptys.set(id, p);
-  if (sessionId) sessionOwner.set(sessionId, owner);
+  if (sessionId) { sessionOwner.set(sessionId, owner); sessionOpenTime.set(sessionId, Date.now()); }
   if (ocPort) opencode.watch(id, ocPort, owner);
+  if (otherId) {
+    sessionOwner.set(otherId, owner); sessionOpenTime.set(otherId, Date.now());
+    otherAgentPending.push({ kind: otherKind, otherId, owner, cwd: dir, at: Date.now() });
+  }
   p.onData(data => sendTo(owner, 'pty:data', { id, data }));
-  p.onExit(({ exitCode }) => { ptys.delete(id); opencode.unwatch(id); sendTo(owner, 'pty:exit', { id, exitCode }); });
-  return { id, sessionId: ocPort ? `oc:${id}` : sessionId, cwd: dir, agent };
+  p.onExit(({ exitCode }) => {
+    ptys.delete(id); opencode.unwatch(id); sendTo(owner, 'pty:exit', { id, exitCode });
+    if (otherId) { otherAgentPending = otherAgentPending.filter(x => x.otherId !== otherId); sessionOwner.delete(otherId); sessionOpenTime.delete(otherId); }
+  });
+  return { id, sessionId: ocPort ? `oc:${id}` : otherId || sessionId, cwd: dir, agent };
 });
 
 ipcMain.on('pty:write', (_e, { id, data }) => ptys.get(id)?.write(data));
@@ -1047,10 +1064,10 @@ ipcMain.on('media:command', (_e, cmd) => media.command(String(cmd)));
 
 const usage = createUsage({
   projectsDir: PROJECTS_DIR, send: broadcast,
-  onContext: (sessionId, tokens, max) => {
+  onContext: (sessionId, tokens, max, model) => {
     if (!config.contextBadge) return;
     const owner = sessionOwner.get(sessionId);
-    if (owner) sendTo(owner, 'context', { sessionId, tokens, max });
+    if (owner) sendTo(owner, 'context', { sessionId, tokens, max, model });
   },
   // A subagent's tool calls/tokens count toward its parent tile (usage.js already resolves the
   // session id to the parent for subagent transcripts, and gates out pre-startup history).
@@ -1058,9 +1075,10 @@ const usage = createUsage({
     const owner = sessionOwner.get(sessionId);
     if (owner) noteToolUse(sessionId, owner, name, input, agentId ? (agents.get(agentId)?.description || null) : null);
   },
-  onTokens: (sessionId, tokens) => {
+  onTokens: (sessionId, tokens, breakdown, t) => {
     const owner = sessionOwner.get(sessionId);
     if (owner) noteTokens(sessionId, owner, tokens);
+    if (breakdown) addTileTokens(sessionId, owner, breakdown, t, false);
   },
 });
 ipcMain.handle('usage:summary', () => usage.summary());
@@ -1069,11 +1087,43 @@ ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 const opencode = createOpenCode({
   sendTo, primary: agentWindow, config,
   onToolUse: (sessionId, owner, name, input, label) => noteToolUse(sessionId, owner, name, input, label),
-  onTokens: (sessionId, owner, tokens) => noteTokens(sessionId, owner, tokens),
+  onTokens: (sessionId, owner, tokens, breakdown, free, project) => {
+    noteTokens(sessionId, owner, tokens);
+    if (breakdown) {
+      addTileTokens(sessionId, owner, breakdown, null, free);
+      usage.addEvent(Date.now(), breakdown.input, breakdown.output, breakdown.cacheWrite, breakdown.cacheRead, project || 'opencode');
+    }
+  },
   onSubagentCount: (sessionId, owner, count) => checkSubagents(sessionId, owner, count),
 });
 ipcMain.handle('opencode:abort', (_e, { ptyId }) => opencode.abort(ptyId));
 ipcMain.handle('opencode:summarize', (_e, { ptyId }) => opencode.summarize(ptyId));
+
+// ------------------------------------------------------- Codex / Gemini CLI usage (otherAgents.js)
+// Neither takes an explicit session id, so their session file is matched to the tile that started
+// it (otherAgentPending, filled in pty:create) by cwd, the first time that file's cwd is seen.
+
+const otherFileOwner = new Map(); // rollout/session file -> { otherId, project }, once matched
+function matchOtherAgent(kind, file, fileCwd) {
+  if (otherFileOwner.has(file) || !fileCwd) return;
+  const norm = p => String(p).replace(/[\\/]+$/, '').toLowerCase();
+  const i = otherAgentPending.findIndex(x => x.kind === kind && norm(x.cwd) === norm(fileCwd));
+  if (i < 0) return;
+  const [entry] = otherAgentPending.splice(i, 1);
+  otherFileOwner.set(file, { otherId: entry.otherId, project: path.basename(fileCwd) || kind });
+}
+function otherAgentUsage(file, ev) {
+  const m = otherFileOwner.get(file);
+  const owner = m && sessionOwner.get(m.otherId);
+  if (!owner) return;
+  if (config.contextBadge && ev.ctxMax) sendTo(owner, 'context', { sessionId: m.otherId, tokens: ev.ctxTokens, max: ev.ctxMax, model: ev.model || null });
+  if (ev.last) {
+    addTileTokens(m.otherId, owner, ev.last, ev.t, false);
+    usage.addEvent(ev.t, ev.last.input, ev.last.output, ev.last.cacheWrite, ev.last.cacheRead, m.project);
+  }
+}
+createCodex({ onSession: (file, cwd) => matchOtherAgent('codex', file, cwd), onUsage: otherAgentUsage }).start();
+createGemini({ onSession: (file, cwd) => matchOtherAgent('gemini', file, cwd), onUsage: otherAgentUsage }).start();
 
 // Claude plan limits (the 5-hour session and the week), as Claude Code's /usage shows them: asked of
 // Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, at most once a minute.
@@ -1193,6 +1243,21 @@ function noteTokens(sessionId, owner, tokens) {
 
 function checkSubagents(sessionId, owner, count) {
   if (config.runawaySubagents && count >= config.runawaySubagents) flagRunaway(sessionId, owner, 'subagents', `${count} subagents running`);
+}
+
+// Tokens each tile has used since it opened (item 42): sessionId -> running { input, output,
+// cacheWrite, cacheRead, free }, sent to the tile as a 'tokens' event. A resumed Claude session's
+// history before the tile reopened is skipped (t is the transcript entry's own timestamp);
+// OpenCode tiles pass t = null since they're watched fresh from the moment the tile opens.
+const tileTokens = new Map();
+function addTileTokens(sessionId, owner, breakdown, t, free) {
+  if (!config.tileTokens || !owner) return;
+  if (t != null) { const openAt = sessionOpenTime.get(sessionId); if (openAt && t < openAt) return; }
+  const acc = tileTokens.get(sessionId) || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, free: false };
+  acc.input += breakdown.input; acc.output += breakdown.output; acc.cacheWrite += breakdown.cacheWrite; acc.cacheRead += breakdown.cacheRead;
+  acc.free = !!free;
+  tileTokens.set(sessionId, acc);
+  sendTo(owner, 'tokens', { sessionId, ...acc });
 }
 
 // ---------------------------------------------------------- subagent watcher

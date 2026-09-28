@@ -26,6 +26,9 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
   // A message's tokens {input, output, cache:{read, write}} -> the runaway guard's per-turn total,
   // the same shape Claude's usage entries are summed as.
   const tokenSum = tk => !tk ? 0 : (tk.input || 0) + (tk.output || 0) + (tk.cache?.read || 0) + (tk.cache?.write || 0);
+  const tokenBreakdown = tk => ({ input: tk?.input || 0, output: tk?.output || 0, cacheWrite: tk?.cache?.write || 0, cacheRead: tk?.cache?.read || 0 });
+  // Free Zen models: the id ends in "-free", or the always-free opencode/big-pickle.
+  const isFreeModel = id => !id ? false : id === 'opencode/big-pickle' || /-free$/i.test(id);
   const liveSubs = t => { let n = 0; for (const s of t.subs.values()) if (!s.done) n++; return n; };
 
   // One subagent: which window it's in, the roles of its messages, and what has been sent already.
@@ -69,12 +72,12 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
   const send = (sub, entries) => { if (entries.length) sendTo(sub.owner, 'agent:entries', { agentId: sub.id, entries }); };
 
   // The tile's root session filling its context window: input + both cache kinds.
-  function sendContext(t, ptyId, tokens) {
+  function sendContext(t, ptyId, tokens, modelID, free) {
     if (!config.contextBadge || !tokens) return;
     const ctx = (tokens.input || 0) + (tokens.cache?.read || 0) + (tokens.cache?.write || 0);
-    if (!ctx || ctx === t.ctx) return;
-    t.ctx = ctx;
-    sendTo(t.owner, 'context', { sessionId: `oc:${ptyId}`, tokens: ctx, max: ctx > 200000 ? 1000000 : 200000 });
+    if (!ctx || (ctx === t.ctx && modelID === t.ctxModel)) return;
+    t.ctx = ctx; t.ctxModel = modelID;
+    sendTo(t.owner, 'context', { sessionId: `oc:${ptyId}`, tokens: ctx, max: ctx > 200000 ? 1000000 : 200000, model: modelID, free });
   }
 
   // ---------------------------------------------------------------- tiles started in Operant
@@ -84,7 +87,7 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
     const key = `oc:${ptyId}`;
     if (e.type === 'session.created' || e.type === 'session.updated') {
       const info = p.info || {};
-      if (!info.parentID) { t.roots.add(info.id); ownedRoots.add(info.id); return; }
+      if (!info.parentID) { t.roots.add(info.id); ownedRoots.add(info.id); if (info.directory) t.directory = info.directory; return; }
       if (!t.subs.has(info.id) && e.type === 'session.created') {
         const sub = newSub(info, t.owner, key);
         t.subs.set(info.id, sub);
@@ -99,8 +102,9 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
     }
     if (e.type === 'message.updated' && t.roots.has(p.sessionID)) {
       if (p.info?.role === 'assistant') {
-        sendContext(t, ptyId, p.info.tokens);
-        onTokens?.(key, t.owner, tokenSum(p.info.tokens));
+        const free = isFreeModel(p.info.modelID) || isFreeModel(p.info.providerID && `${p.info.providerID}/${p.info.modelID}`);
+        sendContext(t, ptyId, p.info.tokens, p.info.modelID, free);
+        onTokens?.(key, t.owner, tokenSum(p.info.tokens), tokenBreakdown(p.info.tokens), free, t.directory && path.basename(t.directory));
         // Auto compact's /session/{id}/summarize needs the model the tile is actually using.
         if (p.info.providerID) t.providerID = p.info.providerID;
         if (p.info.modelID) t.modelID = p.info.modelID;
@@ -115,7 +119,10 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
     if (!sub) return;
     if (e.type === 'message.updated' && p.info) {
       sub.roles.set(p.info.id, p.info.role);
-      if (p.info.role === 'assistant') onTokens?.(sub.key, t.owner, tokenSum(p.info.tokens));
+      if (p.info.role === 'assistant') {
+        const free = isFreeModel(p.info.modelID) || isFreeModel(p.info.providerID && `${p.info.providerID}/${p.info.modelID}`);
+        onTokens?.(sub.key, t.owner, tokenSum(p.info.tokens), tokenBreakdown(p.info.tokens), free, t.directory && path.basename(t.directory));
+      }
     } else if (e.type === 'message.part.updated' && p.part) {
       if (p.part.type === 'tool' && p.part.state?.status === 'running') onToolUse?.(sub.key, t.owner, p.part.tool, p.part.state.input, null);
       send(sub, partEntries(sub, p.part));
