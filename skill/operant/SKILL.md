@@ -35,7 +35,7 @@ tiles/status/focus/close/ws/title, run/test/build/read/send/wait/stop, view/edit
 - If `.codegraph/` exists in the repo, use `codegraph explore` before grepping or reading files.
 - Read only the lines you need, not whole files.
 - Re-checking a tile: use `--new`, not a full read.
-- Run `operant team` at the start. If team mode is on, hand every task that fits a tier's "use" to a worker: `operant agent "<self-contained task>" --tier <name>`, always the cheapest tier that fits, never above the top tier listed (the user sets it with the slider; `operant team` lists only allowed tiers). Use `operant summarize`/`operant find` for big reads instead of reading them yourself. Do only what fits no tier yourself, and review workers' changes before accepting. Workers started with `--tier` do their task themselves.
+- Run `operant team` at the start. If team mode is on, hand every task that fits a tier's "use" to a worker: `operant agent "<self-contained task>" --tier <name>`, always the cheapest tier that fits, never above the top tier listed (the user sets it with the slider; `operant team` lists only allowed tiers). Use `operant summarize`/`operant find` for big reads instead of reading them yourself. Do only what fits no tier yourself, and review workers' changes before accepting. Once a worker's task is done and you've checked its work, close its tile: `operant close <id>`. Workers started with `--tier` do their task themselves.
 - At start, `operant recall` this project's shared memory; save durable facts with `operant remember "<fact>"`.
 - Before changing a symbol or file CodeGraph just showed you, `operant recall --about <it>` first.
 
