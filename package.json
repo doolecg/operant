@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --check main.js && node --check opencode.js && node --check opencode-theme.js && node --check otherAgents.js && node --check agent-brief.js && node --check agent-setup.js && node --check updater.js && node --check media.js && node --check usage.js && node --check renderer/renderer.js && node --check renderer/highlight.js && node --check renderer/settings.js && node --check renderer/themes.js && node --check shell-integration.js && node --check hooks/long-commands.js && node --check hooks/opencode-long-commands.mjs",
+    "test": "node --check main.js && node --check opencode.js && node --check opencode-theme.js && node --check otherAgents.js && node --check agent-brief.js && node --check agent-setup.js && node --check memory.js && node --check updater.js && node --check media.js && node --check usage.js && node --check renderer/renderer.js && node --check renderer/highlight.js && node --check renderer/settings.js && node --check renderer/themes.js && node --check shell-integration.js && node --check hooks/long-commands.js && node --check hooks/opencode-long-commands.mjs",
     "dist": "electron-builder --win msi --x64",
     "pack": "electron-builder --dir --win --x64"
   },
@@ -48,6 +48,7 @@
       "otherAgents.js",
       "agent-brief.js",
       "agent-setup.js",
+      "memory.js",
       "media-helper.ps1",
       "renderer/**",
       "build/icon.png",

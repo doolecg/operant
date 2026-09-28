@@ -162,6 +162,9 @@ const Panels = (() => {
       { key: 'vimKeys', label: 'Vim keys', hint: 'j/k and h/l scroll, gg/G top and end, Ctrl+D/U half a page, / finds, n/N next and previous in viewer and diff tiles ([ and ] change file); in the sidebar (Alt+Shift+B) j/k move, l opens, h closes, e edits, a and s open an agent or shell · Ctrl+J/K move in the pickers', type: 'toggle' },
       { type: 'keys', label: 'Keybinds shortcuts keys' },
     ]],
+    ['Memory', [
+      { type: 'memory', label: 'Memory facts remember recall project global' },
+    ]],
     ['CodeGraph', [
       { type: 'codegraph', label: 'CodeGraph install index init version' },
       { key: 'codegraphOnStartup', label: 'Index projects when Operant starts', hint: 'Every pinned project, in one CodeGraph tile · “All projects” also sets up ones not indexed yet', type: 'select',
@@ -175,7 +178,7 @@ const Panels = (() => {
     ]],
   ];
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
+    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -303,6 +306,7 @@ const Panels = (() => {
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
     if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';
+    if (it.type === 'memory') return '<div class="mem-card"></div>';
     if (it.type === 'updates') return updatesCard(ext.update());
     return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}</div><div class="ctl">${control(it, cfg[it.key], cfg)}</div></div>`;
   }
@@ -346,6 +350,8 @@ const Panels = (() => {
       if (cgEl) ext.renderCodegraph(cgEl);
       const tbEl = pane.querySelector('.tok-breakdown');
       if (tbEl) ext.renderTokenBreakdown(tbEl);
+      const memEl = pane.querySelector('.mem-card');
+      if (memEl) ext.renderMemory(memEl);
       pane.querySelectorAll('[data-update]').forEach(b => b.onclick = () => {
         const a = b.dataset.update;
         if (a === 'check') { ext.checkUpdate(); b.disabled = true; b.textContent = 'Checking…'; }

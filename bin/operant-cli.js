@@ -14,13 +14,14 @@ const POSITIONAL = {
   text: ['id', 'selector'], click: ['id', 'selector'], type: ['id', 'selector', 'text'],
   ports: [], watch: ['id'],
   plan: ['path'], board: [],
+  remember: ['text'], recall: ['query'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
-const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text', test: 'command', build: 'command' };
+const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text', test: 'command', build: 'command', remember: 'text', recall: 'query' };
 
 // Single source of truth for command help: group (for the grouped list) plus
 // usage/description/examples (for `operant help <cmd>`). Keeps the two in sync.
-const GROUP_ORDER = ['tiles', 'terminals', 'files', 'browser', 'agents & tasks', 'context', 'misc'];
+const GROUP_ORDER = ['tiles', 'terminals', 'files', 'browser', 'agents & tasks', 'memory', 'context', 'misc'];
 const COMMANDS = {
   tiles: { group: 'tiles', usage: 'operant tiles', desc: "list this window's tiles", examples: ['operant tiles'] },
   status: { group: 'tiles', usage: 'operant status', desc: 'info about the calling tile', examples: ['operant status'] },
@@ -56,6 +57,9 @@ const COMMANDS = {
   plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'] },
   task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | done <id> [--note n] | note <id> "<text>"', desc: 'add/claim/finish/note a board task', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --note "fixed in login.js"'] },
   board: { group: 'agents & tasks', usage: 'operant board', desc: 'list every task: id, status, owner, text, last note', examples: ['operant board'] },
+
+  remember: { group: 'memory', usage: 'operant remember "<fact>" [--type user|feedback|project|reference] [--global] [--about "<file|symbol>[,<more>]"]', desc: 'save (or update) one fact in this project\'s shared memory; --type user/--global for user-wide facts; --about links it to code (resolved through CodeGraph when indexed)', examples: ['operant remember "Ship on dev-<version>, fast-forward main at release" --type project', 'operant remember "Prefers plain commit messages" --type user', 'operant remember "recall() caps output around 2k tokens" --about memory.js,recall'] },
+  recall: { group: 'memory', usage: 'operant recall ["query"] [--about "<file|symbol>"]', desc: 'the memory index, matching facts for a query, or facts linked to a file/symbol', examples: ['operant recall', 'operant recall "release process"', 'operant recall --about main.js'] },
 
   usage: { group: 'context', usage: 'operant usage [--breakdown] [--days 1|7]', desc: "your tile's context size and the plan limits, or (--breakdown) where its project's tokens went", examples: ['operant usage', 'operant usage --breakdown', 'operant usage --breakdown --days 7'] },
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'] },
@@ -232,6 +236,8 @@ function formatResult(cmd, result) {
       const owner = o => o ? `${o.id} ${o.title}` : '-';
       return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${owner(t.owner)}  ${t.text}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
     }
+    case 'remember': return `${result.name} (${result.type}${result.updated ? ', updated' : ''})`;
+    case 'recall': return (result.text || '') + (result.more ? `\n(${result.more} more matched, ${result.shown} of ${result.total} shown)` : '');
     case 'usage': {
       const lines = [result.max
         ? `context: ${result.tokens.toLocaleString()} / ${result.max.toLocaleString()} tokens (${result.pct}%)`
