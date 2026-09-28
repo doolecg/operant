@@ -310,7 +310,7 @@ body.anim-off .win::before,
 .win.ai.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
   font-size: 10px; color: var(--dim); background: rgba(var(--bar-rgb), .35); border-bottom: 1px solid rgba(var(--ink-rgb), .06);
   overflow: hidden; white-space: nowrap; }
-.ibar .ib-model:empty, .ibar .ib-ctx:empty, .ibar .ib-tok:empty, .ibar .ib-folder:empty, .ibar .ib-branch:empty { display: none; }
+.ibar .ib-model:empty, .ibar .ib-ctx:empty, .ibar .ib-tok:empty, .ibar .ib-cache:empty, .ibar .ib-folder:empty, .ibar .ib-branch:empty { display: none; }
 .ibar .ib-model { flex: none; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 .ibar .ib-ctx { flex: none; display: flex; align-items: center; gap: 5px; }
 .ibar .ib-bar { display: inline-block; width: 30px; height: 4px; border-radius: 99px; background: rgba(var(--ink-rgb), .12); overflow: hidden; }
@@ -318,6 +318,8 @@ body.anim-off .win::before,
 .ibar .ib-ctx.warn .ib-bar b { background: #e3b27a; }
 .ibar .ib-ctx.over .ib-bar b { background: #f08a78; }
 .ibar .ib-tok { flex: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.ibar .ib-cache { flex: none; opacity: .55; }
+.ibar .ib-cache.cold { opacity: .8; }
 .ibar .ib-sp { flex: 1; min-width: 0; }
 .ibar .ib-folder, .ibar .ib-branch { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .ibar .ib-branch { opacity: .8; }

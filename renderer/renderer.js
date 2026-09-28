@@ -294,7 +294,7 @@
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
+      <span class="title"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -652,8 +652,49 @@
       }
     }
     tickCompacting();
+    tickCacheState();
   }
   setInterval(checkAutoCompact, 1000);
+
+  // ------------------------------------------------------------ prompt cache
+  // Claude's prompt cache expires after cfg.cacheTtlMinutes of no activity (default 5); a tile's
+  // next message after that re-reads its whole context at full price. Mark an idle Claude Code
+  // tile's info bar "cache cold" once past the TTL, warn with a countdown in the minute before,
+  // and (cfg.compactBeforeCold) auto-compact a big, unfocused context shortly before it goes cold,
+  // reusing queueCompact above.
+  function cacheState(w) {
+    if (w.kind !== 'ai' || !w.alive || !w.ctx || !w.ctx.max || !w.lastOut || isWorking(w) || !isClaudeTile(w)) return null;
+    const ttlMs = (cfg.cacheTtlMinutes || 5) * 60000;
+    const remaining = ttlMs - (Date.now() - w.lastOut);
+    if (remaining <= 0) return { cold: true, remaining };
+    if (remaining <= 60000 && w.ctx.tokens > 50000) return { cold: false, remaining };
+    return null;
+  }
+  function tickCacheState() {
+    for (const w of wins.values()) {
+      if (w.kind !== 'ai' || !w.alive) continue;
+      const el = w.el.querySelector('.ib-cache');
+      if (!el) continue;
+      const st = cacheState(w);
+      let text = '', title = '';
+      if (st && st.cold) {
+        text = 'cache cold';
+        title = `Idle longer than the prompt cache lasts: the next message re-reads the whole context `
+          + `(~${fmtTok(w.ctx.tokens)} tokens at full price). Compacting first makes it cheaper.`;
+      } else if (st) {
+        const s = Math.max(0, Math.round(st.remaining / 1000));
+        text = `cache warm · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        title = 'The prompt cache is about to expire; compacting now keeps this session cheap.';
+      }
+      if (el.textContent !== text) el.textContent = text;
+      if (el.title !== title) el.title = title;
+      if (st) el.classList.toggle('cold', !!st.cold); else el.classList.remove('cold');
+      if (st && !st.cold && cfg.compactBeforeCold && w.ctx.tokens > 50000 && st.remaining <= 30000) {
+        const isFocused = w.ws === current && workspaces[w.ws].focused === w.id;
+        if (!isFocused) queueCompact(w);
+      }
+    }
+  }
 
   const FIND_BAR = '<div class="find-bar hidden"><input placeholder="Find" spellcheck="false"><span class="find-n"></span>'
     + '<button data-f="prev" title="Previous (Shift+Enter)">↑</button><button data-f="next" title="Next (Enter)">↓</button><button data-f="close" title="Close (Esc)">✕</button></div>';
