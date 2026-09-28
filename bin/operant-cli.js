@@ -6,6 +6,7 @@
 const POSITIONAL = {
   view: ['path'], edit: ['path'], open: ['target'], diff: ['dir'], usage: [], compact: [],
   run: ['command'], agent: ['prompt'], notify: ['text'], title: ['text'],
+  test: ['command'], build: ['command'],
   ask: ['question'], ws: ['index'],
   read: ['id'], focus: ['id'], close: ['id'], wait: ['id'], stop: ['id'],
   send: ['id', 'text'],
@@ -15,7 +16,7 @@ const POSITIONAL = {
   plan: ['path'], board: [],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
-const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text' };
+const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text', test: 'command', build: 'command' };
 
 // Single source of truth for command help: group (for the grouped list) plus
 // usage/description/examples (for `operant help <cmd>`). Keeps the two in sync.
@@ -34,13 +35,15 @@ const COMMANDS = {
   open: { group: 'files', usage: 'operant open <target>', desc: 'open a file/folder/URL', examples: ['operant open report.pdf'] },
 
   run: { group: 'terminals', usage: 'operant run <command...> [--title t] [--cwd c] [--focus]', desc: 'run a command in a new tile, stays open', examples: ['operant run "npm run dev" --title dev'] },
-  read: { group: 'terminals', usage: 'operant read <id> [--lines n] [--new] [--errors] [--grep p]', desc: "a tile's terminal output", examples: ['operant read 7 --errors', 'operant read 7 --new'] },
+  test: { group: 'terminals', usage: 'operant test [command...] [--cwd c] [--idle s] [--timeout s] [--json]', desc: 'run tests in a new tile (auto-detected if no command), wait, return a runner/summary/failures digest', examples: ['operant test', 'operant test "pytest -k foo"'] },
+  build: { group: 'terminals', usage: 'operant build [command...] [--cwd c] [--idle s] [--timeout s] [--json]', desc: 'like test, for a build/compile command', examples: ['operant build', 'operant build "cargo build --release"'] },
+  read: { group: 'terminals', usage: 'operant read <id> [--lines n] [--new] [--errors] [--grep p] [--digest]', desc: "a tile's terminal output", examples: ['operant read 7 --errors', 'operant read 7 --digest'] },
   send: { group: 'terminals', usage: 'operant send <id> <text...> [--enter]', desc: 'type into a tile', examples: ['operant send 7 "y" --enter'] },
-  wait: { group: 'terminals', usage: 'operant wait <id> [--idle s] [--timeout s] [--new] [--errors] [--grep p]', desc: 'block until a tile goes quiet or exits, then read (same read filters)', examples: ['operant wait 7 --idle 5', 'operant wait 7 --errors'] },
+  wait: { group: 'terminals', usage: 'operant wait <id> [--idle s] [--timeout s] [--new] [--errors] [--grep p] [--digest]', desc: 'block until a tile goes quiet or exits, then read (same read filters, or a test/build digest)', examples: ['operant wait 7 --idle 5', 'operant wait 7 --digest'] },
   stop: { group: 'terminals', usage: 'operant stop <id>', desc: "stop a tile's running agent/command", examples: ['operant stop 7'] },
 
   browse: { group: 'browser', usage: 'operant browse <url> [--id n] [--focus]', desc: 'open (or navigate) a browser tile', examples: ['operant browse localhost:3000'] },
-  shot: { group: 'browser', usage: 'operant shot <id> [--out file.png] [--full]', desc: "screenshot a browser tile's page", examples: ['operant shot 5'] },
+  shot: { group: 'browser', usage: 'operant shot <id> [--out file] [--selector "<css>"] [--region x,y,w,h] [--full]', desc: "screenshot a browser tile's page (downscaled JPEG by default; --full for a full-size PNG)", examples: ['operant shot 5', 'operant shot 5 --selector "#app"'] },
   console: { group: 'browser', usage: 'operant console <id> [--errors] [--new] [--lines n]', desc: "a browser tile's console output", examples: ['operant console 5 --errors'] },
   text: { group: 'browser', usage: 'operant text <id> [selector]', desc: "a browser tile's visible page text (cheap, no image)", examples: ['operant text 5'] },
   click: { group: 'browser', usage: 'operant click <id> <selector>', desc: 'click an element in a browser tile', examples: ['operant click 5 "#btn"'] },
@@ -69,7 +72,7 @@ function helpList() {
   }
   lines.push('', '  operant help <cmd> for flags and examples.');
   lines.push('  --json prints the raw JSON result instead of formatted text.');
-  lines.push('  read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines.');
+  lines.push('  read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines, --digest a test/build summary+failures.');
   console.log(lines.join('\n'));
 }
 
@@ -165,13 +168,28 @@ function footer(result) {
   return `\n(showing ${shown} of ${total} lines)`;
 }
 
+// Digest (plan item 34): runner/summary line, then each failure as "file:line  title — message",
+// with the stack frame on its own line when it differs from the file:line already shown.
+function fmtDigest(d) {
+  if (!d) return '(no digest recognised for this output; try --errors)';
+  const lines = [`${d.runner}: ${d.summary}`];
+  for (const f of d.failures || []) {
+    const loc = f.file ? `${f.file}${f.line ? ':' + f.line : ''}` : '?';
+    lines.push(`${loc}  ${f.title}${f.message ? ' — ' + f.message.split('\n')[0] : ''}`);
+    if (f.frame && f.frame !== loc) lines.push(`  ${f.frame}`);
+  }
+  if (d.more) lines.push(`… and ${d.more} more`);
+  return lines.join('\n');
+}
+
 function formatResult(cmd, result) {
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
     case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}${result.tokens ? '  ' + result.tokens + ' tokens' : ''}`;
     case 'view': case 'edit': case 'diff': case 'run': case 'agent': return `tile ${result.id}`;
-    case 'read': return (result.text || '') + footer(result);
-    case 'wait': return (result.exited ? '[exited]\n' : '') + (result.text || '') + footer(result);
+    case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : (result.text || '(no output)');
+    case 'read': return ('digest' in result) ? fmtDigest(result.digest) : (result.text || '') + footer(result);
+    case 'wait': return ('digest' in result) ? (result.exited ? '[exited]\n' : '') + fmtDigest(result.digest) : (result.exited ? '[exited]\n' : '') + (result.text || '') + footer(result);
     case 'stop': return `stopped tile ${result.id} (${result.how})`;
     case 'ask': return result.answer === null ? '(closed)' : String(result.answer);
     case 'ws': return `workspace ${result.current}`;
@@ -255,16 +273,17 @@ async function main() {
     const fs = require('fs');
     const os = require('os');
     const path = require('path');
-    const { id, png } = body.result;
+    const { id, png, jpeg, width, height } = body.result;
+    const isJpeg = !!jpeg;
     let out = flags.out;
     if (!out) {
       const dir = path.join(os.tmpdir(), 'operant-shots');
       fs.mkdirSync(dir, { recursive: true });
-      out = path.join(dir, `tile${id}-${Date.now()}.png`);
+      out = path.join(dir, `tile${id}-${Date.now()}.${isJpeg ? 'jpg' : 'png'}`);
     }
-    fs.writeFileSync(out, Buffer.from(png, 'base64'));
-    if (asJson) console.log(JSON.stringify({ id, path: out }));
-    else console.log(out);
+    fs.writeFileSync(out, Buffer.from(isJpeg ? jpeg : png, 'base64'));
+    if (asJson) console.log(JSON.stringify({ id, path: out, width, height }));
+    else console.log(`${out}  ${width}x${height}`);
     return;
   }
 

@@ -89,6 +89,18 @@ test('node:test spec reporter: failing run', () => {
   assert.equal(f.line, 10);
 });
 
+test('node:test spec reporter: real "failing tests:" trailer (top-level tests, no describe)', () => {
+  const d = digest(fixture('node-test-spec-trailer-fail.txt'));
+  assert.equal(d.runner, 'node:test');
+  assert.equal(d.ok, false);
+  assert.equal(d.failures.length, 1);
+  const f = d.failures[0];
+  assert.equal(f.title, 'fails');
+  assert.match(f.file, /sample\.test\.js$/);
+  assert.equal(f.line, 8);
+  assert.match(f.message, /AssertionError/);
+});
+
 // ---------------------------------------------------------------- mocha
 test('mocha: passing run', () => {
   const d = digest(fixture('mocha-pass.txt'));

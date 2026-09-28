@@ -14,7 +14,7 @@ Cap fan-out at ~4 agent tiles unless asked for more. `operant tiles` — a `⚠`
 Finish only the step you're on, write done/next/open-questions to `.operant/progress.md`, then stop and wait. On start, read `.operant/progress.md` first if it exists.
 
 ## Save tokens on long output
-For tests, builds, installs, dev servers, linters: `operant run "<cmd>"` instead of your own shell tool, then `operant wait <id> --errors` (or `--new`). Re-checking a tile later: add `--new`. Hunting one thing: `operant read <id> --grep "<pattern>"`. Results say `(showing N of M lines)` when trimmed. Your own shell is fine for short commands whose whole output you need.
+Test suites and builds: `operant test [cmd]` / `operant build [cmd]` (auto-detects npm/pytest/cargo/go/gradle/maven/dotnet if you omit the command) — runs it, waits, returns just the runner, summary and each failure's file:line. For other long commands (installs, dev servers, linters): `operant run "<cmd>"` instead of your own shell tool, then `operant wait <id> --errors` (or `--new`). Re-checking a tile later: add `--new`. Hunting one thing: `operant read <id> --grep "<pattern>"`. Results say `(showing N of M lines)` when trimmed. Your own shell is fine for short commands whose whole output you need.
 
 ## Context
 On long jobs, check `operant usage` now and then. Keep `.operant/progress.md` current. Above ~70% context, run `operant compact` yourself at a clean stopping point. Re-read `.operant/progress.md` after any compact.
@@ -26,10 +26,10 @@ Show a plan for approval instead of pasting it into chat: `operant plan plan.md`
 `operant agent "<self-contained task>" --title w1` per worker, `operant wait <id> --errors` each, `operant close <id>` once merged. Bigger fan-outs: put the work on the board so the user can see it — `operant task add "<text>"`, workers `operant task claim <id>` then `operant task done <id> [--note "..."]`, `operant board` lists it all. Ask before a risky or ambiguous step instead of guessing: `operant ask "Delete old migrations?" --options "Delete|Keep"`. Notify when finishing long work: `operant notify "Tests pass, ready for review"`, then `operant diff` before committing.
 
 ## Web apps
-`operant run "npm run dev"`, then `operant ports` for the URL, `operant browse <url>` to open it. `operant text <id>` (cheap) over `operant shot <id>` (image) when text is enough; `operant console <id> --errors` for runtime errors; `click`/`type` drive simple flows; `operant watch <id> --errors` on a dev server instead of polling.
+`operant run "npm run dev"`, then `operant ports` for the URL, `operant browse <url>` to open it. `operant text <id>` (cheap) over `operant shot <id>` (image) when text is enough; for a screenshot, `operant shot <id> --selector "<css>"` captures just that part of the page, cheaper than the whole tile; `operant console <id> --errors` for runtime errors; `click`/`type` drive simple flows; `operant watch <id> --errors` on a dev server instead of polling.
 
 ## Commands
-tiles/status/focus/close/ws/title, run/read/send/wait/stop, view/edit/diff/open, browse/shot/console/text/click/type/url, agent/ask/notify/plan/task/board, usage/compact, ports/watch — `operant help [cmd]` for the full list, flags and examples. `--json` prints raw JSON. Exit codes: 0 ok, 1 error, 2 not inside Operant.
+tiles/status/focus/close/ws/title, run/test/build/read/send/wait/stop, view/edit/diff/open, browse/shot/console/text/click/type/url, agent/ask/notify/plan/task/board, usage/compact, ports/watch — `operant help [cmd]` for the full list, flags and examples. `--json` prints raw JSON. Exit codes: 0 ok, 1 error, 2 not inside Operant.
 
 ## Work smart
 - If `.codegraph/` exists in the repo, use `codegraph explore` before grepping or reading files.

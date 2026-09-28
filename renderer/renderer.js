@@ -3756,6 +3756,45 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   }
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  // Block until a tile goes quiet (idle ms with no activity, or an agent tile reports done) or
+  // exits; throws on timeout. Returns true if the tile exited, false if it just went quiet.
+  // Shared by `wait`, `test` and `build`.
+  async function waitQuiet(w, idle, timeout) {
+    const started = Date.now();
+    for (;;) {
+      if (!w.alive) return true;
+      const quiet = Date.now() - (w.lastActivity || 0) >= idle;
+      if (quiet || (w.kind === 'agent' && w.status === 'done')) return false;
+      if (Date.now() - started >= timeout) throw new Error('timed out');
+      await sleep(250);
+    }
+  }
+
+  // Run text/build digests (plan item 34): window.OperantDigest(text) -> {runner, summary,
+  // failures, more, ok} | null. Loaded as renderer/digest.js in index.html, so it's a plain global.
+  function digestOf(self, w) {
+    const { text } = readOutput(self, w, { lines: 2000 });
+    return typeof window.OperantDigest === 'function' ? window.OperantDigest(text) : null;
+  }
+
+  // Small, deliberately un-clever runner detection for `test`/`build` with no explicit command:
+  // package.json scripts first, then each ecosystem's own project file.
+  async function detectProjectCommand(cwd, kind) {
+    const has = async rel => !(await operant.readFile(resolvePath(cwd, rel))).error;
+    const read = async rel => { const r = await operant.readFile(resolvePath(cwd, rel)); return r.error ? '' : (r.text || ''); };
+    const pkg = await read('package.json');
+    if (pkg) { try { if (JSON.parse(pkg).scripts?.[kind]) return `npm run ${kind}`; } catch {} }
+    if (kind === 'test' && (await has('pytest.ini') || (await read('pyproject.toml')).includes('pytest') || (await read('setup.cfg')).includes('pytest'))) return 'pytest';
+    if (await has('Cargo.toml')) return kind === 'test' ? 'cargo test' : 'cargo build';
+    if (await has('go.mod')) return kind === 'test' ? 'go test ./...' : 'go build ./...';
+    if (await has('gradlew.bat')) return `gradlew.bat ${kind}`;
+    if (await has('gradlew')) return `./gradlew ${kind}`;
+    if (await has('pom.xml')) return kind === 'test' ? 'mvn test' : 'mvn package';
+    const list = await operant.listDir(cwd).catch(() => []);
+    if (Array.isArray(list) && list.some(f => /\.(csproj|sln)$/i.test(f.name || ''))) return kind === 'test' ? 'dotnet test' : 'dotnet build';
+    return null;
+  }
+
   async function runControl(cmd, args, self) {
     switch (cmd) {
       case 'tiles':
@@ -3808,9 +3847,35 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'shot': {
         const w = needTile(args.id);
         if (w.kind !== 'browser') throw new Error('tile is not a browser');
-        // "full" (whole page, not just the view) isn't implemented: this always captures the visible area.
-        const img = await w.webview.capturePage();
-        return { id: w.id, png: img.toDataURL().replace(/^data:image\/png;base64,/, '') };
+        let rect = null;
+        if (args.selector) {
+          const sel = JSON.stringify(args.selector);
+          rect = await w.webview.executeJavaScript(`(() => { const e = document.querySelector(${sel}); if (!e) return null; const b = e.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) }; })()`);
+          if (!rect) throw new Error(`no match for ${args.selector}`);
+        } else if (args.region) {
+          const p = String(args.region).split(',').map(n => parseInt(n.trim(), 10));
+          if (p.length !== 4 || p.some(Number.isNaN)) throw new Error('--region must be x,y,w,h');
+          rect = { x: p[0], y: p[1], width: p[2], height: p[3] };
+        }
+        const img = rect ? await w.webview.capturePage(rect) : await w.webview.capturePage();
+        const size = img.getSize();
+        if (args.full) return { id: w.id, png: img.toDataURL().replace(/^data:image\/png;base64,/, ''), width: size.width, height: size.height };
+        // NativeImage.resize()/toJPEG() cross the native binding and crash this sandboxed renderer -
+        // downscale and re-encode through a plain <canvas> instead (DOM-only, no native image calls).
+        const MAX_W = 1280;
+        const width = Math.min(size.width, MAX_W) || 1, height = Math.round(size.height * (width / size.width)) || 1;
+        const jpegUrl = await new Promise((resolve, reject) => {
+          const el = new (window.Image)();
+          el.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = width; canvas.height = height;
+            canvas.getContext('2d').drawImage(el, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', 0.75));
+          };
+          el.onerror = () => reject(new Error('could not decode the capture'));
+          el.src = img.toDataURL();
+        });
+        return { id: w.id, jpeg: jpegUrl.replace(/^data:image\/jpeg;base64,/, ''), width, height };
       }
       case 'console': {
         const w = needTile(args.id);
@@ -3870,6 +3935,18 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         });
         return { id: w.id };
       }
+      case 'test': case 'build': {
+        const cwd = args.cwd || self?.cwd || lastCwd;
+        const command = args.command || await detectProjectCommand(cwd, cmd);
+        if (!command) throw new Error(`couldn't spot a ${cmd} command in ${cwd} — pass one, e.g. operant ${cmd} "npm run ${cmd}"`);
+        const w = await newTerminal('shell', cwd, {
+          run: command, title: args.title || command.slice(0, 40), ws: self?.ws ?? current, near: self, focus: !!args.focus,
+        });
+        await waitQuiet(w, (args.idle ?? 3) * 1000, (args.timeout ?? 600) * 1000);
+        const digest = digestOf(self, w);
+        if (digest) return { id: w.id, command, digest };
+        return { id: w.id, command, digest: null, text: readOutput(self, w, { lines: 400, errors: true }).text };
+      }
       case 'agent': {
         if (!args.prompt) throw new Error('prompt required');
         if (args.agent && !cfg.agents.some(a => a.id === args.agent)) throw new Error(`unknown agent "${args.agent}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
@@ -3880,6 +3957,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'read': {
         const w = needTile(args.id);
+        if (args.digest) return { id: w.id, title: w.title, busy: isWorking(w), digest: digestOf(self, w) };
         const def = (args.errors || args.grep) ? 400 : 60;
         const lines = Math.min(Math.max(1, +args.lines || def), 2000);
         const { text, total, shown } = readOutput(self, w, { lines, isNew: !!args.new, errors: !!args.errors, grep: args.grep });
@@ -3893,17 +3971,12 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'wait': {
         const w = needTile(args.id);
-        const idle = (args.idle ?? 3) * 1000, timeout = (args.timeout ?? 600) * 1000, started = Date.now();
+        const exited = await waitQuiet(w, (args.idle ?? 3) * 1000, (args.timeout ?? 600) * 1000);
+        if (args.digest) return { id: w.id, exited, digest: digestOf(self, w) };
         const def = args.errors ? 400 : 30;
         const lines = Math.min(Math.max(1, +args.lines || def), 2000);
-        const opts = { lines, isNew: !!args.new, errors: !!args.errors, grep: args.grep };
-        for (;;) {
-          if (!w.alive) { const r = readOutput(self, w, opts); return { id: w.id, exited: true, text: r.text, total: r.total, shown: r.shown }; }
-          const quiet = Date.now() - (w.lastActivity || 0) >= idle;
-          if (quiet || (w.kind === 'agent' && w.status === 'done')) { const r = readOutput(self, w, opts); return { id: w.id, exited: false, text: r.text, total: r.total, shown: r.shown }; }
-          if (Date.now() - started >= timeout) throw new Error('timed out');
-          await sleep(250);
-        }
+        const r = readOutput(self, w, { lines, isNew: !!args.new, errors: !!args.errors, grep: args.grep });
+        return { id: w.id, exited, text: r.text, total: r.total, shown: r.shown };
       }
       case 'usage': {
         if (!self) throw new Error('unknown tile');

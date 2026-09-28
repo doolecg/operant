@@ -126,25 +126,50 @@ const OperantDigest = (() => {
         failures.push({ title: positions[i].title, file, line, message, frame });
       }
     } else {
-      const blockRe = /^\s*✖\s+(.+?)(?:\s*\(\d+(?:\.\d+)?ms\))?$/gm;
-      let m, positions = [];
-      while ((m = blockRe.exec(text))) positions.push({ index: m.index, title: m[1].trim() });
-      for (let i = 0; i < positions.length; i++) {
-        const start = positions[i].index;
-        const end = i + 1 < positions.length ? positions[i + 1].index : text.search(/^ℹ tests/m);
-        const block = text.slice(start, end === -1 ? text.length : end);
-        const lines = block.split('\n').slice(1).filter(l => l.trim());
-        const frameRe = /at\s+.*?\(?([^\s()]+):(\d+):(\d+)\)?/g;
-        let fm, chosen = null;
-        while ((fm = frameRe.exec(block))) { if (isProject(fm[1])) { chosen = fm; break; } if (!chosen) chosen = fm; }
-        const msgLines = lines.filter(l => !/^\s*at\s/.test(l));
-        failures.push({
-          title: positions[i].title,
-          file: chosen ? chosen[1] : null,
-          line: chosen ? parseInt(chosen[2], 10) : null,
-          message: shortMessage(msgLines, 3),
-          frame: chosen ? `${chosen[1]}:${chosen[2]}:${chosen[3]}` : null,
-        });
+      // Node prints a trailing "✖ failing tests:" section (top-level tests, no describe block) with
+      // "test at file:line:col" right above each repeated "✖ title (Xms)" and its error - the
+      // reliable source for file/line. Prefer it; it also avoids double-counting the same failure
+      // that already appears once in the plain run listing above.
+      const sectionM = text.match(/^[✖✗]\s*failing tests:\s*$/m);
+      if (sectionM) {
+        const section = text.slice(sectionM.index + sectionM[0].length);
+        const blockRe = /^test at ([^\n]+):(\d+):(\d+)\s*$/gm;
+        let m, positions = [];
+        while ((m = blockRe.exec(section))) positions.push({ index: m.index, file: m[1], line: parseInt(m[2], 10), col: m[3] });
+        for (let i = 0; i < positions.length; i++) {
+          const start = positions[i].index;
+          const end = i + 1 < positions.length ? positions[i + 1].index : section.length;
+          const lines = section.slice(start, end).split('\n');
+          const titleM = lines[1] && lines[1].match(/^\s*[✖✗]\s+(.+?)(?:\s*\(\d+(?:\.\d+)?ms\))?\s*$/);
+          const msgLines = lines.slice(2).filter(l => l.trim() && !/^\s*at\s/.test(l));
+          failures.push({
+            title: titleM ? titleM[1].trim() : positions[i].file,
+            file: positions[i].file, line: positions[i].line,
+            message: shortMessage(msgLines, 3),
+            frame: `${positions[i].file}:${positions[i].line}:${positions[i].col}`,
+          });
+        }
+      } else {
+        const blockRe = /^\s*✖\s+(.+?)(?:\s*\(\d+(?:\.\d+)?ms\))?$/gm;
+        let m, positions = [];
+        while ((m = blockRe.exec(text))) positions.push({ index: m.index, title: m[1].trim() });
+        for (let i = 0; i < positions.length; i++) {
+          const start = positions[i].index;
+          const end = i + 1 < positions.length ? positions[i + 1].index : text.search(/^ℹ tests/m);
+          const block = text.slice(start, end === -1 ? text.length : end);
+          const lines = block.split('\n').slice(1).filter(l => l.trim());
+          const frameRe = /at\s+.*?\(?([^\s()]+):(\d+):(\d+)\)?/g;
+          let fm, chosen = null;
+          while ((fm = frameRe.exec(block))) { if (isProject(fm[1])) { chosen = fm; break; } if (!chosen) chosen = fm; }
+          const msgLines = lines.filter(l => !/^\s*at\s/.test(l));
+          failures.push({
+            title: positions[i].title,
+            file: chosen ? chosen[1] : null,
+            line: chosen ? parseInt(chosen[2], 10) : null,
+            message: shortMessage(msgLines, 3),
+            frame: chosen ? `${chosen[1]}:${chosen[2]}:${chosen[3]}` : null,
+          });
+        }
       }
     }
     return result('node:test', summary, failures, ok);

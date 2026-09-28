@@ -115,7 +115,7 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
 Already in: `run`/`wait --errors|--new|--grep`, repeated-line folding, `text` over `shot`, auto compact (32),
 team mode (33). In order of how much each should save:
 
-- [ ] **34. Test and build digests:** `operant test` / `operant build` (or `run --digest`) spot the runner (npm/vitest/
+- [x] **34. Test and build digests:** `operant test` / `operant build` (or `run --digest`) spot the runner (npm/vitest/
       jest, pytest, cargo, go test, tsc, eslint, gradle/maven, dotnet) and return only the summary line plus each
       failure with its file:line and the first project frame of the stack; everything else stays in the tile.
       Unknown runners fall back to `--errors`.
@@ -135,7 +135,7 @@ team mode (33). In order of how much each should save:
       the biggest single reads, repeated reads of the same file, and each session's fixed overhead (CLAUDE.md,
       memory, skills, MCP tool lists), with a hint when something is oversized (e.g. an MCP server that's loaded but
       never used).
-- [ ] **40. Cheaper screenshots:** `operant shot` defaults to a downscaled JPEG, with `--selector`/`--region`
+- [x] **40. Cheaper screenshots:** `operant shot` defaults to a downscaled JPEG, with `--selector`/`--region`
       to capture only part of the page and `--full` for the old behaviour.
 - [x] **41. Skill nudges for the big wins:** use CodeGraph (when `.codegraph/` exists) before grep/read, read only
       the lines needed, prefer `--new` on re-reads, and hand small tasks to the small tier.
