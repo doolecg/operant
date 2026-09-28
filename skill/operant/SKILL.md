@@ -19,6 +19,9 @@ For anything with long output — test suites, builds, installs, dev servers, li
 - Hunting one thing in a long log: `operant read <id> --grep "<pattern>"`.
 - `read`/`wait` results are capped and say `(showing N of M lines)` when trimmed.
 
+## Context
+On long jobs, check `operant usage` now and then. Keep `.operant/progress.md` current as you go. Above ~70% context, run `operant compact` yourself at a clean stopping point rather than waiting for Operant's own auto compact. After any compact (yours or Operant's), re-read `.operant/progress.md`.
+
 ## Commands
 | cmd | example | does |
 |---|---|---|
@@ -33,6 +36,8 @@ For anything with long output — test suites, builds, installs, dev servers, li
 | send | `operant send 7 "y" --enter` | type into a tile |
 | wait | `operant wait 7 --idle 5` | block until quiet/exit, then read (same `--new`/`--errors`/`--grep`/`--lines`) |
 | stop | `operant stop 7` | stop a tile's running agent/command |
+| usage | `operant usage` | your tile's context size and the plan limits |
+| compact | `operant compact` | queue a progress note + compact for your tile's next idle moment |
 | notify | `operant notify "done"` | Windows notification |
 | ask | `operant ask "Delete old migrations?" --options "Delete|Keep"` | blocking dialog, returns the choice |
 | close | `operant close 7` | close a tile |

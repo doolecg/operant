@@ -544,7 +544,7 @@
   async function saveAndQuit() {
     const busy = cfg.saveQuitWaits ? busyAgentTiles() : [];
     if (!busy.length) return doSaveQuit();
-    for (const w of busy) if (w.ptyId) operant.writePty(w.ptyId, SAVE_QUIT_MSG + '\r');
+    for (const w of busy) if (w.ptyId) sendLine(w, SAVE_QUIT_MSG);
     sq = { ids: busy.map(w => w.id), idleSince: new Map() };
     $('#savequit').classList.remove('hidden');
     renderSaveQuit();
@@ -576,6 +576,83 @@
   function forceSaveQuit() { endSaveQuitOverlay(); doSaveQuit(); }
   $('#sq-force').onclick = forceSaveQuit;
   $('#sq-cancel').onclick = cancelSaveQuit;
+
+  // ------------------------------------------------------------ auto compact
+  // When an agent tile's context passes cfg.autoCompact percent, wait until it's idle (like Save
+  // and quit), ask it to write .operant/progress.md, wait idle again, then compact it: /compact for
+  // Claude Code, OpenCode's own summarize API (falling back to /compact) for OpenCode. Fires once per
+  // crossing — context has to drop back under the threshold before it can fire again — and never
+  // touches a tile Save and quit is already handling. `operant compact` queues the same sequence
+  // directly for the tile that asked, skipping the threshold.
+  const COMPACT_MSG = "Before compacting: write a short progress note to .operant/progress.md in the "
+    + "project (what's done, what's next, open questions), then stop.";
+  const compacting = new Map(); // tile id -> { stage, idleSince, sentAt, seenActivity }
+  const pctOf = w => w.ctx && w.ctx.max ? w.ctx.tokens / w.ctx.max : 0;
+
+  function queueCompact(w) {
+    if (!w.alive || !w.ptyId || compacting.has(w.id)) return;
+    compacting.set(w.id, { stage: 'wait', idleSince: null });
+  }
+
+  // A long or multi-line paste, sent as one write with a trailing \r, can land in Claude Code's
+  // input box as a draft rather than submitting: its TUI treats a big burst of characters as a
+  // paste and doesn't read \r inside it as Enter. Typing the message, then Enter as its own write
+  // a moment later, submits it the way a person pasting text and then pressing Enter would.
+  function sendLine(w, text) {
+    operant.writePty(w.ptyId, text);
+    setTimeout(() => { if (w.alive && w.ptyId) operant.writePty(w.ptyId, '\r'); }, 150);
+  }
+
+  async function runCompact(w) {
+    if (!w.alive || !w.ptyId) return;
+    if (String(w.sessionId || '').startsWith('oc:')) {
+      const r = await operant.summarizeOpenCode(w.ptyId).catch(() => null);
+      if (r && r.ok) return;
+    }
+    sendLine(w, '/compact');
+  }
+
+  // A tile that was never typed into by hand (e.g. started with `operant agent`) never sets
+  // w.typed, so isWorking() can't see it working and looks "idle" the instant we write to it.
+  // Once the note request is sent, wait for real output after that (w.lastActivity moving past
+  // sentAt) rather than trusting isWorking() alone — otherwise the /compact that follows can land
+  // on top of a still-open, unsubmitted prompt and get typed into the same message as the note.
+  function tickCompacting() {
+    const now = Date.now();
+    for (const [id, st] of [...compacting]) {
+      const w = wins.get(id);
+      if (!w || !w.alive || !w.ptyId) { compacting.delete(id); continue; }
+      if (sq && sq.ids.includes(id)) continue; // Save and quit is already talking to this tile
+      if (st.stage === 'wait') {
+        if (isWorking(w)) { st.idleSince = null; continue; }
+        if (st.idleSince == null) { st.idleSince = now; continue; }
+        if (now - st.idleSince < 3000) continue;
+        sendLine(w, COMPACT_MSG);
+        Object.assign(st, { stage: 'note-sent', sentAt: now, seenActivity: false, idleSince: null });
+      } else if (st.stage === 'note-sent') {
+        if (w.lastActivity > st.sentAt) st.seenActivity = true;
+        const settled = st.seenActivity && now - w.lastActivity >= 3000;
+        if (settled || now - st.sentAt > 120000) { // give up waiting after 2 minutes and compact anyway
+          compacting.delete(id);
+          runCompact(w);
+        }
+      }
+    }
+  }
+
+  function checkAutoCompact() {
+    const threshold = (cfg.autoCompact || 0) / 100;
+    if (threshold > 0) {
+      for (const w of wins.values()) {
+        if (w.kind !== 'ai' || !w.alive || !w.ptyId || !w.ctx || !w.ctx.max) continue;
+        const above = pctOf(w) >= threshold;
+        if (above && !w.compactAbove && !(sq && sq.ids.includes(w.id))) queueCompact(w);
+        w.compactAbove = above;
+      }
+    }
+    tickCompacting();
+  }
+  setInterval(checkAutoCompact, 1000);
 
   const FIND_BAR = '<div class="find-bar hidden"><input placeholder="Find" spellcheck="false"><span class="find-n"></span>'
     + '<button data-f="prev" title="Previous (Shift+Enter)">↑</button><button data-f="next" title="Next (Enter)">↓</button><button data-f="close" title="Close (Esc)">✕</button></div>';
@@ -3539,6 +3616,18 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (Date.now() - started >= timeout) throw new Error('timed out');
           await sleep(250);
         }
+      }
+      case 'usage': {
+        if (!self) throw new Error('unknown tile');
+        const ctx = self.ctx || null;
+        return { id: self.id, tokens: ctx?.tokens ?? null, max: ctx?.max ?? null,
+          pct: ctx && ctx.max ? Math.round((ctx.tokens / ctx.max) * 100) : null };
+      }
+      case 'compact': {
+        if (!self) throw new Error('unknown tile');
+        if (!self.ptyId) throw new Error('tile has no terminal to compact');
+        queueCompact(self);
+        return {};
       }
       case 'notify': {
         if (!self) throw new Error('unknown tile');

@@ -68,6 +68,8 @@ const Panels = (() => {
       { key: 'installSkill', label: 'Operant skill for agents',
         hint: 'Installs a skill that lets Claude Code and OpenCode use Operant: show you files, run commands in their own tiles, start other agents, ask you questions · the operant command works in every tile',
         type: 'toggle' },
+      { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
+        type: 'number', min: 0, max: 100 },
     ]],
     ['Notifications', [
       { key: 'notifications', label: 'Windows notifications', type: 'toggle' },

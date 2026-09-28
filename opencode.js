@@ -101,6 +101,9 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
       if (p.info?.role === 'assistant') {
         sendContext(t, ptyId, p.info.tokens);
         onTokens?.(key, t.owner, tokenSum(p.info.tokens));
+        // Auto compact's /session/{id}/summarize needs the model the tile is actually using.
+        if (p.info.providerID) t.providerID = p.info.providerID;
+        if (p.info.modelID) t.modelID = p.info.modelID;
       }
       return;
     }
@@ -166,6 +169,23 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
     await Promise.all(ids.map(id => fetch(`http://127.0.0.1:${t.port}/session/${id}/abort`, { method: 'POST' }).catch(() => {})));
   }
 
+  // Auto compact (main.js): summarize the tile's root session in place, using the provider/model
+  // its own assistant messages report. Never throws; { ok: false } tells the caller to fall back
+  // to typing /compact instead.
+  async function summarize(ptyId) {
+    const t = tiles.get(ptyId);
+    if (!t) return { ok: false, error: 'no tile' };
+    const root = [...t.roots][0];
+    if (!root || !t.providerID || !t.modelID) return { ok: false, error: 'no session/model yet' };
+    try {
+      const r = await fetch(`http://127.0.0.1:${t.port}/session/${root}/summarize`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerID: t.providerID, modelID: t.modelID }),
+      });
+      return { ok: r.ok };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
   // ---------------------------------------------------------------- OpenCode started elsewhere
 
   let db = null, pollT = null, lastPart = 0;
@@ -205,7 +225,7 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
   }
   function start() { if (!pollT) pollT = setInterval(poll, 2000); }
 
-  return { freePort, watch, unwatch, start, abort };
+  return { freePort, watch, unwatch, start, abort, summarize };
 }
 
 // The OpenCode CLI, however its command is written.

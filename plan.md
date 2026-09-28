@@ -62,7 +62,7 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
       answer (Change returns the user's note).
 - [ ] **24. Task board:** a shared board tile for fanned-out agents: `operant task add|claim|done|note`, `operant board`;
       the user sees every task, owner and status in one tile.
-- [ ] **25. `operant usage`:** the agent's own context size and the plan limits, so it can compact or hand off in time.
+- [x] **25. `operant usage`:** the agent's own context size and the plan limits, so it can compact or hand off in time.
 - [ ] **26. Dev servers:** `operant ports` lists servers started in tiles with their URLs, spotted in their output.
 - [ ] **27. Watch and alert:** `operant watch <tile> --errors` notifies (and tells the agent on its next call) when a
       long-running tile prints an error.
@@ -76,7 +76,7 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
       at a safe point (idle), then closes; a "Force quit now" button for when you can't wait.
 - [x] **31. Ship in 1.10.1 (already in the working tree, uncommitted):** browser detection matches by exe name, so Zen
       (which registers under a `Firefox-<hash>` key) isn't listed as Firefox in Settings › Startup.
-- [ ] **32. Auto compact:** when an agent tile's context passes a threshold (Settings › Agents, default 80%, off
+- [x] **32. Auto compact:** when an agent tile's context passes a threshold (Settings › Agents, default 80%, off
       switch), Operant waits until the agent is idle, asks it to write its progress note (as in 29), then types
       `/compact` into it. OpenCode tiles use its server instead (`POST /session/<id>/summarize` on the tile's
       `--port`, with the session's provider and model), falling back to typing `/compact`; context size comes from

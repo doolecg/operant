@@ -4,7 +4,7 @@
 // Node built-ins only, no deps, must start fast.
 
 const POSITIONAL = {
-  view: ['path'], edit: ['path'], open: ['target'], diff: ['dir'],
+  view: ['path'], edit: ['path'], open: ['target'], diff: ['dir'], usage: [], compact: [],
   run: ['command'], agent: ['prompt'], notify: ['text'], title: ['text'],
   ask: ['question'], ws: ['index'],
   read: ['id'], focus: ['id'], close: ['id'], wait: ['id'], stop: ['id'],
@@ -25,6 +25,8 @@ function usage() {
   diff [dir]                     open a changes tile
   run <command...> [--title t] [--cwd c] [--focus]   run a command in a new tile
   agent <prompt...> [--agent id] [--cwd c] [--title t]  start an agent tile
+  usage                          your tile's context size and the plan limits
+  compact                        queue a progress note + compact for your tile's next idle moment
   read <id> [--lines n] [--new] [--errors] [--grep p]  read a tile's terminal output
   send <id> <text...> [--enter]  type into a tile
   wait <id> [--idle s] [--timeout s] [--new] [--errors] [--grep p]   wait for a tile to go quiet
@@ -128,6 +130,20 @@ function formatResult(cmd, result) {
     case 'console': case 'text': return (result.text || '') + footer(result);
     case 'click': case 'type': return result.ok ? 'ok' : JSON.stringify(result);
     case 'url': return [result.id, result.url, result.title, result.loading ? '[loading]' : ''].filter(x => x !== undefined && x !== '').join('  ');
+    case 'usage': {
+      const lines = [result.max
+        ? `context: ${result.tokens.toLocaleString()} / ${result.max.toLocaleString()} tokens (${result.pct}%)`
+        : 'context: not available for this tile yet'];
+      const l = result.limits;
+      const pct = x => x && typeof x.used === 'number' ? `${Math.round(x.used)}%${x.resets ? ` (resets ${new Date(x.resets).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })})` : ''}` : null;
+      if (!l) lines.push('plan limits: off (Settings › Usage)');
+      else if (l.error) lines.push(l.error);
+      else {
+        if (pct(l.session)) lines.push(`session (5h): ${pct(l.session)}`);
+        if (pct(l.week)) lines.push(`week: ${pct(l.week)}`);
+      }
+      return lines.join('\n');
+    }
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0
       ? 'ok' : JSON.stringify(result);
   }

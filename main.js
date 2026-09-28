@@ -112,6 +112,7 @@ const DEFAULT_CONFIG = {
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
+  autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
   masterRatio: 0.55,
@@ -416,6 +417,12 @@ function startControlServer() {
         if (cmd === 'version') return reply(200, { ok: true, result: { version: app.getVersion() } });
         if (cmd === 'ask') { const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'open') { const r = await controlOpen(args, ownerForTile(tile)); return reply(r.ok ? 200 : 400, r); }
+        if (cmd === 'usage') {
+          // The renderer knows the calling tile's own context size; main owns the Claude plan limits.
+          const r = await forwardControl(ownerForTile(tile), cmd, args, tile, 20000);
+          if (!r.ok) return reply(400, r);
+          return reply(200, { ok: true, result: { ...r.result, limits: await fetchLimits() } });
+        }
         const owner = ownerForTile(tile);
         const timeoutMs = cmd === 'wait' ? (Number(args.timeout) || 600) * 1000 + 5000 : 20000;
         const r = await forwardControl(owner, cmd, args, tile, timeoutMs);
@@ -1064,6 +1071,7 @@ const opencode = createOpenCode({
   onSubagentCount: (sessionId, owner, count) => checkSubagents(sessionId, owner, count),
 });
 ipcMain.handle('opencode:abort', (_e, { ptyId }) => opencode.abort(ptyId));
+ipcMain.handle('opencode:summarize', (_e, { ptyId }) => opencode.summarize(ptyId));
 
 // Claude plan limits (the 5-hour session and the week), as Claude Code's /usage shows them: asked of
 // Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, at most once a minute.
