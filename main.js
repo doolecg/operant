@@ -155,13 +155,14 @@ const DEFAULT_CONFIG = {
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
     tiers: {
-      small: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up, read and summarise files, renames, run tests, docs tweaks' },
-      medium: { agent: 'claude', model: 'claude-sonnet-5-5', use: 'smaller tasks: a feature across a few files, a normal bug fix, simple edits' },
-      high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'medium', use: 'hard tasks: tricky debugging, a multi-file refactor, security-sensitive work' },
-      big: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'big tasks: architecture, a large refactor or migration' },
+      xsmall: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up, read and summarise files, renames, run tests, docs tweaks' },
+      small: { agent: 'claude', model: 'claude-sonnet-5-5', use: 'smaller tasks: a feature across a few files, a normal bug fix, simple edits' },
+      medium: { agent: 'claude', model: 'claude-opus-5-5', effort: 'medium', use: 'hard tasks: tricky debugging, a multi-file refactor, security-sensitive work' },
+      high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'big tasks: architecture, a large refactor or migration' },
+      max: { agent: 'claude', model: 'claude-opus-5-5', effort: 'max', use: 'the very hardest problems, where getting it right matters more than cost' },
     },
     maxWorkers: 4,
-    maxTier: 'medium',            // highest tier workers may be started on (gear menu slider)
+    maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
   },
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
@@ -688,17 +689,17 @@ const hasTranscript = id => {
   try { return fs.readdirSync(PROJECTS_DIR).some(p => fs.existsSync(path.join(PROJECTS_DIR, p, id + '.jsonl'))); } catch { return false; }
 };
 
-// Item 35: cheap readers. Runs the team's small tier agent non-interactively, in a hidden child
+// Item 35: cheap readers. Runs the team's xsmall tier agent non-interactively, in a hidden child
 // process (no tile), and hands back its answer only - never the file/log/page itself. Only OpenCode
 // and Claude Code are supported (the two agents with a documented non-interactive print mode).
 async function controlSummarize(cmd, args, tile) {
   const team = config.team || DEFAULT_CONFIG.team;
-  const tierCfg = team?.tiers?.small;
-  if (!tierCfg?.agent) return { ok: false, error: 'no small tier configured (Settings › Agents › Team)' };
+  const tierCfg = team?.tiers?.xsmall;
+  if (!tierCfg?.agent) return { ok: false, error: 'no xsmall tier configured (Settings › Agents › Team)' };
   const agent = findAgent(tierCfg.agent);
-  if (!agent) return { ok: false, error: `small tier agent "${tierCfg.agent}" isn't configured in Settings › Agents` };
+  if (!agent) return { ok: false, error: `xsmall tier agent "${tierCfg.agent}" isn't configured in Settings › Agents` };
   const isOc = isOpenCode(agent), isCl = isClaude(agent);
-  if (!isOc && !isCl) return { ok: false, error: 'the small tier agent must be OpenCode or Claude Code for cheap reads' };
+  if (!isOc && !isCl) return { ok: false, error: 'the xsmall tier agent must be OpenCode or Claude Code for cheap reads' };
 
   const owner = ownerForTile(tile);
   const statusR = await forwardControl(owner, 'status', {}, tile, 10000);

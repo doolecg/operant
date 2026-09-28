@@ -1,3 +1,20 @@
+# Operant 1.13.1
+
+Team mode now has five tiers, and agents use them by default according to your top-tier slider.
+
+**Install:** download `Operant-1.13.1.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Five team tiers:** `xsmall` (OpenCode Big Pickle), `small` (Sonnet 5.5), `medium` (Opus 5.5, medium effort), `high` (Opus 5.5, high effort) and `max` (Opus 5.5, max effort). Start one with `operant agent "<task>" --tier <name>`.
+- **Effort per tier:** ⚙ Settings › Agents › Team has a row for every tier, with an effort dropdown.
+- **Agents delegate on their own:** when team mode is on, every agent checks `operant team` at the start and hands tasks to the cheapest tier that fits, never above your top-tier slider.
+
+## Changed
+- **Tier names moved:** `small` is now Sonnet 5.5 and Big Pickle is `xsmall`. `operant summarize` and `operant find` use `xsmall`. If you saved your own tiers before, Operant keeps them, so check ⚙ Settings › Agents › Team.
+- **Top tier defaults to Small,** so the Opus tiers stay off until you raise the slider.
+
+---
+
 # Operant 1.13.0
 
 Team mode gets two more tiers for harder work, Sonnet 5.5 and Opus 5.5 become the Claude workers, and the settings panel is bigger.
