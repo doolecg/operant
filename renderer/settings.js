@@ -137,6 +137,7 @@ const Panels = (() => {
       { key: 'tokenBudget', label: 'Daily token budget', hint: 'Counted tokens a day, like 2M or 500k · the pill turns orange at 80% and red past it · 0 = off', type: 'tokens' },
       { key: 'contextBadge', label: 'Context size in the info bar', hint: 'How full each Claude Code and OpenCode tile’s context is · orange at 60%, red at 85% · big contexts cost more tokens per message · needs Token usage in the top bar for Claude Code', type: 'toggle' },
       { key: 'tileTokens', label: 'Tile info bar', hint: 'A thin bar under each agent tile’s title: model, context, tokens used since it opened, folder and branch', type: 'toggle' },
+      { type: 'tokenBreakdown', label: 'Where tokens go' },
     ]],
     ['Startup', [
       { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
@@ -298,6 +299,7 @@ const Panels = (() => {
     if (it.type === 'agents') return agentsEditor(cfg.agents);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
+    if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';
     if (it.type === 'updates') return updatesCard(ext.update());
     return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}</div><div class="ctl">${control(it, cfg[it.key], cfg)}</div></div>`;
   }
@@ -339,6 +341,8 @@ const Panels = (() => {
       if (keysEl) ext.renderKeys(keysEl);
       const cgEl = pane.querySelector('.cg-card');
       if (cgEl) ext.renderCodegraph(cgEl);
+      const tbEl = pane.querySelector('.tok-breakdown');
+      if (tbEl) ext.renderTokenBreakdown(tbEl);
       pane.querySelectorAll('[data-update]').forEach(b => b.onclick = () => {
         const a = b.dataset.update;
         if (a === 'check') { ext.checkUpdate(); b.disabled = true; b.textContent = 'Checking…'; }

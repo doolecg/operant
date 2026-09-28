@@ -182,7 +182,136 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
     events.push([t, input || 0, output || 0, cacheWrite || 0, cacheRead || 0, project || 'other']);
   }
 
-  return { start, stop, summary, series, refresh: scan, addEvent };
+  return { start, stop, summary, series, refresh: scan, addEvent, breakdown: opts => computeBreakdown(projectsDir, opts) };
+}
+
+// ------------------------------------------------------------ item 39: "where the tokens go"
+// A fresh, on-demand read of the JSONL (not the running scan above): per project and per tile
+// (Claude Code session, subagents folded into their parent) totals, the biggest single turns with
+// the tool call that likely caused them, files read more than 3 times in a session, and each
+// session's fixed first-turn overhead. Claude Code transcripts carry no free/paid flag (unlike
+// OpenCode's free Zen models), so everything here is "paid" — this only covers Claude Code usage.
+
+const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
+function toolArg(input) {
+  if (!input) return '';
+  const v = input.file_path || input.path || input.command || input.pattern || input.url || input.query || '';
+  return shortPath(String(v)).slice(0, 60);
+}
+function projectOf(o, fallback) {
+  const cwd = o.cwd && o.cwd.replace(/[\\/]\.claude[\\/]worktrees[\\/].*$/i, '');
+  return cwd ? path.basename(cwd) || cwd : fallback;
+}
+const shortLabel = (sessionId, project) => `${project} · ${String(sessionId || '').slice(0, 8)}`;
+
+async function listJsonl(dir, depth, out) {
+  let ents;
+  try { ents = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return out; }
+  for (const d of ents) {
+    const p = path.join(dir, d.name);
+    if (d.isDirectory() && depth < 3) await listJsonl(p, depth + 1, out);
+    else if (d.isFile() && d.name.endsWith('.jsonl')) out.push(p);
+  }
+  return out;
+}
+
+async function computeBreakdown(projectsDir, { days = 1, project = null } = {}) {
+  const now = Date.now();
+  const since = days <= 1 ? new Date(now).setHours(0, 0, 0, 0) : now - 7 * 86400e3;
+  const files = await listJsonl(projectsDir, 0, []);
+  const seen = new Set();
+  const perProject = new Map(), perTile = new Map(), fileReads = new Map(), overhead = [], turns = [];
+
+  const bump = (map, key, label, e) => {
+    let a = map.get(key);
+    if (!a) map.set(key, { key, label, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, free: 0, paid: 0 });
+    a = map.get(key);
+    a.input += e.input; a.output += e.output; a.cacheWrite += e.cacheWrite; a.cacheRead += e.cacheRead;
+    a.paid += e.input + e.output + e.cacheWrite + e.cacheRead; // Claude Code usage is always paid (subscription)
+  };
+
+  for (const file of files) {
+    let st;
+    try { st = await fs.promises.stat(file); } catch { continue; }
+    if (st.mtimeMs < since) continue;
+    let text;
+    try { text = await fs.promises.readFile(file, 'utf8'); } catch { continue; }
+    const relParts = path.relative(projectsDir, file).split(path.sep);
+    const fallback = relParts[0];
+    const isSubagent = relParts.includes('subagents');
+    const sessionId = path.basename(file, '.jsonl');
+    const parentSessionId = isSubagent ? relParts[1] : null;
+    const agentId = isSubagent ? sessionId.replace(/^agent-/, '') : null;
+    const mergedKey = isSubagent ? parentSessionId : sessionId;
+    let meta = null;
+    if (isSubagent) { try { meta = JSON.parse(fs.readFileSync(file.replace(/\.jsonl$/, '.meta.json'), 'utf8')); } catch {} }
+    let lastTool = null, firstUsageSeen = false;
+    for (const line of text.split('\n')) {
+      if (!line || !line.includes('"assistant"')) continue;
+      let o;
+      try { o = JSON.parse(line); } catch { continue; }
+      const m = o.message;
+      if (o.type !== 'assistant' || !m) continue;
+      const t = Date.parse(o.timestamp);
+      const u = m.usage;
+      if (u && m.model !== '<synthetic>') {
+        const key = `${m.id}:${o.requestId || ''}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          const e = { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 };
+          const wasFirst = !firstUsageSeen;
+          firstUsageSeen = true;
+          if (t >= since) {
+            const p = projectOf(o, fallback);
+            if (!project || p === project) {
+              if (wasFirst) {
+                const ovTokens = e.input + e.cacheWrite;
+                overhead.push({ tile: mergedKey, label: meta?.description || shortLabel(sessionId, p), project: p, tokens: ovTokens, at: t, big: ovTokens > 20000 });
+              }
+              bump(perProject, p, p, e);
+              bump(perTile, mergedKey, meta?.description || shortLabel(mergedKey, p), e);
+              const total = e.input + e.output + e.cacheWrite + e.cacheRead;
+              turns.push({ tokens: total, tile: (perTile.get(mergedKey) || {}).label || mergedKey, project: p, time: t, cause: lastTool });
+            }
+          }
+        }
+      }
+      if (Array.isArray(m.content)) {
+        for (const b of m.content) {
+          if (b.type !== 'tool_use') continue;
+          const arg = toolArg(b.input);
+          lastTool = `${b.name}${arg ? `(${arg})` : ''}`;
+          if (b.name === 'Read' && b.input && b.input.file_path && t >= since) {
+            const p = projectOf(o, fallback);
+            if (!project || p === project) {
+              let fm = fileReads.get(mergedKey);
+              if (!fm) fileReads.set(mergedKey, fm = new Map());
+              const fp = shortPath(b.input.file_path);
+              fm.set(fp, (fm.get(fp) || 0) + 1);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  turns.sort((a, b) => b.tokens - a.tokens);
+  const repeatedReads = [];
+  for (const [tile, fm] of fileReads) {
+    const label = (perTile.get(tile) || {}).label || tile;
+    for (const [file, count] of fm) if (count > 3) repeatedReads.push({ tile, label, file, count });
+  }
+  repeatedReads.sort((a, b) => b.count - a.count);
+  overhead.sort((a, b) => b.tokens - a.tokens);
+
+  return {
+    since, days,
+    projects: [...perProject.values()].sort((a, b) => b.paid - a.paid),
+    tiles: [...perTile.values()].sort((a, b) => b.paid - a.paid),
+    biggestTurns: turns.slice(0, 10),
+    repeatedReads: repeatedReads.slice(0, 20),
+    overhead: overhead.slice(0, 15),
+  };
 }
 
 module.exports = { createUsage };

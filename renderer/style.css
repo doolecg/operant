@@ -817,6 +817,18 @@ button.u-tile:hover { border-color: rgba(var(--ink-rgb), .2); }
 .up-row.other .up-bar i { background: rgba(var(--ink-rgb), .3); }
 .up-val { font: 11.5px var(--mono); color: var(--dim); text-align: right; }
 .series-picks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.tok-seg { margin: 4px 0 14px; width: fit-content; }
+.tok-section { margin: 0 0 18px; }
+.tok-section h4 { margin: 0 0 8px; font: 600 12.5px 'Segoe UI', sans-serif; color: var(--text); }
+.tok-section .hint { display: block; margin: 0 0 8px; }
+.tok-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; border-bottom: 1px solid rgba(var(--ink-rgb), .06); }
+.tok-row:last-child { border-bottom: none; }
+.tok-tok { font: 11.5px var(--mono); color: var(--text); min-width: 56px; }
+.tok-nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.tok-cause { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.tok-when { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.tok-row.tok-flag { background: rgba(230, 160, 60, .1); border-radius: 6px; padding-left: 6px; }
+.tok-row.tok-flag .tok-tok { color: #e6a03c; }
 .chip-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; font-size: 12px; color: var(--dim);
   border: 1px solid rgba(var(--ink-rgb), .12); }
 .chip-toggle.on { color: var(--text); background: rgba(var(--ink-rgb), .07); }
