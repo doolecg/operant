@@ -115,15 +115,17 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 #media-volume { -webkit-appearance: none; appearance: none; width: 78px; height: 4px; border-radius: 99px; outline: none; cursor: pointer;
   background: linear-gradient(to right, var(--text) var(--v, 100%), rgba(var(--ink-rgb), .18) var(--v, 100%)); }
 #media-volume:hover { background: linear-gradient(to right, var(--accent) var(--v, 100%), rgba(var(--ink-rgb), .18) var(--v, 100%)); }
-/* Compact (default): only cover, title and play/pause show; the rest peeks in on hover or while the volume is being dragged. */
-#media-shuffle, #media-prev, #media-next, .media-vol { max-width: 0; opacity: 0; overflow: hidden; pointer-events: none;
-  transition: max-width .18s ease, opacity .12s ease; }
-#media:hover #media-shuffle, #media.vol-drag #media-shuffle,
-#media:hover #media-prev, #media.vol-drag #media-prev,
-#media:hover #media-next, #media.vol-drag #media-next,
-#media:hover .media-vol, #media.vol-drag .media-vol { max-width: 130px; opacity: 1; pointer-events: auto; }
-#media.full #media-shuffle, #media.full #media-prev, #media.full #media-next, #media.full .media-vol {
-  max-width: none; opacity: 1; pointer-events: auto; }
+/* Compact (default): just the cover and the title, as wide as the title; the buttons slide in on hover or while the volume is being dragged. */
+#media:not(.full) { gap: 0; padding-right: 10px; }
+#media:not(.full) .media-text { margin-left: 8px; }
+#media:not(.full) .media-btns, #media:not(.full) .media-vol { max-width: 0; opacity: 0; overflow: hidden; pointer-events: none;
+  transition: max-width .18s ease, opacity .12s ease, margin .18s ease; }
+#media:not(.full):hover .media-btns, #media:not(.full).vol-drag .media-btns,
+#media:not(.full):hover .media-vol, #media:not(.full).vol-drag .media-vol { max-width: 170px; margin-left: 8px; opacity: 1; pointer-events: auto; }
+#media-title > span { display: inline-block; }
+#media-title.scroll { text-overflow: clip; }
+#media-title.scroll > span { animation: media-marquee var(--dur, 6s) ease-in-out infinite alternate; }
+@keyframes media-marquee { 0%, 15% { transform: translateX(0); } 85%, 100% { transform: translateX(var(--over)); } }
 #media-volume::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: var(--text); opacity: 0; transition: opacity .15s; }
 #media-volume:hover::-webkit-slider-thumb { opacity: 1; }
 .logo { color: var(--accent); font-size: 19px; line-height: 1; }

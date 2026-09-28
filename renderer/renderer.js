@@ -3078,7 +3078,19 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const art = $('#media-art');
     if (s.art) { if (art.getAttribute('src') !== s.art) art.src = s.art; art.classList.remove('none'); }
     else { art.removeAttribute('src'); art.classList.add('none'); }
-    $('#media-title').textContent = s.title || '';
+    const titleEl = $('#media-title'), titleText = titleEl.firstChild;
+    if (titleText.textContent !== (s.title || '') || titleEl.dataset.size !== cfg.mediaSize) {
+      titleText.textContent = s.title || '';
+      titleEl.dataset.size = cfg.mediaSize;
+      // Titles too long for the box scroll back and forth instead of being cut off.
+      titleEl.classList.remove('scroll');
+      const over = titleText.scrollWidth - titleEl.clientWidth;
+      if (over > 2) {
+        titleEl.style.setProperty('--over', -over + 'px');
+        titleEl.style.setProperty('--dur', (4 + over / 25).toFixed(1) + 's');
+        titleEl.classList.add('scroll');
+      }
+    }
     $('#media-artist').textContent = s.artist || '';
     const app = s.appName || String(s.app || '').replace(/\.exe$/i, '').split('!').pop();
     mediaEl.title = [s.title, s.artist, s.album].filter(Boolean).join(' · ') + (app ? `\n${app}` : '');
