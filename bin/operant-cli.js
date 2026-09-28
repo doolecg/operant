@@ -57,7 +57,7 @@ const COMMANDS = {
   task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | done <id> [--note n] | note <id> "<text>"', desc: 'add/claim/finish/note a board task', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --note "fixed in login.js"'] },
   board: { group: 'agents & tasks', usage: 'operant board', desc: 'list every task: id, status, owner, text, last note', examples: ['operant board'] },
 
-  usage: { group: 'context', usage: 'operant usage', desc: "your tile's context size and the plan limits", examples: ['operant usage'] },
+  usage: { group: 'context', usage: 'operant usage [--breakdown] [--days 1|7]', desc: "your tile's context size and the plan limits, or (--breakdown) where its project's tokens went", examples: ['operant usage', 'operant usage --breakdown', 'operant usage --breakdown --days 7'] },
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'] },
 
   ports: { group: 'misc', usage: 'operant ports', desc: "list dev-server URLs found in this window's tiles", examples: ['operant ports'] },
@@ -182,6 +182,28 @@ function fmtDigest(d) {
   return lines.join('\n');
 }
 
+// operant usage --breakdown (item 39): a compact version of Settings > Usage > "Where tokens go",
+// scoped to the calling tile's project. All Claude Code usage, so it's all "paid" (subscription).
+function fmtTok(n) { return n >= 1e6 ? +(n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(n); }
+function fmtBreakdown(b) {
+  const lines = [`where tokens go (${b.days === 7 ? 'last 7 days' : 'today'}):`];
+  lines.push(...b.tiles.slice(0, 8).map(t => `  ${t.label}  in ${fmtTok(t.input)} out ${fmtTok(t.output)} cache-r ${fmtTok(t.cacheRead)} cache-w ${fmtTok(t.cacheWrite)}`));
+  if (b.biggestTurns.length) {
+    lines.push('  biggest turns:');
+    lines.push(...b.biggestTurns.slice(0, 5).map(t => `    ${fmtTok(t.tokens)}  ${t.tile}${t.cause ? `  (${t.cause})` : ''}`));
+  }
+  if (b.repeatedReads.length) {
+    lines.push('  read more than 3×:');
+    lines.push(...b.repeatedReads.slice(0, 5).map(r => `    ${r.count}×  ${r.file}  (${r.label})`));
+  }
+  const big = b.overhead.filter(o => o.big);
+  if (big.length) {
+    lines.push('  session overhead over 20k (system prompt/CLAUDE.md/memory/skills/MCP tools):');
+    lines.push(...big.slice(0, 5).map(o => `    ${fmtTok(o.tokens)}  ${o.label}`));
+  }
+  return lines.join('\n');
+}
+
 function formatResult(cmd, result) {
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
@@ -221,6 +243,7 @@ function formatResult(cmd, result) {
         if (pct(l.session)) lines.push(`session (5h): ${pct(l.session)}`);
         if (pct(l.week)) lines.push(`week: ${pct(l.week)}`);
       }
+      if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0

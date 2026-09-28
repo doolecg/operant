@@ -2275,7 +2275,47 @@
     openReleases: () => operant.openReleases(),
     openLogFolder: () => operant.openLogFolder(),
     openLink: (url, second) => operant.openLink(url, second),
+    renderTokenBreakdown,
   });
+  // Settings › Usage › "Where tokens go" (item 39): per project/tile totals, the biggest single
+  // turns, files read more than 3 times in a session, and each session's fixed first-turn overhead.
+  // Computed fresh from ~/.claude/projects on demand (tab open or range switch), not kept running.
+  let tbDays = 1, tbData = null, tbLoading = false;
+  async function renderTokenBreakdown(el) {
+    const cause = c => c ? `<span class="tok-cause">${esc(c)}</span>` : '';
+    const when = t => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    function draw() {
+      if (!tbData) { el.innerHTML = `<div class="usage-empty">${tbLoading ? 'Adding it up…' : 'Loading…'}</div>`; return; }
+      const d = tbData;
+      const bars = (list, key) => {
+        const max = Math.max(1, ...list.map(x => x[key]));
+        return list.slice(0, 12).map(x => `<div class="up-row"><span class="up-nm" title="${esc(x.label || x.name || x.key)}">${esc(x.label || x.name || x.key)}</span>`
+          + `<span class="up-bar"><i style="width:${(x[key] / max * 100).toFixed(1)}%"></i></span><span class="up-val">${fmtTok(x[key])}</span></div>`).join('');
+      };
+      el.innerHTML = `<div class="tok-seg seg">${[[1, 'Today'], [7, '7 days']].map(([n, l]) =>
+        `<button class="${n === tbDays ? 'on' : ''}" data-tbdays="${n}">${l}</button>`).join('')}</div>`
+        + `<div class="tok-section"><h4>By project</h4>${d.projects.length ? bars(d.projects, 'paid') : '<div class="hint">Nothing yet.</div>'}</div>`
+        + `<div class="tok-section"><h4>By tile</h4>${d.tiles.length ? bars(d.tiles, 'paid') : '<div class="hint">Nothing yet.</div>'}</div>`
+        + `<div class="tok-section"><h4>Biggest single turns</h4>${d.biggestTurns.length ? d.biggestTurns.map(t =>
+          `<div class="tok-row"><span class="tok-tok">${fmtTok(t.tokens)}</span><span class="tok-nm">${esc(t.tile)}</span>${cause(t.cause)}<span class="tok-when">${when(t.time)}</span></div>`).join('')
+          : '<div class="hint">Nothing yet.</div>'}</div>`
+        + `<div class="tok-section"><h4>Files read more than 3 times in a session</h4>${d.repeatedReads.length ? d.repeatedReads.map(r =>
+          `<div class="tok-row"><span class="tok-tok">${r.count}×</span><span class="tok-nm">${esc(r.file)}</span><span class="tok-cause">${esc(r.label)}</span></div>`).join('')
+          : '<div class="hint">No repeated reads.</div>'}</div>`
+        + `<div class="tok-section"><h4>Fixed overhead per session</h4><span class="hint">First turn's input + cache write — system prompt, CLAUDE.md, memory, skills, MCP tools · flagged past 20k</span>${d.overhead.length ? d.overhead.map(o =>
+          `<div class="tok-row${o.big ? ' tok-flag' : ''}"><span class="tok-tok">${fmtTok(o.tokens)}</span><span class="tok-nm">${esc(o.label)}</span>${o.big ? '<span class="tok-cause">large — check Settings for unused skills/MCP servers</span>' : ''}</div>`).join('')
+          : '<div class="hint">Nothing yet.</div>'}</div>`;
+      el.querySelectorAll('[data-tbdays]').forEach(b => b.onclick = () => { tbDays = +b.dataset.tbdays; load(); });
+    }
+    async function load() {
+      tbLoading = true; tbData = null; draw();
+      const d = await operant.usageBreakdown({ days: tbDays });
+      tbLoading = false;
+      if (el.isConnected) { tbData = d; draw(); }
+    }
+    draw();
+    if (!tbData) load();
+  }
   // Settings › CodeGraph: the installed version, install/update, index everything.
   let cgVersion; // undefined until asked, null when not installed
   async function renderCodegraph(el) {
@@ -4023,7 +4063,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         const ctx = self.ctx || null;
         return { id: self.id, tokens: ctx?.tokens ?? null, max: ctx?.max ?? null,
-          pct: ctx && ctx.max ? Math.round((ctx.tokens / ctx.max) * 100) : null };
+          pct: ctx && ctx.max ? Math.round((ctx.tokens / ctx.max) * 100) : null,
+          project: self.cwd ? baseName(self.cwd) : null };
       }
       case 'compact': {
         if (!self) throw new Error('unknown tile');

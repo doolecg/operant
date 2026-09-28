@@ -451,10 +451,13 @@ function startControlServer() {
         if (cmd === 'ask') { const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'open') { const r = await controlOpen(args, ownerForTile(tile)); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'usage') {
-          // The renderer knows the calling tile's own context size; main owns the Claude plan limits.
+          // The renderer knows the calling tile's own context size and project; main owns the Claude
+          // plan limits and (item 39) computes the token breakdown from the transcripts on demand.
           const r = await forwardControl(ownerForTile(tile), cmd, args, tile, 20000);
           if (!r.ok) return reply(400, r);
-          return reply(200, { ok: true, result: { ...r.result, limits: await fetchLimits() }, warn: r.warn });
+          const extra = { limits: await fetchLimits() };
+          if (args.breakdown) extra.breakdown = await usage.breakdown({ days: args.days === 7 ? 7 : 1, project: r.result.project || null });
+          return reply(200, { ok: true, result: { ...r.result, ...extra }, warn: r.warn });
         }
         const owner = ownerForTile(tile);
         // plan: waits on the user, same as ask, so it gets an ask-length leash rather than the 20s default.
@@ -1120,6 +1123,7 @@ const usage = createUsage({
 });
 ipcMain.handle('usage:summary', () => usage.summary());
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
+ipcMain.handle('usage:breakdown', (_e, opts) => usage.breakdown(opts));
 
 const opencode = createOpenCode({
   sendTo, primary: agentWindow, config,
