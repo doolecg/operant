@@ -487,31 +487,33 @@ const freshEnv = () => withFreshPath({ ...process.env });
 // ------------------------------------------------------------------ links: which browser they open in
 
 const KNOWN_BROWSERS = [
-  { id: 'zen', name: 'Zen', match: /zen/i, paths: () => [path.join(process.env.ProgramFiles || '', 'Zen Browser', 'zen.exe')] },
-  { id: 'firefox', name: 'Firefox', match: /firefox/i, paths: () => [
+  { id: 'zen', name: 'Zen', exeName: 'zen.exe', paths: () => [path.join(process.env.ProgramFiles || '', 'Zen Browser', 'zen.exe')] },
+  { id: 'firefox', name: 'Firefox', exeName: 'firefox.exe', paths: () => [
     path.join(process.env.ProgramFiles || '', 'Mozilla Firefox', 'firefox.exe'),
     path.join(process.env['ProgramFiles(x86)'] || '', 'Mozilla Firefox', 'firefox.exe') ] },
-  { id: 'chrome', name: 'Chrome', match: /chrome/i, paths: () => [
+  { id: 'chrome', name: 'Chrome', exeName: 'chrome.exe', paths: () => [
     path.join(process.env.ProgramFiles || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
     path.join(process.env['ProgramFiles(x86)'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
     path.join(process.env.LocalAppData || '', 'Google', 'Chrome', 'Application', 'chrome.exe') ] },
-  { id: 'edge', name: 'Edge', match: /msedge|edge/i, paths: () => [
+  { id: 'edge', name: 'Edge', exeName: 'msedge.exe', paths: () => [
     path.join(process.env['ProgramFiles(x86)'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     path.join(process.env.ProgramFiles || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe') ] },
-  { id: 'brave', name: 'Brave', match: /brave/i, paths: () => [
+  { id: 'brave', name: 'Brave', exeName: 'brave.exe', paths: () => [
     path.join(process.env.ProgramFiles || '', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
     path.join(process.env.LocalAppData || '', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe') ] },
-  { id: 'vivaldi', name: 'Vivaldi', match: /vivaldi/i, paths: () => [
+  { id: 'vivaldi', name: 'Vivaldi', exeName: 'vivaldi.exe', paths: () => [
     path.join(process.env.LocalAppData || '', 'Vivaldi', 'Application', 'vivaldi.exe'),
     path.join(process.env.ProgramFiles || '', 'Vivaldi', 'Application', 'vivaldi.exe') ] },
-  { id: 'opera', name: 'Opera', match: /^Opera(Stable)?$/i, paths: () => [
+  { id: 'opera', name: 'Opera', exeName: 'opera.exe', paths: () => [
     path.join(process.env.LocalAppData || '', 'Programs', 'Opera', 'launcher.exe') ] },
-  { id: 'floorp', name: 'Floorp', match: /floorp/i, paths: () => [path.join(process.env.ProgramFiles || '', 'Floorp', 'floorp.exe')] },
-  { id: 'librewolf', name: 'LibreWolf', match: /librewolf/i, paths: () => [path.join(process.env.ProgramFiles || '', 'LibreWolf', 'librewolf.exe')] },
+  { id: 'floorp', name: 'Floorp', exeName: 'floorp.exe', paths: () => [path.join(process.env.ProgramFiles || '', 'Floorp', 'floorp.exe')] },
+  { id: 'librewolf', name: 'LibreWolf', exeName: 'librewolf.exe', paths: () => [path.join(process.env.ProgramFiles || '', 'LibreWolf', 'librewolf.exe')] },
 ];
 
 // Detected once, then cached: static known install paths, plus the registry's list of browsers
-// Windows itself offers ("Default apps" > web browser), for installs off the beaten path.
+// Windows itself offers ("Default apps" > web browser), for installs off the beaten path. Matched
+// by the resolved exe's filename, not the registry key's name: Gecko-fork browsers (Zen, LibreWolf,
+// Floorp) often register under a "Firefox-<hash>" key, so the key name alone would misidentify them.
 let browserCache = null; // Promise<[{ id, name, exe }]>
 function detectBrowsers() {
   if (browserCache) return browserCache;
@@ -526,14 +528,12 @@ function detectBrowsers() {
       const list = await run('reg.exe', ['query', base]);
       const keys = [...list.stdout.matchAll(/^(HK\w+\\.*)$/gm)].map(m => m[1].trim()).filter(k => k.toLowerCase() !== base.toLowerCase());
       for (const key of keys) {
-        const name = key.slice(key.lastIndexOf('\\') + 1);
-        const known = KNOWN_BROWSERS.find(b => b.match.test(name));
-        if (!known || found.has(known.id)) continue;
         const cmd = await run('reg.exe', ['query', `${key}\\shell\\open\\command`, '/ve']);
         const m = /^\s*\(Default\)\s+REG_SZ\s+(.*)$/mi.exec(cmd.stdout);
         if (!m) continue;
         const exe = m[1].trim().replace(/^"/, '').split('"')[0];
-        if (exe && fs.existsSync(exe)) found.set(known.id, { id: known.id, name: known.name, exe });
+        const known = KNOWN_BROWSERS.find(b => b.exeName === path.basename(exe).toLowerCase());
+        if (known && !found.has(known.id) && fs.existsSync(exe)) found.set(known.id, { id: known.id, name: known.name, exe });
       }
     }
     return [...found.values()];
