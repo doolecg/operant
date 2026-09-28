@@ -1,3 +1,14 @@
+# Operant 1.15.2
+
+Running the installer by hand while Operant is open no longer breaks the install.
+
+**Install:** download `Operant-1.15.2.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## Fixed
+- **"Error writing to file" when installing:** if Operant was still open, or hung, when you ran the `.msi` yourself, the installer stopped halfway and left the install folder empty. The installer now closes Operant first, then installs. It closes it without asking, so finish or save anything running in Operant before you run the installer by hand. Updates installed from inside Operant work as before.
+
+---
+
 # Operant 1.15.1
 
 Fixes 1.15.0 crashing on startup with "Cannot find module './backup'".
