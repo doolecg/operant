@@ -357,6 +357,9 @@ function isOperantSkillFile(content) {
 function syncSkill() {
   try {
     if (!fs.existsSync(SKILL_SRC)) return; // not built yet (e.g. a fresh dev checkout)
+    // The targets are in the user's home, shared with their installed Operant: a dev/test profile
+    // must neither install its work-in-progress skill there nor remove the installed one.
+    if (process.env.OPERANT_USER_DATA) return;
     const content = fs.readFileSync(SKILL_SRC, 'utf8');
     for (const t of SKILL_TARGETS) {
       try {

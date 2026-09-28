@@ -252,7 +252,7 @@ function buildOpencodeConfigContent({ base, cwd, userDataDir, config }) {
     const mcp = mcpForOpenCodeTiles(cwd);
     if (Object.keys(mcp).length) obj.mcp = { ...(obj.mcp || {}), ...mcp };
 
-    syncPluginSkillsMirror();
+    if (!process.env.OPERANT_USER_DATA) syncPluginSkillsMirror(); // dev/test profiles leave ~/.config alone
   }
 
   const pluginEntry = codegraphPluginEntry(config);
