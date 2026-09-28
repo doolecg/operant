@@ -1327,22 +1327,24 @@ createCodex({ onSession: (file, cwd) => matchOtherAgent('codex', file, cwd), onU
 createGemini({ onSession: (file, cwd) => matchOtherAgent('gemini', file, cwd), onUsage: otherAgentUsage }).start();
 
 // Claude plan limits (the 5-hour session and the week), as Claude Code's /usage shows them: asked of
-// Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, at most once a minute.
+// Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, every 10 minutes, or
+// right away when you click the usage pill.
 // Operant never refreshes that login; Claude Code does whenever it runs.
 let limitsCache = null;
 // A 429 (asked too often; Claude Code and other Operant copies share the login) keeps the last good
 // numbers and backs off, doubling up to 30 minutes, or longer if Retry-After says so.
 let limitsGood = null, limitsBackoff = 0, limits429 = 0;
-async function fetchLimits() {
+const LIMITS_EVERY = 10 * 60000;
+async function fetchLimits(force = false) {
   if (!config.planLimits) return null;
-  if (limitsCache && Date.now() - limitsCache.at < 60000) return limitsCache;
+  if (limitsCache && !force && Date.now() - limitsCache.at < LIMITS_EVERY - 5000) return limitsCache;
   if (limitsCache && Date.now() < limitsBackoff) return limitsCache;
   const got = await askLimits();
   broadcast('usage:limits', got);
   limitAlerts(got);
   return got;
 }
-ipcMain.handle('usage:limits', () => fetchLimits());
+ipcMain.handle('usage:limits', (e, force) => fetchLimits(!!force));
 async function askLimits() {
   let token;
   try { token = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8')).claudeAiOauth?.accessToken; } catch {}
@@ -1370,7 +1372,7 @@ async function askLimits() {
 }
 
 // Plan-limit alerts: a notification when the 5-hour session passes 80% and 95%, once each per session window.
-// The limits are asked for every 2 minutes while the pill or the alerts want them.
+// The limits are asked for every 10 minutes while the pill or the alerts want them.
 const alerted = new Set(); // "<resets>|<threshold>"
 function limitAlerts(l) {
   const s = l?.session;
@@ -1389,7 +1391,7 @@ function pollLimits() {
   clearInterval(limitsT); limitsT = null;
   if (!config.planLimits || !(config.tokenUsage || config.planLimitAlerts)) return;
   fetchLimits();
-  limitsT = setInterval(fetchLimits, 120000);
+  limitsT = setInterval(fetchLimits, LIMITS_EVERY);
 }
 
 // ---------------------------------------------------------------- runaway guard

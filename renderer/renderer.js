@@ -3557,7 +3557,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   }
 
   // Hovering the pill shows a card: today's tokens, the budget, and the Claude plan limits as bars,
-  // like Claude Code's /usage. Main asks Anthropic for the limits at most once a minute.
+  // like Claude Code's /usage. Main asks Anthropic for the limits every 10 minutes, or on a click.
   const usageCard = $('#usage-card');
   let limits = null, cardShowT = null, cardHideT = null;
   const pctClass = p => p >= 100 ? ' over' : p >= 80 ? ' warn' : '';
@@ -3608,7 +3608,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   usageCard.onmouseenter = () => clearTimeout(cardHideT);
   usageCard.onmouseleave = () => hideUsageCard();
   window.addEventListener('blur', () => hideUsageCard(0));
-  usagePill.onclick = () => togglePanel('usage');
+  usagePill.onclick = () => { togglePanel('usage'); if (cfg.planLimits) operant.usageLimits(true); };
   operant.on('usage:limits', l => { limits = l; renderUsagePill(); });
   operant.on('usage:changed', s => {
     renderUsagePill(s);
