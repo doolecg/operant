@@ -55,7 +55,7 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
 
 ## 1.11: the Operant skill, part 2 (after 1.10.0 ships)
 
-- [ ] **22. Browser tile:** a real in-app browser tile (Electron's own web view, no new dependency): URL bar, back,
+- [x] **22. Browser tile:** a real in-app browser tile (Electron's own web view, no new dependency): URL bar, back,
       forward, reload, DevTools. Agents: `operant browse <url>`, `operant shot <tile>` (a PNG they can look at),
       `operant console <tile> [--errors]`, `operant click`/`type` for simple flows.
 - [x] **23. Plan approval:** `operant plan plan.md` shows the plan in a viewer with Approve / Change and waits for the
