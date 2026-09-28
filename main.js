@@ -1330,9 +1330,13 @@ createGemini({ onSession: (file, cwd) => matchOtherAgent('gemini', file, cwd), o
 // Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, at most once a minute.
 // Operant never refreshes that login; Claude Code does whenever it runs.
 let limitsCache = null;
+// A 429 (asked too often; Claude Code and other Operant copies share the login) keeps the last good
+// numbers and backs off, doubling up to 30 minutes, or longer if Retry-After says so.
+let limitsGood = null, limitsBackoff = 0, limits429 = 0;
 async function fetchLimits() {
   if (!config.planLimits) return null;
   if (limitsCache && Date.now() - limitsCache.at < 60000) return limitsCache;
+  if (limitsCache && Date.now() < limitsBackoff) return limitsCache;
   const got = await askLimits();
   broadcast('usage:limits', got);
   limitAlerts(got);
@@ -1349,10 +1353,17 @@ async function askLimits() {
       signal: AbortSignal.timeout(10000),
     });
     if (r.status === 401) return (limitsCache = { at: Date.now(), error: 'Claude login expired · open Claude Code to refresh it' });
+    if (r.status === 429) {
+      limits429++;
+      const wait = Math.max((+r.headers.get('retry-after') || 0) * 1000, Math.min(30, 2 ** limits429) * 60000);
+      limitsBackoff = Date.now() + wait;
+      return (limitsCache = limitsGood ? { ...limitsGood, at: Date.now() } : { at: Date.now(), error: 'Plan limits are busy · trying again shortly' });
+    }
     if (!r.ok) return (limitsCache = { at: Date.now(), error: `Couldn't read plan limits (${r.status})` });
     const d = await r.json();
     const one = x => x && typeof x.utilization === 'number' ? { used: x.utilization, resets: x.resets_at || null } : null;
-    return (limitsCache = { at: Date.now(), session: one(d.five_hour), week: one(d.seven_day), weekOpus: one(d.seven_day_opus), weekSonnet: one(d.seven_day_sonnet) });
+    limits429 = 0; limitsBackoff = 0;
+    return (limitsCache = limitsGood = { at: Date.now(), session: one(d.five_hour), week: one(d.seven_day), weekOpus: one(d.seven_day_opus), weekSonnet: one(d.seven_day_sonnet) });
   } catch (e) {
     return (limitsCache = { at: Date.now(), error: `Couldn't read plan limits (${e.name === 'TimeoutError' ? 'timed out' : e.message})` });
   }
