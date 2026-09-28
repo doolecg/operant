@@ -13,7 +13,7 @@
   <header id="bar">
     <div class="bar-left">
       <button class="icon-btn" id="btn-sidebar"><svg viewBox="0 0 16 16"><path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9A1.5 1.5 0 0 1 2.5 2zm0 1.3a.2.2 0 0 0-.2.2v9c0 .1.1.2.2.2H6V3.3zm4.8 0v9.4h6.2a.2.2 0 0 0 .2-.2v-9a.2.2 0 0 0-.2-.2z"/></svg></button>
-      <span class="logo">◈</span><span class="brand">Operant</span>
+      <button class="brand-btn" id="btn-about" title="About Operant"><span class="logo">◈</span><span class="brand">Operant</span></button>
       <div id="workspaces"></div>
       <div id="media" class="hidden">
         <img id="media-art" alt="">
@@ -169,6 +169,33 @@
       <div class="picker-head"><input id="picker-input" spellcheck="false" autocomplete="off"></div>
       <div class="card-body" id="picker-body"></div>
       <div class="card-foot"><span class="grow" id="picker-foot"></span><button class="btn" data-close>Close</button></div>
+    </div>
+  </div>
+
+  <div id="startpick" class="overlay hidden">
+    <div class="card narrow">
+      <div class="card-head"><h2><span class="logo">◈</span> Where do you want to work?</h2><span class="sub">Pick a folder to open an agent in</span></div>
+      <div class="card-body" id="startpick-body"></div>
+      <div class="card-foot">
+        <span class="grow"></span>
+        <button class="btn" data-close>Start empty</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="about" class="overlay hidden">
+    <div class="card narrow">
+      <div class="card-head"><h2><span class="logo">◈</span> Operant</h2><span class="sub" id="about-ver"></span></div>
+      <div class="card-body tour-step" id="about-body">
+        <p>Operant is a tiling workspace for terminal AI agents. Run Claude Code, OpenCode or any command-line agent side by side, each in its own tile, with notifications, token tracking, team tiers and project memory built in.</p>
+        <p>Free and open source. Updates arrive from the GitHub releases page.</p>
+      </div>
+      <div class="card-foot">
+        <button class="btn" id="about-tour">Take the tour</button>
+        <button class="btn" id="about-site">GitHub</button>
+        <span class="grow"></span>
+        <button class="btn primary" data-close>Close</button>
+      </div>
     </div>
   </div>
 

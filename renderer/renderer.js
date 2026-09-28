@@ -2320,7 +2320,7 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub', 'tour'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub', 'tour', 'startpick', 'about'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
     if (name === 'picker') return openPicker(pick.mode || 'commands');
@@ -2335,6 +2335,8 @@
     else if (name === 'board') { $('#board').classList.remove('hidden'); renderBoard(); }
     else if (name === 'hub') scanHub();
     else if (name === 'tour') { tourStep = 0; renderTour(); }
+    else if (name === 'startpick') renderStartPick();
+    else if (name === 'about') renderAbout();
     else renderSettings();
     $('#' + name).classList.remove('hidden');
     $('#' + name + ' .card-body').scrollTop = 0;
@@ -2366,6 +2368,22 @@
   $('#tour-skip').onclick = () => closePanels();
   $('#tour').addEventListener('click', e => { const d = e.target.closest('[data-j]'); if (d) { tourStep = +d.dataset.j; renderTour(); } });
   $('#qm-tour').onclick = () => togglePanel('tour');
+  // Startup: no agent opens until a folder is chosen here.
+  function renderStartPick() {
+    const seen = new Set(), dirs = [];
+    for (const d of [...allProjects(), cfg.defaultCwd]) if (d && !seen.has(normPath(d))) { seen.add(normPath(d)); dirs.push(d); }
+    $('#startpick-body').innerHTML = dirs.map((d, i) => `<button class="launch-row" data-d="${i}"><span class="ico">▸</span><span class="nm">${esc(baseName(d))}<small>${esc(d)}</small></span></button>`).join('')
+      + '<button class="launch-row" data-browse><span class="ico">＋</span><span class="nm">Browse for a folder…</span></button>';
+    const go = dir => { closePanels(false); lastCwd = dir; newTerminal('ai', dir, { master: true }); };
+    $('#startpick-body').querySelectorAll('[data-d]').forEach(b => b.onclick = () => go(dirs[+b.dataset.d]));
+    $('#startpick-body [data-browse]').onclick = async () => { const d = await operant.pickFolder(); if (d) go(d); };
+  }
+  async function renderAbout() {
+    $('#about-ver').textContent = 'Version ' + await operant.version();
+  }
+  $('#btn-about').onclick = () => togglePanel('about');
+  $('#about-tour').onclick = () => togglePanel('tour');
+  $('#about-site').onclick = () => operant.openLink('https://github.com/doolecg/operant');
   $('#btn-keys').onclick = () => togglePanel('keys');
   $('#btn-new').onclick = () => togglePanel('launcher');
   $('#btn-gear').onclick = () => togglePanel('quickmenu');
@@ -3962,7 +3980,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       togglePanel('launcher');
       welcome = { dir: startDir || cfg.defaultCwd };
       renderLauncher();
-    } else if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
+    } else if (startDir) newTerminal('ai', startDir, { master: true });
+    else if (cfg.masterOnStartup) togglePanel('startpick');
   };
   if (snap && await restore(snap)) { if (startDir) newTerminal('ai', startDir); }
   else if (!cfg.onboarded) { tourThen = startFresh; togglePanel('tour'); }

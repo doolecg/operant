@@ -146,7 +146,7 @@ const Panels = (() => {
       { type: 'tokenBreakdown', label: 'Where tokens go' },
     ]],
     ['Startup', [
-      { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
+      { key: 'masterOnStartup', label: 'Ask where to work on startup', type: 'toggle' },
       { key: 'defaultCwd', label: 'Default folder', type: 'folder' },
       { key: 'shell', label: 'Shell', hint: 'PowerShell runs the agents · ' + NEW_TILES, type: 'text' },
       { key: 'explorerContextMenu', label: 'Explorer right-click entry', hint: '"Open in Operant" on folders (installed app)', type: 'toggle' },

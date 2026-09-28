@@ -129,6 +129,8 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 #media-volume::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: var(--text); opacity: 0; transition: opacity .15s; }
 #media-volume:hover::-webkit-slider-thumb { opacity: 1; }
 .logo { color: var(--accent); font-size: 19px; line-height: 1; }
+.brand-btn { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 8px; color: inherit; }
+.brand-btn:hover { background: rgba(var(--ink-rgb), .07); }
 .brand { font-family: var(--serif); font-size: 15px; color: var(--text); margin: 0 6px 0 -2px; }
 
 #workspaces { display: flex; gap: 4px; padding: 3px; border-radius: 99px; background: rgba(var(--ink-rgb), .05); }
