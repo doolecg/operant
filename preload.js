@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('operant', {
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
   onControl: fn => ipcRenderer.on('control', (_e, d) => fn(d)),
   controlReply: r => ipcRenderer.send('control:reply', r),
+  memory: (op, args) => ipcRenderer.invoke('memory', { op, args }),
   abortOpenCode: ptyId => ipcRenderer.invoke('opencode:abort', { ptyId }),
   summarizeOpenCode: ptyId => ipcRenderer.invoke('opencode:summarize', { ptyId }),
 });

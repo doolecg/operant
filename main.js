@@ -19,6 +19,7 @@ const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
 const agentBrief = require('./agent-brief');
+const memory = require('./memory');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
@@ -473,6 +474,19 @@ function startControlServer() {
 const ptys = new Map(); // id -> pty (each also carries .owner, its window)
 
 ipcMain.handle('config', () => config);
+
+// Item 45: shared memory. cwd is the calling tile's project folder (resolved by the renderer,
+// same as diff/status); userDataDir is always Operant's own, for --type user / --global facts.
+ipcMain.handle('memory', (_e, { op, args = {} }) => {
+  const userDataDir = app.getPath('userData');
+  try {
+    if (op === 'remember') return { ok: true, result: memory.remember({ ...args, userDataDir }) };
+    if (op === 'recall') return { ok: true, result: memory.recall({ ...args, userDataDir }) };
+    if (op === 'list') return { ok: true, result: memory.listAll({ ...args, userDataDir }) };
+    if (op === 'delete') { memory.deleteFact(args); return { ok: true, result: {} }; }
+    return { ok: false, error: `unknown memory op "${op}"` };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 
 // A folder passed on the command line (e.g. from the Explorer right-click entry).
 // Dev runs also pass the app's own folder (`electron .`), and Chromium can put its flags first.

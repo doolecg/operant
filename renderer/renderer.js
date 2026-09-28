@@ -2269,6 +2269,7 @@
   const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, {
     renderKeys: el => { keysTarget = el; renderKeys(); },
     renderCodegraph,
+    renderMemory,
     update: () => ({ version, status: updateStatus }),
     checkUpdate: () => operant.checkUpdate(),
     installUpdate: () => operant.installUpdate(),
@@ -2295,6 +2296,26 @@
     draw();
     cgVersion = await operant.codegraphVersion();
     if (el.isConnected) draw();
+  }
+  // Settings › Memory: every remembered fact (this project's, then global), edit opens it in the
+  // editor tile, ✕ deletes it.
+  async function renderMemory(el) {
+    const cwd = barProject();
+    const r = await operant.memory('list', { cwd });
+    const facts = r.ok ? r.result : [];
+    const row = f => `<div class="update-card" data-mem="${esc(f.path)}"><span class="uc-logo">${f.scope === 'global' ? '◇' : '✎'}</span>`
+      + `<div class="uc-main"><div class="uc-name">${esc(f.name)} <span class="uc-status">[${esc(f.type)}]</span></div>`
+      + `<div class="uc-status">${esc(f.description)}</div></div>`
+      + `<button class="btn" data-mem-edit>Edit</button><button class="btn" data-mem-del>Delete</button></div>`;
+    el.innerHTML = facts.length ? facts.map(row).join('') : '<div class="cg-note">No facts remembered yet. Agents save them with <code>operant remember</code>.</div>';
+    el.querySelectorAll('[data-mem]').forEach(card => {
+      const f = facts.find(x => x.path === card.dataset.mem);
+      card.querySelector('[data-mem-edit]').onclick = () => { closePanels(false); openEditor(f.path); };
+      card.querySelector('[data-mem-del]').onclick = async () => {
+        await operant.memory('delete', { dir: f.dir, file: f.file });
+        renderMemory(el);
+      };
+    });
   }
   // config.json opens with Windows, or in the editor tile (Settings › Files).
   async function openConfig() {
@@ -4111,6 +4132,17 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'board': {
         const w = getBoard();
         return { tasks: w ? w.tasks.map(t => ({ id: t.id, status: t.status, text: t.text, note: t.note, owner: fmtOwner(t.owner) })) : [] };
+      }
+      case 'remember': {
+        if (!args.text) throw new Error('text required');
+        const r = await operant.memory('remember', { cwd: projectDir(self?.cwd || lastCwd), text: args.text, type: args.type, global: !!args.global, about: args.about ? String(args.about).split(',').map(s => s.trim()).filter(Boolean) : [] });
+        if (!r.ok) throw new Error(r.error);
+        return r.result;
+      }
+      case 'recall': {
+        const r = await operant.memory('recall', { cwd: projectDir(self?.cwd || lastCwd), query: args.query, about: args.about });
+        if (!r.ok) throw new Error(r.error);
+        return r.result;
       }
       default:
         throw new Error(`unknown command "${cmd}"`);
