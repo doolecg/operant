@@ -66,7 +66,7 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
 - [x] **26. Dev servers:** `operant ports` lists servers started in tiles with their URLs, spotted in their output.
 - [x] **27. Watch and alert:** `operant watch <tile> --errors` notifies (and tells the agent on its next call) when a
       long-running tile prints an error.
-- [ ] **28. Skill update:** teach all of the above in `skill/operant/SKILL.md`, still short.
+- [x] **28. Skill update:** teach all of the above in `skill/operant/SKILL.md`, still short.
 
 ## Next (asked for during 1.10.0)
 

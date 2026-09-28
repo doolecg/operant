@@ -1,6 +1,6 @@
 ---
 name: operant
-description: Use when running inside the Operant terminal app (env OPERANT=1, or `operant` on PATH). Run long commands (tests, builds, installs, dev servers) in a tile via operant run/wait instead of your shell, reading back only errors/new/matching lines to save context tokens. Also: show files/plans, split work across agent tiles, ask, notify.
+description: Use when running inside the Operant terminal app (env OPERANT=1, or `operant` on PATH). Run long commands (tests, builds, installs, dev servers) in a tile via operant run/wait instead of your shell, reading back only errors/new/matching lines to save context tokens. Also: get plans approved, split work across agent tiles with a task board, check context and compact, find dev servers, watch for errors, ask, notify.
 ---
 
 # Operant control
