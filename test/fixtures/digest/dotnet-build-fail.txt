@@ -1,0 +1,8 @@
+Determining projects to restore...
+C:\proj\Operant\Math.cs(10,17): error CS0103: The name 'bar' does not exist in the current context [C:\proj\Operant\Operant.csproj]
+
+Build FAILED.
+
+    1 Error(s)
+
+Time Elapsed 00:00:01.23

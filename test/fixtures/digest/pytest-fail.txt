@@ -1,0 +1,20 @@
+============================= test session starts ==============================
+platform win32 -- Python 3.12.1, pytest-8.1.1, pluggy-1.4.0
+rootdir: F:\PROGRAMMING\REPOS\Operant
+collected 2 items
+
+test_math.py::test_add PASSED                                          [ 50%]
+test_math.py::test_sub FAILED                                          [100%]
+
+=================================== FAILURES ====================================
+__________________________________ test_sub ______________________________________
+
+    def test_sub():
+>       assert sub(2, 1) == 2
+E       assert 1 == 2
+E        +  where 1 = sub(2, 1)
+
+test_math.py:8: AssertionError
+=========================== short test summary info =============================
+FAILED test_math.py::test_sub - assert 1 == 2
+========================= 1 failed, 1 passed in 0.06s ============================

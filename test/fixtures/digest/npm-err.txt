@@ -1,0 +1,10 @@
+> operant@1.10.1 test
+> node --check main.js
+
+npm ERR! code ELIFECYCLE
+npm ERR! errno 1
+npm ERR! operant@1.10.1 test: `node --check main.js`
+npm ERR! Exit status 1
+npm ERR!
+npm ERR! Failed at the operant@1.10.1 test script.
+npm ERR! This is probably not a problem with npm. There is likely additional logging output above.

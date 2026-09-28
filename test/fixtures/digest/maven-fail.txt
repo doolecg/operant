@@ -1,0 +1,18 @@
+-------------------------------------------------------
+ T E S T S
+-------------------------------------------------------
+Running com.example.MathTest
+testSubtract(com.example.MathTest)  Time elapsed: 0.012 sec  <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <1> but was: <2>
+	at com.example.MathTest.testSubtract(MathTest.java:14)
+
+Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.05 sec <<< FAILURE! - in com.example.MathTest
+
+Results :
+
+Failed tests:
+  MathTest.testSubtract:14 expected: <1> but was: <2>
+
+Tests run: 2, Failures: 1, Errors: 0, Skipped: 0
+
+[ERROR] BUILD FAILURE

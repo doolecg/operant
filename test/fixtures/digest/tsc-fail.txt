@@ -1,0 +1,14 @@
+src/math.ts:10:5 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+10   const x: number = "hello";
+       ~
+
+src/math.ts:20:10 - error TS2339: Property 'foo' does not exist on type 'Math'.
+
+20   Math.foo();
+            ~~~
+
+Found 2 errors in 1 file.
+
+Errors  Files
+     2  src/math.ts:10

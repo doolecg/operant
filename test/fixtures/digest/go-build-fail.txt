@@ -1,0 +1,3 @@
+# example.com/operant/pkg
+./math.go:5:2: undefined: bar
+./math.go:9:14: cannot use "x" (untyped string constant) as int value in return statement

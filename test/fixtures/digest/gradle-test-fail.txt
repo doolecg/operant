@@ -1,0 +1,18 @@
+> Task :test
+
+MathTest > testAdd() FAILED
+    org.opentest4j.AssertionFailedError: expected: <3> but was: <4>
+        at MathTest.testAdd(MathTest.java:10)
+
+2 tests completed, 1 failed
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':test'.
+> There were failing tests. See the report at: file:///build/reports/tests/test/index.html
+
+* Try:
+> Run with --info or --debug option to get more log output.
+
+BUILD FAILED in 2s

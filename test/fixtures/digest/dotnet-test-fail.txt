@@ -1,0 +1,13 @@
+Determining projects to restore...
+  Restored C:\proj\Operant.Tests\Operant.Tests.csproj
+
+  Failed MathTests.SubtractTest [5 ms]
+  Error Message:
+   Assert.Equal() Failure
+Expected: 1
+Actual:   2
+  Stack Trace:
+     at MathTests.SubtractTest() in C:\proj\Operant.Tests\MathTests.cs:line 14
+     at System.RuntimeMethodHandle.InvokeMethod(...)
+
+Failed!  - Failed:     1, Passed:     1, Skipped:     0, Total:     2, Duration: 15 ms

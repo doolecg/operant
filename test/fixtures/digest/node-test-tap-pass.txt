@@ -1,0 +1,11 @@
+TAP version 13
+# Subtest: adds numbers
+ok 1 - adds numbers
+# Subtest: subtracts numbers
+ok 2 - subtracts numbers
+1..2
+# tests 2
+# pass 2
+# fail 0
+# cancelled 0
+# duration_ms 8.1

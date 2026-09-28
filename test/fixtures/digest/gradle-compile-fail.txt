@@ -1,0 +1,15 @@
+> Task :compileJava FAILED
+
+F:\PROGRAMMING\REPOS\Operant\src\main\java\Math.java:10: error: cannot find symbol
+    int x = bar();
+            ^
+  symbol:   method bar()
+  location: class Math
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileJava'.
+> Compilation failed; see the compiler error output for details.
+
+BUILD FAILED in 1s

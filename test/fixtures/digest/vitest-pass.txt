@@ -1,0 +1,8 @@
+ ✓ src/math.test.js (2)
+   ✓ adds numbers 2ms
+   ✓ subtracts numbers 1ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  10:00:00
+   Duration  98ms

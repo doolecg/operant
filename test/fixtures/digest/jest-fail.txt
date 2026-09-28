@@ -1,0 +1,27 @@
+FAIL src/math.test.js
+  math
+    ✓ adds numbers (3 ms)
+    ✕ subtracts numbers (5 ms)
+
+  ● math › subtracts numbers
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 1
+    Received: 2
+
+      6 |   test('subtracts numbers', () => {
+      7 |     const result = sub(3, 1);
+    > 8 |     expect(result).toBe(1);
+        |                    ^
+      9 |   });
+      10 |
+
+      at Object.<anonymous> (F:\PROGRAMMING\REPOS\Operant\src\math.test.js:8:20)
+      at Promise.then.completed (node_modules/jest-circus/build/utils.js:298:28)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 passed, 2 total
+Snapshots:   0 total
+Time:        0.812 s
+Ran all test suites.

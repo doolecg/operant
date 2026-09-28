@@ -1,0 +1,20 @@
+
+  Math
+    ✓ adds numbers
+    1) subtracts numbers
+
+
+  1 passing (12ms)
+  1 failing
+
+  1) Math
+       subtracts numbers:
+
+      AssertionError [ERR_ASSERTION]: 2 == 1
+      + expected - actual
+
+      -2
+      +1
+
+      at Context.<anonymous> (test/math.test.js:10:5)
+      at process.processImmediate (node:internal/timers:478:21)

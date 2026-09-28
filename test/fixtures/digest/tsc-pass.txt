@@ -1,0 +1,3 @@
+[10:00:00 AM] Starting compilation in watch mode...
+
+Found 0 errors. Watching for file changes.

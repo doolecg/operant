@@ -1,0 +1,8 @@
+F:\PROGRAMMING\REPOS\Operant\src\math.js
+  10:5   error    'x' is not defined       no-undef
+  12:1   warning  Missing semicolon        semi
+
+F:\PROGRAMMING\REPOS\Operant\src\util.js
+  3:10  error    Unexpected console statement  no-console
+
+✖ 3 problems (2 errors, 1 warning)

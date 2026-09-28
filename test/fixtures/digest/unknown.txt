@@ -1,0 +1,3 @@
+Hello, world!
+Just some ordinary script output with no recognizable test or build runner.
+Done in 0.02s.
