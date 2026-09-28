@@ -13,6 +13,12 @@ const MAX_SKILL_BYTES = 20 * 1024;
 const MAX_RULES_BYTES = 8 * 1024;
 const LINK_NAME = 'operant-hub'; // ~/.claude/operant-hub -> <hub>: the space-free path CLAUDE.md imports through
 const SKIP_SKILLS = new Set(['synced']); // managed by Claude Code
+const MANAGED_SKILLS = new Set(['operant']); // rewritten by Operant on every start, so never tidied
+const TIDY_MIN_BYTES = 32;             // below this, stray whitespace isn't worth a finding
+const OPTIMISE_RULES_BYTES = 4 * 1024; // rules/skills past these sizes get an "optimise with an agent" offer
+const OPTIMISE_SKILL_BYTES = 12 * 1024;
+const MAX_DESCRIPTION = 1024;          // Claude Code's cap on a skill description
+const MAX_INDEX_LINES = 200;           // Claude Code only loads this many lines of MEMORY.md
 
 const hubSkills = hubDir => path.join(hubDir, 'skills');
 const hubRules = hubDir => path.join(hubDir, 'rules.md');
@@ -63,6 +69,172 @@ function findSkillFiles(root, depth = 6) {
     }
   })(root, 0);
   return out;
+}
+
+// ---- Markdown: the files every agent reads, checked for waste and structure.
+const optimisedPath = hubDir => path.join(hubDir, 'optimised.json');
+function readOptimised(hubDir) { try { return JSON.parse(fs.readFileSync(optimisedPath(hubDir), 'utf8')); } catch { return {}; } }
+
+// Every Markdown file Tidy agents looks after: the rules, the user's own skills (not plugins) and memory.
+function mdTargets({ claudeDir, hubDir, memoryDirs }, localSkills) {
+  const out = [];
+  const md = path.join(claudeDir, 'CLAUDE.md'), text = readText(md);
+  const rules = text != null && text.trim() === importLine(claudeDir) ? hubRules(hubDir) : md;
+  if (fs.existsSync(rules)) out.push({ file: rules, role: 'rules', writable: true });
+  for (const [name, dir] of localSkills) {
+    if (MANAGED_SKILLS.has(name)) continue;
+    (function walk(d, depth) {
+      let ents; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        const p = path.join(d, e.name);
+        if (e.isFile() && /\.md$/i.test(e.name)) out.push({ file: p, role: e.name === 'SKILL.md' && d === dir ? 'skill' : 'skill-ref', skill: name, writable: true });
+        else if (e.isDirectory() && depth < 3 && e.name !== 'node_modules' && e.name !== '.git') walk(p, depth + 1);
+      }
+    })(dir, 0);
+  }
+  for (const { dir, writable } of memoryDirs) {
+    let files = []; try { files = fs.readdirSync(dir); } catch {}
+    for (const f of files) if (/\.md$/i.test(f)) out.push({ file: path.join(dir, f), role: f.toUpperCase() === 'MEMORY.MD' ? 'memory-index' : 'memory', writable });
+  }
+  return out;
+}
+
+// Lines of a Markdown file tagged raw when they sit in frontmatter or a code fence, which are never rewritten.
+function mdLines(text) {
+  const lines = text.split(/\r?\n/);
+  let fence = null, front = lines[0] === '---';
+  return lines.map((line, i) => {
+    let raw = front || !!fence;
+    if (front && i > 0 && line === '---') front = false;
+    else if (!front) {
+      const m = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+      if (m && !fence) { fence = m[1]; raw = true; }
+      else if (m && fence && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+    }
+    return { line, raw };
+  }).concat(fence ? [{ unclosed: true }] : []);
+}
+
+// Mechanical tidy: BOM, trailing spaces, runs of blank lines, repeated paragraphs. Code and frontmatter stay as they are.
+function tidyMd(text) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const tagged = mdLines(text.replace(/^﻿/, '')).filter(l => !l.unclosed);
+  const out = [], seen = new Set();
+  let dupes = 0, para = [];
+  const flush = () => {
+    const key = para.map(l => l.trim()).join(' ').replace(/\s+/g, ' ');
+    if (key.length >= 40 && !key.startsWith('#')) {
+      if (seen.has(key)) { dupes++; para = []; if (out[out.length - 1] === '') out.pop(); return; }
+      seen.add(key);
+    }
+    out.push(...para); para = [];
+  };
+  for (const l of tagged) {
+    if (l.raw) { flush(); out.push(l.line); continue; }
+    const line = l.line.replace(/[ \t]+$/, '');
+    if (line === '') { flush(); if (out.length && out[out.length - 1] !== '') out.push(''); continue; }
+    para.push(line);
+  }
+  flush();
+  while (out.length && out[0] === '') out.shift();
+  while (out.length && out[out.length - 1] === '') out.pop();
+  const result = out.join(eol) + (out.length ? eol : '');
+  return { text: result, saved: Buffer.byteLength(text) - Buffer.byteLength(result), dupes };
+}
+
+// Structure problems an agent (or the user) should sort out: they make a file slower to read and search.
+function mdStructure(text, { needHeadings = true } = {}) {
+  const issues = [], headings = new Set();
+  let last = 0, lastHeading = null, sinceHeading = 0;
+  for (const l of mdLines(text)) {
+    if (l.unclosed) { issues.push('a code block is never closed'); continue; }
+    if (l.raw) { sinceHeading++; continue; }
+    const h = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l.line);
+    if (!h) {
+      if (l.line.trim()) sinceHeading++;
+      if (l.line.length > 600) issues.push('a line over 600 characters (split it into bullets)');
+      continue;
+    }
+    const level = h[1].length, key = level + h[2].toLowerCase();
+    if (last && level > last + 1) issues.push(`heading "${h[2]}" jumps from level ${last} to ${level}`);
+    if (lastHeading && !sinceHeading && level <= lastHeading.level) issues.push(`section "${lastHeading.text}" is empty`);
+    if (headings.has(key)) issues.push(`heading "${h[2]}" appears twice (merge the sections)`);
+    headings.add(key);
+    last = level; lastHeading = { level, text: h[2] }; sinceHeading = 0;
+  }
+  if (needHeadings && !headings.size && Buffer.byteLength(text) > 3 * 1024) issues.push('over 3 KB with no headings');
+  return [...new Set(issues)];
+}
+
+// Relative links and @imports that point at nothing.
+function mdBrokenLinks(file, text) {
+  const dir = path.dirname(file), bad = new Set();
+  for (const l of mdLines(text)) {
+    if (l.raw || l.unclosed) continue;
+    for (const m of l.line.matchAll(/\[[^\]]*\]\(<?([^)\s>]+)>?(?:\s[^)]*)?\)/g)) {
+      const t = m[1].split('#')[0];
+      if (!t || /^[a-z][a-z0-9+.-]*:/i.test(t) || t.startsWith('//')) continue;
+      let target; try { target = decodeURIComponent(t); } catch { target = t; }
+      if (!fs.existsSync(path.resolve(dir, target))) bad.add(t);
+    }
+    const imp = /^@(\S+)$/.exec(l.line.trim());
+    if (imp && /[\\/.]/.test(imp[1]) && !fs.existsSync(path.resolve(dir, imp[1].replace(/^~(?=[\\/])/, os.homedir())))) bad.add(imp[1]);
+  }
+  return [...bad];
+}
+
+const kb = n => n >= 1024 ? `${Math.round(n / 102.4) / 10} KB` : `${n} bytes`;
+
+function mdAudit(args, localSkills, add) {
+  const { claudeDir, hubDir } = args;
+  const bases = [[hubDir, 'hub'], [claudeDir, '~/.claude'], [os.homedir(), '~']].map(([b, as]) => [path.resolve(b), as]);
+  const show = p => {
+    const r = path.resolve(p);
+    const hit = bases.find(([b]) => r.toLowerCase().startsWith(b.toLowerCase() + path.sep));
+    return (hit ? hit[1] + r.slice(hit[0].length) : r).replace(/\\/g, '/');
+  };
+  const optimised = readOptimised(hubDir);
+  const toOptimise = [], stats = { files: 0, bytes: 0 };
+  for (const t of mdTargets(args, localSkills)) {
+    const text = readText(t.file);
+    if (text == null) continue;
+    const size = Buffer.byteLength(text), name = show(t.file);
+    stats.files++; stats.bytes += size;
+
+    const tidy = tidyMd(text);
+    if (tidy.saved >= TIDY_MIN_BYTES || tidy.dupes) {
+      const what = [tidy.saved ? `${kb(tidy.saved)} of padding` : '', tidy.dupes ? `${tidy.dupes} repeated paragraph${tidy.dupes === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ');
+      add({ id: `tidy-md:${t.file}`, kind: 'messy', message: `${name}: ${what}; tidy it (code blocks and frontmatter untouched)`, fix: t.writable ? { type: 'tidy-md', file: t.file } : undefined });
+    }
+    const issues = t.role === 'memory-index' ? [] : mdStructure(text, { needHeadings: t.role !== 'memory' });
+    // Problems only an agent can sort out: offered as an "agent-fix" that hands it the file and the problem.
+    const agentFix = (id, kind, message) => add({ id, kind, message, fix: t.writable ? { type: 'agent-fix', file: t.file, problem: message } : undefined });
+    if (issues.length) agentFix(`structure:${t.file}`, 'structure', `${name}: ${issues.slice(0, 3).join('; ')}${issues.length > 3 ? ` (+${issues.length - 3} more)` : ''}`);
+    const broken = mdBrokenLinks(t.file, text);
+    if (broken.length) agentFix(`md-links:${t.file}`, 'broken-link', `${name} links to ${broken.length === 1 ? 'a missing file' : broken.length + ' missing files'}: ${broken.slice(0, 3).join(', ')}`);
+
+    if (t.role === 'skill') {
+      const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+      const desc = m && /^description:\s*(.*)$/m.exec(m[1]);
+      if (!m || !/^name:/m.test(m[1]) || !desc || !desc[1].trim().replace(/^["']|["']$/g, '')) agentFix(`skill-meta:${t.skill}`, 'index', `Skill "${t.skill}" has no name or description in its frontmatter, so agents can't tell when to load it`);
+      else if (desc[1].length > MAX_DESCRIPTION) agentFix(`skill-desc:${t.skill}`, 'index', `Skill "${t.skill}" description is ${desc[1].length} characters; Claude Code cuts it at ${MAX_DESCRIPTION}`);
+    }
+    if (t.role === 'memory' && !/^---[\s\S]*?^description:[ \t]*\S/m.test(text)) agentFix(`memory-meta:${t.file}`, 'index', `${name} has no description, so its index line says nothing useful`);
+    if (t.role === 'memory-index') {
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      if (lines.length > MAX_INDEX_LINES) agentFix(`index-long:${t.file}`, 'index', `${name} has ${lines.length} lines; only the first ${MAX_INDEX_LINES} are loaded`);
+      const wide = lines.filter(l => l.length > 200).length;
+      if (wide) agentFix(`index-wide:${t.file}`, 'index', `${name}: ${wide} index line${wide === 1 ? ' is' : 's are'} over 200 characters; keep each to a one-line hook`);
+    }
+
+    const big = (t.role === 'rules' && size > OPTIMISE_RULES_BYTES) || (t.role === 'skill' && size > OPTIMISE_SKILL_BYTES);
+    const prev = optimised[t.file];
+    if (t.writable && (big || issues.length >= 2) && !(prev && size <= prev.size * 1.2)) toOptimise.push({ file: t.file, name, size, issues: issues.length });
+  }
+  for (const o of toOptimise) {
+    add({ id: `optimise:${o.file}`, kind: 'optimise', message: `${o.name} (${kb(o.size)}${o.issues ? `, ${o.issues} structure issue${o.issues === 1 ? '' : 's'}` : ''}): an agent restructures it into short sections, merges repeats and cuts its token cost, keeping every rule`, fix: { type: 'agent-optimise', file: o.file, size: o.size } });
+  }
+  return stats;
 }
 
 // memoryDirs: [{ dir, writable }]. Only writable ones (Operant's own) get fixes.
@@ -168,8 +340,11 @@ function audit({ claudeDir, hubDir, memoryDirs = [] }) {
     }
   }
 
-  const fixable = findings.filter(f => f.fix).length;
-  return { findings, fixable, drift: fixable > 0 };
+  const mdStats = mdAudit({ claudeDir, hubDir, memoryDirs }, local, add);
+
+  // Agent rewrites cost tokens, so they are offered but never counted toward the badge.
+  const fixable = findings.filter(f => f.fix && !f.fix.type.startsWith('agent-')).length;
+  return { findings, fixable, drift: fixable > 0, md: mdStats };
 }
 
 // ---- backup: save(p) records what p is right now, so undo can put it back exactly.
@@ -253,6 +428,25 @@ function runFix(fix, { claudeDir, hubDir }, bk) {
       memory.rebuildIndex(fix.dir);
       return;
     }
+    case 'tidy-md': {
+      const text = fs.readFileSync(fix.file, 'utf8');
+      bk.save(fix.file);
+      fs.writeFileSync(fix.file, tidyMd(text).text);
+      return;
+    }
+    case 'agent-optimise': {
+      // Backed up here and rewritten by the agent tile the renderer starts, so undo puts the original back.
+      bk.save(fix.file);
+      const done = readOptimised(hubDir);
+      done[fix.file] = { size: fix.size, at: new Date().toISOString() };
+      fs.mkdirSync(hubDir, { recursive: true });
+      fs.writeFileSync(optimisedPath(hubDir), JSON.stringify(done, null, 1));
+      return { agent: { file: fix.file, task: 'optimise' } };
+    }
+    case 'agent-fix': {
+      bk.save(fix.file);
+      return { agent: { file: fix.file, task: 'fix', problem: fix.problem } };
+    }
     default: throw new Error(`unknown fix ${fix.type}`);
   }
 }
@@ -261,18 +455,18 @@ function runFix(fix, { claudeDir, hubDir }, bk) {
 function apply({ claudeDir, hubDir, memoryDirs = [], ids }) {
   const want = new Set(ids);
   const fixes = audit({ claudeDir, hubDir, memoryDirs }).findings.filter(f => f.fix && want.has(f.id));
-  if (!fixes.length) return { backup: null, done: [], errors: [] };
+  if (!fixes.length) return { backup: null, done: [], errors: [], agent: [] };
   const bk = newBackup(hubDir);
-  const done = [], errors = [];
+  const done = [], errors = [], agent = [];
   // rules first, so a skills failure never leaves CLAUDE.md pointing nowhere
   fixes.sort((a, b) => (b.fix.type === 'adopt-rules') - (a.fix.type === 'adopt-rules'));
   for (const f of fixes) {
-    try { runFix(f.fix, { claudeDir, hubDir }, bk); done.push(f.id); }
+    try { const r = runFix(f.fix, { claudeDir, hubDir }, bk); done.push(f.id); if (r?.agent) agent.push(r.agent); }
     catch (e) { errors.push({ id: f.id, error: String(e.message || e) }); }
   }
   bk.manifest.applied = done;
   bk.flush();
-  return { backup: path.basename(bk.dir), done, errors };
+  return { backup: path.basename(bk.dir), done, errors, agent };
 }
 
 function lastBackup(hubDir) {
@@ -302,4 +496,4 @@ function undo({ hubDir }) {
   return { restored: b.manifest.entries.length, backup: b.name };
 }
 
-module.exports = { audit, apply, undo, lastBackup, importLine, hubRules, hubSkills, LINK_NAME };
+module.exports = { audit, apply, tidyMd, mdStructure, undo, lastBackup, importLine, hubRules, hubSkills, LINK_NAME };

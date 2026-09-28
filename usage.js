@@ -176,7 +176,7 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
   }
   function stop() { clearInterval(timer); timer = null; }
 
-  // Usage from outside a Claude Code transcript (OpenCode, Codex, Gemini CLI): same shape as a
+  // Usage from outside a Claude Code transcript (OpenCode): same shape as a
   // transcript entry, so it counts toward the top-bar pill and graph too. Picked up on the next scan.
   function addEvent(t, input, output, cacheWrite, cacheRead, project) {
     events.push([t, input || 0, output || 0, cacheWrite || 0, cacheRead || 0, project || 'other']);

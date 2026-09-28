@@ -318,8 +318,14 @@ const Panels = (() => {
         <div class="set-row"><div class="lbl">${label} use for<span class="hint">Shown to the lead agent, and taught in the skill</span></div>
           <div class="ctl"><input data-team-f="${id}.use" value="${esc(t.use || '')}" placeholder="what this tier is for" spellcheck="false"></div></div>`;
     };
+    // With OpenCode as the default agent, the tiers come from its models instead of the rows below.
+    const def = cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
+    const ocNote = def && /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(String(def.command || '').trim().split(/\s+/)[0])
+      ? `<div class="set-row"><div class="lbl">OpenCode tiers<span class="hint">OpenCode is your default agent, so its tiers come from the models it can reach: ${esc(Object.entries(cfg.teamTiers || {}).map(([n, t]) => `${n} ${t.model}${t.effort ? ' · ' + t.effort : ''}`).join(', ') || 'reading its models…')}. Free Zen models have no effort levels, so they give one tier; a paid Zen or OpenAI model adds one per effort level. The tiers below apply when another agent is the default.</span></div></div>`
+      : '';
     return `<div class="set-row"><div class="lbl">Team mode<span class="hint">A lead agent hands small tasks to cheaper workers, in their own tiles</span></div>
         <div class="ctl"><button class="toggle${team.enabled ? ' on' : ''}" data-team-enabled></button></div></div>
+      ${ocNote}
       ${tierBlock('xsmall', 'XSmall')}
       ${tierBlock('small', 'Small')}
       ${tierBlock('medium', 'Medium')}

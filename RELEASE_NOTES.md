@@ -1,3 +1,31 @@
+# Operant 1.16.0
+
+This release makes Tidy agents clean up and slim down your Markdown, names the team tiers, and fits the tiers to your default agent. It also adds a first-run tour, and Operant now supports only Claude Code and OpenCode.
+
+**Install:** download `Operant-1.16.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## New
+- **First-run tour:** a short walkthrough on first launch. You can skip it, and reopen it from the quick menu.
+- **Tidy agents checks your Markdown:** it looks at your rules, your own skills and your memory files. The panel opens on a summary of how many files it checked and how big they are, with three buttons:
+  - **Tidy everything safe:** Operant fixes whitespace, blank lines and repeated paragraphs itself.
+  - **Optimise big files:** one agent shortens large rules and skill files.
+  - **Fix index and structure problems:** one agent fixes heading jumps, empty sections, broken links, missing skill descriptions and memory indexes that are too long.
+
+  Everything it changes is backed up and can be undone. **Details** shows the full list to tick by hand.
+- **Status bar on subagent tiles:** tiles for Claude subagents now show the same info bar as agent terminals: model, context used, tokens and folder.
+
+## Changed
+- **Tidy agents is in the quick menu** (⚙) instead of having its own button in the top bar.
+- **Team tier slider:** each tier now shows its model by name, its effort, and what it's used for.
+- **New agent terminals follow your top tier:** with team mode on, a new agent terminal starts on the highest tier you allow for that agent.
+- **Tiers follow your default agent:** with Claude Code as the default you get your configured tiers. With OpenCode as the default, the tiers come from the models you have:
+  - Only free Zen models (such as Big Pickle): one tier.
+  - A paid Zen or OpenAI model: one tier for each effort level.
+- **OpenCode team work runs in one instance:** team mode sends all of a tier's tasks to OpenCode as a single prompt, so OpenCode uses its own subagents instead of opening one instance per task.
+- **Only Claude Code and OpenCode are built in.** Codex and Gemini are removed, and a saved default of either switches to Claude Code. Both remaining agents work with the usual AI providers, and custom agents you add in Settings still work.
+
+---
+
 # Operant 1.15.2
 
 Running the installer by hand while Operant is open no longer breaks the install.

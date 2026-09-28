@@ -102,3 +102,47 @@ test('an existing junction to elsewhere is left alone, and a second audit is qui
   assert.ok(fs.existsSync(path.join(other, 'SKILL.md')));
   assert.ok(!hub.audit(f).drift);
 });
+
+test('tidyMd trims padding and repeated paragraphs but leaves code and frontmatter alone', () => {
+  const para = 'Run long commands with operant run, then wait for them.';
+  const src = '---\nname: x  \n---\n\n\n# Title   \n\n\n\n' + para + '\n\n```\nkeep   \n\n\n```\n\n' + para + '\n\n\n';
+  const r = hub.tidyMd(src);
+  assert.equal(r.text, '---\nname: x  \n---\n\n# Title\n\n' + para + '\n\n```\nkeep   \n\n\n```\n');
+  assert.equal(r.dupes, 1);
+  assert.equal(hub.tidyMd(r.text).saved, 0);
+  assert.equal(hub.tidyMd('a  \r\n\r\n\r\nb\r\n').text, 'a\r\n\r\nb\r\n');
+});
+
+test('mdStructure reports jumps, empty and repeated sections, and unclosed fences', () => {
+  const issues = hub.mdStructure('# A\n### B\ntext\n## C\n## C\nx\n```\nopen\n');
+  assert.ok(issues.some(i => i.includes('jumps from level 1 to 3')));
+  assert.ok(issues.some(i => i.includes('"C" is empty')));
+  assert.ok(issues.some(i => i.includes('appears twice')));
+  assert.ok(issues.some(i => i.includes('never closed')));
+  assert.deepEqual(hub.mdStructure('# A\n## B\ntext\n'), []);
+});
+
+test('markdown findings: tidy applies and undoes, agent rewrites are offered but not counted', () => {
+  const f = fixture('markdown');
+  const rules = '# Rules\n\n\n\n' + '- be brief and plain in every reply you give\n\n'.repeat(3) + 'x'.repeat(5000) + '\n';
+  write(path.join(f.claudeDir, 'CLAUDE.md'), rules);
+  write(path.join(f.claudeDir, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\n---\nSee [ref](ref/missing.md).\n');
+  const a = hub.audit(f), ids = a.findings.map(x => x.id);
+  const claudeMd = path.join(f.claudeDir, 'CLAUDE.md');
+  assert.ok(ids.includes(`tidy-md:${claudeMd}`));
+  assert.ok(ids.includes(`optimise:${claudeMd}`));
+  assert.ok(ids.includes('skill-meta:alpha'));
+  assert.ok(a.findings.some(x => x.kind === 'broken-link' && x.message.includes('ref/missing.md')));
+  assert.equal(a.fixable, a.findings.filter(x => x.fix && !x.fix.type.startsWith('agent-')).length);
+  assert.equal(a.findings.find(x => x.id === 'skill-meta:alpha').fix.type, 'agent-fix');
+  assert.ok(a.md.files >= 3 && a.md.bytes > 5000);
+
+  const r = hub.apply({ ...f, ids: [`tidy-md:${claudeMd}`, `optimise:${claudeMd}`] });
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.agent, [{ file: claudeMd, task: 'optimise' }]);
+  const tidied = fs.readFileSync(claudeMd, 'utf8');
+  assert.ok(tidied.length < rules.length && tidied.split('be brief').length === 2);
+  assert.ok(!hub.audit(f).findings.some(x => x.id === `optimise:${claudeMd}`), 'not offered again once done');
+  hub.undo(f);
+  assert.equal(fs.readFileSync(claudeMd, 'utf8'), rules);
+});

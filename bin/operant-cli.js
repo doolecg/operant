@@ -224,7 +224,7 @@ function formatResult(cmd, result) {
     case 'team': {
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
       const lines = [`team mode: enabled  ·  ${result.workers}/${result.maxWorkers} workers running`];
-      for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}  —  ${t.use}`);
+      for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}${t.effort ? ` (${t.effort} effort)` : ''}  —  ${t.use}`);
       return lines.join('\n');
     }
     case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : (result.text || '(no output)');

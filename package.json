@@ -1,11 +1,11 @@
 {
   "name": "operant",
-  "version": "1.15.2",
-  "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenAI Codex, OpenCode, Gemini CLI and more",
+  "version": "1.16.0",
+  "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenCode and more",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --check main.js && node --check opencode.js && node --check opencode-theme.js && node --check otherAgents.js && node --check agent-brief.js && node --check agent-setup.js && node --check memory.js && node --check hub.js && node --check backup.js && node --test test/hub.test.js test/backup.test.js test/package-files.test.js && node --check updater.js && node --check media.js && node --check usage.js && node --check renderer/renderer.js && node --check renderer/highlight.js && node --check renderer/settings.js && node --check renderer/tour.js && node --check renderer/themes.js && node --check shell-integration.js && node --check hooks/long-commands.js && node --check hooks/opencode-long-commands.mjs",
+    "test": "node --check main.js && node --check opencode.js && node --check opencode-theme.js && node --check agent-brief.js && node --check agent-setup.js && node --check memory.js && node --check hub.js && node --check team-tiers.js && node --check backup.js && node --test test/hub.test.js test/team-tiers.test.js test/backup.test.js test/package-files.test.js && node --check updater.js && node --check media.js && node --check usage.js && node --check renderer/renderer.js && node --check renderer/highlight.js && node --check renderer/settings.js && node --check renderer/tour.js && node --check renderer/themes.js && node --check shell-integration.js && node --check hooks/long-commands.js && node --check hooks/opencode-long-commands.mjs",
     "dist": "electron-builder --win msi --x64",
     "pack": "electron-builder --dir --win --x64"
   },
@@ -45,11 +45,11 @@
       "usage.js",
       "opencode.js",
       "opencode-theme.js",
-      "otherAgents.js",
       "agent-brief.js",
       "agent-setup.js",
       "memory.js",
       "hub.js",
+      "team-tiers.js",
       "backup.js",
       "media-helper.ps1",
       "renderer/**",

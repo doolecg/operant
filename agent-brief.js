@@ -9,7 +9,7 @@ const BRIEF = [
   'If `.codegraph/` exists in this project, your first step for any question about the code is CodeGraph (`codegraph explore "<symbols or question>"`, or its MCP tool): not grep, glob or reading files. Fall back to those only for what CodeGraph did not answer.',
   'If `.operant/progress.md` exists, read it first and continue from it.',
   'Run long commands (tests, builds, installs, dev servers) with `operant run`, then `operant wait <id> --errors`.',
-  'At start, run `operant team`. If team mode is on, hand each task that fits a tier\'s "use" to a worker with `operant agent "<self-contained task>" --tier <name>`, always the cheapest tier that fits and never above the top tier it lists (the user sets that slider); do only what fits no tier yourself. If you were started as a worker (you have a board task), do the task yourself.',
+  'At start, run `operant team`. If team mode is on, hand each task that fits a tier\'s "use" to a worker with `operant agent "<self-contained task>" --tier <name>`, always the cheapest tier that fits and never above the top tier it lists (the user sets that slider); when a tier runs OpenCode, send it ONE `operant agent` call per tier holding all the tasks for that tier as a single numbered prompt, and tell it to use its own subagents for them, instead of one OpenCode instance per task; do only what fits no tier yourself. If you were started as a worker (you have a board task), do the task yourself.',
   'At start, run `operant recall` for this project\'s memory; save durable facts you learn (user preferences, decisions, gotchas) with `operant remember`.',
 ].join('\n');
 
@@ -36,8 +36,6 @@ const home = require('os').homedir();
 const RULES = {
   claude: path.join(home, '.claude', 'CLAUDE.md'),
   opencode: path.join(home, '.config', 'opencode', 'AGENTS.md'),
-  codex: path.join(home, '.codex', 'AGENTS.md'),
-  gemini: path.join(home, '.gemini', 'GEMINI.md'),
 };
 // Once Operant's hub holds the rules (hub.js), that file is the main agent's rules for Claude Code:
 // ~/.claude/CLAUDE.md is then only an @import line pointing at it.

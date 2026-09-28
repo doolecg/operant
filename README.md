@@ -1,6 +1,6 @@
 # Operant
 
-A Hyprland-style tiling window manager for terminal AI agents on Windows. Run **Claude Code**, **OpenAI Codex**, **OpenCode**, **Gemini CLI** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a Windows notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
+A Hyprland-style tiling window manager for terminal AI agents on Windows. Run **Claude Code**, **OpenCode** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a Windows notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
 
 ## Saving tokens
 Operant is built so agents don't have to read their own noise. A few things do that work:
@@ -31,9 +31,7 @@ You need the agent CLIs themselves installed and on your `PATH`, for example:
 | Agent | Command | Install |
 |---|---|---|
 | Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` |
-| OpenAI Codex | `codex` | `npm i -g @openai/codex` |
 | OpenCode | `opencode` | `npm i -g opencode-ai` |
-| Gemini CLI | `gemini` | `npm i -g @google/gemini-cli` |
 
 **Explorer integration:** right-click any folder, the empty space inside one, or a drive, and choose **Open in Operant**. It opens your default agent in that folder. If Operant is already running, the folder opens as a new tile in that window. You can turn this off in Settings.
 

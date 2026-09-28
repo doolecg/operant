@@ -311,7 +311,7 @@ body.anim-off .win::before,
    folder and branch. Never overlaps: the branch and then the folder hide first when it's tight
    (layoutIbar in renderer.js), everything else has a fixed, always-visible width. */
 .ibar { display: none; }
-.win.ai.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
+.win.ai.ibar-on .ibar, .win.agent.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
   font-size: 10px; color: var(--dim); background: rgba(var(--bar-rgb), .35); border-bottom: 1px solid rgba(var(--ink-rgb), .06);
   overflow: hidden; white-space: nowrap; }
 .ibar .ib-model:empty, .ibar .ib-ctx:empty, .ibar .ib-tok:empty, .ibar .ib-cache:empty, .ibar .ib-folder:empty, .ibar .ib-branch:empty { display: none; }
@@ -361,7 +361,7 @@ body.anim-off .win::before,
 
 /* Task board tile (operant task/board): a list of tasks grouped by status. */
 .win.board .ico { color: var(--accent); }
-#btn-board svg, #btn-hub svg { width: 14px; height: 14px; vertical-align: middle; fill: currentColor; }
+#btn-board svg { width: 14px; height: 14px; vertical-align: middle; fill: currentColor; }
 #board-body { padding: 4px 14px 10px; }
 .board-card { width: 420px; }
 .notif-head { gap: 12px; }
@@ -369,6 +369,18 @@ body.anim-off .win::before,
 .hub-row { cursor: pointer; }
 .hub-row.report { cursor: default; color: var(--dim); }
 .hub-row input { flex: none; accent-color: var(--accent); }
+.hub-stat { font-size: 12px; color: var(--dim); margin: 2px 2px 12px; }
+.hub-act { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; margin-bottom: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(var(--ink-rgb), .06); color: var(--text); text-align: left; }
+.hub-act b { font-weight: 600; font-size: 13px; }
+.hub-act span { font-size: 11.5px; color: var(--dim); }
+.hub-act:hover:not(:disabled) { background: var(--accent-tint); }
+.hub-act:hover:not(:disabled) b { color: var(--accent); }
+.hub-act:disabled { opacity: .45; cursor: default; }
+.hub-more { display: flex; align-items: center; width: 100%; margin-top: 4px; padding: 9px 12px; border-radius: 10px; color: var(--text); font-size: 12.5px; }
+.hub-more span:first-child { flex: 1; text-align: left; }
+.hub-more:hover { background: rgba(var(--ink-rgb), .08); }
+.hub-pick { cursor: pointer; }
+.hub-pick:hover { text-decoration: underline; }
 .hub-dot { flex: none; width: 13px; text-align: center; color: var(--dim); }
 #hub-undo.hidden { display: none; }
 #hub-body { padding: 4px 14px 10px; }
@@ -648,10 +660,13 @@ body.anim-off .overlay.anchor, body.anim-off .overlay.anchor .card { transition:
 .qm-row { display: flex; align-items: center; width: 100%; padding: 9px 10px; border-radius: 10px; color: var(--text); font-size: 12.5px; }
 .qm-row span:first-child { flex: 1; text-align: left; }
 .qm-row:hover { background: rgba(var(--ink-rgb), .08); }
+.qm-row .badge { position: static; margin-right: 6px; }
 .qm-chev { color: var(--dim); }
 .qm-team { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px 8px; }
 .qm-slider { display: grid; grid-template-columns: 74px 1fr 46px; align-items: center; gap: 8px; font-size: 11.5px; color: var(--dim); }
 .qm-slider input { width: 100%; min-width: 0; accent-color: var(--accent); }
+.qm-tier-info { font-size: 11px; color: var(--dim); line-height: 1.4; padding: 0 2px; }
+.qm-tier-info b { color: var(--text); font-weight: 500; }
 .qm-slider b { font-weight: 400; color: var(--text); text-align: right; }
 
 /* notifications panel */

@@ -1,4 +1,4 @@
-// Operant: a Hyprland-style tiler for terminal AI agents (Claude Code, Codex, OpenCode, ...)
+// Operant: a Hyprland-style tiler for terminal AI agents (Claude Code, OpenCode, ...)
 // and Claude's subagents.
 
 (async () => {
@@ -422,6 +422,8 @@
   function setBadge(w, html) { w.el.querySelector('.badge').innerHTML = html; }
 
   const defaultAgent = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
+  // The team tiers for the default agent (main's team-tiers.js); OpenCode gets its own set.
+  const activeTiers = () => cfg.teamTiers || cfg.team?.tiers || {};
   // Settings › Projects: what tiles opened in a project start with (the innermost project, if they nest).
   function projectDefaults(dir) {
     const d = cfg.projectDefaults || {};
@@ -435,6 +437,13 @@
     agentId ??= projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent;
     const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
+    // With team mode on, a new agent with no model of its own runs as the top tier (quick menu slider)
+    // for that agent: the highest allowed tier using the same CLI.
+    if (kind === 'ai' && !model && !resume && cfg.team?.enabled) {
+      const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
+      const tier = names.slice(0, top < 0 ? names.length : top + 1).reverse().map(n => activeTiers()[n]).find(t => t.agent === agent.id && t.model);
+      if (tier) { model = tier.model; effort ??= tier.effort || null; }
+    }
     const name = title || (agent ? agent.name : 'Shell');
     const w = makeWin(kind, name, icon || agent?.icon || '●');
     Object.assign(w, { agentName: name, agentConf: agent?.id, customTitle: title, run, edit });
@@ -1184,7 +1193,7 @@
   }
   // Traffic light by tier position: first green, second orange, every higher one red.
   const tierDot = tier => {
-    const i = Object.keys(cfg.team?.tiers || {}).indexOf(tier);
+    const i = Object.keys(activeTiers()).indexOf(tier);
     return i < 0 ? '' : `<i class="tier-dot t${Math.min(i, 2)}" title="Tier: ${esc(tier)}"></i>`;
   };
   function renderBoard() {
@@ -1674,6 +1683,7 @@
     Object.assign(w, { agentId: info.agentId, sessionId: info.sessionId, info, status: 'running', state: { first: true, tools: new Map() }, tools: 0 });
     agentWin.set(info.agentId, w);
     mount(w, wsIndex, target, { focus: false });
+    renderIbar(w);
     w.term.write(AgentRender.header(info));
     if (resumed) w.term.write('\x1b[38;2;156;151;139m↻ resumed\x1b[0m\r\n\r\n');
     updateBadge(w);
@@ -1700,6 +1710,15 @@
     }
     let text = '';
     for (const e of entries) {
+      if (e.cwd) w.cwd = e.cwd;
+      if (e.model && e.model !== '<synthetic>') w.model = modelName('', e.model);
+      if (e.usage && !(w.seenMsgs ||= new Set()).has(e.id)) {
+        w.seenMsgs.add(e.id);
+        const t = w.tok ||= { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+        for (const k of Object.keys(t)) t[k] += e.usage[k];
+        const tokens = e.usage.input + e.usage.cacheRead + e.usage.cacheWrite;
+        w.ctx = { tokens, max: tokens > 200000 || /\[1m\]/i.test(e.model || '') ? 1000000 : 200000 };
+      }
       text += AgentRender.entry(e, w.state);
       w.tools += e.blocks.filter(b => b.type === 'tool_use').length;
       if (e.role === 'assistant') w.status = e.stop === 'end_turn' ? 'done' : 'running';
@@ -1715,6 +1734,7 @@
     }
     if (w.status !== 'done') w.doneMarked = false;
     updateBadge(w);
+    renderIbar(w);
     refreshBar();
   });
 
@@ -1738,8 +1758,8 @@
   }
 
   // The info bar under an agent tile's title (item 42): model, how full its context is, tokens
-  // used since the tile opened, and its folder and git branch. Only for kind 'ai' tiles (Claude
-  // Code, OpenCode, other agent CLIs), gated by Settings > "Tile info bar" (cfg.tileTokens).
+  // used since the tile opened, and its folder and git branch. For agent CLI tiles (kind 'ai') and
+  // subagent tiles (kind 'agent', fed from their transcript), gated by Settings > "Tile info bar" (cfg.tileTokens).
   // A raw model id -> a short display name. Claude ids look like claude-opus-4-5-20250929;
   // OpenCode ids look like opencode/big-pickle (or just the model half once the provider is known).
   function modelName(sessionId, raw, free) {
@@ -1755,7 +1775,7 @@
     return m[3] != null ? `${fam} ${m[2]}.${m[3]}` : `${fam} ${m[2]}`;
   }
   function renderIbar(w) {
-    if (w.kind !== 'ai') return;
+    if (w.kind !== 'ai' && w.kind !== 'agent') return;
     const on = !!cfg.tileTokens;
     w.el.classList.toggle('ibar-on', on);
     if (!on) return;
@@ -2351,29 +2371,54 @@
   $('#btn-gear').onclick = () => togglePanel('quickmenu');
   $('#btn-notifs').onclick = () => togglePanel('notifications');
   $('#btn-board').onclick = () => togglePanel('board');
-  $('#btn-hub').onclick = () => togglePanel('hub');
+  $('#qm-hub').onclick = () => togglePanel('hub');
 
-  // Tidy agents: Operant's hub of skills and rules. The audit is read-only (hub.js); nothing changes
-  // until fixes are ticked and Apply is pressed, and the last apply can be undone.
-  let hubState = null, hubMsg = '';
-  const HUB_KINDS = { 'not-in-hub': 'Not in the hub', 'broken-link': 'Broken links', duplicate: 'Duplicates', conflict: 'Needs you', oversized: 'Oversized', stale: 'Stale', info: 'Info' };
+  // Tidy agents: Operant's hub of skills and rules. The audit is read-only (hub.js). The panel opens
+  // on a summary with one button per kind of fix; Details lists every finding to tick by hand.
+  // Everything an apply touches is backed up first, and the last apply can be undone.
+  let hubState = null, hubMsg = '', hubDetails = false;
+  const HUB_KINDS = { 'not-in-hub': 'Not in the hub', 'broken-link': 'Broken links', duplicate: 'Duplicates', conflict: 'Needs you', messy: 'Messy markdown', stale: 'Stale', index: 'Hard to index', structure: 'Structure', optimise: 'Optimise with an agent', oversized: 'Oversized', info: 'Info' };
+  const hubGroups = s => {
+    const fixes = s.findings.filter(f => f.fix);
+    return {
+      safe: fixes.filter(f => !f.fix.type.startsWith('agent-')),
+      optimise: fixes.filter(f => f.fix.type === 'agent-optimise'),
+      index: fixes.filter(f => f.fix.type === 'agent-fix'),
+      needYou: s.findings.filter(f => !f.fix && f.kind !== 'info'),
+    };
+  };
   function hubUpdate(state) {
     hubState = state;
     const n = state ? state.fixable : 0;
     $('#hub-badge').textContent = n > 99 ? '99+' : n || '';
     $('#hub-badge').classList.toggle('hidden', !n);
-    $('#btn-hub').title = n ? `Tidy agents: ${n} thing${n === 1 ? '' : 's'} to tidy` : 'Tidy agents: skills, rules and memory';
     if (openPanel() === 'hub') renderHub();
   }
-  async function scanHub() { $('#hub-body').innerHTML = '<div class="board-empty">Scanning…</div>'; try { hubUpdate(await operant.hubAudit()); } catch (e) { hubMsg = String(e.message || e); } }
+  async function scanHub() { hubDetails = false; $('#hub-body').innerHTML = '<div class="board-empty">Scanning…</div>'; try { hubUpdate(await operant.hubAudit()); } catch (e) { hubMsg = String(e.message || e); } }
   function renderHub() {
     const s = hubState;
     $('#hub-undo').classList.toggle('hidden', !s?.canUndo);
+    $('#hub-all').classList.toggle('hidden', !hubDetails);
+    $('#hub-view').textContent = hubDetails ? '‹ Summary' : 'Details';
+    $('#hub-apply').classList.toggle('hidden', !hubDetails);
     if (!s) return;
+    if (!hubDetails) {
+      const g = hubGroups(s), md = s.md || { files: 0, bytes: 0 };
+      const kbs = Math.round(md.bytes / 102.4) / 10, tokens = Math.round(md.bytes / 4 / 100) / 10;
+      const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+      const act = (key, title, n, sub) => `<button class="hub-act" data-act="${key}"${n ? '' : ' disabled'}><b>${title}</b><span>${n ? sub : 'Nothing to do'}</span></button>`;
+      $('#hub-body').innerHTML = `<div class="hub-stat">${plural(md.files, 'Markdown file', 'Markdown files')} checked · ${kbs} KB, about ${tokens}k tokens when agents read them all</div>`
+        + act('safe', 'Tidy everything safe', g.safe.length, `${plural(g.safe.length, 'fix', 'fixes')} · done here, no agent`)
+        + act('optimise', 'Optimise big files', g.optimise.length, `${plural(g.optimise.length, 'file', 'files')} · starts an agent`)
+        + act('index', 'Fix index and structure problems', g.index.length, `${plural(g.index.length, 'problem', 'problems')} · starts an agent`)
+        + (g.needYou.length ? `<button class="hub-more" data-act="details"><span>${plural(g.needYou.length, 'thing needs', 'things need')} you</span><span class="qm-chev">Details ›</span></button>` : '');
+      hubCount();
+      return;
+    }
     const byKind = {};
     for (const f of s.findings) (byKind[f.kind] ||= []).push(f);
     const keep = new Set([...$('#hub-body').querySelectorAll('input:checked')].map(i => i.value));
-    $('#hub-body').innerHTML = Object.keys(HUB_KINDS).filter(k => byKind[k]).map(k => `<div class="board-group"><h3>${HUB_KINDS[k]} (${byKind[k].length})</h3>`
+    $('#hub-body').innerHTML = Object.keys(HUB_KINDS).filter(k => byKind[k]).map(k => `<div class="board-group" data-kind="${k}"><h3${byKind[k].some(f => f.fix) ? ' class="hub-pick" title="Tick or untick this group"' : ''}>${HUB_KINDS[k]} (${byKind[k].length})</h3>`
       + byKind[k].map(f => `<label class="board-row hub-row${f.fix ? '' : ' report'}">`
         + (f.fix ? `<input type="checkbox" value="${esc(f.id)}"${keep.has(f.id) ? ' checked' : ''}>` : '<span class="hub-dot">·</span>')
         + `<span class="board-text">${esc(f.message)}</span></label>`).join('') + '</div>').join('')
@@ -2381,22 +2426,52 @@
     hubCount();
   }
   function hubCount() {
+    if (!hubDetails) { $('#hub-note').textContent = hubMsg || 'Everything it touches is backed up first'; return; }
     const n = $('#hub-body').querySelectorAll('input:checked').length;
     $('#hub-apply').disabled = !n;
     $('#hub-apply').textContent = n ? `Apply ${n}` : 'Apply';
     $('#hub-note').textContent = hubMsg || (n ? 'Everything it touches is backed up first' : 'Tick fixes to apply');
   }
   $('#hub-body').addEventListener('change', () => { hubMsg = ''; hubCount(); });
-  $('#hub-all').onclick = () => { const all = [...$('#hub-body').querySelectorAll('input')]; const on = all.some(i => !i.checked); all.forEach(i => { i.checked = on; }); hubMsg = ''; hubCount(); };
-  $('#hub-apply').onclick = async () => {
-    const ids = [...$('#hub-body').querySelectorAll('input:checked')].map(i => i.value);
+  const hubTick = all => { const on = all.some(i => !i.checked); all.forEach(i => { i.checked = on; }); hubMsg = ''; hubCount(); };
+  // Select all leaves agent work out: it costs tokens, so it's ticked by hand or started from the summary.
+  $('#hub-all').onclick = () => hubTick([...$('#hub-body').querySelectorAll('input')].filter(i => hubState.findings.some(f => f.id === i.value && !f.fix.type.startsWith('agent-'))));
+  $('#hub-view').onclick = () => { hubDetails = !hubDetails; hubMsg = ''; renderHub(); $('#hub-body').scrollTop = 0; };
+  $('#hub-body').addEventListener('click', e => {
+    const h = e.target.closest('h3.hub-pick');
+    if (h) return hubTick([...h.parentElement.querySelectorAll('input')]);
+    const a = e.target.closest('[data-act]');
+    if (!a || a.disabled) return;
+    if (a.dataset.act === 'details') { hubDetails = true; hubMsg = ''; renderHub(); return; }
+    hubRun(hubGroups(hubState)[a.dataset.act].map(f => f.id));
+  });
+  $('#hub-apply').onclick = () => hubRun([...$('#hub-body').querySelectorAll('input:checked')].map(i => i.value));
+  // All agent work goes to one agent, which can split the files across its own subagents.
+  function hubAgentPrompt(jobs) {
+    const q = s => String(s).replace(/"/g, "'"); // the prompt is one quoted shell argument
+    const optimise = jobs.filter(j => j.task === 'optimise').map(j => `'${j.file}'`);
+    const fixes = {};
+    for (const j of jobs.filter(j => j.task === 'fix')) (fixes[j.file] ||= []).push(q(j.problem));
+    const parts = ['Tidy agents asked you to improve Markdown files that agents read, so they cost fewer tokens and index well. Keep every rule, fact, command and instruction: the meaning must not change and nothing may be dropped. Leave code blocks as they are.'];
+    if (optimise.length) parts.push(`Optimise these files: ${optimise.join(', ')}. Merge duplicated or repeated points, group related rules under clear ## headings with short bullets, fix heading levels, keep the frontmatter and make a skill description one or two plain sentences saying what it does and when to use it. If a SKILL.md is still over 12 KB, move long reference material into a file next to it and link to it.`);
+    const fx = Object.entries(fixes);
+    if (fx.length) parts.push(`Fix these problems: ${fx.map(([f, p], i) => `(${i + 1}) '${f}': ${p.join('; ')}`).join(' ')}. A missing description is one plain sentence saying what the file is for; a broken link is repointed to the right file or removed; an overlong index is shortened to one-line hooks.`);
+    parts.push('Backups are already saved (Tidy agents > Undo last apply restores them). If you have subagents, give each file to one. When done, list each file with its size before and after.');
+    return parts.join(' ');
+  }
+  async function hubRun(ids) {
     if (!ids.length) return;
     if ([...wins.values()].some(isWorking)) { hubMsg = 'Wait until agents are idle; a skill moving mid-turn can break it'; hubCount(); return; }
     const r = await operant.hubApply(ids);
     hubMsg = r.errors?.length ? `${r.done.length} applied, ${r.errors.length} failed: ${r.errors[0].error}` : `Applied ${r.done.length}. Backup ${r.backup}`;
+    if (r.agent?.length) {
+      const files = new Set(r.agent.map(j => j.file)).size;
+      try { await newTerminal('ai', r.cwd, { prompt: hubAgentPrompt(r.agent), title: 'Tidy markdown', focus: true }); hubMsg = `Started an agent on ${files} file${files === 1 ? '' : 's'}. Backup ${r.backup}`; }
+      catch (e) { hubMsg += `. Could not start the agent: ${e.message || e}`; }
+    }
     hubUpdate(r.state);
     hubCount();
-  };
+  }
   $('#hub-undo').onclick = async () => {
     const r = await operant.hubUndo();
     hubMsg = r.errors?.length ? `Undo failed: ${r.errors[0].error}` : r.backup ? `Restored backup ${r.backup}` : 'Nothing to undo';
@@ -2407,8 +2482,15 @@
   $('#qm-settings').onclick = () => togglePanel('settings');
   $('#btn-save-quit').onclick = () => { closePanels(); saveAndQuit(); };
   // Quick menu sliders for team mode: how many workers may run at once, and the highest tier they may use.
-  const tierNames = () => Object.keys(cfg.team?.tiers || {});
+  const tierNames = () => Object.keys(activeTiers());
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  // 'claude-opus-5-5' -> 'Claude Opus 5.5', 'opencode/big-pickle' -> 'OpenCode Big Pickle'
+  const tierModelName = t => {
+    const m = String(t.model || '').split('/').pop().replace(/-(\d+)-(\d+)(?=-|$)/, ' $1.$2').replace(/-(\d{8})$/, '');
+    const words = m.split(/[-\s]+/).map(w => /^\d/.test(w) ? w : cap(w)).join(' ');
+    const agent = t.agent === 'opencode' ? 'OpenCode' : cap(t.agent || '');
+    return words.toLowerCase().startsWith(String(t.agent || '').toLowerCase()) ? words : `${agent} ${words}`.trim();
+  };
   function drawTeamSliders() {
     const names = tierNames(), team = cfg.team || {};
     const ti = names.includes(team.maxTier) ? names.indexOf(team.maxTier) : names.length - 1;
@@ -2417,6 +2499,8 @@
     $('#qm-tier').max = Math.max(0, names.length - 1);
     $('#qm-tier').value = ti;
     $('#qm-tier-val').textContent = names[ti] ? cap(names[ti]) : '-';
+    const t = activeTiers()[names[ti]];
+    $('#qm-tier-info').innerHTML = t ? `<b>${esc(tierModelName(t))}</b>${t.effort ? ' · ' + esc(t.effort) + ' effort' : ''}<br>${esc(cap(t.use || ''))}` : '';
   }
   $('#qm-workers').oninput = e => { setSetting('team', { ...(cfg.team || {}), maxWorkers: +e.target.value }); drawTeamSliders(); };
   $('#qm-tier').oninput = e => { const n = tierNames()[+e.target.value]; if (n) setSetting('team', { ...(cfg.team || {}), maxTier: n }); drawTeamSliders(); };
@@ -2458,7 +2542,7 @@
   function save(patch) {
     Object.assign(pending, patch);
     clearTimeout(saveT);
-    saveT = setTimeout(() => { operant.setConfig(pending); pending = {}; }, 300);
+    saveT = setTimeout(() => { operant.setConfig(pending).then(c => onTeamTiers(c?.teamTiers)); pending = {}; }, 300);
   }
 
   const LIVE_LAYOUT = new Set(['defaultLayout', 'masterRatio']);
@@ -3892,6 +3976,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     runCodegraph(dirs, `${dirs.length} project${dirs.length === 1 ? '' : 's'} on startup`, { focus: false });
     toast(`<b>◇ CodeGraph</b> indexing ${dirs.map(d => esc(baseName(d))).join(', ')}`);
   });
+  // The tiers change with the default agent and, for OpenCode, once its model list has been read.
+  function onTeamTiers(t) {
+    if (!t) return;
+    cfg.teamTiers = t;
+    if (openPanel() === 'quickmenu') drawTeamSliders();
+  }
+  operant.on('team:tiers', onTeamTiers);
   // A setting changed in another Operant window.
   operant.on('config:changed', c => {
     Object.assign(cfg, c);
@@ -4290,9 +4381,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let agentId = args.agent, model = args.model, effort = null, tier = null;
         if (args.tier) {
           tier = String(args.tier);
-          const t = cfg.team?.tiers?.[tier];
+          const t = activeTiers()[tier];
           if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
-          const names = Object.keys(cfg.team.tiers), top = names.indexOf(cfg.team.maxTier);
+          const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
           if (top >= 0 && names.indexOf(tier) > top) throw new Error(`tier "${tier}" is above the top tier allowed (${cfg.team.maxTier}) - use --tier ${names.slice(0, top + 1).join(' or ')}`);
           const maxWorkers = cfg.team?.maxWorkers || 4;
           const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
@@ -4323,8 +4414,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const team = cfg.team || {};
         if (!team.enabled) return { enabled: false };
         const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
-        const names = Object.keys(team.tiers || {}), top = names.indexOf(team.maxTier);
-        const tiers = top < 0 ? team.tiers || {} : Object.fromEntries(names.slice(0, top + 1).map(n => [n, team.tiers[n]]));
+        const names = Object.keys(activeTiers()), top = names.indexOf(team.maxTier);
+        const tiers = top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]]));
         return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers };
       }
       case 'read': {

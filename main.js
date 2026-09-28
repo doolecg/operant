@@ -16,10 +16,10 @@ const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
 const { createUsage } = require('./usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
-const { createCodex, createGemini } = require('./otherAgents');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
+const teamTiers = require('./team-tiers');
 const agentBrief = require('./agent-brief');
 const agentSetup = require('./agent-setup');
 const memory = require('./memory');
@@ -137,9 +137,7 @@ const DEFAULT_CONFIG = {
   // Terminal AI CLIs. Any command that runs in a terminal works; tiles run it through the shell.
   agents: [
     { id: 'claude', name: 'Claude Code', command: 'claude', args: [], install: 'npm i -g @anthropic-ai/claude-code', icon: '✻' },
-    { id: 'codex', name: 'OpenAI Codex', command: 'codex', args: [], install: 'npm i -g @openai/codex', icon: '◎' },
     { id: 'opencode', name: 'OpenCode', command: 'opencode', args: [], install: 'npm i -g opencode-ai', icon: '▣' },
-    { id: 'gemini', name: 'Gemini CLI', command: 'gemini', args: [], install: 'npm i -g @google/gemini-cli', icon: '✦' },
   ],
   defaultAgent: 'claude',          // what Alt+Enter, the master and Explorer's entry open
   onboarded: false,               // false until the first-run tour is finished or skipped
@@ -265,7 +263,17 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
 } // a BOM from Notepad or PowerShell would fail the parse
 // team is nested (tiers keyed by name), so a user override of just `team.enabled` shouldn't drop
 // the default tiers - same idea as keybinds below.
-const merged = () => ({ ...DEFAULT_CONFIG, ...user,
+// teamTiers is derived, never saved: the tiers for the default agent (team-tiers.js), which for
+// OpenCode depend on the models it can reach (ocModels, filled in by scanOpencodeModels).
+let ocModels = null;
+const withTiers = c => ({ ...c, teamTiers: teamTiers.activeTiers({ ...c, isOpenCode, models: ocModels }) });
+// Codex and Gemini CLI are no longer built in: drop them from a saved agents list.
+const dropRemoved = u => {
+  if (!Array.isArray(u.agents)) return u;
+  const agents = u.agents.filter(a => a && a.id !== 'codex' && a.id !== 'gemini');
+  return { ...u, agents, ...(u.defaultAgent === 'codex' || u.defaultAgent === 'gemini' ? { defaultAgent: 'claude' } : {}) };
+};
+const merged = () => withTiers({ ...DEFAULT_CONFIG, ...dropRemoved(user),
   keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) },
   team: { ...DEFAULT_CONFIG.team, ...(user.team || {}), tiers: { ...DEFAULT_CONFIG.team.tiers, ...(user.team?.tiers || {}) } },
 });
@@ -296,6 +304,7 @@ ipcMain.handle('config:set', (e, patch) => {
   if ('planLimits' in patch || 'planLimitAlerts' in patch || 'tokenUsage' in patch) pollLimits();
   if ('installSkill' in patch) syncSkill();
   if ('theme' in patch || 'accent' in patch) opencodeTheme.writeTheme(config);
+  if ('agents' in patch || 'defaultAgent' in patch) scanOpencodeModels();
   // Other Operant windows pick the change up live.
   for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
   return config;
@@ -318,10 +327,8 @@ const agentWindow = () => {
   return (alive(lastFocused) && withMaster.includes(lastFocused) && lastFocused) || withMaster[0];
 };
 const winOf = e => BrowserWindow.fromWebContents(e.sender);
-const sessionOwner = new Map(); // Claude --session-id -> window (also holds OpenCode's oc:<id> and Codex/Gemini's <kind>:<id>)
+const sessionOwner = new Map(); // Claude --session-id -> window (also holds OpenCode's oc:<id>)
 const sessionOpenTime = new Map(); // same keys -> when its tile opened (tile token counting starts here)
-// Codex/Gemini CLI tiles waiting for their session file to be spotted by cwd (otherAgents.js), FIFO per kind.
-let otherAgentPending = [];
 // Windows only lets a background app take the foreground in some cases; briefly going
 // always-on-top gets the window in front even when it doesn't.
 // Test runs (OPERANT_BACKGROUND=1) open behind other windows and never take focus.
@@ -575,6 +582,17 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+// OpenCode's model list (for its team tiers). Only runs while the default agent is OpenCode.
+async function scanOpencodeModels() {
+  const agent = config.agents.find(a => a.id === config.defaultAgent);
+  if (!agent || !isOpenCode(agent)) return;
+  const r = await run(await resolveExe(String(agent.command).trim().split(/\s+/)[0]), ['models', '--verbose'], { env: await withFreshPath({ ...process.env }) });
+  if (r.code !== 0) { logLine('opencode models failed: ' + (r.stderr || r.code)); return; }
+  ocModels = teamTiers.parseModels(r.stdout);
+  config.teamTiers = withTiers(config).teamTiers;
+  broadcast('team:tiers', config.teamTiers);
+}
+
 // execFile('opencode', ...) with a `cwd` option set fails ENOENT on Windows for PATH-only (shim)
 // executables - a real Node/libuv quirk, not a missing-PATH problem (works fine with no cwd, or
 // with the full path). Resolve to the full path first so item 35's cwd-scoped run doesn't hit it.
@@ -786,14 +804,8 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   await controlReady;
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
-  const exeBase = agent ? path.basename(String(agent.command).trim().split(/\s+/)[0]).replace(/\.(exe|cmd|ps1)$/i, '').toLowerCase() : null;
   const resuming = !!(agent && isClaude(agent) && /^[0-9a-f-]{36}$/i.test(resume || '') && hasTranscript(resume));
   const sessionId = agent && isClaude(agent) ? (resuming ? resume : crypto.randomUUID()) : null;
-  // Codex and Gemini CLI don't take an explicit session id from Operant, so a made-up one (like
-  // OpenCode's oc:<id>) is registered up front and matched to their own session file by cwd, once
-  // that file's token reader (otherAgents.js) sees it (see the otherAgentPending queue below).
-  const otherKind = !sessionId && !isOpenCode(agent || {}) && (exeBase === 'codex' || exeBase === 'gemini') ? exeBase : null;
-  const otherId = otherKind ? `${otherKind}:${id}` : null;
   const dir = cwd && fs.existsSync(cwd) ? cwd : config.defaultCwd;
   const proj = config.projectDefaults?.[projectOf(dir)] || {};
   const startup = String(proj.startup || '').trim();
@@ -826,12 +838,12 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
       return `'${s.replace(/'/g, "''")}'`;
     };
     const extra = String(proj.args || '').trim().split(/\s+/).filter(Boolean);
-    // Claude Code and Codex take the prompt positionally, OpenCode as --prompt, Gemini as -i;
+    // Claude Code takes the prompt positionally, OpenCode as --prompt;
     // anything else (a custom agent) also gets it positional, appended after the other args.
-    const promptArgs = !prompt ? [] : isOpenCode(agent) ? ['--prompt', prompt] : exeBase === 'gemini' ? ['-i', prompt] : [prompt];
+    const promptArgs = !prompt ? [] : isOpenCode(agent) ? ['--prompt', prompt] : [prompt];
     // Item 43: Claude Code gets the brief on every launch, including resumed/reopened tiles —
     // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
-    // own env below; Codex and Gemini CLI have no equivalent flag, so they're skipped.
+    // own env below; other agents have no equivalent flag, so they're skipped.
     // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
     const rules = config.shareSetup ? agentBrief.mainRulesText(config.defaultAgent, 'claude') : '';
     const briefText = [config.briefAgents && agentBrief.BRIEF, rules].filter(Boolean).join('\n\n');
@@ -896,6 +908,13 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
       base: envBase.OPENCODE_CONFIG_CONTENT, cwd: dir, userDataDir: AGENT_SETUP_DIR, config,
     });
   }
+  // OpenCode's TUI has no effort flag: a tier's effort becomes the build agent's model variant,
+  // which OpenCode applies only while that agent runs its configured model (the same -m model).
+  if (isOc && model && effort) {
+    let oc = {}; try { oc = JSON.parse(envBase.OPENCODE_CONFIG_CONTENT || '{}'); } catch {}
+    oc.agent = { ...(oc.agent || {}), build: { ...(oc.agent?.build || {}), model: String(model), variant: String(effort) } };
+    envBase.OPENCODE_CONFIG_CONTENT = JSON.stringify(oc);
+  }
   const env = await withFreshPath(envBase);
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];
@@ -916,16 +935,11 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   ptys.set(id, p);
   if (sessionId) { sessionOwner.set(sessionId, owner); sessionOpenTime.set(sessionId, Date.now()); }
   if (ocPort) opencode.watch(id, ocPort, owner);
-  if (otherId) {
-    sessionOwner.set(otherId, owner); sessionOpenTime.set(otherId, Date.now());
-    otherAgentPending.push({ kind: otherKind, otherId, owner, cwd: dir, at: Date.now() });
-  }
   p.onData(data => sendTo(owner, 'pty:data', { id, data }));
   p.onExit(({ exitCode }) => {
     ptys.delete(id); opencode.unwatch(id); sendTo(owner, 'pty:exit', { id, exitCode });
-    if (otherId) { otherAgentPending = otherAgentPending.filter(x => x.otherId !== otherId); sessionOwner.delete(otherId); sessionOpenTime.delete(otherId); }
   });
-  return { id, sessionId: ocPort ? `oc:${id}` : otherId || sessionId, cwd: dir, agent };
+  return { id, sessionId: ocPort ? `oc:${id}` : sessionId, cwd: dir, agent };
 });
 
 ipcMain.on('pty:write', (_e, { id, data }) => ptys.get(id)?.write(data));
@@ -1263,7 +1277,7 @@ ipcMain.on('update:install', async () => {
 
 // ---------------------------------------------------------------------- hub
 // Operant's hub of skills and rules (hub.js). The audit is read-only and runs at startup and every
-// few hours; it only badges the Tidy agents button. Fixes happen when the user ticks and applies them.
+// few hours; it only badges the Tidy agents row in the quick menu. Fixes happen when the user ticks and applies them.
 
 const HUB_DIR = path.join(app.getPath('userData'), 'hub');
 const HUB_CLAUDE_DIR = process.env.OPERANT_CLAUDE_DIR || path.join(os.homedir(), '.claude');
@@ -1284,7 +1298,7 @@ ipcMain.handle('hub:apply', (_e, ids) => {
   try {
     const r = hub.apply({ ...hubArgs(), ids: Array.isArray(ids) ? ids : [] });
     if (r.done?.length && !r.errors?.length) backupRun(true);
-    return { ...r, state: hubState() };
+    return { ...r, cwd: os.homedir(), state: hubState() };
   }
   catch (e) { return { done: [], errors: [{ error: String(e.message || e) }], state: hubState() }; }
 });
@@ -1357,32 +1371,6 @@ const opencode = createOpenCode({
 });
 ipcMain.handle('opencode:abort', (_e, { ptyId }) => opencode.abort(ptyId));
 ipcMain.handle('opencode:summarize', (_e, { ptyId }) => opencode.summarize(ptyId));
-
-// ------------------------------------------------------- Codex / Gemini CLI usage (otherAgents.js)
-// Neither takes an explicit session id, so their session file is matched to the tile that started
-// it (otherAgentPending, filled in pty:create) by cwd, the first time that file's cwd is seen.
-
-const otherFileOwner = new Map(); // rollout/session file -> { otherId, project }, once matched
-function matchOtherAgent(kind, file, fileCwd) {
-  if (otherFileOwner.has(file) || !fileCwd) return;
-  const norm = p => String(p).replace(/[\\/]+$/, '').toLowerCase();
-  const i = otherAgentPending.findIndex(x => x.kind === kind && norm(x.cwd) === norm(fileCwd));
-  if (i < 0) return;
-  const [entry] = otherAgentPending.splice(i, 1);
-  otherFileOwner.set(file, { otherId: entry.otherId, project: path.basename(fileCwd) || kind });
-}
-function otherAgentUsage(file, ev) {
-  const m = otherFileOwner.get(file);
-  const owner = m && sessionOwner.get(m.otherId);
-  if (!owner) return;
-  if (config.contextBadge && ev.ctxMax) sendTo(owner, 'context', { sessionId: m.otherId, tokens: ev.ctxTokens, max: ev.ctxMax, model: ev.model || null });
-  if (ev.last) {
-    addTileTokens(m.otherId, owner, ev.last, ev.t, false);
-    usage.addEvent(ev.t, ev.last.input, ev.last.output, ev.last.cacheWrite, ev.last.cacheRead, m.project);
-  }
-}
-createCodex({ onSession: (file, cwd) => matchOtherAgent('codex', file, cwd), onUsage: otherAgentUsage }).start();
-createGemini({ onSession: (file, cwd) => matchOtherAgent('gemini', file, cwd), onUsage: otherAgentUsage }).start();
 
 // Claude plan limits (the 5-hour session and the week), as Claude Code's /usage shows them: asked of
 // Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, every 10 minutes, or
@@ -1612,9 +1600,13 @@ function slimEntry(o) {
   if (o.type !== 'user' && o.type !== 'assistant') return null;
   const c = o.message?.content;
   const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+  const u = o.type === 'assistant' && o.message?.usage;
   return {
     role: o.type,
     stop: o.message?.stop_reason || null,
+    // For the subagent tile's info bar: model, folder and token use (one message can span several lines, hence id).
+    ...(o.cwd ? { cwd: o.cwd } : {}),
+    ...(u ? { id: o.message.id, model: o.message.model, usage: { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 } } : {}),
     blocks: blocks.map(b => {
       if (b.type === 'text') return { type: 'text', text: b.text };
       if (b.type === 'thinking') return b.thinking ? { type: 'thinking', text: b.thinking } : null;
@@ -1779,6 +1771,7 @@ function createWindow(startDir = null, restore = null) {
     if (config.mediaControls) media.start();
     if (config.tokenUsage) usage.start();
     opencode.start();
+    scanOpencodeModels();
     pollLimits();
   });
   return w;
