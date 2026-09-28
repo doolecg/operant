@@ -125,7 +125,7 @@ team mode (33). In order of how much each should save:
 - [ ] **36. Don't let the prompt cache go cold:** Claude's cache lasts minutes; an agent left idle past it pays
       full price to re-read its whole context on the next message. Show a "cache cold" mark on idle tiles, and an
       option to compact big idle contexts before the cache expires (or when you leave the tile for a set time).
-- [ ] **37. Big commands never flood the context:** an optional Claude Code hook (installed with the skill, off
+- [x] **37. Big commands never flood the context:** an optional Claude Code hook (installed with the skill, off
       by default, Settings › Agents) that moves long-running commands (test, build, install, dev servers) from the
       agent's own shell into `operant run` + `wait --errors` automatically, so savings don't depend on the agent
       remembering the skill. OpenCode: the same through its plugin/config if it allows it.

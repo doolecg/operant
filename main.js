@@ -62,6 +62,24 @@ const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 // The file OpenCode's per-process `instructions` config points at (item 43); Claude Code gets the
 // same text inline via --append-system-prompt.
 const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
+// Item 37: the optional PreToolUse hook that reroutes long-running commands (test/build/install)
+// through `operant test`/`operant build`/`operant run`+`wait` instead of the agent's own shell.
+// Off by default; wired into Claude Code's args via --settings when config.longCommandHook is on
+// (see below, next to the --append-system-prompt brief). Written unconditionally at startup, like
+// the brief file, so turning the setting on doesn't need a restart.
+const HOOK_CMD_PATH = path.join(__dirname, 'hooks', 'long-commands.cmd').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+const HOOK_SETTINGS_PATH = path.join(app.getPath('userData'), 'hook-settings.json');
+function writeHookSettings() {
+  try {
+    const content = JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `"${HOOK_CMD_PATH}"` }] }] },
+    });
+    let existing = null;
+    try { existing = fs.readFileSync(HOOK_SETTINGS_PATH, 'utf8'); } catch {}
+    if (existing !== content) fs.writeFileSync(HOOK_SETTINGS_PATH, content);
+  } catch (e) { console.error('hook settings write failed', e.message); }
+}
+writeHookSettings();
 
 // Alt is the "Super" key here: Windows reserves most Win+ combos for itself.
 const DEFAULT_KEYBINDS = {
@@ -118,6 +136,7 @@ const DEFAULT_CONFIG = {
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
+  longCommandHook: false,         // Claude Code hook: reroute long commands (test/build/install) through operant run/wait automatically (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
@@ -669,7 +688,10 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
     // own env below; Codex and Gemini CLI have no equivalent flag, so they're skipped.
     const briefArgs = config.briefAgents && isClaude(agent) ? ['--append-system-prompt', agentBrief.BRIEF] : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
+    // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
+    // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
+    const hookArgs = config.longCommandHook && isClaude(agent) ? ['--settings', HOOK_SETTINGS_PATH] : [];
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
