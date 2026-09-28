@@ -362,13 +362,13 @@ function forwardControl(owner, cmd, args, tile, timeoutMs) {
     sendTo(owner, 'control', { reqId, cmd, args, tile });
   });
 }
-ipcMain.on('control:reply', (e, { reqId, ok, result, error }) => {
+ipcMain.on('control:reply', (e, { reqId, ok, result, error, warn }) => {
   const pend = pendingControl.get(reqId);
   if (!pend) return;
   if (pend.owner !== winOf(e)) return; // only the window that was asked may answer
   clearTimeout(pend.timer);
   pendingControl.delete(reqId);
-  pend.resolve({ ok, result, error });
+  pend.resolve({ ok, result, error, warn });
 });
 
 async function controlAsk(owner, args = {}) {
@@ -421,7 +421,7 @@ function startControlServer() {
           // The renderer knows the calling tile's own context size; main owns the Claude plan limits.
           const r = await forwardControl(ownerForTile(tile), cmd, args, tile, 20000);
           if (!r.ok) return reply(400, r);
-          return reply(200, { ok: true, result: { ...r.result, limits: await fetchLimits() } });
+          return reply(200, { ok: true, result: { ...r.result, limits: await fetchLimits() }, warn: r.warn });
         }
         const owner = ownerForTile(tile);
         const timeoutMs = cmd === 'wait' ? (Number(args.timeout) || 600) * 1000 + 5000 : 20000;

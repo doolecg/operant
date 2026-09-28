@@ -50,6 +50,8 @@ On long jobs, check `operant usage` now and then. Keep `.operant/progress.md` cu
 | text | `operant text 5` | a browser tile's visible page text (cheap, no image) |
 | click / type | `operant click 5 "#btn"` / `operant type 5 "#q" hi --enter` | interact with a browser tile |
 | url | `operant url 5` | a browser tile's current url/title |
+| ports | `operant ports` | dev-server URLs found in this window's tiles |
+| watch | `operant watch 7 --errors` | notify on a new error line in a tile (`--grep p`, `--off`, or no id to list) |
 
 `--json` on any command prints raw JSON instead of formatted text. Exit codes: 0 ok, 1 error (stderr), 2 not inside Operant.
 
@@ -78,7 +80,7 @@ Close tiles you opened once merged: `operant close <id>`.
 **Notify when finishing long work:** `operant notify "Tests pass, ready for review"`, then `operant diff` to show pending changes before committing.
 
 ## Web apps
-`operant run "npm run dev" --title dev`, then `operant read <id> --grep localhost` to find the URL, then `operant browse <url>` to open it. Check the UI with `operant shot <id>` and look at the PNG; `operant console <id> --errors` for runtime errors. Prefer `operant text <id> [selector]` over a screenshot when text is enough — it's much cheaper in tokens than an image. `click`/`type` drive simple flows (login, filling a form).
+`operant run "npm run dev" --title dev`, then `operant ports` to find the URL (instead of grepping for it), then `operant browse <url>` to open it. Check the UI with `operant shot <id>` and look at the PNG; `operant console <id> --errors` for runtime errors. Prefer `operant text <id> [selector]` over a screenshot when text is enough — it's much cheaper in tokens than an image. `click`/`type` drive simple flows (login, filling a form). `operant watch <id> --errors` on a dev server tile to get notified instead of polling it.
 
 ## Rules
 - Only open tiles that help the user; close tiles you opened for yourself once done.

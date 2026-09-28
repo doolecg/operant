@@ -3399,6 +3399,72 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   }
   const ERROR_RE = /\b(error|failed|failure|fatal|exception|traceback|panic|warn(ing)?|FAIL)\b|[✗✖]/i;
 
+  // ------------------------------------------------------------ ports & watch
+  // `operant ports`: scan each tile's terminal for local dev-server URLs a build tool printed
+  // (Vite/Next "Local:"/"ready on", "listening on port N", etc). A tile whose process has exited
+  // is already gone from `wins` (pty:exit closes it), so nothing extra to filter there.
+  const PORT_URL_RE = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::\d+)?(?:\/[^\s"'<>]*)?/gi;
+  const PORT_ONLY_RE = /\b(?:listening|ready|running|serving)\b[^\n]{0,30}?\bport\s+(\d{2,5})\b/i;
+  function scanPorts() {
+    const out = [];
+    for (const w of wins.values()) {
+      if (!w.alive || !w.term) continue;
+      const found = new Map(); // port -> url; later lines win (a restarted server can pick a new port)
+      for (const line of cleanLines(rawLines(w, 4000).join('\n'))) {
+        for (const m of line.matchAll(PORT_URL_RE)) {
+          const url = m[0].replace(/^(https?:\/\/)(?:0\.0\.0\.0|\[::1?\])/i, '$1localhost');
+          let port;
+          try { port = new URL(url).port || (url.startsWith('https') ? '443' : '80'); } catch { continue; }
+          found.set(port, url);
+        }
+        const pm = line.match(PORT_ONLY_RE);
+        if (pm) found.set(pm[1], `http://localhost:${pm[1]}`);
+      }
+      for (const [port, url] of found) out.push({ id: w.id, title: w.title, port: Number(port), url });
+    }
+    return out;
+  }
+
+  // `operant watch <id> --errors|--grep p`: notify (Windows toast, via the same `notify()` as
+  // everything else) and flag the watcher's next `operant` call when the target tile prints a new
+  // line matching ERROR_RE or the grep. One notification per burst (debounced ~5s). Ends on its
+  // own once the target tile closes (checked each tick, same pattern as auto-compact above).
+  const watches = new Map(); // target tile id -> { callerId, errors, grep, pos, debounceUntil }
+  const watchPrefix = new Map(); // caller tile id -> pending "[watch] ..." line for its next operant call
+  function tickWatches() {
+    const now = Date.now();
+    for (const [id, st] of [...watches]) {
+      const w = wins.get(id);
+      if (!w || !w.alive) { watches.delete(id); continue; }
+      if (!w.term) continue;
+      const buf = w.term.buffer.active, line = i => buf.getLine(i)?.translateToString(true) ?? '';
+      // Once scrollback is full the buffer stops growing and old lines shift up, so find
+      // where the last line we saw has moved to rather than trusting the stored index.
+      if (st.anchor != null && st.pos > 0 && line(st.pos - 1) !== st.anchor) {
+        let i = st.pos - 2;
+        while (i >= 0 && line(i) !== st.anchor) i--;
+        st.pos = i + 1;
+      }
+      const pos = absPos(w);
+      if (pos <= st.pos) { st.pos = Math.min(st.pos, pos); continue; }
+      const rows = [];
+      for (let i = st.pos; i < pos; i++) rows.push(line(i));
+      st.pos = pos;
+      st.anchor = line(pos - 1);
+      if (now < st.debounceUntil) continue;
+      const cleaned = cleanLines(rows.join('\n'));
+      let re = null;
+      if (st.grep) { try { re = new RegExp(st.grep, 'i'); } catch { re = null; } }
+      const isMatch = l => st.grep ? (re ? re.test(l) : l.toLowerCase().includes(String(st.grep).toLowerCase())) : ERROR_RE.test(l);
+      const hit = cleaned.find(isMatch);
+      if (!hit) continue;
+      st.debounceUntil = now + 5000;
+      notify(w, w.title, hit);
+      watchPrefix.set(st.callerId, `[watch] tile ${id} (${w.title}): ${hit}`);
+    }
+  }
+  setInterval(tickWatches, 1000);
+
   // Per (caller tile, target tile) read cursor, updated on every read/wait of a tile
   // (so `--new` returns only what's happened since the caller's last look, `--new` or not).
   const readCursors = new Map();
@@ -3629,6 +3695,18 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         queueCompact(self);
         return {};
       }
+      case 'ports':
+        return { ports: scanPorts() };
+      case 'watch': {
+        if (args.id == null) return { watches: [...watches].map(([id, st]) => ({ id, errors: !!st.errors, grep: st.grep || null })) };
+        const w = needTile(args.id);
+        if (args.off) { watches.delete(w.id); return { id: w.id, off: true }; }
+        if (!args.errors && !args.grep) throw new Error('--errors or --grep required');
+        if (!self) throw new Error('unknown tile');
+        const pos = absPos(w), anchor = pos && w.term ? (w.term.buffer.active.getLine(pos - 1)?.translateToString(true) ?? '') : null;
+        watches.set(w.id, { callerId: self.id, errors: !!args.errors, grep: args.grep || null, pos, anchor, debounceUntil: 0 });
+        return { id: w.id, watching: true };
+      }
       case 'notify': {
         if (!self) throw new Error('unknown tile');
         if (!args.text) throw new Error('text required');
@@ -3673,11 +3751,14 @@ Double-click to ${name ? 'rename' : 'name'} it`;
 
   operant.onControl(async ({ reqId, cmd, args, tile }) => {
     const self = wins.get(Number(tile));
+    // A watch hit on a tile this caller is watching for shows once on its very next call, of any kind.
+    const warn = self && watchPrefix.get(self.id);
+    if (warn) watchPrefix.delete(self.id);
     try {
       const result = await runControl(cmd, args || {}, self);
-      operant.controlReply({ reqId, ok: true, result });
+      operant.controlReply({ reqId, ok: true, result, warn });
     } catch (e) {
-      operant.controlReply({ reqId, ok: false, error: e.message || String(e) });
+      operant.controlReply({ reqId, ok: false, error: e.message || String(e), warn });
     }
   });
 })();

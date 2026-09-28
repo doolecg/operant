@@ -11,6 +11,7 @@ const POSITIONAL = {
   send: ['id', 'text'],
   browse: ['url'], shot: ['id'], console: ['id'], url: ['id'],
   text: ['id', 'selector'], click: ['id', 'selector'], type: ['id', 'selector', 'text'],
+  ports: [], watch: ['id'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text' };
@@ -45,6 +46,8 @@ function usage() {
   click <id> <selector>          click an element in a browser tile
   type <id> <selector> <text...> [--enter]   type into an element in a browser tile
   url <id>                       a browser tile's current url/title
+  ports                          list dev-server URLs found in this window's tiles
+  watch <id> --errors [--grep p]  notify on a new matching line in a tile (--off to stop, no id to list)
 
   --json prints the raw JSON result instead of formatted text.
   read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines.`);
@@ -130,6 +133,12 @@ function formatResult(cmd, result) {
     case 'console': case 'text': return (result.text || '') + footer(result);
     case 'click': case 'type': return result.ok ? 'ok' : JSON.stringify(result);
     case 'url': return [result.id, result.url, result.title, result.loading ? '[loading]' : ''].filter(x => x !== undefined && x !== '').join('  ');
+    case 'ports': return (result.ports || []).length ? result.ports.map(p => `${p.id}  ${p.title}  ${p.url}`).join('\n') : '(no dev servers found)';
+    case 'watch':
+      if (result.watches) return result.watches.length
+        ? result.watches.map(w => `${w.id}${w.errors ? '  errors' : ''}${w.grep ? `  grep:"${w.grep}"` : ''}`).join('\n')
+        : '(no watches)';
+      return result.off ? `stopped watching tile ${result.id}` : `watching tile ${result.id}`;
     case 'usage': {
       const lines = [result.max
         ? `context: ${result.tokens.toLocaleString()} / ${result.max.toLocaleString()} tokens (${result.pct}%)`
@@ -181,6 +190,8 @@ async function main() {
 
   let body;
   try { body = await res.json(); } catch { body = null; }
+
+  if (body && body.warn) console.error(body.warn);
 
   if (!res.ok || !body || body.ok === false) {
     console.error(`operant: ${body && body.error ? body.error : `request failed (${res.status})`}`);
