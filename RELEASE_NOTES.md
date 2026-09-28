@@ -1,3 +1,27 @@
+# Operant 1.17.0
+
+Operant now asks where you want to work before it opens an agent. New agent terminals follow the tier slider all the way, links open in your own browser, and a few small bugs in Tidy agents and the tour are fixed.
+
+**Install:** download `Operant-1.17.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## New
+- **Choose where to work at startup:** Operant opens on a list of your pinned projects and your default folder, plus *Browse for a folder…*. Pick one and the agent opens there, or click *Start empty* to open nothing. Turn it off in ⚙ Settings › Startup › *Ask where to work on startup*. Opening a folder with Explorer's "Open in Operant" still starts the agent there straight away.
+- **About Operant:** click the Operant name in the top bar for the version, the tour and the GitHub page.
+
+## Changed
+- **New agent terminals use your top tier's agent:** with team mode on, a new agent terminal now starts with the agent and model of the highest tier the slider allows. With the slider on *xsmall* (OpenCode Big Pickle), it opens OpenCode. An agent you pick by name in the launcher stays that agent, on its highest allowed tier.
+- **Links open in your browser:** the in-app browser tile is gone for now. Links, and `operant browse` from agents, open in Windows' default browser, or the one you chose in ⚙ Settings › Startup › *Open links in*. The agent commands that drove the browser tile (`shot`, `console`, `text`, `click`, `type` and `url`) are removed.
+- **Lead agents close finished workers:** once a worker's task is done and the lead has checked its work, the lead closes the worker's tile.
+
+## Fixed
+- **Tidy agents showed *Select all* and *Apply* on its summary page,** and the tour showed *Skip tour* on its last step. They're hidden again.
+- **Tidy agents misread some code blocks:** a line such as ```` ```js ```` inside another code block ended it early, and indented code blocks weren't recognised, so text inside them could be tidied. A file starting with a byte-order mark failed its frontmatter check, and a missing `description:` could be read from the wrong line.
+- **Undo after *Optimise big files*** also forgets that the file was optimised, so it's offered again.
+- **Tidy agents stuck on "Scanning…"** when a scan failed. It now shows the error.
+- **First run** asks where to work after you choose your agent, instead of opening it in your home folder.
+
+---
+
 # Operant 1.16.0
 
 This release makes Tidy agents clean up and slim down your Markdown, names the team tiers, and fits the tiers to your default agent. It also adds a first-run tour, and Operant now supports only Claude Code and OpenCode.
