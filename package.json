@@ -88,6 +88,7 @@
       "shortcutName": "Operant",
       "artifactName": "Operant-${version}.msi"
     },
+    "msiProjectCreated": "build/msi-close-app.js",
     "publish": null
   }
 }
