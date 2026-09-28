@@ -17,6 +17,7 @@ const { createOpenCode, isOpenCode } = require('./opencode');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
+const agentSetup = require('./agent-setup');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
@@ -57,6 +58,9 @@ process.on('unhandledRejection', err => logLine(`unhandledRejection ${err?.stack
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 // Lives in %APPDATA%/Operant so it survives updates (the install dir is replaced).
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
+// Where agent-setup.js keeps generated, per-process-only files (a mirrored skills folder, a
+// --mcp-config file for Claude tiles) — never ~/.claude or ~/.config/opencode.
+const AGENT_SETUP_DIR = path.join(app.getPath('userData'), 'agent-setup');
 
 // Alt is the "Super" key here: Windows reserves most Win+ combos for itself.
 const DEFAULT_KEYBINDS = {
@@ -111,6 +115,7 @@ const DEFAULT_CONFIG = {
   showExternalAgents: true,       // subagents from Claude sessions not started inside Operant
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
+  shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
@@ -637,7 +642,9 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Claude Code and Codex take the prompt positionally, OpenCode as --prompt, Gemini as -i;
     // anything else (a custom agent) also gets it positional, appended after the other args.
     const promptArgs = !prompt ? [] : isOpenCode(agent) ? ['--prompt', prompt] : exeBase === 'gemini' ? ['-i', prompt] : [prompt];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
+    // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
+    const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
+    const quoted = [...[].concat(agent.args || []), ...extra, ...setupArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -669,6 +676,14 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // Selects the operant.json theme (renderer/themes.js) for just this OpenCode process, without
   // touching the user's own ~/.config/opencode/tui.json.
   if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
+  // Folds the main agent's MCP servers, plugin skills and CodeGraph hook into whatever
+  // OPENCODE_CONFIG_CONTENT already carries (brief instructions, rules, other plugin entries),
+  // rather than replacing it. Per process only — never touches ~/.config/opencode.
+  if (isOc) {
+    envBase.OPENCODE_CONFIG_CONTENT = agentSetup.buildOpencodeConfigContent({
+      base: envBase.OPENCODE_CONFIG_CONTENT, cwd: dir, userDataDir: AGENT_SETUP_DIR, config,
+    });
+  }
   const env = await withFreshPath(envBase);
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];

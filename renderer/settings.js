@@ -68,6 +68,9 @@ const Panels = (() => {
       { key: 'installSkill', label: 'Operant skill for agents',
         hint: 'Installs a skill that lets Claude Code and OpenCode use Operant: show you files, run commands in their own tiles, start other agents, ask you questions · the operant command works in every tile',
         type: 'toggle' },
+      { key: 'shareSetup', label: 'Share your main agent\'s setup',
+        hint: 'Rules, MCP servers and skills from your default agent (above) reach every agent you launch, for that process only · never edits your agents\' own config files',
+        type: 'toggle' },
     ]],
     ['Notifications', [
       { key: 'notifications', label: 'Windows notifications', type: 'toggle' },
