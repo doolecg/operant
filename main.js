@@ -142,6 +142,7 @@ const DEFAULT_CONFIG = {
     { id: 'gemini', name: 'Gemini CLI', command: 'gemini', args: [], install: 'npm i -g @google/gemini-cli', icon: '✦' },
   ],
   defaultAgent: 'claude',          // what Alt+Enter, the master and Explorer's entry open
+  onboarded: false,               // false until the first-run tour is finished or skipped
   agentChosen: false,             // false until the first-run "which agent?" prompt is answered
   shell: 'powershell.exe',
   showExternalAgents: true,       // subagents from Claude sessions not started inside Operant

@@ -96,6 +96,7 @@
           <label class="qm-slider"><span>Max workers</span><input type="range" id="qm-workers" min="1" max="16" step="1"><b id="qm-workers-val"></b></label>
           <label class="qm-slider"><span>Top tier</span><input type="range" id="qm-tier" min="0" max="1" step="1"><b id="qm-tier-val"></b></label>
         </div>
+        <button class="qm-row" id="qm-tour"><span>Take the tour</span><span class="qm-chev">›</span></button>
         <button class="qm-row" id="qm-settings"><span>Settings…</span><span class="qm-chev">›</span></button>
       </div>
     </div>
@@ -120,6 +121,19 @@
       <div class="card-head notif-head"><h2>Tidy agents</h2><button class="link" id="hub-all">Select all</button><button class="link hidden" id="hub-undo">Undo last apply</button></div>
       <div class="card-body" id="hub-body"></div>
       <div class="card-foot"><span class="grow" id="hub-note"></span><button class="btn primary" id="hub-apply">Apply</button></div>
+    </div>
+  </div>
+
+  <div id="tour" class="overlay hidden">
+    <div class="card narrow">
+      <div class="card-head"><h2><span class="logo">◈</span> <span class="t"></span></h2><span class="sub"></span></div>
+      <div class="card-body"></div>
+      <div class="card-foot">
+        <button class="btn" id="tour-skip">Skip tour</button>
+        <span class="grow"></span>
+        <button class="btn" id="tour-back">Back</button>
+        <button class="btn primary" id="tour-next">Next</button>
+      </div>
     </div>
   </div>
 
@@ -189,6 +203,7 @@
   <script src="highlight.js"></script>
   <script src="digest.js"></script>
   <script src="settings.js"></script>
+  <script src="tour.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -2278,6 +2278,9 @@
     if (recording) { e.preventDefault(); e.stopPropagation(); return recordKey(e); }
     const panel = openPanel();
     if (e.key === 'Escape' && panel) { closePanels(); e.preventDefault(); return; }
+    if (panel === 'tour' && !e.ctrlKey && !e.altKey && (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === 'ArrowLeft')) {
+      e.preventDefault(); return e.key === 'ArrowLeft' ? $('#tour-back').click() : $('#tour-next').click();
+    }
     if (panel === 'launcher' && !e.ctrlKey && !e.altKey && /^(Digit|Numpad)[1-9]$/.test(e.code)) {
       e.preventDefault(); return launch(+e.code.at(-1) - 1, e.shiftKey);
     }
@@ -2297,7 +2300,7 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub', 'tour'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
     if (name === 'picker') return openPicker(pick.mode || 'commands');
@@ -2311,12 +2314,14 @@
     else if (name === 'notifications') { renderNotifications(); markAllNotifsRead(); }
     else if (name === 'board') { $('#board').classList.remove('hidden'); renderBoard(); }
     else if (name === 'hub') scanHub();
+    else if (name === 'tour') { tourStep = 0; renderTour(); }
     else renderSettings();
     $('#' + name).classList.remove('hidden');
     $('#' + name + ' .card-body').scrollTop = 0;
     document.activeElement?.blur();
   }
   function closePanels(refocus = true) {
+    if (openPanel() === 'tour') { $('#tour').classList.add('hidden'); endTour(); }
     recording = null;
     welcome = null; // dismissed without choosing: ask again next start
     PANELS.forEach(p => $('#' + p).classList.add('hidden'));
@@ -2327,6 +2332,20 @@
     const closeBtn = $('#' + p).querySelector('[data-close]');
     if (closeBtn) closeBtn.onclick = () => closePanels();
   }
+  // First-run tour: skipping or finishing (or Esc) marks it done, then startup carries on with the agent question.
+  let tourStep = 0, tourThen = null;
+  const renderTour = () => Tour.render($('#tour'), tourStep, k);
+  function endTour() {
+    if (!cfg.onboarded) { cfg.onboarded = true; save({ onboarded: true }); }
+    const then = tourThen;
+    tourThen = null;
+    if (then) setTimeout(then, 0);
+  }
+  $('#tour-next').onclick = () => { if (tourStep >= Tour.render($('#tour'), tourStep, k) - 1) closePanels(); else { tourStep++; renderTour(); } };
+  $('#tour-back').onclick = () => { if (tourStep > 0) { tourStep--; renderTour(); } };
+  $('#tour-skip').onclick = () => closePanels();
+  $('#tour').addEventListener('click', e => { const d = e.target.closest('[data-j]'); if (d) { tourStep = +d.dataset.j; renderTour(); } });
+  $('#qm-tour').onclick = () => togglePanel('tour');
   $('#btn-keys').onclick = () => togglePanel('keys');
   $('#btn-new').onclick = () => togglePanel('launcher');
   $('#btn-gear').onclick = () => togglePanel('quickmenu');
@@ -3854,12 +3873,16 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   if (startDir) lastCwd = startDir;
   // After an update (or on every start, in Settings) the tiles you had come back.
   const snap = await operant.takeSession();
+  const startFresh = () => {
+    if (!cfg.agentChosen && cfg.agents.length > 1) {
+      togglePanel('launcher');
+      welcome = { dir: startDir || cfg.defaultCwd };
+      renderLauncher();
+    } else if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
+  };
   if (snap && await restore(snap)) { if (startDir) newTerminal('ai', startDir); }
-  else if (!cfg.agentChosen && cfg.agents.length > 1) {
-    togglePanel('launcher');
-    welcome = { dir: startDir || cfg.defaultCwd };
-    renderLauncher();
-  } else if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
+  else if (!cfg.onboarded) { tourThen = startFresh; togglePanel('tour'); }
+  else startFresh();
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
   // linkBrowser: 'tile' sends links here instead of opening them outside Operant.
   operant.on('browse', url => openBrowser(url, { near: focused() }));

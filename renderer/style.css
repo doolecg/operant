@@ -875,3 +875,14 @@ button.u-tile:hover { border-color: rgba(var(--ink-rgb), .2); }
 .splitter:hover::after, .splitter.drag::after { opacity: .6; }
 body.split-h, body.split-h * { cursor: col-resize !important; user-select: none; }
 body.split-v, body.split-v * { cursor: row-resize !important; user-select: none; }
+
+/* first-run tour */
+.tour-step { font-size: 13.5px; line-height: 1.6; min-height: 190px; padding-top: 6px; }
+.tour-step p { margin: 0 0 10px; }
+.tour-step ul { margin: 0; padding-left: 18px; }
+.tour-step li { margin: 5px 0; }
+.tour-step code { font: 12px var(--mono); background: rgba(var(--ink-rgb), .08); padding: 1px 6px; border-radius: 5px; }
+.tour-dots { display: flex; gap: 7px; justify-content: center; padding: 8px 0 6px; }
+.tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(var(--ink-rgb), .18); cursor: pointer; }
+.tour-dots i.on { background: var(--accent); }
+.btn:disabled { opacity: .4; pointer-events: none; }
