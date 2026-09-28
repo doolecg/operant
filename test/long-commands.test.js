@@ -46,3 +46,10 @@ test('leaves commands already using operant alone', () => {
   assert.strictEqual(classify('operant test npm test'), null);
   assert.strictEqual(classify('npm test # via operant'), null);
 });
+
+test('rewrites for PowerShell too, Claude Code\'s Windows shell tool', () => {
+  assert.strictEqual(rewriteCommand('npm test', 'powershell'), 'operant test "npm test"');
+  assert.strictEqual(rewriteCommand('cargo build', 'powershell'), 'operant build "cargo build"');
+  const rewritten = rewriteCommand('npm install', 'powershell');
+  assert.match(rewritten, /^\$id = \(operant run "npm install" --title "npm-install"\) -split ' ' \| Select-Object -Last 1; operant wait \$id --errors$/);
+});
