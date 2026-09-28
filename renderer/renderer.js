@@ -32,7 +32,7 @@
   function renderHints() {
     const k = a => bindLabel(a) ? `<kbd>${esc(Panels.pretty(bindLabel(a)))}</kbd>` : '';
     workspaces.forEach((ws, i) => {
-      ws.hint.innerHTML = `<div class="big">◈</div><div class="headline">What should we build?</div><div>Workspace ${i + 1} is empty</div>
+      ws.hint.innerHTML = `<div class="big">◈</div><div class="headline">What should we build?</div><div>${esc(wsName(i) || `Workspace ${i + 1}`)} is empty</div>
         <div class="row"><span>${k('newAgent')} new ${esc(defaultAgent()?.name || 'agent')}</span><span>${k('pickAgent')} pick an agent…</span>
         <span>${k('newAgentIn')} agent in folder…</span><span>${k('help')} keybinds</span><span>${k('settings')} settings</span></div>
         <div>Claude Code subagents open here in their own tiles as soon as they start.</div>`;
@@ -149,7 +149,7 @@
   function scheduleFit(w, delay) {
     clearTimeout(w.fitTimer);
     w.fitTimer = setTimeout(() => {
-      if (!w.alive) return;
+      if (!w.alive || !w.term) return;
       try { w.fit.fit(); } catch {}
       if (w.ptyId) operant.resizePty(w.ptyId, w.term.cols, w.term.rows);
     }, delay);
@@ -217,17 +217,17 @@
     for (const [k, v] of Object.entries(vars)) root.setProperty(k, v);
     document.body.className = `wp-${cfg.wallpaper} border-${cfg.borderAnimation}`;
     applySidebar();
-    for (const w of wins.values()) Object.assign(w.term.options, termOptions(w.kind));
+    for (const w of wins.values()) if (w.term) Object.assign(w.term.options, termOptions(w.kind));
     workspaces.forEach((_, i) => layout(i, i !== current));
   }
 
   function mount(w, wsIndex, target, { focus = true } = {}) {
     insert(w, wsIndex, target);
-    w.term.open(w.el.querySelector('.term'));
-    w.term.textarea?.addEventListener('focus', () => { if (workspaces[w.ws].focused !== w.id) focusWin(w, false); });
+    if (w.term) w.term.open(w.el.querySelector('.term'));
+    w.term?.textarea?.addEventListener('focus', () => { if (workspaces[w.ws].focused !== w.id) focusWin(w, false); });
     // Keys never fall into nothing: if the focused tile loses the keyboard to no other control
     // (a tile closing, a redraw, a click on empty space), it takes it straight back.
-    w.term.textarea?.addEventListener('blur', e => {
+    w.term?.textarea?.addEventListener('blur', e => {
       if (e.relatedTarget) return;
       setTimeout(() => {
         if (focused() === w && document.hasFocus() && document.activeElement === document.body && !openPanel()) w.term.focus();
@@ -242,7 +242,7 @@
       if (wsIndex !== current && focus) switchWorkspace(wsIndex);
       focusWin(w, focus);
     }
-    try { w.fit.fit(); } catch {}
+    try { w.fit?.fit(); } catch {}
   }
 
   function setTitle(w, t) { w.title = t; w.el.querySelector('.title').textContent = t; if (w.el.classList.contains('focused')) refreshBar(); }
@@ -251,15 +251,17 @@
   const defaultAgent = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
 
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
-  async function newTerminal(kind, cwd, { master = false, agentId = cfg.defaultAgent, run, title } = {}) {
+  // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
+  async function newTerminal(kind, cwd, { master = false, agentId = cfg.defaultAgent, run, title, resume, ws = current, focus = true, edit, icon } = {}) {
     const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
     const name = title || (agent ? agent.name : 'Shell');
-    const w = makeWin(kind, name, agent?.icon || '●');
-    w.agentName = name;
+    const w = makeWin(kind, name, icon || agent?.icon || '●');
+    Object.assign(w, { agentName: name, agentConf: agent?.id, customTitle: title, run, edit });
+    if (edit && /vim/i.test(editorName || '')) w.el.querySelector('.inner').insertAdjacentHTML('beforeend', VIM_KEYS);
     if (master) { w.master = true; w.el.classList.add('master'); }
-    mount(w, current, null);
-    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run });
+    mount(w, ws, null, { focus });
+    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run, resume, edit });
     w.ptyId = info.id;
     w.sessionId = info.sessionId;
     w.cwd = info.cwd;
@@ -272,6 +274,176 @@
     w.term.onTitleChange(t => t && !/\.exe$/i.test(t.trim()) && setTitle(w, t));
     w.term.onBell(() => { if (kind === 'ai') notify(w, `${name} needs your attention`, shortPath(w.cwd || '')); });
     scheduleFit(w, 50);
+    saveSession();
+    return w;
+  }
+
+  // ------------------------------------------------------------- files
+  // A file in the editor tile (vim or whatever Settings › Files picks; the tile closes when you quit
+  // it), or in the viewer tile: Markdown rendered, other text with line numbers, reloaded when it changes.
+
+  let editorName = null;
+  const refreshEditorName = () => operant.editorName().then(n => { editorName = n; });
+  refreshEditorName();
+  const dirOf = p => String(p).replace(/[\\/][^\\/]*$/, '');
+  const isMarkdown = p => /\.(md|markdown|mdx|mdown)$/i.test(p);
+
+  // Vim shows no help of its own, so its tiles get the essentials along the bottom.
+  const VIM_KEYS = '<div class="keys-foot">' + [['i', 'insert'], ['Esc', 'stop inserting'], [':w', 'save'], [':q', 'quit'], [':wq', 'save + quit'],
+    [':q!', 'quit, no save'], ['u', 'undo'], ['Ctrl+R', 'redo'], ['/text', 'find'], ['n', 'next'], ['dd', 'cut line'], ['yy', 'copy line'], ['p', 'paste'],
+    ['gg / G', 'top / end']].map(([k, d]) => `<span><kbd>${k}</kbd>${d}</span>`).join('') + '</div>';
+
+  function openEditor(file, near) {
+    return newTerminal('shell', dirOf(file), { edit: file, title: `${editorName || 'Editor'} · ${baseName(file)}`, icon: '✎', ws: near?.ws ?? current });
+  }
+
+  function openViewer(file) {
+    const id = nextId++;
+    const el = document.createElement('div');
+    el.className = 'win view opening';
+    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">▤</span><span class="title"></span><span class="badge"></span>
+      <span class="view-acts"><button data-v="source" title="Show the Markdown source">Source</button><button data-v="edit" title="Edit">✎</button>
+      <button data-v="open" title="Open with Windows">↗</button></span><button class="x" title="Close">✕</button></div>
+      <div class="view-page" tabindex="-1"><div class="view-body"></div></div></div>`;
+    const w = { id, kind: 'view', el, term: null, file, title: baseName(file), alive: true, ws: current, lastActivity: Date.now(), closeIn: null,
+      cwd: dirOf(file), page: el.querySelector('.view-page'), source: false, mtime: null };
+    el.querySelector('.title').textContent = w.title;
+    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); closeWin(w); });
+    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
+    el.querySelector('.view-acts').addEventListener('click', e => {
+      const b = e.target.closest('[data-v]');
+      if (!b) return;
+      if (b.dataset.v === 'source') { w.source = !w.source; drawView(w); }
+      else if (b.dataset.v === 'edit') openEditor(w.file, w);
+      else operant.openPath(w.file);
+    });
+    w.page.addEventListener('click', e => {
+      const a = e.target.closest('[data-href]');
+      if (!a) return;
+      e.preventDefault();
+      const href = a.dataset.href;
+      if (/^https?:\/\//i.test(href)) return operant.openLink(href);
+      if (href.startsWith('#')) return w.page.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ behavior: 'smooth' });
+      const target = resolvePath(dirOf(w.file), decodeURIComponent(href.split('#')[0]));
+      operant.isDir(target).then(d => { if (d) return; w.file = target; w.cwd = dirOf(target); setTitle(w, baseName(target)); updateBadge(w); w.page.scrollTop = 0; loadView(w); });
+    });
+    wins.set(id, w);
+    mount(w, current, null);
+    updateBadge(w);
+    loadView(w);
+    saveSession();
+    return w;
+  }
+
+  function resolvePath(dir, rel) {
+    if (/^[a-z]:[\\/]/i.test(rel) || rel.startsWith('\\\\')) return rel;
+    const parts = dir.split(/[\\/]/);
+    for (const seg of rel.split(/[\\/]/)) { if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg); }
+    return parts.join('\\');
+  }
+
+  async function loadView(w) {
+    const r = await operant.readFile(w.file);
+    if (!w.alive) return;
+    w.mtime = r.mtime ?? null; w.text = r.text; w.error = r.error;
+    drawView(w);
+  }
+
+  function drawView(w) {
+    const body = w.el.querySelector('.view-body'), md = isMarkdown(w.file) && !w.source, top = w.page.scrollTop;
+    const btn = w.el.querySelector('[data-v="source"]');
+    btn.hidden = !isMarkdown(w.file);
+    btn.textContent = w.source ? 'Rendered' : 'Source';
+    btn.title = w.source ? 'Show it rendered' : 'Show the Markdown source';
+    w.el.classList.toggle('md', md);
+    if (w.error) body.innerHTML = `<div class="view-msg">${esc(w.error)}<br><button class="btn" data-v2="open">Open with Windows</button></div>`;
+    else if (md) body.innerHTML = `<article class="md-doc">${MdView.render(w.text)}</article>`;
+    else {
+      const lines = w.text.split('\n'), shown = lines.slice(0, 20000);
+      body.innerHTML = `<pre class="view-src">${shown.map((l, i) => `<span class="ln">${i + 1}</span>${esc(l.replace(/\r$/, ''))}`).join('\n')}</pre>`
+        + (lines.length > shown.length ? `<div class="view-msg">Showing the first ${shown.length.toLocaleString()} of ${lines.length.toLocaleString()} lines</div>` : '');
+    }
+    body.querySelector('[data-v2="open"]')?.addEventListener('click', () => operant.openPath(w.file));
+    w.page.scrollTop = top;
+  }
+
+  // Viewers follow their file as it changes (an agent writing it, or the editor tile saving it).
+  setInterval(async () => {
+    for (const w of wins.values()) {
+      if (w.kind !== 'view' || !w.alive || w.loading) continue;
+      w.loading = true;
+      const m = await operant.fileMtime(w.file);
+      w.loading = false;
+      if (m !== w.mtime) loadView(w);
+    }
+  }, 1500);
+
+  // ------------------------------------------------------------- session
+  // Main keeps each window's tiles and layout so they can be reopened after an update. Subagent
+  // tiles and one-off command tiles (CodeGraph) aren't kept.
+
+  const keepTile = w => w.alive && w.kind !== 'agent' && w.kind !== 'view' && !w.run && !w.edit;
+  function snapshot() {
+    const tiles = [];
+    const ser = n => {
+      if (!n) return null;
+      if (n.win) {
+        if (!keepTile(n.win)) return null;
+        const w = n.win;
+        tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master, sessionId: w.sessionId });
+        w.snapIndex = tiles.length - 1;
+        return { tile: w.snapIndex };
+      }
+      const a = ser(n.a), b = ser(n.b);
+      return a && b ? { split: n.split, ratio: n.ratio, a, b } : a || b;
+    };
+    const idx = id => { const w = wins.get(id); return w && keepTile(w) ? w.snapIndex : null; };
+    const spaces = workspaces.map(ws => {
+      const tree = ser(ws.tree);
+      return { layout: ws.layout, mfact: ws.mfact, tree, focused: tree ? idx(ws.focused) : null, fullscreen: tree ? idx(ws.fullscreen) : null };
+    });
+    return { current, tiles, workspaces: spaces };
+  }
+  let sessionT, lastSnap = '';
+  function saveSession() {
+    clearTimeout(sessionT);
+    sessionT = setTimeout(() => {
+      const snap = snapshot(), sig = JSON.stringify(snap);
+      if (sig !== lastSnap) { lastSnap = sig; operant.saveSession(snap); }
+    }, 300);
+  }
+
+  // Reopens a snapshot's tiles in their workspaces, then puts back each layout exactly.
+  async function restore(snap) {
+    const made = await Promise.all(snap.tiles.map((t, i) => {
+      const ws = snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`));
+      return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws: Math.max(ws, 0), focus: false });
+    }));
+    const build = n => {
+      if (!n) return null;
+      if ('tile' in n) { const w = made[n.tile]; return w?.alive ? findLeaf(workspaces[w.ws].tree, w) && { win: w } : null; }
+      const a = build(n.a), b = build(n.b);
+      return a && b ? { split: n.split, ratio: n.ratio, a, b } : a || b;
+    };
+    snap.workspaces.forEach((s, i) => {
+      const ws = workspaces[i];
+      if (!s || !ws) return;
+      ws.layout = s.layout || ws.layout;
+      ws.mfact = s.mfact || ws.mfact;
+      if (!s.tree) return;
+      const before = wsWins(i);
+      ws.tree = build(s.tree) || ws.tree;
+      // Anything that opened meanwhile (a subagent) keeps a place beside the restored layout.
+      for (const w of before) if (!findLeaf(ws.tree, w)) ws.tree = { split: 'h', ratio: 0.5, a: ws.tree, b: { win: w } };
+      const at = k => (k != null && made[k]?.alive && made[k].ws === i ? made[k].id : null);
+      ws.fullscreen = at(s.fullscreen);
+      const f = at(s.focused);
+      if (f != null) ws.focused = f;
+      for (const w of wins.values()) if (w.ws === i) w.el.classList.toggle('focused', w.id === ws.focused);
+      layout(i, true);
+    });
+    if (snap.current !== current) switchWorkspace(snap.current); else { const f = focused(); if (f) focusWin(f); else refreshBar(); }
+    return made.some(Boolean);
   }
 
   function shortPath(p) { const parts = p.split(/[\\/]/).filter(Boolean); return parts.slice(-2).join('\\'); }
@@ -287,7 +459,7 @@
     if (w.sessionId) sessionWin.delete(w.sessionId);
     if (w.agentId) agentWin.delete(w.agentId);
     w.el.classList.add('closing');
-    setTimeout(() => { w.term.dispose(); w.el.remove(); }, 320);
+    setTimeout(() => { w.term?.dispose(); w.el.remove(); }, 320);
     wins.delete(w.id);
     layout(wsIndex);
     if (wasFocused) {
@@ -314,14 +486,17 @@
     if (prev) touch(prev);
     touch(w);
     ws.focused = w.id;
+    w.focusedAt = Date.now();
     for (const o of wins.values()) if (o.ws === w.ws) o.el.classList.toggle('focused', o === w);
     if (w.ws !== current) return refreshBar();
     flushBacklog(w);
-    if (grabKeyboard) w.term.focus();
+    if (grabKeyboard) focusKeys(w);
     refreshBar();
   }
 
   const focused = () => wins.get(workspaces[current].focused);
+  // The keyboard goes to a tile's terminal, or to a viewer's page so the arrow keys scroll it.
+  const focusKeys = w => { if (!w) return; if (w.term) w.term.focus(); else w.page?.focus({ preventScroll: true }); };
 
   // ------------------------------------------------------------- pty data
 
@@ -417,7 +592,7 @@
     mount(w, wsIndex, target, { focus: false });
     w.term.write(AgentRender.header(info));
     updateBadge(w);
-    if (wsIndex !== current) toast(`<b>◆ ${esc(info.agentType)}</b> ${esc(info.description)} → workspace ${wsIndex + 1}`, () => { switchWorkspace(wsIndex); focusWin(w); });
+    if (wsIndex !== current) toast(`<b>◆ ${esc(info.agentType)}</b> ${esc(info.description)} → ${esc(wsName(wsIndex) || `workspace ${wsIndex + 1}`)}`, () => { switchWorkspace(wsIndex); focusWin(w); });
     refreshBar();
   });
 
@@ -746,7 +921,7 @@
     recording = null;
     welcome = null; // dismissed without choosing: ask again next start
     PANELS.forEach(p => $('#' + p).classList.add('hidden'));
-    if (refocus) focused()?.term.focus();
+    if (refocus) focusKeys(focused());
   }
   for (const p of PANELS) {
     $('#' + p).addEventListener('mousedown', e => { if (e.target.id === p) closePanels(); });
@@ -804,8 +979,11 @@
     if (LIVE_LAYOUT.has(key)) for (const ws of workspaces) if (!ws.tree) { ws.layout = cfg.defaultLayout; ws.mfact = cfg.masterRatio; }
     if (key === 'agents' || key === 'defaultAgent') renderHints();
     if (key === 'mediaControls') renderMedia();
-    if (key === 'tokenUsage' || key === 'usageSeries') { renderUsagePill(); drawUsage(); }
+    if (key === 'tokenUsage' || key === 'usageSeries' || key === 'tokenBudget') { renderUsagePill(); drawUsage(); }
+    if (key.startsWith('clock')) tick();
+    if (key === 'barTitle' || key === 'workspaceNames') { refreshBar(); renderHints(); }
     if (key === 'sidebarHiddenFiles') dirCache.clear();
+    if (key === 'editor' || key === 'editorCommand') refreshEditorName();
     if (key === 'defaultAgent' && !cfg.agentChosen) { cfg.agentChosen = true; save({ agentChosen: true }); }
     applyAppearance();
   }
@@ -892,22 +1070,64 @@
   // ------------------------------------------------------------ bar
 
   const wsBar = $('#workspaces');
+  let wsEditing = null; // the workspace whose name is being typed in the bar
   function refreshBar() {
+    if (wsEditing == null) drawWorkspaces();
+    const f = focused();
+    $('#bar-title').textContent = f ? f.title : '';
+    $('#bar-title').classList.toggle('hidden', !cfg.barTitle || !f);
+    refreshStats();
+    sidebarChanged();
+    saveSession();
+  }
+
+  function drawWorkspaces() {
     wsBar.innerHTML = '';
     for (let i = 0; i < WS_COUNT; i++) {
-      const list = wsWins(i);
+      const list = wsWins(i), name = wsName(i);
       if (i > 4 && !list.length && i !== current) continue;
       const b = document.createElement('button');
       b.className = 'ws-btn' + (i === current ? ' active' : '') + (list.length ? ' occupied' : '')
-        + (list.some(isWorking) ? ' busy' : '');
-      b.textContent = i + 1;
-      b.onclick = () => switchWorkspace(i);
+        + (list.some(isWorking) ? ' busy' : '') + (name && i === current ? ' named' : '');
+      b.textContent = name && i === current ? `${i + 1} · ${name}` : i + 1;
+      b.title = `${name || `Workspace ${i + 1}`}${list.length ? ` · ${list.length} tile${list.length === 1 ? '' : 's'}` : ''}
+Double-click to ${name ? 'rename' : 'name'} it`;
+      b.dataset.ws = i;
+      b.onclick = () => { wsClicked = i; switchWorkspace(i); };
       wsBar.appendChild(b);
     }
-    const f = focused();
-    $('#bar-title').textContent = f ? f.title : '';
-    refreshStats();
-    sidebarChanged();
+  }
+  // The first click of a double-click switches workspace and resizes the buttons, so the second
+  // can land on a neighbour: the one named is the one first clicked.
+  let wsClicked = null;
+  wsBar.addEventListener('dblclick', e => { if (e.target.closest('.ws-btn') && wsClicked != null) editWsName(wsClicked); });
+
+  // Workspace names: double-click a workspace in the bar, Enter keeps it, Esc cancels, empty clears it.
+  const wsName = i => String(cfg.workspaceNames?.[i] || '').trim();
+  function editWsName(i) {
+    wsEditing = i;
+    drawWorkspaces();
+    const input = document.createElement('input');
+    input.className = 'ws-name'; input.value = wsName(i); input.placeholder = `Workspace ${i + 1}`; input.spellcheck = false; input.maxLength = 40;
+    const btn = wsBar.querySelector(`[data-ws="${i}"]`);
+    if (btn) wsBar.replaceChild(input, btn); else wsBar.appendChild(input);
+    input.focus(); input.select();
+    let done = false;
+    const finish = keep => {
+      if (done) return;
+      done = true; wsEditing = null;
+      if (keep) {
+        const names = Array.from({ length: WS_COUNT }, (_, j) => wsName(j));
+        names[i] = input.value.trim();
+        while (names.length && !names.at(-1)) names.pop();
+        setSetting('workspaceNames', names);
+        renderHints();
+      }
+      refreshBar();
+      focusKeys(focused());
+    };
+    input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); finish(e.key === 'Enter'); } };
+    input.onblur = () => finish(true);
   }
 
   // Agent CLI tiles (the master among them) count as running while output is streaming, idle otherwise.
@@ -939,8 +1159,66 @@
   }
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
-  const tick = () => { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
-  tick(); setInterval(tick, 10000);
+  // ------------------------------------------------------------ clock
+  // Time and date in the middle of the bar, formatted as Settings › Top bar says. Hover it for
+  // this month's calendar, click it to copy the time and date.
+
+  const clockEl = $('#clock'), calEl = $('#cal');
+  function clockText(d = new Date()) {
+    const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(cfg.clockSeconds ? { second: '2-digit' } : {}),
+      ...(cfg.clockFormat === '24' ? { hourCycle: 'h23' } : cfg.clockFormat === '12' ? { hourCycle: 'h12' } : {}) });
+    return cfg.clockDate ? `${t}  ·  ${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}` : t;
+  }
+  // The date is its own span so a narrow window can drop it.
+  const tick = () => {
+    const [t, d] = clockText().split('  ·  ');
+    const html = esc(t) + (d ? `<span class="dt">  ·  ${esc(d)}</span>` : '');
+    if (clockEl.innerHTML !== html) clockEl.innerHTML = html;
+  };
+  tick(); setInterval(tick, 1000);
+  clockEl.onclick = () => {
+    const d = new Date();
+    navigator.clipboard.writeText(`${d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} ${clockText(d).split('  ·  ')[0]}`);
+    toast('Copied the time and date');
+  };
+
+  let calMonth = null, calShowT = null, calHideT = null; // calMonth: first of the month shown
+  const isoWeek = d => {
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    t.setUTCDate(t.getUTCDate() + 3 - (t.getUTCDay() + 6) % 7);
+    return 1 + Math.floor((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 864e5 / 7);
+  };
+  function drawCal() {
+    const today = new Date(), m = calMonth;
+    const lead = (m.getDay() + 6) % 7; // weeks start on Monday
+    const dows = Array.from({ length: 7 }, (_, k) => new Date(2024, 0, 1 + k).toLocaleDateString([], { weekday: 'narrow' }));
+    let cells = dows.map(d => `<span class="dow">${esc(d)}</span>`).join('');
+    for (let k = 0; k < 42; k++) {
+      const d = new Date(m.getFullYear(), m.getMonth(), 1 - lead + k);
+      const cls = ['d', d.getMonth() !== m.getMonth() ? 'out' : '', d.toDateString() === today.toDateString() ? 'today' : ''].filter(Boolean).join(' ');
+      cells += `<span class="${cls}">${d.getDate()}</span>`;
+    }
+    calEl.innerHTML = `<div class="cal-head"><button data-cal="-1" title="Previous month">‹</button><b>${esc(m.toLocaleDateString([], { month: 'long', year: 'numeric' }))}</b>`
+      + `<button data-cal="1" title="Next month">›</button></div><div class="cal-grid">${cells}</div>`
+      + `<div class="cal-foot">${esc(today.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }))} · week ${isoWeek(today)}</div>`;
+    calEl.querySelectorAll('[data-cal]').forEach(b => b.onclick = () => { calMonth = new Date(m.getFullYear(), m.getMonth() + +b.dataset.cal, 1); drawCal(); });
+  }
+  function showCal() {
+    clearTimeout(calHideT);
+    if (!calEl.classList.contains('hidden')) return;
+    const t = new Date(); calMonth = new Date(t.getFullYear(), t.getMonth(), 1);
+    drawCal();
+    calEl.classList.remove('hidden');
+    const r = clockEl.getBoundingClientRect();
+    calEl.style.left = Math.max(6, Math.min(innerWidth - calEl.offsetWidth - 6, r.left + r.width / 2 - calEl.offsetWidth / 2)) + 'px';
+    calEl.style.top = r.bottom + 6 + 'px';
+  }
+  const hideCal = (delay = 200) => { clearTimeout(calShowT); clearTimeout(calHideT); calHideT = setTimeout(() => calEl.classList.add('hidden'), delay); };
+  clockEl.onmouseenter = () => { clearTimeout(calHideT); calShowT = setTimeout(showCal, 350); };
+  clockEl.onmouseleave = () => hideCal();
+  calEl.onmouseenter = () => clearTimeout(calHideT);
+  calEl.onmouseleave = () => hideCal();
+  window.addEventListener('blur', () => hideCal(0));
   $('#wc-min').onclick = operant.minimize; $('#wc-max').onclick = operant.maximize; $('#wc-close').onclick = operant.close;
 
   let resizeT;
@@ -1019,7 +1297,7 @@
     const agent = defaultAgent();
     let html = `<div class="${cls}" data-path="${esc(p)}" data-dir="${entry.dir ? 1 : ''}" data-project="${project ? 1 : ''}" title="${esc(p)}" style="padding-left:${4 + depth * 12}px">`
       + `<span class="tw">${entry.dir ? '▶' : ''}</span>`
-      + (project ? '<span class="fi">◈</span>' : entry.dir ? '' : '<span class="fi">·</span>')
+      + (project ? `<span class="fi" data-jump title="${count ? 'Go to its master terminal' : 'No tiles open here'}">◈</span>` : entry.dir ? '' : '<span class="fi">·</span>')
       + `<span class="nm">${esc(entry.name)}</span>`
       + (count ? `<span class="count" title="${count} open tile${count === 1 ? '' : 's'}">${count}</span>` : '')
       + (entry.dir ? `<span class="acts">${project && cfg.codegraphButtons ? '<button data-act="cg" title="Index with CodeGraph">◇</button>' : ''}${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
@@ -1137,6 +1415,24 @@
     if (err) toast(`<b>Couldn't open ${esc(ideName())}</b><br>${esc(err)}`);
   }
 
+  // The project's ◈: its most recently used master tile, else its most recently used tile of any kind.
+  function jumpToProject(dir) {
+    const here = [...wins.values()].filter(w => w.alive && w.kind !== 'agent' && w.cwd && isUnder(w.cwd, dir));
+    const recent = list => list.sort((a, b) => (b.focusedAt || 0) - (a.focusedAt || 0))[0];
+    const w = recent(here.filter(x => x.master)) || recent(here.filter(x => x.kind === 'ai')) || recent(here);
+    if (!w) return false;
+    if (w.ws !== current) switchWorkspace(w.ws);
+    focusWin(w);
+    return true;
+  }
+
+  let fileClick = {};
+  function openFile(p, how) {
+    if (how === 'edit') return openEditor(p);
+    if (how === 'view') return openViewer(p);
+    operant.openPath(p);
+  }
+
   function openHere(dir, what) {
     if (what === 'ide') return openInIde(dir);
     lastCwd = dir;
@@ -1147,7 +1443,7 @@
   }
 
   // One shell tile that indexes each folder with CodeGraph: sync if it has a .codegraph, init otherwise.
-  function runCodegraph(dirs, label) {
+  function runCodegraph(dirs, label, { focus = true } = {}) {
     dirs = (dirs || []).filter(Boolean);
     if (!dirs.length) return toast('No projects to index. Pin a folder first.');
     const q = s => `'${String(s).replace(/'/g, "''")}'`;
@@ -1155,7 +1451,7 @@
       + `if (Test-Path -LiteralPath (Join-Path ${q(d)} '.codegraph')) { codegraph sync ${q(d)} } else { codegraph init -y ${q(d)} }`);
     const run = `if (-not (Get-Command codegraph -ErrorAction SilentlyContinue)) { Write-Host 'CodeGraph is not installed. Install it from Settings > CodeGraph.' -ForegroundColor Yellow } else { `
       + steps.join('; ') + `; Write-Host ''; Write-Host 'CodeGraph done for ${dirs.length} project(s)' -ForegroundColor Green }`;
-    newTerminal('shell', dirs[0], { run, title: `CodeGraph · ${label || baseName(dirs[0])}` });
+    newTerminal('shell', dirs[0], { run, title: `CodeGraph · ${label || baseName(dirs[0])}`, focus });
   }
 
   sideBody.addEventListener('click', e => {
@@ -1173,6 +1469,13 @@
     const p = row.dataset.path;
     const act = e.target.closest('[data-act]');
     if (act) return openHere(p, act.dataset.act);
+    if (e.target.closest('[data-jump]') && jumpToProject(p)) return;
+    // A file's double-click, counted here: the first click redraws the tree, so no dblclick event follows.
+    if (!row.dataset.dir) {
+      const now = Date.now(), again = fileClick.p === p && now - fileClick.t < 500;
+      fileClick = again ? {} : { p, t: now };
+      if (again) return openFile(p, cfg.fileOpens);
+    }
     selected = p;
     if (row.dataset.dir) {
       lastCwd = p;
@@ -1185,8 +1488,6 @@
   sideBody.addEventListener('dblclick', e => {
     const grow = e.target.closest('.group-row');
     if (grow && !e.target.closest('.group-name, [data-gact]')) return groupAct(+grow.dataset.group, 'rename');
-    const row = e.target.closest('.node-row');
-    if (row && !row.dataset.dir) operant.openPath(row.dataset.path);
   });
   sideBody.addEventListener('input', e => { if (editing && e.target.matches('.group-name')) editing.value = e.target.value; });
   sideBody.addEventListener('keydown', e => {
@@ -1226,7 +1527,9 @@
     e.preventDefault();
     const p = row.dataset.path;
     const copy = ['⧉', 'Copy path', () => navigator.clipboard.writeText(p)];
-    if (!row.dataset.dir) return showMenu(e.clientX, e.clientY, [['↗', 'Open', () => operant.openPath(p)], ['▤', 'Show in Explorer', () => operant.reveal(p)], copy]);
+    if (!row.dataset.dir) return showMenu(e.clientX, e.clientY, [
+      ['▤', 'View in Operant', () => openFile(p, 'view')], ['✎', `Edit in ${editorName || 'editor'}`, () => openFile(p, 'edit')], '-',
+      ['↗', 'Open with Windows', () => operant.openPath(p)], ['▤', 'Show in Explorer', () => operant.reveal(p)], copy]);
     const pinned = isPinned(p), gi = groupOf(p);
     const grouping = !pinned ? [] : [
       ...groups().map((g, i) => i === gi ? null : ['▣', `Move to ${g.name}`, () => moveToGroup(p, i)]).filter(Boolean),
@@ -1278,7 +1581,6 @@
     mediaState = s;
     const show = !!(cfg.mediaControls && s.active && (s.title || s.artist));
     mediaEl.classList.toggle('hidden', !show);
-    $('.bar-center').classList.toggle('has-media', show);
     if (!show) return;
     const art = $('#media-art');
     if (s.art) { if (art.getAttribute('src') !== s.art) art.src = s.art; art.classList.remove('none'); }
@@ -1287,11 +1589,13 @@
     $('#media-artist').textContent = s.artist || '';
     const app = String(s.app || '').replace(/\.exe$/i, '').split('!').pop();
     mediaEl.title = [s.title, s.artist, s.album].filter(Boolean).join(' · ') + (app ? `\n${app}` : '');
+    $('.media-text').title = `${mediaEl.title}${app ? `\nClick to open ${app}` : ''}`;
     mediaEl.classList.toggle('playing', !!s.playing);
     $('#media-play').title = s.playing ? 'Pause' : 'Play';
     $('#media-play').disabled = !s.canPlayPause;
     $('#media-prev').disabled = !s.canPrev;
     $('#media-next').disabled = !s.canNext;
+    drawProgress();
     const shuffle = $('#media-shuffle');
     shuffle.disabled = !s.canShuffle;
     shuffle.classList.toggle('on', !!s.shuffle);
@@ -1316,6 +1620,26 @@
     clearTimeout(volSendT);
     volSendT = setTimeout(() => operant.media('vol ' + v), 40);
   }
+
+  // The track's progress, counted on from the player's last report while it plays.
+  const progEl = $('#media-progress');
+  const fmtTime = sec => {
+    sec = Math.max(0, Math.floor(sec));
+    const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, x = String(sec % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`;
+  };
+  function drawProgress() {
+    const tl = mediaState.timeline, show = !!(tl && tl.dur > 0 && !mediaEl.classList.contains('hidden'));
+    progEl.classList.toggle('hidden', !show);
+    if (!show) return;
+    const pos = Math.min(tl.dur, tl.pos + (mediaState.playing && tl.at > 0 ? Math.max(0, Date.now() - tl.at) / 1000 : 0));
+    progEl.firstChild.style.width = (pos / tl.dur * 100).toFixed(2) + '%';
+    const t = `${fmtTime(pos)} / ${fmtTime(tl.dur)} · ${fmtTime(tl.dur - pos)} left`;
+    if (progEl.title !== t) progEl.title = t;
+  }
+  setInterval(() => { if (mediaState.playing) drawProgress(); }, 500);
+  operant.on('media:timeline', tl => { mediaState = { ...mediaState, timeline: tl }; drawProgress(); });
+  $('.media-text').onclick = () => operant.media('focus');
 
   const mediaCmd = cmd => { operant.media(cmd); if (cmd === 'toggle') mediaEl.classList.toggle('playing'); };
   $('#media-play').onclick = () => mediaCmd('toggle');
@@ -1347,11 +1671,65 @@
     const show = !!(cfg.tokenUsage && s?.ready);
     usagePill.classList.toggle('hidden', !show);
     if (!show) return;
-    usagePill.innerHTML = `<svg viewBox="0 0 16 16"><path d="M2 13.5h12v1.3H2zM3 8h2.3v4.5H3zm3.8-5h2.3v9.5H6.8zm3.9 3h2.3v6.5h-2.3z"/></svg>${fmtTok(countOf(s.today))} <span class="dim">today</span>`;
-    usagePill.title = 'Claude Code tokens today\n'
-      + USAGE_SERIES.map(([k, n]) => `${n}: ${fullTok(s.today[k])}${counted().some(c => c[0] === k) ? '' : ' (not counted)'}`).join('\n')
-      + `\nLast hour: ${fmtTok(countOf(s.hour))}\nClick for the graph`;
+    const used = countOf(s.today), budget = +cfg.tokenBudget || 0, share = budget ? used / budget : 0;
+    usagePill.classList.toggle('warn', budget > 0 && share >= 0.8 && share < 1);
+    usagePill.classList.toggle('over', budget > 0 && share >= 1);
+    usagePill.innerHTML = `<svg viewBox="0 0 16 16"><path d="M2 13.5h12v1.3H2zM3 8h2.3v4.5H3zm3.8-5h2.3v9.5H6.8zm3.9 3h2.3v6.5h-2.3z"/></svg>${fmtTok(used)} <span class="dim">${budget ? `/ ${fmtTok(budget)}` : 'today'}</span>`;
+    if (!usageCard.classList.contains('hidden')) drawUsageCard();
   }
+
+  // Hovering the pill shows a card: today's tokens, the budget, and the Claude plan limits as bars,
+  // like Claude Code's /usage. Main asks Anthropic for the limits at most once a minute.
+  const usageCard = $('#usage-card');
+  let limits = null, cardShowT = null, cardHideT = null;
+  const pctClass = p => p >= 100 ? ' over' : p >= 80 ? ' warn' : '';
+  const bar = p => `<div class="uc-bar${pctClass(p)}"><i style="width:${Math.min(100, Math.max(0, p)).toFixed(1)}%"></i></div>`;
+  function resetsAt(t) {
+    const d = new Date(t), hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const mins = Math.round((d - Date.now()) / 60000);
+    const left = mins < 60 ? `in ${Math.max(0, mins)} min` : mins < 1440 ? `in ${Math.floor(mins / 60)} h ${mins % 60} min` : '';
+    const day = d.toDateString() === new Date().toDateString() ? '' : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' ';
+    return `Resets ${day}${hm}${left ? ` · ${left}` : ''}`;
+  }
+  const limitRow = (name, l) => !l ? '' : `<div class="uc-limit"><div class="uc-row"><span>${name}</span><b>${Math.round(l.used)}% used</b></div>`
+    + bar(l.used) + (l.resets ? `<div class="uc-sub">${esc(resetsAt(l.resets))}</div>` : '') + '</div>';
+  function drawUsageCard() {
+    const s = usageSum;
+    if (!s?.ready) return;
+    const used = countOf(s.today), budget = +cfg.tokenBudget || 0;
+    let html = `<div class="uc-head"><span>Tokens today</span><b>${fmtTok(used)}</b></div>`
+      + (budget ? `<div class="uc-limit">${bar(used / budget * 100)}<div class="uc-sub">${Math.round(used / budget * 100)}% of your ${fmtTok(budget)} daily budget</div></div>` : '')
+      + `<div class="uc-series">${USAGE_SERIES.map(([k, n]) => {
+        const on = counted().some(c => c[0] === k);
+        return `<div class="uc-row${on ? '' : ' off'}"><span><i class="sw s-${k}"></i>${n}</span><b>${fmtTok(s.today[k] || 0)}</b></div>`;
+      }).join('')}<div class="uc-row"><span>Last hour</span><b>${fmtTok(countOf(s.hour))}</b></div></div>`;
+    if (cfg.planLimits) {
+      html += '<div class="uc-title">Plan limits</div>';
+      if (!limits) html += '<div class="uc-sub">Checking…</div>';
+      else if (limits.error) html += `<div class="uc-sub">${esc(limits.error)}</div>`;
+      else html += limitRow('Current session', limits.session) + limitRow('Current week', limits.week)
+        + limitRow('Current week (Opus)', limits.weekOpus) + limitRow('Current week (Sonnet)', limits.weekSonnet);
+    }
+    html += '<div class="uc-foot">Click for the graph</div>';
+    usageCard.innerHTML = html;
+  }
+  function showUsageCard() {
+    clearTimeout(cardHideT);
+    if (!usageCard.classList.contains('hidden')) return;
+    drawUsageCard();
+    usageCard.classList.remove('hidden');
+    const r = usagePill.getBoundingClientRect();
+    usageCard.style.left = Math.max(6, Math.min(innerWidth - usageCard.offsetWidth - 6, r.left + r.width / 2 - usageCard.offsetWidth / 2)) + 'px';
+    usageCard.style.top = r.bottom + 6 + 'px';
+    if (cfg.planLimits) operant.usageLimits().then(l => { limits = l; if (!usageCard.classList.contains('hidden')) drawUsageCard(); });
+  }
+  const hideUsageCard = (delay = 200) => { clearTimeout(cardShowT); clearTimeout(cardHideT); cardHideT = setTimeout(() => usageCard.classList.add('hidden'), delay); };
+  usagePill.addEventListener('mouseenter', () => { clearTimeout(cardHideT); cardShowT = setTimeout(showUsageCard, 250); });
+  usagePill.addEventListener('mouseleave', () => hideUsageCard());
+  usagePill.addEventListener('mousedown', () => hideUsageCard(0));
+  usageCard.onmouseenter = () => clearTimeout(cardHideT);
+  usageCard.onmouseleave = () => hideUsageCard();
+  window.addEventListener('blur', () => hideUsageCard(0));
   usagePill.onclick = () => togglePanel('usage');
   operant.on('usage:changed', s => {
     renderUsagePill(s);
@@ -1479,9 +1857,37 @@
       pill.textContent = `↑ Update to v${s.version}`;
       pill.title = `v${version} → v${s.version}. Click to install and restart (or it installs when you quit).\nWhat's new: Settings › Updates`;
       if (!wasReady) toast(`<b>Update ready</b> v${esc(s.version)}. Click the pill in the bar to restart.`);
+      if (updateWaiting) showWaiting();
     }
   });
-  pill.onclick = () => { if (pill.classList.contains('ready')) operant.installUpdate(); };
+  // With an agent mid-task, Update waits until every tile has been quiet for a few seconds.
+  // Clicking again updates at once; right-clicking stops waiting.
+  let updateWaiting = false, quietSince = 0;
+  const anyWorking = () => [...wins.values()].some(w => w.alive && isWorking(w));
+  function showWaiting() {
+    pill.textContent = '↑ Updating when agents finish…';
+    pill.title = 'Click to update now · right-click to cancel';
+  }
+  pill.onclick = () => {
+    if (!pill.classList.contains('ready')) return;
+    if (updateWaiting || !cfg.updateWhenIdle || !anyWorking()) { updateWaiting = false; return operant.installUpdate(); }
+    updateWaiting = true; quietSince = 0;
+    showWaiting();
+    toast('Updating once your agents finish. Click the pill to update now.');
+  };
+  pill.oncontextmenu = e => {
+    if (!updateWaiting) return;
+    e.preventDefault();
+    updateWaiting = false;
+    pill.textContent = `↑ Update to v${updateStatus?.version || ''}`;
+    pill.title = 'Click to install and restart';
+  };
+  setInterval(() => {
+    if (!updateWaiting) return;
+    if (anyWorking()) { quietSince = 0; return; }
+    quietSince ||= Date.now();
+    if (Date.now() - quietSince >= 5000) { updateWaiting = false; operant.installUpdate(); }
+  }, 1000);
 
   applyAppearance();
   renderHints();
@@ -1490,16 +1896,25 @@
   // and later right-clicks (while running) each add a tile of the default agent there.
   const startDir = await operant.startupFolder();
   if (startDir) lastCwd = startDir;
-  if (!cfg.agentChosen && cfg.agents.length > 1) {
+  // After an update (or on every start, in Settings) the tiles you had come back.
+  const snap = await operant.takeSession();
+  if (snap && await restore(snap)) { if (startDir) newTerminal('ai', startDir); }
+  else if (!cfg.agentChosen && cfg.agents.length > 1) {
     togglePanel('launcher');
     welcome = { dir: startDir || cfg.defaultCwd };
     renderLauncher();
   } else if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
+  // Settings › CodeGraph: pinned projects with lots of new code (or all of them) are indexed in one tile at startup.
+  operant.codegraphStartup().then(dirs => {
+    if (!dirs.length) return;
+    runCodegraph(dirs, `${dirs.length} project${dirs.length === 1 ? '' : 's'} on startup`, { focus: false });
+    toast(`<b>◇ CodeGraph</b> indexing ${dirs.map(d => esc(baseName(d))).join(', ')}`);
+  });
   // A setting changed in another Operant window.
   operant.on('config:changed', c => {
     Object.assign(cfg, c);
-    applyAppearance(); rebuildBinds(); renderHints(); renderMedia(); renderUsagePill(); drawUsage();
+    applyAppearance(); rebuildBinds(); renderHints(); renderMedia(); renderUsagePill(); drawUsage(); tick(); refreshBar();
     if (openPanel() === 'settings') renderSettings();
     if (openPanel() === 'keys') renderKeys();
   });

@@ -1,6 +1,6 @@
 # Operant media helper: reports what Windows is playing (the same session the volume flyout shows)
 # and runs the bar's media buttons. Started by media.js; one JSON line per change on stdout,
-# one command per line on stdin: toggle | next | prev | shuffle | vol <0..1>.
+# one command per line on stdin: toggle | next | prev | shuffle | focus | vol <0..1>.
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -126,6 +126,31 @@ namespace OperantMedia {
       foreach (var s in vols) s.SetMasterVolume(v, ref ctx);
     }
   }
+
+  // Brings the media app's window to the front (restoring it if minimized).
+  public static class Window {
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+
+    public static bool Focus(string app) {
+      if (string.IsNullOrEmpty(app)) return false;
+      foreach (var p in Process.GetProcesses()) {
+        string name = p.ProcessName.ToLowerInvariant();
+        if (!(name == app || app.StartsWith(name) || name.StartsWith(app))) continue;
+        IntPtr h = p.MainWindowHandle;
+        if (h == IntPtr.Zero) continue;
+        if (IsIconic(h)) ShowWindow(h, 9);
+        // Windows only lets the foreground app hand over the foreground; a tap of Alt counts as input and lifts that.
+        keybd_event(0x12, 0, 0, UIntPtr.Zero);
+        keybd_event(0x12, 0, 2, UIntPtr.Zero);
+        SetForegroundWindow(h);
+        return true;
+      }
+      return false;
+    }
+  }
 }
 '@
 
@@ -199,9 +224,27 @@ function State {
   }
 }
 
+# Where the track is: position and length in seconds, and when the player last reported the position (ms since
+# 1970), so Operant can count on from there. Sent only when the player reports a new position.
+function Timeline {
+  $session = $manager.GetCurrentSession()
+  if (-not $session) { return $null }
+  $t = $session.GetTimelineProperties()
+  $dur = ($t.EndTime - $t.StartTime).TotalSeconds
+  if ($dur -le 0) { return $null }
+  return @{
+    pos = [math]::Round(($t.Position - $t.StartTime).TotalSeconds, 2)
+    dur = [math]::Round($dur, 2)
+    at = $t.LastUpdatedTime.ToUnixTimeMilliseconds()
+  }
+}
+
+$lastTimeline = ''
 function Emit {
   $json = (State) | ConvertTo-Json -Compress
   if ($json -ne $script:lastJson) { $script:lastJson = $json; [Console]::Out.WriteLine($json); [Console]::Out.Flush() }
+  $tl = @{ timeline = (Timeline) } | ConvertTo-Json -Compress
+  if ($tl -ne $script:lastTimeline) { $script:lastTimeline = $tl; [Console]::Out.WriteLine($tl); [Console]::Out.Flush() }
 }
 
 function Run($line) {
@@ -213,6 +256,7 @@ function Run($line) {
     'next' { [void](Await ($session.TrySkipNextAsync()) ([bool])) }
     'prev' { [void](Await ($session.TrySkipPreviousAsync()) ([bool])) }
     'shuffle' { [void](Await ($session.TryChangeShuffleActiveAsync(-not [bool]$session.GetPlaybackInfo().IsShuffleActive)) ([bool])) }
+    'focus' { [void][OperantMedia.Window]::Focus((AppKey $session.SourceAppUserModelId)) }
     'vol' { [OperantMedia.Volume]::Set((AppKey $session.SourceAppUserModelId), [float][math]::Min([double]1, [math]::Max([double]0, [double]$parts[1]))) }
   }
 }

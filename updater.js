@@ -19,7 +19,7 @@ function newer(a, b) { // is version a > b
   return false;
 }
 
-function createUpdater({ send, currentVersion = app.getVersion() }) {
+function createUpdater({ send, onInstall, currentVersion = app.getVersion() }) {
   let ready = null;      // { version, file, notes }
   let busy = false;
   let installing = false;
@@ -97,11 +97,12 @@ function createUpdater({ send, currentVersion = app.getVersion() }) {
       return false;
     }
     installing = true;
+    onInstall?.();
     return true;
   }
 
   function start() {
-    if (!app.isPackaged && !process.env.OPERANT_UPDATE_TEST) return;
+    if ((!app.isPackaged || process.env.OPERANT_USER_DATA) && !process.env.OPERANT_UPDATE_TEST) return;
     setTimeout(check, 5000);
     setInterval(check, CHECK_EVERY_MS);
     // Like electron-updater's autoInstallOnAppQuit: a downloaded update goes in when the app closes.

@@ -1,3 +1,28 @@
+# Operant 1.8.0
+
+View and edit files inside Operant, see your Claude plan limits, and a redesigned top bar with the clock in the middle and music beside your workspaces. Your tiles now come back after an update.
+
+**Install:** download `Operant-1.8.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Your tiles come back after an update:** the same tiles, folders and layout reopen, and Claude Code conversations pick up where they left off. ⚙ Settings › Tiles & subagents › *Reopen my tiles* can also do it every time Operant starts.
+- **Updates wait for your agents:** clicking the update pill while an agent is working installs once it finishes. Click again to update now, or right-click to cancel.
+- **File viewer:** double-click a file in the sidebar to view it in a tile. Markdown is rendered (headings, lists, task lists, tables, code blocks, links), other text files show with line numbers, and the tile reloads when the file changes. **Source** shows the raw Markdown, and ✎ edits the file.
+- **Edit files in vim:** right-click a file › *Edit in vim*. Vim shows line numbers and a strip of its shortcuts along the bottom, and the tile closes when you quit. ⚙ Settings › Files picks the editor (Vim, Neovim, micro, nano, Windows' Edit or your own) and what double-clicking a file does.
+- **Plan limits:** hover the token pill for a card with today's tokens and your Claude 5-hour session and weekly limits as bars, with when each resets, like Claude Code's `/usage`. Turn it off in ⚙ Settings › Usage.
+- **Daily token budget:** set one in ⚙ Settings › Usage and the token pill turns orange at 80% and red past it.
+- **Calendar:** hover the clock for this month's calendar. Click the clock to copy the time and date.
+- **Clock settings:** ⚙ Settings › Top bar sets 12- or 24-hour time, seconds and the date, and can show the focused tile's title beside the clock.
+- **Named workspaces:** double-click a workspace number to name it. The name shows on the active workspace, on hover and on an empty workspace.
+- **Track progress and quick jump:** a thin line under the music shows how far through the track you are (hover it for the time left). Click the track name to bring the player to the front.
+- **Jump to a project's terminal:** click the ◈ next to a project in the sidebar to go to its most recent master terminal.
+- **CodeGraph on startup:** when Operant starts, pinned projects with lots of changes since their last index are indexed together in one tile. ⚙ Settings › CodeGraph can do it for all projects, change what counts as lots, or turn it off.
+
+## Changed
+- **Top bar:** the time and date sit in the middle, and the music controls sit right after the workspace switcher. On narrow windows the music shrinks to the cover and play/pause, and the date drops out.
+
+---
+
 # Operant 1.7.1
 
 Smoother typing: busy terminals in other tiles no longer hold up what you type in the one you're using.

@@ -17,6 +17,9 @@ const { THEMES } = require('./renderer/themes');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
+// A test build (npm run pack) run with its own profile is packaged but must not take over the installed
+// app's Explorer entry, operant:// links or jump list.
+const installed = app.isPackaged && !process.env.OPERANT_USER_DATA;
 // Windows only shows toast notifications for an app with an AppUserModelID (the installer's shortcut carries the same one).
 app.setAppUserModelId('com.doolecg.operant');
 
@@ -76,6 +79,9 @@ const DEFAULT_CONFIG = {
   autoCloseDoneAgentsSeconds: 15, // finished agent tiles, counted from when you first see them
   idleCloseTerminalMinutes: 10,   // Claude/shell tiles with no output and no typing
   maxTilesPerWorkspace: 6,        // new agents spill onto the next workspace past this
+  confirmClose: true,             // ask before closing a window that still has terminals running
+  restoreSession: 'update',       // reopen the tiles you had open: 'update' (after an update) | 'always' | 'never'
+  updateWhenIdle: true,           // clicking Update while an agent is working waits until it finishes
   gapsIn: 5,
   gapsOut: 12,
   rounding: 12,
@@ -106,7 +112,19 @@ const DEFAULT_CONFIG = {
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
   tokenUsage: true,               // Claude Code's tokens today in the top bar; click for the graph
   usageSeries: ['input', 'output', 'cacheWrite'], // what the pill and graph count; cache reads would swamp the rest
-  codegraphButtons: true,         // "Index with CodeGraph" buttons in the sidebar
+  planLimits: true,               // Claude plan limits (5-hour session, week) in the token pill's tooltip
+  tokenBudget: 0,                // counted tokens a day; the pill turns orange near it and red past it · 0 = off
+  clockFormat: 'auto',            // the bar's clock: 'auto' (from Windows) | '24' | '12'
+  clockSeconds: false,
+  clockDate: true,
+  barTitle: false,                // the focused tile's title beside the clock
+  workspaceNames: [],             // names given to workspaces 1-9 (double-click one in the bar)
+  editor: 'auto',                 // the editor tile's program: 'auto' | 'vim' | 'nvim' | 'micro' | 'nano' | 'edit' | 'custom'
+  editorCommand: '',              // with 'custom': the command, the file is added at the end
+  fileOpens: 'view',              // double-clicking a file in the sidebar: 'view' (viewer tile) | 'edit' (editor tile) | 'system'
+  codegraphButtons: true,        // "Index with CodeGraph" buttons in the sidebar
+  codegraphOnStartup: 'changed',  // index pinned projects when Operant starts: 'changed' (lots of changes) | 'all' | 'off'
+  codegraphChangedFiles: 20,      // files added, changed or removed since the last index that count as lots
   // Windows notifications
   notifications: true,
   notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long is waiting for you
@@ -136,7 +154,7 @@ ipcMain.handle('config:set', (e, patch) => {
   }
   saveUser();
   Object.assign(config, merged());
-  if ('explorerContextMenu' in patch && app.isPackaged) {
+  if ('explorerContextMenu' in patch && installed) {
     if (config.explorerContextMenu) shellIntegration.register(process.execPath); else shellIntegration.unregister();
   }
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
@@ -213,19 +231,48 @@ const findAgent = id => config.agents.find(a => a.id === id) || config.agents.fi
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
 const isClaude = agent => /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim());
 
-ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows, run }) => {
+// A restored Claude tile continues its conversation, if it had one (a tile you never typed in
+// leaves no transcript, and --resume would fail on it).
+const hasTranscript = id => {
+  try { return fs.readdirSync(PROJECTS_DIR).some(p => fs.existsSync(path.join(PROJECTS_DIR, p, id + '.jsonl'))); } catch { return false; }
+};
+
+// The editor tile's program: Settings › Files › Editor, or the first one found. Git for Windows brings
+// vim and nano without putting them on PATH, so its usr\bin is looked in too.
+const GIT_BIN = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin');
+function editorCommand() {
+  if (config.editor === 'custom') return (config.editorCommand || '').trim() || null;
+  const onPath = c => spawnSync('where', [c], { windowsHide: true, env: withFreshPath({ ...process.env }) }).status === 0;
+  const find = c => onPath(c) ? c : fs.existsSync(path.join(GIT_BIN, c + '.exe')) ? path.join(GIT_BIN, c + '.exe') : null;
+  const order = config.editor && config.editor !== 'auto' ? [config.editor] : ['nvim', 'vim', 'micro', 'edit', 'nano'];
+  for (const c of order) { const f = find(c); if (f) return f; }
+  return null;
+}
+ipcMain.handle('editor:name', () => { const c = editorCommand(); return c ? path.basename(c).replace(/\.exe$/i, '') : null; });
+
+ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows, run, resume, edit }) => {
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
-  const sessionId = agent && isClaude(agent) ? crypto.randomUUID() : null;
+  const resuming = !!(agent && isClaude(agent) && /^[0-9a-f-]{36}$/i.test(resume || '') && hasTranscript(resume));
+  const sessionId = agent && isClaude(agent) ? (resuming ? resume : crypto.randomUUID()) : null;
   const dir = cwd && fs.existsSync(cwd) ? cwd : config.defaultCwd;
 
   // Run the agent through the shell (PATH lookup, .cmd shims). The tile closes when it
   // exits cleanly; on failure it waits so the error stays readable.
   let command = config.shell;
   let args = run && !agent ? ['-NoLogo', '-NoExit', '-Command', run] : ['-NoLogo'];
+  // An editor tile: the editor on that file, and the tile closes when you quit it.
+  if (edit && !agent) {
+    const q = a => `'${String(a).replace(/'/g, "''")}'`;
+    const ed = editorCommand();
+    // Vim gets line numbers, and no swap file (it would be left beside the file whenever the tile is closed with vim still open).
+    const noSwap = ed && /(^|[\\/])n?vim(\.exe)?$/i.test(ed) ? " -n -c 'set number'" : '';
+    args = ['-NoLogo', '-Command', ed ? `& ${config.editor === 'custom' ? ed : q(ed)}${noSwap} ${q(edit)}`
+      : `Write-Host 'No editor found. Install vim, neovim, micro or nano, or set one in Settings > Files.' -ForegroundColor Yellow; Read-Host 'Press Enter to close'`];
+  }
   if (agent) {
     const q = a => `'${String(a).replace(/'/g, "''")}'`;
-    const quoted = [...[].concat(agent.args || []), ...(sessionId ? ['--session-id', sessionId] : [])].map(q).join(' ');
+    const quoted = [...[].concat(agent.args || []), ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : [])].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -254,6 +301,7 @@ ipcMain.handle('pty:create', (e, { kind, agentId, cwd, cols, rows, run }) => {
   });
   const owner = winOf(e);
   p.owner = owner;
+  p.label = agent ? agent.name : 'Shell';
   ptys.set(id, p);
   if (sessionId) sessionOwner.set(sessionId, owner);
   p.onData(data => sendTo(owner, 'pty:data', { id, data }));
@@ -288,6 +336,17 @@ ipcMain.handle('fs:list', async (_e, { dir, hidden }) => {
   } catch { return null; }
 });
 ipcMain.handle('fs:is-dir', (_e, p) => isDir(p));
+// The viewer tile: a file's text (up to 5 MB), or why it can't be shown.
+ipcMain.handle('fs:read', async (_e, p) => {
+  try {
+    const st = await fs.promises.stat(p);
+    if (st.size > 5 * 1024 * 1024) return { mtime: st.mtimeMs, error: 'This file is over 5 MB' };
+    const buf = await fs.promises.readFile(p);
+    if (buf.subarray(0, 8000).includes(0)) return { mtime: st.mtimeMs, error: 'This isn’t a text file' };
+    return { mtime: st.mtimeMs, text: buf.toString('utf8').replace(/^﻿/, '') };
+  } catch (e) { return { error: e.code === 'ENOENT' ? 'The file is gone' : e.message }; }
+});
+ipcMain.handle('fs:mtime', async (_e, p) => { try { return (await fs.promises.stat(p)).mtimeMs; } catch { return null; } });
 ipcMain.on('fs:open', (_e, p) => shell.openPath(p));
 ipcMain.on('fs:reveal', (_e, p) => shell.showItemInFolder(p));
 // Where the IDE presets install when their launcher isn't on PATH (JetBrains never adds itself). Newest version first.
@@ -315,6 +374,33 @@ ipcMain.handle('codegraph:version', () => {
   const r = spawnSync('codegraph', ['--version'], { shell: true, env: withFreshPath({ ...process.env }), windowsHide: true, encoding: 'utf8' });
   return r.status === 0 && (r.stdout || '').trim() || null;
 });
+// Which pinned projects to index as Operant starts, asked once per run (the first window gets the answer):
+// with 'changed', indexed projects with at least codegraphChangedFiles files changed since their last index;
+// with 'all', every pinned project, including ones CodeGraph hasn't set up yet.
+let codegraphStartupDone = false;
+const codegraphPending = dir => new Promise(resolve => {
+  let out = '';
+  const p = spawn('codegraph', ['status', '--json', `"${dir}"`], { shell: true, env: withFreshPath({ ...process.env }), windowsHide: true });
+  const timer = setTimeout(() => { try { p.kill(); } catch {} resolve(0); }, 30000);
+  p.stdout.on('data', d => { out += d; });
+  p.on('error', () => { clearTimeout(timer); resolve(0); });
+  p.on('close', () => {
+    clearTimeout(timer);
+    try { const c = JSON.parse(out).pendingChanges || {}; resolve((c.added || 0) + (c.modified || 0) + (c.removed || 0)); } catch { resolve(0); }
+  });
+});
+ipcMain.handle('codegraph:startup', async () => {
+  if (codegraphStartupDone || config.codegraphOnStartup === 'off') return [];
+  codegraphStartupDone = true;
+  const seen = new Set();
+  const projects = [...config.projects, ...(config.projectGroups || []).flatMap(g => g.projects || [])]
+    .filter(p => p && isDir(p) && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
+  if (!projects.length || spawnSync('codegraph', ['--version'], { shell: true, env: withFreshPath({ ...process.env }), windowsHide: true }).status !== 0) return [];
+  if (config.codegraphOnStartup === 'all') return projects;
+  const indexed = projects.filter(p => fs.existsSync(path.join(p, '.codegraph')));
+  const counts = await Promise.all(indexed.map(codegraphPending));
+  return indexed.filter((_, i) => counts[i] >= Math.max(1, config.codegraphChangedFiles || 1));
+});
 // Runs the IDE through cmd so .cmd launchers like code and cursor work. Resolves to an error message, or null.
 ipcMain.handle('ide:open', (_e, dir) => new Promise(resolve => {
   const cmd = ideCommand();
@@ -339,7 +425,7 @@ ipcMain.on('devtools', e => winOf(e)?.webContents.toggleDevTools());
 // toast is clicked later from the Action Center. Installed, each toast carries an operant:// link
 // that Windows hands to Operant (see second-instance); in dev the click event does it.
 const ICON = path.join(__dirname, 'build', 'icon.png').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-const protocolReady = process.platform === 'win32' && app.isPackaged && app.setAsDefaultProtocolClient('operant');
+const protocolReady = process.platform === 'win32' && installed && app.setAsDefaultProtocolClient('operant');
 const liveNotes = new Set(); // a Notification that gets garbage-collected never reports its click
 
 function focusTile(wcId, tileId) {
@@ -378,13 +464,17 @@ ipcMain.handle('win:focused', e => { const w = winOf(e); return !!w && w.isFocus
 
 // ------------------------------------------------------------------ updates
 
-const updater = createUpdater({ send: broadcast });
+const updater = createUpdater({ send: broadcast, onInstall: () => { session.restoreNext = true; writeSession(); } });
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.on('update:check', () => updater.check());
 ipcMain.handle('update:state', () => updater.status);
 ipcMain.on('open-releases', () => shell.openExternal('https://github.com/doolecg/operant/releases'));
 ipcMain.on('open-link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) shell.openExternal(url); }); // links in release notes
-ipcMain.on('update:install', () => { if (updater.install()) app.quit(); });
+ipcMain.on('update:install', async () => {
+  // Installing quits every window, so ask once for all of them before starting the installer.
+  if (!await confirmClose([...windows].filter(alive), { update: true })) return;
+  if (updater.install()) app.quit();
+});
 
 // -------------------------------------------------------------------- media
 
@@ -397,6 +487,31 @@ ipcMain.on('media:command', (_e, cmd) => media.command(String(cmd)));
 const usage = createUsage({ projectsDir: PROJECTS_DIR, send: broadcast });
 ipcMain.handle('usage:summary', () => usage.summary());
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
+
+// Claude plan limits (the 5-hour session and the week), as Claude Code's /usage shows them: asked of
+// Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, at most once a minute.
+// Operant never refreshes that login; Claude Code does whenever it runs.
+let limitsCache = null;
+ipcMain.handle('usage:limits', async () => {
+  if (!config.planLimits) return null;
+  if (limitsCache && Date.now() - limitsCache.at < 60000) return limitsCache;
+  let token;
+  try { token = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8')).claudeAiOauth?.accessToken; } catch {}
+  if (!token) return (limitsCache = { at: Date.now(), error: 'Sign in to Claude Code to see your plan limits' });
+  try {
+    const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': `Operant/${app.getVersion()}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (r.status === 401) return (limitsCache = { at: Date.now(), error: 'Claude login expired · open Claude Code to refresh it' });
+    if (!r.ok) return (limitsCache = { at: Date.now(), error: `Couldn't read plan limits (${r.status})` });
+    const d = await r.json();
+    const one = x => x && typeof x.utilization === 'number' ? { used: x.utilization, resets: x.resets_at || null } : null;
+    return (limitsCache = { at: Date.now(), session: one(d.five_hour), week: one(d.seven_day), weekOpus: one(d.seven_day_opus), weekSonnet: one(d.seven_day_sonnet) });
+  } catch (e) {
+    return (limitsCache = { at: Date.now(), error: `Couldn't read plan limits (${e.name === 'TimeoutError' ? 'timed out' : e.message})` });
+  }
+});
 
 // ---------------------------------------------------------- subagent watcher
 // Layout on disk: projects/<project>/<sessionId>/subagents/agent-<id>.jsonl (+ .meta.json)
@@ -524,8 +639,35 @@ function startWatcher() {
 
 // --------------------------------------------------------------------- app
 
+// ---------------------------------------------------------------- session
+// What each window has open, so its tiles come back after an update (or on every start, in
+// Settings). Each renderer sends its own snapshot whenever its tiles or layout change.
+
+const SESSION_PATH = path.join(app.getPath('userData'), 'session.json');
+let session = { restoreNext: false };
+try { session = JSON.parse(fs.readFileSync(SESSION_PATH, 'utf8')); } catch {}
+const snapshots = new Map(); // webContents id -> snapshot, in window order
+const restoreFor = new Map(); // webContents id -> snapshot that window starts with
+const toRestore = config.restoreSession !== 'never' && (session.restoreNext || config.restoreSession === 'always')
+  ? (session.windows || []).filter(s => s?.tiles?.length) : [];
+let quitting = false;
+let sessionT = null;
+function writeSession() {
+  clearTimeout(sessionT); sessionT = null;
+  // Nothing saved yet this run: keep what's on disk for the next start.
+  if (snapshots.size) session.windows = [...snapshots.values()];
+  try { fs.writeFileSync(SESSION_PATH, JSON.stringify(session)); } catch (e) { console.error('session save failed', e); }
+}
+ipcMain.on('session:save', (e, snap) => {
+  snapshots.set(e.sender.id, snap);
+  sessionT ??= setTimeout(writeSession, 500);
+});
+ipcMain.handle('session:take', e => { const s = restoreFor.get(e.sender.id) || null; restoreFor.delete(e.sender.id); return s; });
+app.on('before-quit', () => { quitting = true; });
+app.on('will-quit', () => { if (sessionT) writeSession(); });
+
 let started = false;
-function createWindow(startDir = null) {
+function createWindow(startDir = null, restore = null) {
   // A new window opens a little down and right of the one you're in.
   const from = primary();
   const b = from && !from.isMaximized() ? from.getBounds() : null;
@@ -539,13 +681,27 @@ function createWindow(startDir = null) {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   const wcId = w.webContents.id;
+  // Run from source the process is electron.exe, whose icon the taskbar would show; point it at Operant's.
+  if (process.platform === 'win32' && !app.isPackaged) {
+    w.setAppDetails({ appId: 'com.doolecg.operant', appIconPath: path.join(__dirname, 'build', 'icon.ico'), appIconIndex: 0, relaunchDisplayName: 'Operant' });
+  }
   windows.add(w);
   lastFocused = w;
   if (startDir) startDirs.set(wcId, startDir);
+  if (restore) restoreFor.set(wcId, restore);
   w.on('focus', () => { lastFocused = w; });
+  w.on('close', e => {
+    if (w.closeConfirmed || !running(w).length || !config.confirmClose) return;
+    e.preventDefault();
+    quitting = false; // a quit waits for the answer, and Cancel ends it
+    confirmClose([w]).then(ok => { if (ok) w.close(); });
+  });
   w.on('closed', () => {
     windows.delete(w);
     startDirs.delete(wcId);
+    restoreFor.delete(wcId);
+    // Closing one of several windows forgets its tiles; quitting, or closing the last, keeps them.
+    if (!quitting && windows.size) { snapshots.delete(wcId); sessionT ??= setTimeout(writeSession, 500); }
     if (lastFocused === w) lastFocused = null;
     // Its terminals go with it.
     for (const [id, p] of ptys) if (p.owner === w) { try { p.kill(); } catch {} ptys.delete(id); }
@@ -562,9 +718,44 @@ function createWindow(startDir = null) {
   return w;
 }
 
+// Closing a window ends its terminals, so it asks first while any are still running.
+// "Don't ask again" turns off confirmClose, which Settings › Tiles & subagents turns back on.
+const running = w => [...ptys.values()].filter(p => p.owner === w);
+let asking = null;
+function confirmClose(wins, { update = false } = {}) {
+  const list = wins.flatMap(running);
+  if (!list.length || !config.confirmClose) { wins.forEach(w => { w.closeConfirmed = true; }); return Promise.resolve(true); }
+  if (asking) return asking.then(() => false);
+  const counts = new Map();
+  for (const p of list) counts.set(p.label, (counts.get(p.label) || 0) + 1);
+  const what = [...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(', ');
+  const owner = wins.find(alive);
+  if (owner) bringUp(owner);
+  const opts = {
+    type: 'warning', title: 'Operant',
+    message: list.length === 1 ? '1 terminal is still running' : `${list.length} terminals are still running`,
+    detail: `${what}\n\n` + (update && config.restoreSession !== 'never'
+      ? `Updating closes ${list.length === 1 ? 'it. It reopens' : 'them. They reopen'} after the update, and Claude Code conversations pick up where they left off.`
+      : `Closing ends ${list.length === 1 ? 'it' : 'them'}.`),
+    buttons: [update ? 'Update' : 'Close', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+    checkboxLabel: "Don't ask again",
+  };
+  asking = (owner ? dialog.showMessageBox(owner, opts) : dialog.showMessageBox(opts)).then(({ response, checkboxChecked }) => {
+    asking = null;
+    if (response !== 0) return false;
+    if (checkboxChecked) {
+      user.confirmClose = false; saveUser(); config.confirmClose = false;
+      broadcast('config:changed', config);
+    }
+    wins.forEach(w => { w.closeConfirmed = true; });
+    return true;
+  });
+  return asking;
+}
+
 // Right-click the taskbar icon for another window.
 function setJumpList() {
-  if (process.platform !== 'win32' || !app.isPackaged) return;
+  if (process.platform !== 'win32' || !installed) return;
   app.setUserTasks([{ program: process.execPath, arguments: '--new-window', iconPath: process.execPath, iconIndex: 0,
     title: 'New window', description: 'Open another Operant window' }]);
 }
@@ -584,9 +775,12 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
-    createWindow(folderArg(process.argv));
+    createWindow(folderArg(process.argv), toRestore[0]);
+    for (const s of toRestore.slice(1)) createWindow(null, s);
+    // Restore once after an update; the next start is a normal one.
+    if (session.restoreNext) { session.restoreNext = false; writeSession(); }
     setJumpList();
-    if (app.isPackaged) {
+    if (installed) {
       if (config.explorerContextMenu) shellIntegration.register(process.execPath);
       else shellIntegration.unregister();
     }

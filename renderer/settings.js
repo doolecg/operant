@@ -17,6 +17,12 @@ const Panels = (() => {
   const pretty = combo => combo.replace(/[A-Za-z]+$/, k => KEY_NAMES[k] || k);
 
   const RESTART = 'Applies after a restart';
+  // Token counts as typed and shown in Settings: 2M, 1.5m, 500k, 1200000.
+  const fmtTokens = n => n >= 1e6 ? +(n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(n);
+  const parseTokens = t => {
+    const m = String(t).trim().replace(/[,_\s]/g, '').match(/^(\d*\.?\d+)([kmb]?)$/i);
+    return m ? Math.round(+m[1] * ({ k: 1e3, m: 1e6, b: 1e9 }[m[2].toLowerCase()] || 1)) : null;
+  };
   const NEW_TILES = 'Applies to new tiles';
 
   const SECTIONS = [
@@ -60,6 +66,10 @@ const Panels = (() => {
       { key: 'notifyOnlyUnfocused', label: 'Only when I\'m not looking at it', hint: 'Skip it for the focused tile while Operant is in front', type: 'toggle' },
     ]],
     ['Tiles & subagents', [
+      { key: 'confirmClose', label: 'Ask before closing with terminals running', hint: 'Closing a window ends its terminals', type: 'toggle' },
+      { key: 'restoreSession', label: 'Reopen my tiles', hint: 'Same tiles, folders and layout · Claude Code conversations pick up where they left off',
+        type: 'select', options: [['update', 'After an update'], ['always', 'Every time Operant starts'], ['never', 'Never']] },
+      { key: 'updateWhenIdle', label: 'Wait for agents before updating', hint: 'Clicking Update while an agent is working installs once it finishes', type: 'toggle' },
       { key: 'showExternalAgents', label: 'Show subagents from other Claude sessions', hint: 'Your IDE, other terminals', type: 'toggle' },
       { key: 'autoCloseDoneAgentsSeconds', label: 'Close finished agents after', hint: 'Seconds after you first see them · running agents never close · 0 = never', type: 'number', min: 0, max: 86400 },
       { key: 'idleCloseTerminalMinutes', label: 'Close idle terminals after', hint: 'Minutes · 0 = never · the master and focused tile stay', type: 'number', min: 0, max: 1440 },
@@ -72,12 +82,28 @@ const Panels = (() => {
       { key: 'ide', label: 'IDE', hint: 'What a folder\'s "Open in IDE" button opens it in', type: 'select', options: IDES },
       { key: 'ideCommand', label: 'Custom IDE command', hint: 'When IDE is Custom command · the folder is added at the end, e.g. "C:\\Tools\\IDE\\bin\\ide64.exe"', type: 'text' },
     ]],
+    ['Files', [
+      { key: 'fileOpens', label: 'Double-clicking a file in the sidebar', hint: 'Right-click a file for the others', type: 'select',
+        options: [['view', 'Views it in Operant'], ['edit', 'Edits it in a terminal'], ['system', 'Opens it with Windows']] },
+      { key: 'editor', label: 'Editor', hint: 'The terminal editor for “Edit” · Auto takes the first found: Neovim, Vim, micro, Edit, nano', type: 'select',
+        options: [['auto', 'Auto'], ['vim', 'Vim'], ['nvim', 'Neovim'], ['micro', 'micro'], ['nano', 'nano'], ['edit', 'Edit (Windows)'], ['custom', 'Custom command']] },
+      { key: 'editorCommand', label: 'Custom editor command', hint: 'When Editor is Custom command · the file is added at the end, e.g. "C:\\Tools\\hx.exe"', type: 'text' },
+    ]],
+    ['Top bar', [
+      { key: 'clockFormat', label: 'Clock', hint: 'Hover it for a calendar · click it to copy the time and date', type: 'select',
+        options: [['auto', 'Like Windows'], ['24', '24-hour'], ['12', '12-hour']] },
+      { key: 'clockSeconds', label: 'Show seconds', type: 'toggle' },
+      { key: 'clockDate', label: 'Show the date', type: 'toggle' },
+      { key: 'barTitle', label: 'Focused tile’s title beside the clock', type: 'toggle' },
+    ]],
     ['Media', [
       { key: 'mediaControls', label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },
     ]],
     ['Usage', [
       { key: 'tokenUsage', label: 'Token usage in the top bar', hint: 'Claude Code tokens used today, from its transcripts · click it (or Alt+U) for a graph over time', type: 'toggle' },
       { key: 'usageSeries', label: 'Count these tokens', hint: 'In the bar and the graph · cache reads are usually most of the total', type: 'series' },
+      { key: 'planLimits', label: 'Plan limits when hovering the pill', hint: 'Your Claude 5-hour session and weekly limits, as Claude Code’s /usage shows them · asked of Anthropic with your Claude Code login', type: 'toggle' },
+      { key: 'tokenBudget', label: 'Daily token budget', hint: 'Counted tokens a day, like 2M or 500k · the pill turns orange at 80% and red past it · 0 = off', type: 'tokens' },
     ]],
     ['Startup', [
       { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
@@ -92,6 +118,9 @@ const Panels = (() => {
     ]],
     ['CodeGraph', [
       { type: 'codegraph', label: 'CodeGraph install index init version' },
+      { key: 'codegraphOnStartup', label: 'Index projects when Operant starts', hint: 'Every pinned project, in one CodeGraph tile · “All projects” also sets up ones not indexed yet', type: 'select',
+        options: [['changed', 'Projects with lots of changes'], ['all', 'All projects'], ['off', 'Off']] },
+      { key: 'codegraphChangedFiles', label: 'Lots of changes means', hint: 'Files added, changed or removed since the project was last indexed', type: 'number', min: 1, max: 100000 },
       { key: 'codegraphButtons', label: 'CodeGraph buttons in the sidebar', hint: '◇ on each project, in the header for all of them and in the folder right-click menu', type: 'toggle' },
     ]],
     ['Updates', [
@@ -100,7 +129,7 @@ const Panels = (() => {
     ]],
   ];
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
+    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -108,6 +137,7 @@ const Panels = (() => {
       case 'number': return `<input type="number" data-key="${it.key}" min="${it.min}" max="${it.max}" step="${it.step || 1}" value="${v}">`;
       case 'toggle': return `<button class="toggle${v ? ' on' : ''}" data-key="${it.key}"></button>`;
       case 'select': return `<select data-key="${it.key}">${(typeof it.options === 'function' ? it.options(cfg) : it.options).map(([o, n]) => `<option value="${esc(o)}"${o === v ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+      case 'tokens': return `<input type="text" data-key="${it.key}" value="${v ? esc(fmtTokens(v)) : '0'}" spellcheck="false">`;
       case 'list': return `<input type="text" data-key="${it.key}" value="${esc([].concat(v).join(' '))}">`;
       case 'series': return `<div class="series-picks">${USAGE_SERIES.map(([k, n]) => `<button class="chip-toggle${[].concat(v).includes(k) ? ' on' : ''}" data-series="${k}"><i class="sw s-${k}"></i>${n}</button>`).join('')}</div>`;
       case 'folder': return `<input type="text" data-key="${it.key}" value="${esc(v)}"><button class="btn" data-browse="${it.key}">Browse…</button>`;
@@ -294,6 +324,10 @@ const Panels = (() => {
           if (it.type === 'number') {
             const n = Math.min(it.max, Math.max(it.min, Math.round(+el.value || 0)));
             el.value = n; set(it.key, n);
+          } else if (it.type === 'tokens') {
+            const n = parseTokens(el.value);
+            if (n != null) set(it.key, n);
+            el.value = cfg[it.key] ? fmtTokens(cfg[it.key]) : '0';
           } else if (it.type === 'list') set(it.key, el.value.split(/\s+/).filter(Boolean));
           else set(it.key, el.type === 'text' ? el.value.trim() : el.value);
         };
