@@ -53,7 +53,7 @@ const COMMANDS = {
   type: { group: 'browser', usage: 'operant type <id> <selector> <text...> [--enter]', desc: 'type into an element in a browser tile', examples: ['operant type 5 "#q" hi --enter'] },
   url: { group: 'browser', usage: 'operant url <id>', desc: "a browser tile's current url/title", examples: ['operant url 5'] },
 
-  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier small|medium] [--model id] [--cwd c] [--title t]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier small'] },
+  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier small|medium|high|big] [--model id] [--cwd c] [--title t]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier small'] },
   ask: { group: 'agents & tasks', usage: 'operant ask <question...> [--options "A|B|C"] [--detail d]', desc: 'blocking dialog, returns the choice', examples: ['operant ask "Delete old migrations?" --options "Delete|Keep"'] },
   notify: { group: 'agents & tasks', usage: 'operant notify <text...> [--title t]', desc: 'Windows notification', examples: ['operant notify "Tests pass, ready for review"'] },
   plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'] },

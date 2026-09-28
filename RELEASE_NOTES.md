@@ -1,3 +1,19 @@
+# Operant 1.13.0
+
+Team mode gets two more tiers for harder work, Sonnet 5.5 and Opus 5.5 become the Claude workers, and the settings panel is bigger.
+
+**Install:** download `Operant-1.13.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Two more team tiers:** `high` (Opus 5.5, medium effort, for hard tasks) and `big` (Opus 5.5, high effort, for big tasks). Start one with `operant agent "<task>" --tier high`, and raise the "Top tier" slider in the ⚙ quick menu to allow them.
+- **Effort per tier:** a tier can set an `effort` level, which Operant passes to Claude Code as `--effort`.
+
+## Changed
+- **Default tiers:** `small` is OpenCode Big Pickle for very easy tasks, and `medium` is Sonnet 5.5 for smaller tasks. If you changed your tiers before, Operant keeps your `small` and `medium` as they are. Change them in ⚙ Settings › Agents › Team to use the new defaults.
+- **Bigger settings panel:** ⚙ Settings opens larger, so more of each page fits without scrolling.
+
+---
+
 # Operant 1.12.1
 
 Claude tiles no longer start with a stray "or" message, and the plan limits stop dropping out with a 429 error.

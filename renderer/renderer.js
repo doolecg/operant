@@ -430,7 +430,7 @@
 
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
-  async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt, model, worker } = {}) {
+  async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt, model, effort, worker } = {}) {
     agentId ??= projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent;
     const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
@@ -440,7 +440,7 @@
     if (edit && /vim/i.test(editorName || '')) w.el.querySelector('.inner').insertAdjacentHTML('beforeend', VIM_KEYS);
     if (master) { w.master = true; w.el.classList.add('master'); }
     mount(w, ws, near, { focus });
-    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run, resume, edit, tileId: w.id, prompt, model, worker });
+    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run, resume, edit, tileId: w.id, prompt, model, effort, worker });
     w.ptyId = info.id;
     w.sessionId = info.sessionId;
     w.cwd = info.cwd;
@@ -4187,7 +4187,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'agent': {
         if (!args.prompt) throw new Error('prompt required');
-        let agentId = args.agent, model = args.model, tier = null;
+        let agentId = args.agent, model = args.model, effort = null, tier = null;
         if (args.tier) {
           tier = String(args.tier);
           const t = cfg.team?.tiers?.[tier];
@@ -4199,6 +4199,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (workers >= maxWorkers) throw new Error(`max workers already running (${maxWorkers}) - wait for one to finish`);
           agentId = t.agent;
           model = model || t.model;
+          if (!args.model) effort = t.effort || null;
         }
         if (agentId && !cfg.agents.some(a => a.id === agentId)) throw new Error(`unknown agent "${agentId}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
         // Item 33: with --tier, a board task is added automatically, owned by the new worker tile,
@@ -4215,7 +4216,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           prompt = `${args.prompt} — when done, run: operant task done ${taskId} --note '<what changed, files>'`;
         }
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
-          agentId, prompt, title: args.title, model, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
+          agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
         if (tier) { w.tier = tier; const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; renderBoard(board); saveSession(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}) };

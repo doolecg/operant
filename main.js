@@ -155,8 +155,10 @@ const DEFAULT_CONFIG = {
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
     tiers: {
-      small: { agent: 'opencode', model: 'opencode/big-pickle', use: 'look things up, read and summarise files, renames, run tests, simple edits, docs tweaks' },
-      medium: { agent: 'claude', model: 'sonnet', use: 'a feature across a few files, a normal bug fix' },
+      small: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up, read and summarise files, renames, run tests, docs tweaks' },
+      medium: { agent: 'claude', model: 'claude-sonnet-5-5', use: 'smaller tasks: a feature across a few files, a normal bug fix, simple edits' },
+      high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'medium', use: 'hard tasks: tricky debugging, a multi-file refactor, security-sensitive work' },
+      big: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'big tasks: architecture, a large refactor or migration' },
     },
     maxWorkers: 4,
     maxTier: 'medium',            // highest tier workers may be started on (gear menu slider)
@@ -775,7 +777,7 @@ const projectOf = dir => Object.keys(config.projectDefaults || {})
   .filter(p => { const a = path.resolve(dir).toLowerCase(), b = path.resolve(p).toLowerCase(); return a === b || a.startsWith(b.replace(/[\\/]$/, '') + path.sep); })
   .sort((a, b) => b.length - a.length)[0];
 
-ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit, tileId, prompt, model, worker }) => {
+ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit, tileId, prompt, model, effort, worker }) => {
   await controlReady;
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
@@ -836,7 +838,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
     // Item 33: team mode picks the agent and passes its model straight through — OpenCode takes it as
     // -m, Claude Code as --model. Other agents don't get a model flag (none of the built-in ones need it).
-    const modelArgs = model ? (isOpenCode(agent) ? ['-m', String(model)] : isClaude(agent) ? ['--model', String(model)] : []) : [];
+    const modelArgs = model ? (isOpenCode(agent) ? ['-m', String(model)] : isClaude(agent) ? ['--model', String(model), ...(effort ? ['--effort', String(effort)] : [])] : []) : [];
     const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...setupArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`

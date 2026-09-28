@@ -692,7 +692,7 @@ body.anim-off .overlay.anchor, body.anim-off .overlay.anchor .card { transition:
 .pill.update.hidden { display: none; }
 
 /* settings: tabs down the left, one section at a time */
-#settings .card { width: min(1000px, 94vw); height: min(700px, 88vh); }
+#settings .card { width: min(1240px, 96vw); height: min(860px, 92vh); }
 #settings .card-body { flex: 1; min-height: 0; padding: 0; overflow: hidden; display: flex; border-top: 1px solid rgba(var(--ink-rgb), .06); }
 .set-layout { display: flex; flex: 1; min-width: 0; }
 .set-nav { width: 200px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 14px 10px 14px 16px; overflow: auto;
