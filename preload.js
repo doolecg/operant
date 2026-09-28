@@ -50,11 +50,13 @@ contextBridge.exposeInMainWorld('operant', {
   usageSummary: () => ipcRenderer.invoke('usage:summary'),
   usageSeries: range => ipcRenderer.invoke('usage:series', range),
   usageLimits: () => ipcRenderer.invoke('usage:limits'),
+  usageBreakdown: opts => ipcRenderer.invoke('usage:breakdown', opts),
   clipboardHasImage: () => ipcRenderer.invoke('clipboard:has-image'),
   pathForFile: f => webUtils.getPathForFile(f),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
   onControl: fn => ipcRenderer.on('control', (_e, d) => fn(d)),
   controlReply: r => ipcRenderer.send('control:reply', r),
+  memory: (op, args) => ipcRenderer.invoke('memory', { op, args }),
   abortOpenCode: ptyId => ipcRenderer.invoke('opencode:abort', { ptyId }),
   summarizeOpenCode: ptyId => ipcRenderer.invoke('opencode:summarize', { ptyId }),
 });

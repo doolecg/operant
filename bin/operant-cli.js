@@ -15,14 +15,15 @@ const POSITIONAL = {
   ports: [], watch: ['id'],
   plan: ['path'], board: [], team: [],
   summarize: ['target', 'question'], find: ['question'],
+  remember: ['text'], recall: ['query'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text', test: 'command', build: 'command',
-  summarize: 'question', find: 'question' };
+  summarize: 'question', find: 'question', remember: 'text', recall: 'query' };
 
 // Single source of truth for command help: group (for the grouped list) plus
 // usage/description/examples (for `operant help <cmd>`). Keeps the two in sync.
-const GROUP_ORDER = ['tiles', 'terminals', 'files', 'browser', 'agents & tasks', 'context', 'misc'];
+const GROUP_ORDER = ['tiles', 'terminals', 'files', 'browser', 'agents & tasks', 'memory', 'context', 'misc'];
 const COMMANDS = {
   tiles: { group: 'tiles', usage: 'operant tiles', desc: "list this window's tiles", examples: ['operant tiles'] },
   status: { group: 'tiles', usage: 'operant status', desc: 'info about the calling tile', examples: ['operant status'] },
@@ -62,7 +63,10 @@ const COMMANDS = {
   summarize: { group: 'agents & tasks', usage: 'operant summarize <file|tile-id|url> ["question"]', desc: 'a small-tier worker reads it and answers, so you never load it yourself', examples: ['operant summarize RELEASE_NOTES.md "what shipped in 1.10.0, 3 bullets"', 'operant summarize 7 "why did it fail"'] },
   find: { group: 'agents & tasks', usage: 'operant find "<question>"', desc: 'a small-tier worker searches the project and answers with file:line references', examples: ['operant find "where is the auto compact threshold checked"'] },
 
-  usage: { group: 'context', usage: 'operant usage', desc: "your tile's context size and the plan limits", examples: ['operant usage'] },
+  remember: { group: 'memory', usage: 'operant remember "<fact>" [--type user|feedback|project|reference] [--global] [--about "<file|symbol>[,<more>]"]', desc: 'save (or update) one fact in this project\'s shared memory; --type user/--global for user-wide facts; --about links it to code (resolved through CodeGraph when indexed)', examples: ['operant remember "Ship on dev-<version>, fast-forward main at release" --type project', 'operant remember "Prefers plain commit messages" --type user', 'operant remember "recall() caps output around 2k tokens" --about memory.js,recall'] },
+  recall: { group: 'memory', usage: 'operant recall ["query"] [--about "<file|symbol>"]', desc: 'the memory index, matching facts for a query, or facts linked to a file/symbol', examples: ['operant recall', 'operant recall "release process"', 'operant recall --about main.js'] },
+
+  usage: { group: 'context', usage: 'operant usage [--breakdown] [--days 1|7]', desc: "your tile's context size and the plan limits, or (--breakdown) where its project's tokens went", examples: ['operant usage', 'operant usage --breakdown', 'operant usage --breakdown --days 7'] },
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'] },
 
   ports: { group: 'misc', usage: 'operant ports', desc: "list dev-server URLs found in this window's tiles", examples: ['operant ports'] },
@@ -164,6 +168,7 @@ function buildArgs(cmd, positionals, flags) {
 function fmtTile(t) {
   const flags = [t.busy && 'busy', t.focused && 'focused', t.self && 'self'].filter(Boolean).map(f => `[${f}]`);
   if (t.runaway) flags.push(`[⚠ ${t.runaway}]`);
+  if (t.waiting) flags.push('[waiting]');
   return [t.id, t.kind, t.title, t.cwd, t.tokens, flags.join(' ')].filter(x => x !== undefined && x !== '').join('  ');
 }
 
@@ -184,6 +189,28 @@ function fmtDigest(d) {
     if (f.frame && f.frame !== loc) lines.push(`  ${f.frame}`);
   }
   if (d.more) lines.push(`… and ${d.more} more`);
+  return lines.join('\n');
+}
+
+// operant usage --breakdown (item 39): a compact version of Settings > Usage > "Where tokens go",
+// scoped to the calling tile's project. All Claude Code usage, so it's all "paid" (subscription).
+function fmtTok(n) { return n >= 1e6 ? +(n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(n); }
+function fmtBreakdown(b) {
+  const lines = [`where tokens go (${b.days === 7 ? 'last 7 days' : 'today'}):`];
+  lines.push(...b.tiles.slice(0, 8).map(t => `  ${t.label}  in ${fmtTok(t.input)} out ${fmtTok(t.output)} cache-r ${fmtTok(t.cacheRead)} cache-w ${fmtTok(t.cacheWrite)}`));
+  if (b.biggestTurns.length) {
+    lines.push('  biggest turns:');
+    lines.push(...b.biggestTurns.slice(0, 5).map(t => `    ${fmtTok(t.tokens)}  ${t.tile}${t.cause ? `  (${t.cause})` : ''}`));
+  }
+  if (b.repeatedReads.length) {
+    lines.push('  read more than 3×:');
+    lines.push(...b.repeatedReads.slice(0, 5).map(r => `    ${r.count}×  ${r.file}  (${r.label})`));
+  }
+  const big = b.overhead.filter(o => o.big);
+  if (big.length) {
+    lines.push('  session overhead over 20k (system prompt/CLAUDE.md/memory/skills/MCP tools):');
+    lines.push(...big.slice(0, 5).map(o => `    ${fmtTok(o.tokens)}  ${o.label}`));
+  }
   return lines.join('\n');
 }
 
@@ -222,6 +249,8 @@ function formatResult(cmd, result) {
       const owner = o => o ? `${o.id} ${o.title}` : '-';
       return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${owner(t.owner)}  ${t.text}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
     }
+    case 'remember': return `${result.name} (${result.type}${result.updated ? ', updated' : ''})`;
+    case 'recall': return (result.text || '') + (result.more ? `\n(${result.more} more matched, ${result.shown} of ${result.total} shown)` : '');
     case 'usage': {
       const lines = [result.max
         ? `context: ${result.tokens.toLocaleString()} / ${result.max.toLocaleString()} tokens (${result.pct}%)`
@@ -234,6 +263,7 @@ function formatResult(cmd, result) {
         if (pct(l.session)) lines.push(`session (5h): ${pct(l.session)}`);
         if (pct(l.week)) lines.push(`week: ${pct(l.week)}`);
       }
+      if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0

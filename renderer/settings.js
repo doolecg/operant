@@ -75,6 +75,9 @@ const Panels = (() => {
       { key: 'cacheTtlMinutes', label: 'Prompt cache lifetime', hint: 'Minutes an idle tile\'s cache stays warm before its next message pays full price · 60 if your setup uses the 1-hour cache', type: 'number', min: 1, max: 120 },
       { key: 'compactBeforeCold', label: 'Compact before the cache goes cold', hint: 'Compact big idle agents just before their prompt cache expires, instead of paying to rebuild it', type: 'toggle' },
       { key: 'team', type: 'team' },
+      { key: 'shareSetup', label: 'Share your main agent\'s setup',
+        hint: 'Rules, MCP servers and skills from your default agent (above) reach every agent you launch, for that process only · never edits your agents\' own config files',
+        type: 'toggle' },
     ]],
     ['Notifications', [
       { key: 'notifications', label: 'Windows notifications', type: 'toggle' },
@@ -140,6 +143,7 @@ const Panels = (() => {
       { key: 'tokenBudget', label: 'Daily token budget', hint: 'Counted tokens a day, like 2M or 500k · the pill turns orange at 80% and red past it · 0 = off', type: 'tokens' },
       { key: 'contextBadge', label: 'Context size in the info bar', hint: 'How full each Claude Code and OpenCode tile’s context is · orange at 60%, red at 85% · big contexts cost more tokens per message · needs Token usage in the top bar for Claude Code', type: 'toggle' },
       { key: 'tileTokens', label: 'Tile info bar', hint: 'A thin bar under each agent tile’s title: model, context, tokens used since it opened, folder and branch', type: 'toggle' },
+      { type: 'tokenBreakdown', label: 'Where tokens go' },
     ]],
     ['Startup', [
       { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
@@ -161,6 +165,9 @@ const Panels = (() => {
       { key: 'vimKeys', label: 'Vim keys', hint: 'j/k and h/l scroll, gg/G top and end, Ctrl+D/U half a page, / finds, n/N next and previous in viewer and diff tiles ([ and ] change file); in the sidebar (Alt+Shift+B) j/k move, l opens, h closes, e edits, a and s open an agent or shell · Ctrl+J/K move in the pickers', type: 'toggle' },
       { type: 'keys', label: 'Keybinds shortcuts keys' },
     ]],
+    ['Memory', [
+      { type: 'memory', label: 'Memory facts remember recall project global' },
+    ]],
     ['CodeGraph', [
       { type: 'codegraph', label: 'CodeGraph install index init version' },
       { key: 'codegraphOnStartup', label: 'Index projects when Operant starts', hint: 'Every pinned project, in one CodeGraph tile · “All projects” also sets up ones not indexed yet', type: 'select',
@@ -174,7 +181,7 @@ const Panels = (() => {
     ]],
   ];
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', CodeGraph: '◇', Updates: '↻' };
+    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -321,6 +328,8 @@ const Panels = (() => {
     if (it.type === 'team') return teamEditor(cfg);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
+    if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';
+    if (it.type === 'memory') return '<div class="mem-card"></div>';
     if (it.type === 'updates') return updatesCard(ext.update());
     return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}</div><div class="ctl">${control(it, cfg[it.key], cfg)}</div></div>`;
   }
@@ -362,6 +371,10 @@ const Panels = (() => {
       if (keysEl) ext.renderKeys(keysEl);
       const cgEl = pane.querySelector('.cg-card');
       if (cgEl) ext.renderCodegraph(cgEl);
+      const tbEl = pane.querySelector('.tok-breakdown');
+      if (tbEl) ext.renderTokenBreakdown(tbEl);
+      const memEl = pane.querySelector('.mem-card');
+      if (memEl) ext.renderMemory(memEl);
       pane.querySelectorAll('[data-update]').forEach(b => b.onclick = () => {
         const a = b.dataset.update;
         if (a === 'check') { ext.checkUpdate(); b.disabled = true; b.textContent = 'Checking…'; }

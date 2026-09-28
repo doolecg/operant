@@ -19,6 +19,8 @@ const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
 const agentBrief = require('./agent-brief');
+const agentSetup = require('./agent-setup');
+const memory = require('./memory');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
@@ -69,10 +71,15 @@ const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
 // the brief file, so turning the setting on doesn't need a restart.
 const HOOK_CMD_PATH = path.join(__dirname, 'hooks', 'long-commands.cmd').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 const HOOK_SETTINGS_PATH = path.join(app.getPath('userData'), 'hook-settings.json');
+// Same setting, for OpenCode: a plugin (tool.execute.before) rather than a --settings hook, wired up
+// below next to OPENCODE_CONFIG_CONTENT.
+const OC_HOOK_PATH = path.join(__dirname, 'hooks', 'opencode-long-commands.mjs').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 function writeHookSettings() {
   try {
     const content = JSON.stringify({
-      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `"${HOOK_CMD_PATH}"` }] }] },
+      // "Bash" on macOS/Linux, "PowerShell" on Windows — Claude Code's shell tool is named
+      // differently per platform, and a matcher that misses one never even calls the hook script.
+      hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `"${HOOK_CMD_PATH}"` }] }] },
     });
     let existing = null;
     try { existing = fs.readFileSync(HOOK_SETTINGS_PATH, 'utf8'); } catch {}
@@ -80,6 +87,9 @@ function writeHookSettings() {
   } catch (e) { console.error('hook settings write failed', e.message); }
 }
 writeHookSettings();
+// Where agent-setup.js keeps generated, per-process-only files (a mirrored skills folder, a
+// --mcp-config file for Claude tiles) — never ~/.claude or ~/.config/opencode.
+const AGENT_SETUP_DIR = path.join(app.getPath('userData'), 'agent-setup');
 
 // Alt is the "Super" key here: Windows reserves most Win+ combos for itself.
 const DEFAULT_KEYBINDS = {
@@ -137,6 +147,7 @@ const DEFAULT_CONFIG = {
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
   longCommandHook: false,         // Claude Code hook: reroute long commands (test/build/install) through operant run/wait automatically (Settings > Agents)
+  shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   cacheTtlMinutes: 5,              // Claude's prompt cache lifetime; 60 if your setup uses the 1-hour cache (Settings > Agents)
@@ -364,6 +375,9 @@ function isOperantSkillFile(content) {
 function syncSkill() {
   try {
     if (!fs.existsSync(SKILL_SRC)) return; // not built yet (e.g. a fresh dev checkout)
+    // The targets are in the user's home, shared with their installed Operant: a dev/test profile
+    // must neither install its work-in-progress skill there nor remove the installed one.
+    if (process.env.OPERANT_USER_DATA) return;
     const content = fs.readFileSync(SKILL_SRC, 'utf8');
     for (const t of SKILL_TARGETS) {
       try {
@@ -466,10 +480,13 @@ function startControlServer() {
         if (cmd === 'ask') { const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'open') { const r = await controlOpen(args, ownerForTile(tile)); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'usage') {
-          // The renderer knows the calling tile's own context size; main owns the Claude plan limits.
+          // The renderer knows the calling tile's own context size and project; main owns the Claude
+          // plan limits and (item 39) computes the token breakdown from the transcripts on demand.
           const r = await forwardControl(ownerForTile(tile), cmd, args, tile, 20000);
           if (!r.ok) return reply(400, r);
-          return reply(200, { ok: true, result: { ...r.result, limits: await fetchLimits() }, warn: r.warn });
+          const extra = { limits: await fetchLimits() };
+          if (args.breakdown) extra.breakdown = await usage.breakdown({ days: args.days === 7 ? 7 : 1, project: r.result.project || null });
+          return reply(200, { ok: true, result: { ...r.result, ...extra }, warn: r.warn });
         }
         // Item 35: cheap readers run a hidden child process, no tile, no forward to the renderer's
         // command switch (only a couple of small side-calls into it, for the caller's cwd/tile output).
@@ -491,6 +508,19 @@ function startControlServer() {
 const ptys = new Map(); // id -> pty (each also carries .owner, its window)
 
 ipcMain.handle('config', () => config);
+
+// Item 45: shared memory. cwd is the calling tile's project folder (resolved by the renderer,
+// same as diff/status); userDataDir is always Operant's own, for --type user / --global facts.
+ipcMain.handle('memory', (_e, { op, args = {} }) => {
+  const userDataDir = app.getPath('userData');
+  try {
+    if (op === 'remember') return { ok: true, result: memory.remember({ ...args, userDataDir }) };
+    if (op === 'recall') return { ok: true, result: memory.recall({ ...args, userDataDir }) };
+    if (op === 'list') return { ok: true, result: memory.listAll({ ...args, userDataDir }) };
+    if (op === 'delete') { memory.deleteFact(args); return { ok: true, result: {} }; }
+    return { ok: false, error: `unknown memory op "${op}"` };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 
 // A folder passed on the command line (e.g. from the Explorer right-click entry).
 // Dev runs also pass the app's own folder (`electron .`), and Chromium can put its flags first.
@@ -787,14 +817,19 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Item 43: Claude Code gets the brief on every launch, including resumed/reopened tiles —
     // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
     // own env below; Codex and Gemini CLI have no equivalent flag, so they're skipped.
-    const briefArgs = config.briefAgents && isClaude(agent) ? ['--append-system-prompt', [agentBrief.BRIEF, agentBrief.mainRulesText(config.defaultAgent, 'claude')].filter(Boolean).join('\n\n')] : [];
+    // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
+    const rules = config.shareSetup ? agentBrief.mainRulesText(config.defaultAgent, 'claude') : '';
+    const briefText = [config.briefAgents && agentBrief.BRIEF, rules].filter(Boolean).join('\n\n');
+    const briefArgs = briefText && isClaude(agent) ? ['--append-system-prompt', briefText] : [];
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
     const hookArgs = config.longCommandHook && isClaude(agent) ? ['--settings', HOOK_SETTINGS_PATH] : [];
+    // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
+    const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
     // Item 33: team mode picks the agent and passes its model straight through — OpenCode takes it as
     // -m, Claude Code as --model. Other agents don't get a model flag (none of the built-in ones need it).
     const modelArgs = model ? (isOpenCode(agent) ? ['-m', String(model)] : isClaude(agent) ? ['--model', String(model)] : []) : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...setupArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -829,8 +864,23 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // touching the user's own ~/.config/opencode/tui.json.
   if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
   // Item 43: the brief as an `instructions` file, through OpenCode's own per-process config env var
-  // (merged with the user's real opencode.json/opencode.jsonc, never replacing it).
-  if (isOc && config.briefAgents) envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(BRIEF_PATH, config.defaultAgent);
+  // (merged with the user's real opencode.json/opencode.jsonc, never replacing it). Item 37: the same
+  // env var also carries the long-command reroute plugin when that setting is on, merged into the
+  // same object rather than a second env var.
+  if (isOc && (config.briefAgents || config.longCommandHook || config.shareSetup)) {
+    envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(config.briefAgents ? BRIEF_PATH : null, {
+      mainAgent: config.shareSetup ? config.defaultAgent : null,
+      pluginPath: config.longCommandHook ? OC_HOOK_PATH : null,
+    });
+  }
+  // Folds the main agent's MCP servers, plugin skills and CodeGraph hook into whatever
+  // OPENCODE_CONFIG_CONTENT already carries (brief instructions, rules, other plugin entries),
+  // rather than replacing it. Per process only — never touches ~/.config/opencode.
+  if (isOc && config.shareSetup) {
+    envBase.OPENCODE_CONFIG_CONTENT = agentSetup.buildOpencodeConfigContent({
+      base: envBase.OPENCODE_CONFIG_CONTENT, cwd: dir, userDataDir: AGENT_SETUP_DIR, config,
+    });
+  }
   const env = await withFreshPath(envBase);
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];
@@ -1225,6 +1275,7 @@ const usage = createUsage({
 });
 ipcMain.handle('usage:summary', () => usage.summary());
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
+ipcMain.handle('usage:breakdown', (_e, opts) => usage.breakdown(opts));
 
 const opencode = createOpenCode({
   sendTo, primary: agentWindow, config,

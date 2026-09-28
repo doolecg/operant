@@ -149,6 +149,7 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 #stat-agents .run { color: var(--agent); }
 #stat-agents .ok { color: var(--done); }
 #stat-agents .idle { color: var(--dim); }
+#stat-agents .warn { color: #7aa6e3; }
 .icon-btn { position: relative; width: 26px; height: 24px; border-radius: 7px; color: var(--dim); font-size: 14px; line-height: 1; }
 .icon-btn:hover { color: var(--text); background: rgba(var(--ink-rgb), .08); }
 #btn-notifs svg { width: 14px; height: 14px; vertical-align: middle; fill: currentColor; }
@@ -296,6 +297,9 @@ body.anim-off .win::before,
 .tbar .badge { font-size: 10.5px; padding: 1px 8px; border-radius: 99px; background: rgba(var(--ink-rgb), .06); white-space: nowrap; }
 .win.agent.running .badge { color: var(--agent); }
 .win.agent.done .badge { color: var(--done); }
+.tbar .waiting:empty { display: none; }
+.tbar .waiting { font-size: 10.5px; padding: 1px 8px; border-radius: 99px;
+  color: #7aa6e3; background: color-mix(in srgb, #7aa6e3 16%, transparent); }
 .tbar .runaway:empty { display: none; }
 .tbar .runaway { font-size: 10.5px; padding: 1px 8px; border-radius: 99px; cursor: pointer;
   color: #f08a78; background: color-mix(in srgb, #f08a78 16%, transparent); }
@@ -642,6 +646,8 @@ body.anim-off .overlay.anchor, body.anim-off .overlay.anchor .card { transition:
 .notif-tile { font-size: 10.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notif-body { font-size: 11.5px; color: var(--dim); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notif-time { flex: none; font-size: 10.5px; color: var(--dim); white-space: nowrap; margin-top: 1px; }
+.notif-action { font-size: 10.5px; color: var(--accent); margin-top: 2px; align-self: flex-start; }
+.notif-action:hover { text-decoration: underline; }
 
 /* agent launcher */
 .card.narrow { width: min(520px, 94vw); }
@@ -817,6 +823,18 @@ button.u-tile:hover { border-color: rgba(var(--ink-rgb), .2); }
 .up-row.other .up-bar i { background: rgba(var(--ink-rgb), .3); }
 .up-val { font: 11.5px var(--mono); color: var(--dim); text-align: right; }
 .series-picks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.tok-seg { margin: 4px 0 14px; width: fit-content; }
+.tok-section { margin: 0 0 18px; }
+.tok-section h4 { margin: 0 0 8px; font: 600 12.5px 'Segoe UI', sans-serif; color: var(--text); }
+.tok-section .hint { display: block; margin: 0 0 8px; }
+.tok-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; border-bottom: 1px solid rgba(var(--ink-rgb), .06); }
+.tok-row:last-child { border-bottom: none; }
+.tok-tok { font: 11.5px var(--mono); color: var(--text); min-width: 56px; }
+.tok-nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.tok-cause { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.tok-when { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.tok-row.tok-flag { background: rgba(230, 160, 60, .1); border-radius: 6px; padding-left: 6px; }
+.tok-row.tok-flag .tok-tok { color: #e6a03c; }
 .chip-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; font-size: 12px; color: var(--dim);
   border: 1px solid rgba(var(--ink-rgb), .12); }
 .chip-toggle.on { color: var(--text); background: rgba(var(--ink-rgb), .07); }

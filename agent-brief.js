@@ -9,6 +9,7 @@ const BRIEF = [
   'If `.codegraph/` exists in this project, your first step for any question about the code is CodeGraph (`codegraph explore "<symbols or question>"`, or its MCP tool): not grep, glob or reading files. Fall back to those only for what CodeGraph did not answer.',
   'If `.operant/progress.md` exists, read it first and continue from it.',
   'Run long commands (tests, builds, installs, dev servers) with `operant run`, then `operant wait <id> --errors`.',
+  'At start, run `operant recall` for this project\'s memory; save durable facts you learn (user preferences, decisions, gotchas) with `operant remember`.',
 ].join('\n');
 
 // Written once into Operant's userData, never touching the user's own files. Claude Code gets this
@@ -46,9 +47,14 @@ function mainRulesText(mainAgent, launching) {
   const p = mainRules(mainAgent, launching);
   try { return p ? fs.readFileSync(p, 'utf8') : ''; } catch { return ''; }
 }
-const opencodeConfigContent = (filePath, mainAgent) => {
-  const rules = mainRules(mainAgent, 'opencode');
-  return JSON.stringify({ instructions: [filePath, ...(rules ? [rules] : [])] });
+// `pluginPath`, when given, is the long-command reroute (hooks/opencode-long-commands.mjs), in the
+// same object so everything merges into one config.
+const opencodeConfigContent = (filePath, { mainAgent, pluginPath } = {}) => {
+  const content = {};
+  const instructions = [filePath, mainRules(mainAgent, 'opencode')].filter(Boolean);
+  if (instructions.length) content.instructions = instructions;
+  if (pluginPath) content.plugin = [pluginPath];
+  return JSON.stringify(content);
 };
 
 module.exports = { BRIEF, briefPath, opencodeConfigContent, mainRulesText };

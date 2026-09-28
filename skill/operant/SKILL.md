@@ -29,13 +29,15 @@ Show a plan for approval instead of pasting it into chat: `operant plan plan.md`
 `operant run "npm run dev"`, then `operant ports` for the URL, `operant browse <url>` to open it. `operant text <id>` (cheap) over `operant shot <id>` (image) when text is enough; for a screenshot, `operant shot <id> --selector "<css>"` captures just that part of the page, cheaper than the whole tile; `operant console <id> --errors` for runtime errors; `click`/`type` drive simple flows; `operant watch <id> --errors` on a dev server instead of polling.
 
 ## Commands
-tiles/status/focus/close/ws/title, run/test/build/read/send/wait/stop, view/edit/diff/open, browse/shot/console/text/click/type/url, agent/ask/notify/plan/task/board/team, summarize/find, usage/compact, ports/watch — `operant help [cmd]` for the full list, flags and examples. `--json` prints raw JSON. Exit codes: 0 ok, 1 error, 2 not inside Operant.
+tiles/status/focus/close/ws/title, run/test/build/read/send/wait/stop, view/edit/diff/open, browse/shot/console/text/click/type/url, agent/ask/notify/plan/task/board/team, summarize/find, remember/recall, usage/compact, ports/watch — `operant help [cmd]` for the full list, flags and examples. `--json` prints raw JSON. Exit codes: 0 ok, 1 error, 2 not inside Operant.
 
 ## Work smart
 - If `.codegraph/` exists in the repo, use `codegraph explore` before grepping or reading files.
 - Read only the lines you need, not whole files.
 - Re-checking a tile: use `--new`, not a full read.
 - If `operant team` shows tiers, hand small tasks with `operant agent "<task>" --tier small` and big reads with `operant summarize`/`operant find` instead of reading them yourself; review workers' changes before accepting.
+- At start, `operant recall` this project's shared memory; save durable facts with `operant remember "<fact>"`.
+- Before changing a symbol or file CodeGraph just showed you, `operant recall --about <it>` first.
 
 ## Rules
 - Only open tiles that help the user; close tiles you opened for yourself once done.
