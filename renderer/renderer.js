@@ -4,6 +4,10 @@
 (async () => {
   const cfg = await operant.config();
   const defaults = await operant.defaults();
+  // Installed browsers, for Settings' "Open links in" / "Second browser" selects. Detection touches
+  // the registry, so it's fetched once, off the startup path, and Settings redraws if it's open.
+  cfg.__browsers = [];
+  operant.browsers().then(list => { cfg.__browsers = list; if (openPanel() === 'settings') renderSettings(); });
   const $ = s => document.querySelector(s);
   const desktop = $('#desktop');
   const root = document.documentElement.style;
@@ -13,6 +17,7 @@
   const wins = new Map();      // id -> win
   const sessionWin = new Map();// Claude Code sessionId -> win (to place its subagents next to it)
   const agentWin = new Map();  // agentId -> win
+  const closedAgentInfo = new Map(); // agentId -> info, kept a while so a resumed agent can reopen its tile
   let current = 0;
   let nextId = 1;
   let lastCwd = cfg.defaultCwd;
@@ -41,12 +46,20 @@
 
   function switchWorkspace(i) {
     if (i === current || i < 0 || i >= WS_COUNT) return;
+    const prev = current;
     workspaces.forEach((w, j) => {
       w.el.classList.toggle('left', j < i);
       w.el.classList.toggle('right', j > i);
     });
     current = i;
     layout(i, true);
+    // Only the current workspace's tiles keep a WebGL context: drop the ones we're leaving,
+    // pick back up the ones we're arriving at (capped), and redraw so nothing looks stale.
+    for (const w of wsWins(prev)) gpu(w);
+    for (const w of wsWins(i)) {
+      gpu(w);
+      if (w.term) try { w.term.refresh(0, w.term.rows - 1); } catch {}
+    }
     const f = wins.get(workspaces[i].focused);
     if (f) focusWin(f); else refreshBar();
   }
@@ -127,24 +140,69 @@
     if (ws.focused === win.id) ws.focused = null;
   }
 
+  // Tile moves/resizes are FLIP-animated: left/top/width/height land instantly (cheap, no layout
+  // thrash from a long-running transition), then a short JS transform animation fakes the motion.
+  function flipDuration() {
+    const v = parseFloat(getComputedStyle(document.body).getPropertyValue('--anim-flip'));
+    return Number.isFinite(v) ? v : 0;
+  }
+  function flipTile(w, old, r, dur) {
+    w.flipAnim?.cancel();
+    const dx = old.x - r.x, dy = old.y - r.y, sx = old.w / r.w, sy = old.h / r.h;
+    w.el.style.transformOrigin = 'top left';
+    w.el.classList.add('flipping');
+    w.flipAnim = w.el.animate(
+      [{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` }, { transform: 'none' }],
+      { duration: dur, easing: 'cubic-bezier(0.05, 0.9, 0.1, 1.05)' });
+    const done = () => { w.el.classList.remove('flipping'); w.el.style.transform = ''; scheduleFit(w, 0); };
+    w.flipAnim.onfinish = done; w.flipAnim.oncancel = done;
+  }
+
   function layout(i = current, instant = false) {
     const ws = workspaces[i];
     const all = tileRects(i);
     const A = area();
+    const animOff = document.body.classList.contains('anim-off');
+    const dur = instant || animOff ? 0 : flipDuration();
     for (const [id, r0] of all) {
       const w = wins.get(id);
       const fs = ws.fullscreen === id;
       const r = fs ? A : r0;
       w.el.classList.toggle('fullscreen', fs);
       w.el.classList.toggle('hidden-by-fs', ws.fullscreen != null && !fs);
-      if (instant) w.el.classList.add('no-anim');
-      Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
-      if (instant) { void w.el.offsetWidth; w.el.classList.remove('no-anim'); }
-      scheduleFit(w, instant ? 0 : 440);
+      const old = w._rect;
+      const moved = old && (old.x !== r.x || old.y !== r.y || old.w !== r.w || old.h !== r.h);
+      if (!dur || !moved) {
+        w.el.classList.add('no-anim');
+        Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+        void w.el.offsetWidth;
+        w.el.classList.remove('no-anim');
+        scheduleFit(w, 0);
+      } else {
+        Object.assign(w.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+        flipTile(w, old, r, dur);
+        scheduleFit(w, dur);
+      }
+      w._rect = r;
     }
     ws.hint.style.opacity = ws.tree ? 0 : 1;
     drawSplitters(i);
     refreshBar();
+    updateBorderFlow();
+  }
+
+  // Composited-only border flow is costly per running tile, so it's kept off for tiles that can't
+  // be seen: another workspace, or agent tiles beyond the first couple visible on this one.
+  function updateBorderFlow() {
+    let shown = 0;
+    for (const w of wins.values()) {
+      const onCurrent = w.ws === current;
+      let pause = !onCurrent;
+      if (onCurrent && w.el.classList.contains('running') && !w.el.classList.contains('hidden-by-fs')) {
+        if (++shown > 2) pause = true;
+      }
+      w.el.classList.toggle('flow-paused', pause);
+    }
   }
 
   // The gaps between tiles are handles: drag one to resize the tiles on either side.
@@ -208,20 +266,34 @@
   function scheduleFit(w, delay) {
     clearTimeout(w.fitTimer);
     w.fitTimer = setTimeout(() => {
-      if (!w.alive || !w.term) return;
-      try { w.fit.fit(); } catch {}
-      if (w.ptyId) operant.resizePty(w.ptyId, w.term.cols, w.term.rows);
+      if (!w.alive) return;
+      if (w.term) { try { w.fit.fit(); } catch {} if (w.ptyId) operant.resizePty(w.ptyId, w.term.cols, w.term.rows); }
+      else if (w.kind === 'view' && w.image && w.imgFit) drawImgSize(w);
     }, delay);
   }
 
   // ------------------------------------------------------------- windows
+
+  // Paths dropped from Explorer (real files) or dragged from the sidebar (text/plain).
+  function pathsFromDrop(e) {
+    const paths = [...e.dataTransfer.files].map(f => { try { return operant.pathForFile(f); } catch { return null; } }).filter(Boolean);
+    if (!paths.length) { const t = e.dataTransfer.getData('text/plain'); if (t) paths.push(t); }
+    return paths;
+  }
+  // Dropping files onto empty desktop (not onto a tile) opens each one in its own viewer.
+  desktop.addEventListener('dragover', e => { if (!e.target.closest('.win')) e.preventDefault(); });
+  desktop.addEventListener('drop', async e => {
+    if (e.target.closest('.win')) return;
+    e.preventDefault();
+    for (const p of pathsFromDrop(e)) if (!(await operant.isDir(p))) openFile(p, 'view');
+  });
 
   function makeWin(kind, title, icon) {
     const id = nextId++;
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="badge"></span><button class="x" title="Close">✕</button></div><div class="term"></div></div>`;
+      <span class="title"></span><span class="ctx"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -231,8 +303,24 @@
     const w = { id, kind, el, term, fit, title, alive: true, ws: current, lastActivity: Date.now(), closeIn: null };
     el.querySelector('.title').textContent = title;
     el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
+    el.querySelector('.runaway').addEventListener('click', e => { e.stopPropagation(); stopTile(w); });
     el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
     term.attachCustomKeyEventHandler(e => handleTermKey(e, w));
+    // Copy on select: copies once when the drag ends, not on every selection tick.
+    let hasSel = false;
+    term.onSelectionChange(() => { hasSel = term.hasSelection(); });
+    el.querySelector('.term').addEventListener('mouseup', () => {
+      if (cfg.copyOnSelect && hasSel) { navigator.clipboard.writeText(term.getSelection()); toastCopied(); }
+    });
+    // Dropping files (from Explorer or the sidebar) types their paths into this tile, space-separated.
+    el.addEventListener('dragover', e => e.preventDefault());
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!w.ptyId) return;
+      const paths = pathsFromDrop(e);
+      if (!paths.length) return;
+      operant.writePty(w.ptyId, paths.map(p => /\s/.test(p) ? `"${p}"` : p).join(' '));
+    });
     wins.set(id, w);
     return w;
   }
@@ -274,7 +362,7 @@
       '--opacity': cfg.opacity, '--blur': cfg.blur + 'px', '--flow': cfg.borderAnimationSeconds + 's',
     };
     for (const [k, v] of Object.entries(vars)) root.setProperty(k, v);
-    document.body.className = `wp-${cfg.wallpaper} border-${cfg.borderAnimation}`;
+    document.body.className = `wp-${cfg.wallpaper} border-${cfg.borderAnimation} anim-${cfg.animations}`;
     applySidebar();
     for (const w of wins.values()) if (w.term) Object.assign(w.term.options, termOptions(w.kind));
     workspaces.forEach((_, i) => layout(i, i !== current));
@@ -282,7 +370,7 @@
 
   function mount(w, wsIndex, target, { focus = true } = {}) {
     insert(w, wsIndex, target);
-    if (w.term) w.term.open(w.el.querySelector('.term'));
+    if (w.term) { w.term.open(w.el.querySelector('.term')); gpu(w); }
     w.term?.textarea?.addEventListener('focus', () => { if (workspaces[w.ws].focused !== w.id) focusWin(w, false); });
     // Keys never fall into nothing: if the focused tile loses the keyboard to no other control
     // (a tile closing, a redraw, a click on empty space), it takes it straight back.
@@ -305,6 +393,25 @@
   }
 
   // Agents retitle their tiles many times a second while working, so only the title itself is redrawn.
+  // Settings › Terminal › GPU-accelerated terminals: WebGL drawing. A tile whose context is lost (the GPU
+  // reset, or too many tiles for the browser's limit) goes back to the normal renderer.
+  const liveGlCount = () => { let n = 0; for (const x of wins.values()) if (x.gl) n++; return n; };
+  function gpu(w) {
+    if (!w.term || !w.alive) return;
+    // Without hardware acceleration WebGL runs in software, slower than the normal renderer.
+    // Only the current workspace's tiles hold a context (switchWorkspace disposes/reattaches
+    // as you switch), and at most 12 are live at once; the rest stay on the normal renderer.
+    const want = cfg.gpuTerminals && cfg.hardwareAcceleration && typeof WebglAddon !== 'undefined' && w.ws === current;
+    if (!want && w.gl) { try { w.gl.dispose(); } catch {} w.gl = null; }
+    if (!want || w.gl || w.glLost || liveGlCount() >= 12) return;
+    try {
+      const gl = new WebglAddon.WebglAddon();
+      gl.onContextLoss(() => { try { gl.dispose(); } catch {} if (w.gl === gl) { w.gl = null; w.glLost = true; } });
+      w.term.loadAddon(gl);
+      w.gl = gl;
+    } catch { w.gl = null; }
+  }
+
   function setTitle(w, t) {
     if (w.title === t) return;
     w.title = t; w.el.querySelector('.title').textContent = t;
@@ -322,7 +429,7 @@
 
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
-  async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon } = {}) {
+  async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt } = {}) {
     agentId ??= projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent;
     const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
@@ -331,8 +438,8 @@
     Object.assign(w, { agentName: name, agentConf: agent?.id, customTitle: title, run, edit });
     if (edit && /vim/i.test(editorName || '')) w.el.querySelector('.inner').insertAdjacentHTML('beforeend', VIM_KEYS);
     if (master) { w.master = true; w.el.classList.add('master'); }
-    mount(w, ws, null, { focus });
-    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run, resume, edit });
+    mount(w, ws, near, { focus });
+    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run, resume, edit, tileId: w.id, prompt });
     w.ptyId = info.id;
     w.sessionId = info.sessionId;
     w.cwd = info.cwd;
@@ -369,20 +476,23 @@
   refreshEditorName();
   const dirOf = p => String(p).replace(/[\\/][^\\/]*$/, '');
   const isMarkdown = p => /\.(md|markdown|mdx|mdown)$/i.test(p);
+  const isImageFile = p => /\.(png|jpe?g|gif|webp|bmp|ico|svg|avif)$/i.test(p);
 
   // Vim shows no help of its own, so its tiles get the essentials along the bottom.
   const VIM_KEYS = '<div class="keys-foot">' + [['i', 'insert'], ['Esc', 'stop inserting'], [':w', 'save'], [':q', 'quit'], [':wq', 'save + quit'],
     [':q!', 'quit, no save'], ['u', 'undo'], ['Ctrl+R', 'redo'], ['/text', 'find'], ['n', 'next'], ['dd', 'cut line'], ['yy', 'copy line'], ['p', 'paste'],
     ['gg / G', 'top / end']].map(([k, d]) => `<span><kbd>${k}</kbd>${d}</span>`).join('') + '</div>';
 
-  async function openEditor(file, { ws = current, focus = true } = {}) {
+  async function openEditor(file, { ws = current, focus = true, near = null } = {}) {
     await editorReady;
-    return newTerminal('shell', dirOf(file), { edit: file, title: `${editorName || 'Editor'} · ${baseName(file)}`, icon: '✎', ws, focus });
+    return newTerminal('shell', dirOf(file), { edit: file, title: `${editorName || 'Editor'} · ${baseName(file)}`, icon: '✎', ws, focus, near });
   }
 
   // Keys that save and quit each editor, for "Save and close". Vim's title tells Operant when its file
   // has unsaved changes; with other editors, typing in the tile counts.
   const SAVE_QUIT = { vim: '\x1b:wq\r', nvim: '\x1b:wq\r', nano: '\x0f\r\x18', micro: '\x13\x11', edit: '\x13\x11' };
+  // Save without quitting, for "Save and quit" (the tile itself stays open and reopens next start).
+  const SAVE_ONLY = { vim: '\x1b:wa\r', nvim: '\x1b:wa\r', nano: '\x0f\r', micro: '\x13', edit: '\x13' };
   async function requestClose(w) {
     if (!w?.alive) return;
     if (w.edit && w.ptyId && (w.tracksDirty ? w.dirty : w.typed)) {
@@ -400,10 +510,24 @@
     closeWin(w);
   }
 
+  // "Save and quit": save every dirty editor tile in place (no quitting them), snapshot the
+  // session right now, and tell main to close everything and reopen it all next start.
+  async function saveAndQuit() {
+    toast('Saving…', null, 4000);
+    const dirty = [...wins.values()].filter(w => w.edit && w.ptyId && (w.tracksDirty ? w.dirty : w.typed));
+    const keys = cfg.editor === 'custom' ? null : SAVE_ONLY[String(editorName || '').toLowerCase()];
+    if (dirty.length && keys) {
+      for (const w of dirty) operant.writePty(w.ptyId, keys);
+      await new Promise(r => setTimeout(r, 600));
+    }
+    saveSessionNow();
+    operant.saveAndQuit();
+  }
+
   const FIND_BAR = '<div class="find-bar hidden"><input placeholder="Find" spellcheck="false"><span class="find-n"></span>'
     + '<button data-f="prev" title="Previous (Shift+Enter)">↑</button><button data-f="next" title="Next (Enter)">↓</button><button data-f="close" title="Close (Esc)">✕</button></div>';
 
-  function openViewer(file, { ws = current, focus = true } = {}) {
+  function openViewer(file, { ws = current, focus = true, near = null } = {}) {
     const id = nextId++;
     const el = document.createElement('div');
     el.className = 'win view opening';
@@ -428,18 +552,49 @@
       if (!a) return;
       e.preventDefault();
       const href = a.dataset.href;
-      if (/^https?:\/\//i.test(href)) return operant.openLink(href);
+      if (/^https?:\/\//i.test(href)) return operant.openLink(href, e.shiftKey);
       if (href.startsWith('#')) return w.page.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ behavior: 'smooth' });
       const target = resolvePath(dirOf(w.file), decodeURIComponent(href.split('#')[0]));
-      operant.isDir(target).then(d => {
-        if (d) return;
-        w.file = target; w.cwd = dirOf(target); setTitle(w, baseName(target)); updateBadge(w); w.page.scrollTop = 0;
-        operant.watchFile(w.id, w.file); loadView(w); saveSession();
-      });
+      showFile(w, target);
     });
+    // Dropping a file (from Explorer or the sidebar) replaces this tile's file, like clicking a link to it.
+    el.addEventListener('dragover', e => e.preventDefault());
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      const target = pathsFromDrop(e)[0];
+      if (target) showFile(w, target);
+    });
+    // Image viewer: click toggles fit/actual size, double-click resets to fit, drag pans when zoomed in.
+    w.page.addEventListener('mousedown', e => {
+      const img = e.target.closest('.view-img img');
+      if (!img || e.button !== 0) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY, sl = w.page.scrollLeft, st = w.page.scrollTop;
+      let moved = false;
+      const move = ev => {
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) { moved = true; img.closest('.view-img').classList.add('dragging'); }
+        if (moved) { w.page.scrollLeft = sl - dx; w.page.scrollTop = st - dy; }
+      };
+      const up = () => {
+        window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+        img.closest('.view-img')?.classList.remove('dragging');
+        if (!moved) toggleImgFit(w);
+      };
+      window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+    });
+    w.page.addEventListener('dblclick', e => { if (e.target.closest('.view-img img')) { w.imgFit = true; drawImgSize(w); } });
+    w.page.addEventListener('mouseup', () => copySelection(w));
+    w.page.addEventListener('wheel', e => {
+      if (!e.ctrlKey || !w.image) return;
+      const img = w.el.querySelector('.view-img img');
+      if (!img || !img.naturalWidth) return;
+      e.preventDefault();
+      setImgZoom(w, imgPct(w, img) * Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+    }, { passive: false });
     findBar(w);
     wins.set(id, w);
-    mount(w, ws, null, { focus });
+    mount(w, ws, near, { focus });
     updateBadge(w);
     operant.watchFile(w.id, w.file);
     loadView(w);
@@ -454,6 +609,15 @@
     return parts.join('\\');
   }
 
+  // Swap a viewer tile to another file (a link, or a drop), like reopening it fresh.
+  function showFile(w, target) {
+    operant.isDir(target).then(d => {
+      if (d || !w.alive) return;
+      w.file = target; w.cwd = dirOf(target); setTitle(w, baseName(target)); updateBadge(w); w.page.scrollTop = 0;
+      operant.watchFile(w.id, w.file); loadView(w); saveSession();
+    });
+  }
+
   async function loadView(w) {
     const r = await operant.readFile(w.file);
     if (!w.alive) return;
@@ -462,6 +626,38 @@
   }
 
   const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' bytes';
+  // Image viewer sizing: "fit" scales down to the tile (never up past 100%); otherwise imgZoom (10-800%) applies.
+  function fitPct(w, img) {
+    const cw = w.page.clientWidth - 48, ch = w.page.clientHeight - 48;
+    if (!img.naturalWidth || cw <= 0 || ch <= 0) return 100;
+    return Math.min(cw / img.naturalWidth, ch / img.naturalHeight, 1) * 100;
+  }
+  const imgPct = (w, img) => w.imgFit ? fitPct(w, img) : (w.imgZoom || 100);
+  function drawImgSize(w) {
+    const img = w.el.querySelector('.view-img img'), wrap = w.el.querySelector('.view-img'), cap = w.el.querySelector('.view-cap');
+    if (!img || !wrap || !img.naturalWidth) return;
+    const pct = imgPct(w, img);
+    img.style.width = (img.naturalWidth * pct / 100) + 'px';
+    wrap.classList.toggle('pannable', img.naturalWidth * pct / 100 > w.page.clientWidth + .5 || img.naturalHeight * pct / 100 > w.page.clientHeight + .5);
+    if (cap) cap.textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${fmtBytes(w.size || 0)} · ${Math.round(pct)}%`;
+  }
+  function setImgZoom(w, pct, clientX, clientY) {
+    const img = w.el.querySelector('.view-img img');
+    if (!img || !img.naturalWidth) return;
+    pct = Math.max(10, Math.min(800, pct));
+    const before = img.getBoundingClientRect();
+    w.imgFit = false; w.imgZoom = pct;
+    drawImgSize(w);
+    if (clientX == null || !before.width) return;
+    const after = img.getBoundingClientRect(), fx = (clientX - before.left) / before.width, fy = (clientY - before.top) / before.height;
+    w.page.scrollLeft += (after.left + fx * after.width) - clientX;
+    w.page.scrollTop += (after.top + fy * after.height) - clientY;
+  }
+  function toggleImgFit(w) {
+    w.imgFit = !w.imgFit;
+    if (!w.imgFit) w.imgZoom = 100;
+    drawImgSize(w);
+  }
   function drawView(w) {
     const body = w.el.querySelector('.view-body'), md = isMarkdown(w.file) && !w.source, top = w.page.scrollTop, left = w.page.scrollLeft;
     const btn = w.el.querySelector('[data-v="source"]');
@@ -472,9 +668,10 @@
     w.el.classList.toggle('md', md);
     if (w.error) body.innerHTML = `<div class="view-msg">${esc(w.error)}<br><button class="btn" data-v2="open">Open with Windows</button></div>`;
     else if (w.image) {
-      body.innerHTML = `<div class="view-img"><img alt=""><div class="view-cap"></div></div>`;
+      body.innerHTML = `<div class="view-img"><img alt="" draggable="false"><div class="view-cap"></div></div>`;
       const img = body.querySelector('img');
-      img.onload = () => { body.querySelector('.view-cap').textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${fmtBytes(w.size || 0)}`; };
+      if (w.imgFit === undefined) w.imgFit = true;
+      img.onload = () => drawImgSize(w);
       img.src = w.image;
     } else if (md) {
       body.innerHTML = `<article class="md-doc">${MdView.render(w.text)}</article>`;
@@ -482,11 +679,29 @@
         const l = Highlight.lang(pre.dataset.lang);
         if (l) pre.firstChild.innerHTML = Highlight.lines(pre.textContent, l).join('\n');
       });
+      // Inline local images: resolve against the doc's folder and load as data URLs (remote ones stayed links).
+      body.querySelectorAll('img.md-inline-img').forEach(img => {
+        const target = resolvePath(dirOf(w.file), img.dataset.src);
+        img.addEventListener('click', () => openViewer(target));
+        operant.readFile(target).then(r => {
+          if (!w.alive) return;
+          if (r.image) { img.src = r.image; img.classList.add('loaded'); }
+          else { const s = document.createElement('span'); s.className = 'md-img-broken'; s.textContent = `🖼 ${img.alt || img.dataset.src}`; img.replaceWith(s); }
+        }).catch(() => {});
+      });
     } else {
-      const lines = w.text.split('\n'), shown = lines.slice(0, 20000);
-      const l = w.text.length < 3e6 && Highlight.lang(w.file);
-      const html = l ? Highlight.lines(shown.join('\n'), l) : shown.map(x => esc(x.replace(/\r$/, '')));
-      body.innerHTML = `<pre class="view-src">${html.map((x, i) => `<span class="ln">${i + 1}</span>${x}`).join('\n')}</pre>`
+      // Rendered as 200-line chunks (each its own content-visibility:auto pre) so a huge file only
+      // lays out and paints the chunks near the viewport. Highlighting all of a very long file is
+      // itself expensive, so past 20,000 lines it's shown as plain escaped text instead.
+      const lines = w.text.split('\n'), shown = lines.slice(0, 100000);
+      const l = shown.length <= 20000 && w.text.length < 3e6 && Highlight.lang(w.file);
+      let chunks = '';
+      for (let i = 0; i < shown.length; i += 200) {
+        const part = shown.slice(i, i + 200);
+        const html = l ? Highlight.lines(part.join('\n'), l) : part.map(x => esc(x.replace(/\r$/, '')));
+        chunks += `<pre class="src-chunk">${html.map((x, k) => `<span class="ln">${i + k + 1}</span>${x}`).join('\n')}</pre>`;
+      }
+      body.innerHTML = `<div class="view-src">${chunks}</div>`
         + (lines.length > shown.length ? `<div class="view-msg">Showing the first ${shown.length.toLocaleString()} of ${lines.length.toLocaleString()} lines</div>` : '');
     }
     body.querySelector('[data-v2="open"]')?.addEventListener('click', () => operant.openPath(w.file));
@@ -583,6 +798,94 @@
     f.bar.querySelector('.find-n').textContent = !f.q ? '' : f.n ? `${f.k + 1} of ${f.n}${f.n >= 5000 ? '+' : ''}` : 'No matches';
   }
 
+  // ------------------------------------------------------------- browser tile
+  // An in-app browser (<webview>, its own session, no Node/preload). Back/forward/reload/stop,
+  // a URL bar, DevTools, and opening the page in the system browser. Console messages are kept
+  // (last 500) for the control API; Alt/Ctrl keybinds are forwarded from main (see browser:key
+  // below) since the guest's keyboard never reaches this page.
+
+  const LEVEL_NAME = ['verbose', 'info', 'warning', 'error'];
+  const browserConsoleCursors = new Map(); // cursorKey(caller, tile) -> console entries already read, for `console --new`
+  function normalizeUrl(u) {
+    u = String(u || '').trim();
+    if (!u) return 'about:blank';
+    // A scheme needs "//" after it (http://, file://…) or it's just a bare host:port (localhost:3000).
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u) || u === 'about:blank') return u;
+    return 'http://' + u;
+  }
+  function urlHost(u) { try { return new URL(u).host; } catch { return ''; } }
+  function drawBrowserBar(w) {
+    const reload = w.el.querySelector('[data-b="reload"]'), back = w.el.querySelector('[data-b="back"]'), fwd = w.el.querySelector('[data-b="fwd"]');
+    if (reload) { reload.textContent = w.loading ? '✕' : '⟳'; reload.title = w.loading ? 'Stop' : 'Reload'; }
+    if (back) back.disabled = !w.webview.canGoBack();
+    if (fwd) fwd.disabled = !w.webview.canGoForward();
+  }
+  function browserNavigate(w, url) {
+    const u = normalizeUrl(url);
+    w.url = u;
+    w.urlInput.value = u === 'about:blank' ? '' : u;
+    // Before the guest has ever attached, only setting the src attribute (not loadURL) triggers the attach.
+    if (w.attached) w.webview.loadURL(u).catch(() => {});
+    else w.webview.src = u;
+  }
+  function openBrowser(url, { ws = current, focus = true, near = null } = {}) {
+    const id = nextId++;
+    const el = document.createElement('div');
+    el.className = 'win browser opening';
+    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">◎</span><span class="title">Browser</span><span class="badge"></span>
+      <span class="view-acts"><button data-b="back" title="Back">←</button><button data-b="fwd" title="Forward">→</button>
+      <button data-b="reload" title="Reload">⟳</button><button data-b="dev" title="DevTools">◫</button>
+      <button data-b="open" title="Open in the system browser">↗</button></span><button class="x" title="Close">✕</button></div>
+      <div class="browser-bar"><input class="browser-url" spellcheck="false" autocomplete="off" placeholder="Address"></div>
+      <div class="browser-wrap"><webview class="browser-view" partition="persist:operant-browser" allowpopups></webview></div></div>`;
+    const wv = el.querySelector('webview');
+    const w = { id, kind: 'browser', el, term: null, title: 'Browser', alive: true, ws, lastActivity: Date.now(), closeIn: null,
+      cwd: null, webview: wv, urlInput: el.querySelector('.browser-url'), console: [], loading: false, url: 'about:blank' };
+    el.querySelector('.title').textContent = w.title;
+    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
+    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
+    el.querySelector('.view-acts').addEventListener('click', e => {
+      const b = e.target.closest('[data-b]');
+      if (!b) return;
+      if (b.dataset.b === 'back') wv.goBack();
+      else if (b.dataset.b === 'fwd') wv.goForward();
+      else if (b.dataset.b === 'reload') { if (w.loading) wv.stop(); else wv.reload(); }
+      else if (b.dataset.b === 'dev') { if (wv.isDevToolsOpened()) wv.closeDevTools(); else wv.openDevTools(); }
+      else if (w.url) operant.openLink(w.url, true); // "open in system browser" always uses the second browser
+    });
+    w.urlInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); browserNavigate(w, w.urlInput.value); }
+      else if (e.key === 'Escape') { e.preventDefault(); w.urlInput.value = w.url === 'about:blank' ? '' : w.url; focusKeys(w); }
+    });
+    wv.addEventListener('focus', () => { if (workspaces[w.ws].focused !== w.id) focusWin(w, false); });
+    // A guest webview grabs the keyboard itself once its page is ready; a tile that opened with no
+    // URL wants the address bar instead, so it's clawed back the first time that happens.
+    wv.addEventListener('dom-ready', () => { w.attached = true; if (w.wantUrlFocus) { w.wantUrlFocus = false; w.urlInput.focus(); w.urlInput.select(); } });
+    wv.addEventListener('did-start-loading', () => { w.loading = true; drawBrowserBar(w); });
+    wv.addEventListener('did-stop-loading', () => { w.loading = false; drawBrowserBar(w); });
+    const onNav = () => { w.url = wv.getURL() || w.url; w.urlInput.value = w.url === 'about:blank' ? '' : w.url; setBadge(w, urlHost(w.url)); drawBrowserBar(w); saveSession(); };
+    wv.addEventListener('did-navigate', onNav);
+    wv.addEventListener('did-navigate-in-page', onNav);
+    wv.addEventListener('page-title-updated', e => setTitle(w, e.title || urlHost(w.url) || 'Browser'));
+    wv.addEventListener('console-message', e => {
+      w.console.push({ level: e.level, message: e.message, line: e.line, source: e.sourceId });
+      if (w.console.length > 500) w.console.shift();
+    });
+    wins.set(id, w);
+    if (focus && !url) w.wantUrlFocus = true;
+    mount(w, ws, near, { focus });
+    browserNavigate(w, url || 'about:blank');
+    saveSession();
+    return w;
+  }
+  // Alt/Ctrl keybinds forwarded from main: the guest's key events never bubble to this page.
+  operant.on('browser:key', combo => {
+    const w = focused();
+    if (!w || w.kind !== 'browser') return;
+    const action = bindMap.get(combo);
+    if (action && actions[action]) actions[action]();
+  });
+
   // ------------------------------------------------------------- diff tile
   // What changed in a project since the last commit, file by file: staged, unstaged and new files.
 
@@ -599,7 +902,7 @@
 
   // IntelliJ-style committing: tick the files (all are ticked to start), write a message, Commit or
   // Commit and Push (Ctrl+Enter commits). The bar has the branch (click to switch), Pull and Push.
-  function openDiff(dir, { ws = current, focus = true } = {}) {
+  function openDiff(dir, { ws = current, focus = true, near = null } = {}) {
     const open = [...wins.values()].find(x => x.kind === 'diff' && x.alive && normPath(x.cwd) === normPath(dir));
     if (open && focus) { if (open.ws !== current) switchWorkspace(open.ws); focusWin(open); loadDiff(open); return open; }
     const id = nextId++;
@@ -662,9 +965,10 @@
       if (e.target.checked && !msg.value.trim() && w.status) msg.value = (await operant.git('last-message', w.status.root)).trim();
     };
     el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => commit(w, b.dataset.c === 'push'));
+    w.page.addEventListener('mouseup', () => copySelection(w));
     findBar(w);
     wins.set(id, w);
-    mount(w, ws, null, { focus });
+    mount(w, ws, near, { focus });
     loadDiff(w);
     saveSession();
     return w;
@@ -823,8 +1127,9 @@
       if (n.win) {
         if (!keepTile(n.win)) return null;
         const w = n.win;
-        tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master, sessionId: w.sessionId,
-          ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.edit ? { edit: w.edit } : {}) });
+        tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master,
+          sessionId: w.sessionId && !w.sessionId.startsWith('oc:') ? w.sessionId : undefined,
+          ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.kind === 'browser' ? { url: w.url } : {}), ...(w.edit ? { edit: w.edit } : {}) });
         w.snapIndex = tiles.length - 1;
         return { tile: w.snapIndex };
       }
@@ -846,6 +1151,13 @@
       if (sig !== lastSnap) { lastSnap = sig; operant.saveSession(snap); }
     }, 300);
   }
+  // Skips the debounce: used right before quitting, where the delayed save would never fire.
+  function saveSessionNow() {
+    clearTimeout(sessionT);
+    const snap = snapshot();
+    lastSnap = JSON.stringify(snap);
+    operant.saveSession(snap);
+  }
 
   // Reopens a snapshot's tiles in their workspaces, then puts back each layout exactly.
   async function restore(snap) {
@@ -853,6 +1165,7 @@
       const ws = Math.max(snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`)), 0);
       if (t.kind === 'view') return openViewer(t.file, { ws, focus: false });
       if (t.kind === 'diff') return openDiff(t.cwd, { ws, focus: false });
+      if (t.kind === 'browser') return openBrowser(t.url, { ws, focus: false });
       if (t.edit) return openEditor(t.edit, { ws, focus: false });
       return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws, focus: false });
     }));
@@ -894,11 +1207,17 @@
     detach(w);
     if (w.ptyId) { operant.killPty(w.ptyId); ptyWins.delete(w.ptyId); }
     if (w.sessionId) sessionWin.delete(w.sessionId);
-    if (w.agentId) agentWin.delete(w.agentId);
+    if (w.agentId) {
+      agentWin.delete(w.agentId);
+      closedAgentInfo.delete(w.agentId); // re-insert at the end, so eviction below drops the oldest
+      closedAgentInfo.set(w.agentId, w.info);
+      if (closedAgentInfo.size > 200) closedAgentInfo.delete(closedAgentInfo.keys().next().value);
+    }
     if (w.kind === 'view') operant.watchFile(w.id, null);
     backlog.delete(w);
     w.el.classList.add('closing');
-    setTimeout(() => { w.term?.dispose(); w.el.remove(); }, 320);
+    const closeMs = parseFloat(getComputedStyle(document.body).getPropertyValue('--anim-pop')) || 0;
+    setTimeout(() => { w.term?.dispose(); w.el.remove(); }, closeMs);
     wins.delete(w.id);
     layout(wsIndex);
     if (wasFocused) {
@@ -935,7 +1254,7 @@
 
   const focused = () => wins.get(workspaces[current].focused);
   // The keyboard goes to a tile's terminal, or to a viewer's page so the arrow keys scroll it.
-  const focusKeys = w => { if (!w) return; if (w.term) w.term.focus(); else w.page?.focus({ preventScroll: true }); };
+  const focusKeys = w => { if (!w) return; if (w.term) w.term.focus(); else if (w.kind === 'browser') w.webview?.focus(); else w.page?.focus({ preventScroll: true }); };
 
   // ------------------------------------------------------------- pty data
 
@@ -992,9 +1311,11 @@
   setInterval(() => {
     const now = Date.now();
     for (const w of wins.values()) {
+      if (w.ocBusy) w.lastOut = now;
       if (!w.busySince || now - w.lastOut < cfg.notifyWhenIdleSeconds * 1000) continue;
       const worked = w.lastOut - w.busySince;
       w.busySince = null;
+      if (w.runaway) { w.runaway = null; setRunawayBadge(w); }
       if (worked >= 2500) { w.unchecked = true; gitChanged(); }
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) notify(w, `${w.agentName} is waiting for you`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
     }
@@ -1007,13 +1328,21 @@
     focusWin(w);
   });
   operant.on('pty:exit', ({ id }) => { const w = ptyWins.get(id); if (w) { closeWin(w); gitChanged(); } });
+  // An OpenCode tile's main session started or stopped working.
+  operant.on('opencode:busy', ({ ptyId, busy }) => {
+    const w = ptyWins.get(ptyId);
+    if (!w) return;
+    if (busy) { w.typed = true; w.ocBusy = true; w.busySince ??= Date.now(); w.lastOut = Date.now(); }
+    else w.ocBusy = false;
+  });
 
   // ------------------------------------------------------------- subagents
 
-  operant.on('agent:new', info => {
-    if (agentWin.has(info.agentId)) return;
+  // Places and mounts a tile for a subagent, fresh or reopened after it closed. Returns null if
+  // it's an external agent (no parent tile still open) and those are switched off.
+  function openAgentTile(info, { resumed = false } = {}) {
     const parent = sessionWin.get(info.sessionId);
-    if (!parent && !cfg.showExternalAgents) return;
+    if (!parent && !cfg.showExternalAgents) return null;
 
     // Keep an agent near whatever spawned it: its Claude tile, or a sibling agent from the same session.
     const sibling = [...agentWin.values()].reverse().find(a => a.sessionId === info.sessionId && a.alive);
@@ -1030,14 +1359,29 @@
     agentWin.set(info.agentId, w);
     mount(w, wsIndex, target, { focus: false });
     w.term.write(AgentRender.header(info));
+    if (resumed) w.term.write('\x1b[38;2;156;151;139m↻ resumed\x1b[0m\r\n\r\n');
     updateBadge(w);
     if (wsIndex !== current) toast(`<b>◆ ${esc(info.agentType)}</b> ${esc(info.description)} → ${esc(wsName(wsIndex) || `workspace ${wsIndex + 1}`)}`, () => { switchWorkspace(wsIndex); focusWin(w); });
     refreshBar();
+    return w;
+  }
+
+  operant.on('agent:new', info => {
+    if (agentWin.has(info.agentId)) return;
+    openAgentTile(info);
   });
 
   operant.on('agent:entries', ({ agentId, entries }) => {
-    const w = agentWin.get(agentId);
-    if (!w || !w.alive) return;
+    let w = agentWin.get(agentId);
+    if (!w || !w.alive) {
+      // The tile closed (idle, done, or by hand) but this same agent got more entries: reopen it,
+      // unless there's nothing to show yet (just a done-marker with no actual content).
+      const info = closedAgentInfo.get(agentId);
+      if (!info || !entries.some(e => e.blocks.length > 0)) return;
+      w = openAgentTile(info, { resumed: true });
+      if (!w) return;
+      closedAgentInfo.delete(agentId);
+    }
     let text = '';
     for (const e of entries) {
       text += AgentRender.entry(e, w.state);
@@ -1071,6 +1415,24 @@
     else setBadge(w, `✓ done · ${tools}${closing}`);
   }
 
+  // Context-size pill: how full a Claude Code / OpenCode tile's context window is.
+  function renderCtx(w) {
+    const el = w.el.querySelector('.ctx');
+    if (!el) return;
+    const ctx = w.ctx;
+    if (!cfg.contextBadge || !ctx || !ctx.max) { el.textContent = ''; el.title = ''; el.className = 'ctx'; return; }
+    const pct = ctx.tokens / ctx.max;
+    el.textContent = `ctx ${Math.round(ctx.tokens / 1000)}k`;
+    el.className = 'ctx' + (pct >= 0.85 ? ' over' : pct >= 0.6 ? ' warn' : '');
+    el.title = `${ctx.tokens.toLocaleString()} of ${ctx.max.toLocaleString()} tokens in context (${Math.round(pct * 100)}%) · /compact or start a fresh session when it gets high`;
+  }
+  operant.on('context', ({ sessionId, tokens, max }) => {
+    const w = sessionWin.get(sessionId);
+    if (!w || !w.alive) return;
+    w.ctx = { tokens, max };
+    renderCtx(w);
+  });
+
   // ------------------------------------------------------------ idle reaper
   // A tile closes once nothing has happened in it for its limit: no output, no typing,
   // no transcript lines, and not being looked at. The master and focused tiles are exempt.
@@ -1082,8 +1444,8 @@
 
   function idleLimit(w) {
     if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
-    // Viewers and diffs are read, not run; an editor with unsaved changes would lose them.
-    if (w.kind === 'view' || w.kind === 'diff' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
+    // Viewers, diffs and browsers are read, not run; an editor with unsaved changes would lose them.
+    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'browser' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
     if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
@@ -1105,6 +1467,66 @@
       if (closeIn !== w.closeIn) { w.closeIn = closeIn; updateBadge(w); }
     }
   }, 1000);
+
+  // ------------------------------------------------------------ runaway guard
+  // Main watches Claude/OpenCode transcripts for a tile looping, burning tokens or piling up
+  // subagents and sends 'runaway'; 'time' (busy too long with no break) is checked here.
+
+  const RUNAWAY_TEXT = { loop: '⚠ looping', tokens: '⚠ tokens', subagents: '⚠ subagents' };
+  function setRunawayBadge(w) {
+    const el = w.el.querySelector('.runaway');
+    if (!el) return;
+    if (!w.runaway) { el.textContent = ''; el.title = ''; el.className = 'runaway'; return; }
+    const { reason, detail } = w.runaway;
+    el.textContent = reason === 'time' ? `⚠ ${cfg.runawayMinutes} min` : (RUNAWAY_TEXT[reason] || '⚠');
+    el.className = 'runaway' + (reason === 'time' ? ' time' : '');
+    el.title = `${detail} · click to stop`;
+  }
+
+  function isClaudeTile(w) {
+    if (!/^[0-9a-f-]{36}$/i.test(w.sessionId || '')) return false;
+    const agent = cfg.agents.find(a => a.id === w.agentConf);
+    return !!agent && /claude/i.test(agent.command || '');
+  }
+
+  // Stops whatever the tile is doing without ending its session. Returns how it was stopped.
+  function stopTile(w) {
+    if (w.runaway) { w.runaway = null; setRunawayBadge(w); }
+    if (w.kind === 'agent') { const parent = sessionWin.get(w.sessionId); if (parent) return stopTile(parent); return null; }
+    if (isClaudeTile(w)) { operant.writePty(w.ptyId, '\x1b'); return 'esc'; }
+    if (String(w.sessionId || '').startsWith('oc:')) { operant.abortOpenCode(w.ptyId); return 'abort'; }
+    if (w.ptyId) { operant.writePty(w.ptyId, '\x03'); return 'ctrl-c'; }
+    return null;
+  }
+
+  function flagRunaway(w, reason, detail) {
+    w.runaway = { reason, detail };
+    setRunawayBadge(w);
+    if (cfg.runawayGuard === 'stop') {
+      const how = stopTile(w);
+      notify(w, `${w.agentName} may be running away`, `${detail}${how ? ' · stopped it' : ''}`);
+      if (how) toast(`Stopped <b>${esc(w.title)}</b> · ${esc(detail)}`);
+    } else {
+      notify(w, `${w.agentName} may be running away`, detail);
+    }
+  }
+
+  operant.on('runaway', ({ sessionId, reason, detail }) => {
+    if (cfg.runawayGuard === 'off') return;
+    const w = sessionWin.get(sessionId);
+    if (!w || !w.alive) return;
+    flagRunaway(w, reason, detail);
+  });
+
+  // 'time': a tile busy without a break, checked here (main only sees the loop/tokens/subagents reasons).
+  setInterval(() => {
+    if (cfg.runawayGuard === 'off' || !cfg.runawayMinutes) return;
+    const now = Date.now();
+    for (const w of wins.values()) {
+      if (w.kind !== 'ai' || !w.busySince || w.runaway) continue;
+      if (now - w.busySince >= cfg.runawayMinutes * 60000) flagRunaway(w, 'time', `Working without a break for ${cfg.runawayMinutes} min`);
+    }
+  }, 60000);
 
   // ------------------------------------------------------------ navigation
 
@@ -1207,8 +1629,13 @@
     workspaces[i].focused = f.id;
     f.el.classList.remove('focused');
     layout(from); layout(i, true);
-    const n = wins.get(wsWins(from).at(-1)?.id);
-    if (n) focusWin(n);
+    if (cfg.moveFollowsTile) {
+      switchWorkspace(i);
+      focusWin(f);
+    } else {
+      const n = wins.get(wsWins(from).at(-1)?.id);
+      if (n) focusWin(n);
+    }
     refreshBar();
   }
 
@@ -1278,10 +1705,12 @@
     newAgentIn: async () => { const d = await operant.pickFolder(); if (d) { lastCwd = d; newTerminal('ai', d); } },
     pickAgent: () => togglePanel('launcher'),
     newShell: () => newTerminal('shell'),
+    openBrowser: () => openBrowser(),
     close: () => requestClose(focused()),
     fullscreen: toggleFullscreen,
     toggleSplit,
     closeDoneAgents,
+    stopAgent: () => { const w = focused(); if (w) stopTile(w); },
     toggleSidebar,
     newWindow: () => operant.newWindow(),
     toggleLayout,
@@ -1306,6 +1735,7 @@
     commandPalette: () => openPicker('commands'),
     findInView: () => openFind(focused()),
     showChanges: () => showChanges(),
+    saveQuit: () => saveAndQuit(),
   };
   // Only for viewer and diff tiles: anywhere else the key goes on to the terminal as usual.
   const VIEW_ONLY = new Set(['findInView']);
@@ -1332,10 +1762,25 @@
       navigator.clipboard.writeText(w.term.getSelection()); w.term.clearSelection(); return false;
     }
     if (e.ctrlKey && !e.altKey && e.code === 'KeyV' && w.ptyId) {
-      navigator.clipboard.readText().then(t => t && w.term.paste(t)); e.preventDefault(); return false;
+      pasteClipboard(w); e.preventDefault(); return false;
     }
+    // Alt+V (Claude Code's image-paste key on Windows) isn't bound to anything, so it already
+    // falls through to the terminal as a normal key.
     return true;
   }
+  // An image on the clipboard (and no text) is sent through as Ctrl+V so the agent CLI reads it
+  // itself, the way it would in Windows Terminal, instead of us typing clipboard text.
+  async function pasteClipboard(w) {
+    let img = false;
+    try { img = await operant.clipboardHasImage(); } catch {}
+    if (img) { operant.writePty(w.ptyId, '\x16'); return; }
+    const t = await navigator.clipboard.readText();
+    if (t) w.term.paste(t);
+  }
+
+  // A file dropped anywhere outside a tile's own drop handler would otherwise navigate the window to it.
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
 
   window.addEventListener('keydown', e => {
     if (recording) { e.preventDefault(); e.stopPropagation(); return recordKey(e); }
@@ -1418,6 +1863,7 @@
     newTerminal('ai', dir, { agentId: a.id });
   }
   $('#btn-settings').onclick = () => togglePanel('settings');
+  $('#btn-save-quit').onclick = () => saveAndQuit();
 
   // Settings save a moment after the last change, so dragging a slider writes once.
   let pending = {}, saveT;
@@ -1433,11 +1879,14 @@
     save({ [key]: value });
     if (LIVE_LAYOUT.has(key)) for (const ws of workspaces) if (!ws.tree) { ws.layout = cfg.defaultLayout; ws.mfact = cfg.masterRatio; }
     if (key === 'agents' || key === 'defaultAgent') renderHints();
-    if (key === 'mediaControls') renderMedia();
+    if (key === 'mediaControls' || key === 'mediaSize') renderMedia();
     if (key === 'tokenUsage' || key === 'usageSeries' || key === 'tokenBudget') { renderUsagePill(); drawUsage(); }
     if (key.startsWith('clock')) tick();
     if (key === 'barTitle' || key === 'workspaceNames') { refreshBar(); renderHints(); }
+    if (key === 'gitButton') drawGitButton();
     if (key === 'sidebarHiddenFiles') dirCache.clear();
+    if (key === 'gpuTerminals') for (const w of wins.values()) gpu(w);
+    if (key === 'hardwareAcceleration') toast('Hardware acceleration changes when Operant restarts');
     if (key === 'sidebarGit') { if (cfg.sidebarGit) loadGit(true); else decorateGit(); }
     if (key === 'planLimits' || key === 'planLimitAlerts') renderUsagePill();
     if (key === 'editor' || key === 'editorCommand') refreshEditorName();
@@ -1452,7 +1901,8 @@
     checkUpdate: () => operant.checkUpdate(),
     installUpdate: () => operant.installUpdate(),
     openReleases: () => operant.openReleases(),
-    openLink: url => operant.openLink(url),
+    openLogFolder: () => operant.openLogFolder(),
+    openLink: (url, second) => operant.openLink(url, second),
   });
   // Settings › CodeGraph: the installed version, install/update, index everything.
   let cgVersion; // undefined until asked, null when not installed
@@ -1638,6 +2088,7 @@
   function refreshBar() {
     if (wsEditing == null) drawWorkspaces();
     drawBarTitle();
+    drawGitButton();
     refreshStats();
     sidebarChanged();
     saveSession();
@@ -1647,6 +2098,40 @@
     if (el.textContent !== t) el.textContent = t;
     el.classList.toggle('hidden', !cfg.barTitle || !f);
   }
+
+  // Git button: the focused tile's project (or the first pinned project), redrawn only when its
+  // project or status actually changes. Reuses the sidebar's git cache, fetching it here if the
+  // project isn't pinned/visible there.
+  let barGitSig = '';
+  const barGitPending = new Set();
+  function barProject() {
+    const f = focused();
+    return (f?.cwd ? projectDir(f.cwd) : null) || allProjects()[0] || null;
+  }
+  async function fetchBarGit(p) {
+    if (barGitPending.has(p)) return;
+    barGitPending.add(p);
+    gitState.set(p, { at: Date.now(), status: await operant.gitStatus(p) });
+    barGitPending.delete(p);
+    drawGitButton();
+  }
+  function drawGitButton() {
+    const btn = $('#git-pill');
+    const p = cfg.gitButton ? barProject() : null;
+    if (p && !gitState.has(p)) fetchBarGit(p);
+    const st = p && gitState.get(p)?.status;
+    const sig = JSON.stringify([p, st]);
+    if (sig === barGitSig) return;
+    barGitSig = sig;
+    if (!st) { btn.classList.add('hidden'); return; }
+    const n = gitChanges(p);
+    const sync = [st.ahead ? `↑${st.ahead}` : '', st.behind ? `↓${st.behind}` : ''].filter(Boolean).join(' ');
+    btn.innerHTML = `⎇ ${esc(st.branch)}${n ? ` · ${n}` : ''}`;
+    btn.title = `${baseName(p)} · ⎇ ${st.branch} · ${n} changed${sync ? ' · ' + sync : ''} · click to see and commit`;
+    btn.dataset.dir = p;
+    btn.classList.remove('hidden');
+  }
+  $('#git-pill').onclick = () => showChanges($('#git-pill').dataset.dir);
 
   // The workspace buttons are rebuilt only when something they show has changed.
   let wsSig = '';
@@ -1721,13 +2206,31 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     if (busy !== lastBusy) { lastBusy = busy; refreshBar(); } else refreshStats();
   }, 1000);
 
-  function toast(html, onClick) {
+  function toast(html, onClick, duration = 5000) {
     const t = document.createElement('div');
     t.className = 'toast';
     t.innerHTML = html;
     t.onclick = () => { onClick?.(); t.remove(); };
     $('#toasts').appendChild(t);
-    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, 5000);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, duration);
+  }
+  // Copy-on-select's toast: quick, and at most once a second (a drag can fire several mouseups).
+  let lastCopyToast = 0;
+  // Copy on select in the viewer and diff tiles: a text selection wholly inside the tile, not an
+  // image drag (which makes no text selection) or one that spills into another tile.
+  function copySelection(w) {
+    if (!cfg.copyOnSelect) return;
+    const sel = window.getSelection(), text = sel.toString();
+    if (!text || !sel.rangeCount) return;
+    if (!w.page.contains(sel.getRangeAt(0).commonAncestorContainer)) return;
+    navigator.clipboard.writeText(text);
+    toastCopied();
+  }
+  function toastCopied() {
+    const now = Date.now();
+    if (now - lastCopyToast < 1000) return;
+    lastCopyToast = now;
+    toast('Copied', null, 1200);
   }
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
@@ -1866,7 +2369,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const cls = ['node-row', entry.dir ? 'dir' : 'file', open ? 'open' : '', project ? 'project' : '',
       project && isActive(p) ? 'active' : '', selected && normPath(selected) === normPath(p) ? 'sel' : '', gitClass(p, entry.dir)].filter(Boolean).join(' ');
     const agent = defaultAgent();
-    let html = `<div class="${cls}" data-path="${esc(p)}" data-dir="${entry.dir ? 1 : ''}" data-project="${project ? 1 : ''}" data-depth="${depth}" title="${esc(p)}" style="padding-left:${4 + depth * 12}px">`
+    let html = `<div class="${cls}" draggable="true" data-path="${esc(p)}" data-dir="${entry.dir ? 1 : ''}" data-project="${project ? 1 : ''}" data-depth="${depth}" title="${esc(p)}" style="padding-left:${4 + depth * 12}px">`
       + `<span class="tw">${entry.dir ? '▶' : ''}</span>`
       + (project ? `<span class="fi" data-jump title="${count ? 'Go to its master terminal' : 'No tiles open here'}">◈</span>` : entry.dir ? '' : '<span class="fi">·</span>')
       + `<span class="nm">${esc(entry.name)}</span>`
@@ -2011,6 +2514,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     if (!stale.length) return;
     indexGit();
     decorateGit();
+    drawGitButton();
   }
   // Puts the git tints and project info on the rows already drawn.
   function decorateGit() {
@@ -2028,6 +2532,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     clearTimeout(gitT);
     gitT = setTimeout(() => {
       if (cfg.sidebar) loadGit(true);
+      if (cfg.gitButton) { const p = barProject(); if (p) fetchBarGit(p); }
       for (const w of wins.values()) if (w.kind === 'diff' && w.alive) loadDiff(w);
     }, 400);
   }
@@ -2115,8 +2620,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   }
 
   function openFile(p, how) {
-    if (how === 'edit') return openEditor(p);
-    if (how === 'view') return openViewer(p);
+    if (how === 'edit' && !isImageFile(p)) return openEditor(p);
+    if (how === 'view' || isImageFile(p)) return openViewer(p);
     operant.openPath(p);
   }
 
@@ -2166,6 +2671,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     if (grow && !e.target.closest('.group-name, [data-gact]')) return groupAct(+grow.dataset.group, 'rename');
     const row = e.target.closest('.node-row');
     if (row && !row.dataset.dir && !e.target.closest('[data-act]')) openFile(row.dataset.path, cfg.fileOpens);
+  });
+  // Dragging a row out: a terminal tile types the path, a viewer tile opens it, empty desktop opens a viewer.
+  sideBody.addEventListener('dragstart', e => {
+    const row = e.target.closest('.node-row');
+    if (!row) return;
+    e.dataTransfer.setData('text/plain', row.dataset.path);
+    e.dataTransfer.setData('application/x-operant-path', row.dataset.path);
   });
   sideBody.addEventListener('input', e => { if (editing && e.target.matches('.group-name')) editing.value = e.target.value; });
   sideBody.addEventListener('keydown', e => {
@@ -2352,6 +2864,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     mediaState = s;
     const show = !!(cfg.mediaControls && s.active && (s.title || s.artist));
     mediaEl.classList.toggle('hidden', !show);
+    mediaEl.classList.toggle('full', cfg.mediaSize === 'full');
     if (!show) return;
     const art = $('#media-art');
     if (s.art) { if (art.getAttribute('src') !== s.art) art.src = s.art; art.classList.remove('none'); }
@@ -2420,6 +2933,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   $('#media-shuffle').onclick = () => { $('#media-shuffle').classList.toggle('on'); mediaCmd('shuffle'); };
   $('#media-mute').onclick = () => setVolume(+volEl.value > 0.001 ? 0 : volBeforeMute || 0.5);
   volEl.oninput = () => setVolume(+volEl.value);
+  volEl.addEventListener('pointerdown', () => mediaEl.classList.add('vol-drag'));
+  document.addEventListener('pointerup', () => mediaEl.classList.remove('vol-drag'));
   $('.media-vol').addEventListener('wheel', e => { e.preventDefault(); setVolume(+volEl.value + (e.deltaY < 0 ? 0.05 : -0.05)); }, { passive: false });
   operant.on('media:state', s => renderMedia(s));
   operant.mediaState().then(renderMedia);
@@ -2683,6 +3198,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     renderLauncher();
   } else if (cfg.masterOnStartup || startDir) newTerminal('ai', startDir || cfg.defaultCwd, { master: true });
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
+  // linkBrowser: 'tile' sends links here instead of opening them outside Operant.
+  operant.on('browse', url => openBrowser(url, { near: focused() }));
   // Settings › CodeGraph: pinned projects with lots of new code (or all of them) are indexed in one tile at startup.
   operant.codegraphStartup().then(dirs => {
     if (!dirs.length) return;
@@ -2693,7 +3210,332 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   operant.on('config:changed', c => {
     Object.assign(cfg, c);
     applyAppearance(); rebuildBinds(); renderHints(); renderMedia(); renderUsagePill(); drawUsage(); tick(); refreshBar();
+    for (const w of wins.values()) if (w.alive) renderCtx(w);
     if (openPanel() === 'settings') renderSettings();
     if (openPanel() === 'keys') renderKeys();
+  });
+
+  // ------------------------------------------------------------- control API
+  // An agent CLI running in a tile drives Operant through `operant <cmd>` (see skill/operant).
+  // Main forwards each request here; we reply on the same channel. Nothing thrown here reaches main unanswered.
+  function rawLines(w, n) {
+    if (w.kind === 'view') return (w.text || '').split('\n').slice(0, n);
+    if (!w.term) return [];
+    const buf = w.term.buffer.active, rows = [];
+    for (let i = 0; i < buf.length; i++) rows.push(buf.getLine(i)?.translateToString(true) ?? '');
+    while (rows.length && !rows.at(-1).trim()) rows.pop();
+    return rows.slice(-n);
+  }
+  function tileText(w, lines) { return rawLines(w, lines).join('\n'); }
+
+  // Clean noisy terminal output: strip stray escapes, collapse repeated/progress-y lines and long blank runs.
+  const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\\-';
+  const spinnerRe = new RegExp(`[${SPINNER.replace(/[\\/-]/g, '\\$&')}]`, 'g');
+  const stripAnsi = s => s.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\x1b[()][A-Za-z0-9]/g, '').replace(/\x1b./g, '');
+  const stripVolatile = s => s.replace(/[0-9]/g, '').replace(/%/g, '').replace(spinnerRe, '');
+  function cleanLines(raw) {
+    const lines = stripAnsi(raw).split('\n').map(l => l.replace(/[ \t]+$/, ''));
+    const merged = [];
+    for (const line of lines) {
+      const last = merged.at(-1);
+      if (last && line !== '' && last.text === line) { last.count++; continue; }
+      if (last && line !== '' && last.text !== '' && stripVolatile(line) === stripVolatile(last.text)) { last.text = line; continue; }
+      merged.push({ text: line, count: 1 });
+    }
+    const out = [];
+    let blanks = 0;
+    const flush = () => { if (blanks) out.push(...(blanks >= 3 ? [''] : Array(blanks).fill(''))); blanks = 0; };
+    for (const m of merged) {
+      if (m.text === '') { blanks++; continue; }
+      flush();
+      out.push(m.count > 1 ? `${m.text}  (×${m.count})` : m.text);
+    }
+    flush();
+    return out;
+  }
+  // Lines around each match (context lines included even if they don't match); separate groups joined by "…".
+  function withContext(lines, isMatch, before, after) {
+    const idxs = [];
+    lines.forEach((l, i) => { if (isMatch(l)) idxs.push(i); });
+    if (!idxs.length) return null;
+    const ranges = [];
+    for (const i of idxs) {
+      const s = Math.max(0, i - before), e = Math.min(lines.length - 1, i + after);
+      const r = ranges.at(-1);
+      if (r && s <= r[1] + 1) r[1] = Math.max(r[1], e);
+      else ranges.push([s, e]);
+    }
+    return ranges.map(([s, e]) => lines.slice(s, e + 1).join('\n')).join('\n…\n');
+  }
+  const ERROR_RE = /\b(error|failed|failure|fatal|exception|traceback|panic|warn(ing)?|FAIL)\b|[✗✖]/i;
+
+  // Per (caller tile, target tile) read cursor, updated on every read/wait of a tile
+  // (so `--new` returns only what's happened since the caller's last look, `--new` or not).
+  const readCursors = new Map();
+  function cursorKey(self, w) { return `${self && self.id != null ? self.id : 'ext'}:${w.id}`; }
+  // Absolute end of a tile's output, on the same basis rawLines() uses (trailing blanks
+  // trimmed), not the on-screen cursor row — those two can disagree by a whole viewport's
+  // worth of blank lines below the cursor, which was making `--new` reread stale content.
+  function absPos(w) {
+    if (w.kind === 'view') return (w.text || '').split('\n').length;
+    if (!w.term) return 0;
+    const buf = w.term.buffer.active;
+    let n = buf.length;
+    while (n > 0 && !(buf.getLine(n - 1)?.translateToString(true) ?? '').trim()) n--;
+    return n;
+  }
+  function recordCursor(self, w) {
+    const pos = absPos(w);
+    readCursors.set(cursorKey(self, w), pos);
+    return pos;
+  }
+  function newSince(self, w) {
+    const key = cursorKey(self, w);
+    const last = readCursors.get(key);
+    const pos = recordCursor(self, w);
+    if (last == null) return { lines: rawLines(w, 60), dropped: false };
+    if (w.kind === 'view') {
+      const all = (w.text || '').split('\n');
+      const start = Math.max(0, Math.min(last, all.length));
+      return { lines: all.slice(start), dropped: last > all.length };
+    }
+    if (!w.term) return { lines: [], dropped: false };
+    const buf = w.term.buffer.active;
+    const dropped = last > pos;
+    const start = dropped ? 0 : Math.min(last, pos);
+    const rows = [];
+    for (let i = start; i < pos; i++) rows.push(buf.getLine(i)?.translateToString(true) ?? '');
+    return { lines: rows, dropped };
+  }
+  // Cleaned + filtered output for `read`/`wait`. Returns { text, total, shown }.
+  function readOutput(self, w, { lines, isNew, errors, grep } = {}) {
+    const cap = lines || (errors || grep ? 400 : 60);
+    let raw, dropped = false;
+    if (isNew) { const r = newSince(self, w); raw = r.lines.join('\n'); dropped = r.dropped; }
+    else { raw = rawLines(w, cap).join('\n'); recordCursor(self, w); }
+    let cleaned = cleanLines(raw);
+    if (cap && cleaned.length > cap) cleaned = cleaned.slice(-cap);
+    const total = cleaned.length;
+    let text;
+    if (errors) {
+      const grouped = withContext(cleaned, l => ERROR_RE.test(l), 1, 2);
+      text = grouped == null ? `no errors or warnings in the last ${total} lines` : grouped;
+    } else if (grep) {
+      let re;
+      try { re = new RegExp(grep, 'i'); } catch { re = null; }
+      const isMatch = re ? l => re.test(l) : l => l.toLowerCase().includes(String(grep).toLowerCase());
+      const grouped = withContext(cleaned, isMatch, 1, 1);
+      text = grouped == null ? `no matches in the last ${total} lines` : grouped;
+    } else {
+      text = cleaned.join('\n');
+      if (isNew && !text) text = '(no new output)';
+    }
+    if (dropped) text = `… (older output dropped)\n${text}`;
+    return { text, total, shown: text ? text.split('\n').length : 0 };
+  }
+  function needTile(id) {
+    const w = wins.get(Number(id));
+    if (!w || !w.alive) throw new Error(`no tile ${id}`);
+    return w;
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  async function runControl(cmd, args, self) {
+    switch (cmd) {
+      case 'tiles':
+        return [...wins.values()].filter(w => w.alive).map(w => ({
+          id: w.id, kind: w.kind, title: w.title, cwd: w.cwd, file: w.file, busy: isWorking(w),
+          ws: w.ws + 1, focused: focused() === w, self: !!self && w.id === self.id, agent: w.agentConf,
+          ...(w.runaway ? { runaway: w.runaway.reason } : {}),
+        }));
+      case 'stop': {
+        const w = needTile(args.id);
+        const how = stopTile(w);
+        if (!how) throw new Error('nothing to stop');
+        return { id: w.id, stopped: true, how };
+      }
+      case 'status': {
+        if (!self) throw new Error('unknown tile');
+        const project = projectDir(self.cwd || lastCwd);
+        return { id: self.id, kind: self.kind, title: self.title, cwd: self.cwd, ws: self.ws + 1,
+          project, branch: gitState.get(project)?.status?.branch };
+      }
+      case 'view': {
+        if (!args.path) throw new Error('path required');
+        const w = openViewer(resolvePath(self?.cwd || lastCwd, args.path), { ws: self?.ws ?? current, near: self, focus: !!args.focus });
+        return { id: w.id };
+      }
+      case 'edit': {
+        if (!args.path) throw new Error('path required');
+        const w = await openEditor(resolvePath(self?.cwd || lastCwd, args.path), { ws: self?.ws ?? current, near: self, focus: !!args.focus });
+        return { id: w.id };
+      }
+      case 'diff': {
+        const dir = projectDir(args.dir ? resolvePath(self?.cwd || lastCwd, args.dir) : (self?.cwd || lastCwd));
+        const w = openDiff(dir, { ws: self?.ws ?? current, near: self, focus: !!args.focus });
+        return { id: w.id };
+      }
+      case 'browse': {
+        if (!args.url) throw new Error('url required');
+        if (args.id != null) {
+          const w = needTile(args.id);
+          if (w.kind !== 'browser') throw new Error('tile is not a browser');
+          browserNavigate(w, args.url);
+          if (args.focus) { if (w.ws !== current) switchWorkspace(w.ws); focusWin(w); }
+          return { id: w.id };
+        }
+        const w = openBrowser(args.url, { ws: self?.ws ?? current, near: self, focus: !!args.focus });
+        return { id: w.id };
+      }
+      case 'shot': {
+        const w = needTile(args.id);
+        if (w.kind !== 'browser') throw new Error('tile is not a browser');
+        // "full" (whole page, not just the view) isn't implemented: this always captures the visible area.
+        const img = await w.webview.capturePage();
+        return { id: w.id, png: img.toDataURL().replace(/^data:image\/png;base64,/, '') };
+      }
+      case 'console': {
+        const w = needTile(args.id);
+        if (w.kind !== 'browser') throw new Error('tile is not a browser');
+        let entries = w.console;
+        if (args.new) { const last = browserConsoleCursors.get(cursorKey(self, w)) || 0; entries = entries.slice(last); }
+        browserConsoleCursors.set(cursorKey(self, w), w.console.length);
+        if (args.errors) entries = entries.filter(e => e.level >= 2);
+        const cap = Math.min(Math.max(1, +args.lines || 60), 2000);
+        const total = entries.length, shown = entries.slice(-cap);
+        const text = shown.map(e => `[${LEVEL_NAME[e.level] || e.level}] ${e.message}${e.source ? ` (${e.source}:${e.line})` : ''}`).join('\n');
+        return { id: w.id, text, total, shown: shown.length };
+      }
+      case 'text': {
+        const w = needTile(args.id);
+        if (w.kind !== 'browser') throw new Error('tile is not a browser');
+        const sel = JSON.stringify(args.selector || 'body');
+        const raw = await w.webview.executeJavaScript(`(() => { const e = document.querySelector(${sel}); return e ? e.innerText : ''; })()`).catch(e => { throw new Error(e.message || String(e)); });
+        const lines = String(raw || '').replace(/[ \t]+/g, ' ').split('\n').map(l => l.trim()).filter((l, i, a) => l || a[i - 1]);
+        const cleaned = lines.slice(0, 400);
+        const text = cleaned.join('\n');
+        return { id: w.id, text, total: cleaned.length, shown: cleaned.length };
+      }
+      case 'click': {
+        const w = needTile(args.id);
+        if (w.kind !== 'browser') throw new Error('tile is not a browser');
+        if (!args.selector) throw new Error('selector required');
+        const sel = JSON.stringify(args.selector);
+        const ok = await w.webview.executeJavaScript(`(() => { const e = document.querySelector(${sel}); if (!e) return false; e.click(); return true; })()`);
+        if (!ok) throw new Error(`no match for ${args.selector}`);
+        return { id: w.id, ok: true };
+      }
+      case 'type': {
+        const w = needTile(args.id);
+        if (w.kind !== 'browser') throw new Error('tile is not a browser');
+        if (!args.selector) throw new Error('selector required');
+        const sel = JSON.stringify(args.selector), text = JSON.stringify(String(args.text ?? ''));
+        const ok = await w.webview.executeJavaScript(`(() => {
+          const e = document.querySelector(${sel}); if (!e) return false;
+          e.focus(); e.value = ${text};
+          e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        })()`);
+        if (!ok) throw new Error(`no match for ${args.selector}`);
+        if (args.enter) { w.webview.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); w.webview.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' }); }
+        return { id: w.id, ok: true };
+      }
+      case 'url': {
+        const w = needTile(args.id);
+        if (w.kind !== 'browser') throw new Error('tile is not a browser');
+        return { id: w.id, url: w.url, title: w.title, loading: w.loading };
+      }
+      case 'run': {
+        if (!args.command) throw new Error('command required');
+        const w = await newTerminal('shell', args.cwd || self?.cwd, {
+          run: args.command, title: args.title || args.command.slice(0, 40), ws: self?.ws ?? current, near: self, focus: !!args.focus,
+        });
+        return { id: w.id };
+      }
+      case 'agent': {
+        if (!args.prompt) throw new Error('prompt required');
+        if (args.agent && !cfg.agents.some(a => a.id === args.agent)) throw new Error(`unknown agent "${args.agent}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
+        const w = await newTerminal('ai', args.cwd || self?.cwd, {
+          agentId: args.agent, prompt: args.prompt, title: args.title, ws: self?.ws ?? current, near: self, focus: !!args.focus,
+        });
+        return { id: w.id };
+      }
+      case 'read': {
+        const w = needTile(args.id);
+        const def = (args.errors || args.grep) ? 400 : 60;
+        const lines = Math.min(Math.max(1, +args.lines || def), 2000);
+        const { text, total, shown } = readOutput(self, w, { lines, isNew: !!args.new, errors: !!args.errors, grep: args.grep });
+        return { id: w.id, title: w.title, busy: isWorking(w), text, total, shown };
+      }
+      case 'send': {
+        const w = needTile(args.id);
+        if (!w.ptyId) throw new Error('tile has no terminal to type into');
+        operant.writePty(w.ptyId, String(args.text ?? '') + (args.enter ? '\r' : ''));
+        return { id: w.id };
+      }
+      case 'wait': {
+        const w = needTile(args.id);
+        const idle = (args.idle ?? 3) * 1000, timeout = (args.timeout ?? 600) * 1000, started = Date.now();
+        const def = args.errors ? 400 : 30;
+        const lines = Math.min(Math.max(1, +args.lines || def), 2000);
+        const opts = { lines, isNew: !!args.new, errors: !!args.errors, grep: args.grep };
+        for (;;) {
+          if (!w.alive) { const r = readOutput(self, w, opts); return { id: w.id, exited: true, text: r.text, total: r.total, shown: r.shown }; }
+          const quiet = Date.now() - (w.lastActivity || 0) >= idle;
+          if (quiet || (w.kind === 'agent' && w.status === 'done')) { const r = readOutput(self, w, opts); return { id: w.id, exited: false, text: r.text, total: r.total, shown: r.shown }; }
+          if (Date.now() - started >= timeout) throw new Error('timed out');
+          await sleep(250);
+        }
+      }
+      case 'notify': {
+        if (!self) throw new Error('unknown tile');
+        if (!args.text) throw new Error('text required');
+        notify(self, args.title || self.title, args.text);
+        return {};
+      }
+      case 'title':
+        if (!self) throw new Error('unknown tile');
+        setTitle(self, args.text || self.agentName || self.title);
+        return {};
+      case 'focus': {
+        const w = needTile(args.id);
+        if (w.ws !== current) switchWorkspace(w.ws);
+        focusWin(w);
+        return {};
+      }
+      case 'close': {
+        const w = needTile(args.id);
+        if (self && w.id === self.id && !args.force) throw new Error("pass force to close the tile you're running in");
+        closeWin(w);
+        return {};
+      }
+      case 'ws': {
+        if (args.index != null) {
+          const i = Number(args.index) - 1;
+          if (!(i >= 0 && i < WS_COUNT)) throw new Error(`workspace ${args.index} out of range`);
+          switchWorkspace(i);
+        }
+        if (args.name != null) {
+          const names = Array.from({ length: WS_COUNT }, (_, j) => wsName(j));
+          names[current] = String(args.name).trim();
+          while (names.length && !names.at(-1)) names.pop();
+          setSetting('workspaceNames', names);
+          renderHints(); refreshBar();
+        }
+        return { current: current + 1 };
+      }
+      default:
+        throw new Error(`unknown command "${cmd}"`);
+    }
+  }
+
+  operant.onControl(async ({ reqId, cmd, args, tile }) => {
+    const self = wins.get(Number(tile));
+    try {
+      const result = await runControl(cmd, args || {}, self);
+      operant.controlReply({ reqId, ok: true, result });
+    } catch (e) {
+      operant.controlReply({ reqId, ok: false, error: e.message || String(e) });
+    }
   });
 })();

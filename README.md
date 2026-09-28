@@ -2,6 +2,21 @@
 
 A Hyprland-style tiling window manager for terminal AI agents on Windows. Run **Claude Code**, **OpenAI Codex**, **OpenCode**, **Gemini CLI** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a Windows notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
 
+## Saving tokens
+Operant is built so agents don't have to read their own noise. A few things do that work:
+
+- **Long commands run in their own tile.** `operant run "npm test" --title tests` starts a test, build, install or dev server in a tile and returns right away. The agent reads back only what it needs with `operant wait <id> --errors`, `operant read <id> --new` or `operant read <id> --grep "<pattern>"`. The full log stays on screen in the tile for you; only the requested part goes into the agent's context. Output is cleaned up first — colour codes stripped, repeated and progress lines collapsed — before it reaches the agent.
+- **The Operant skill installs itself** for Claude Code and OpenCode, so agents use `operant run`/`wait`/`read` without being told to.
+- **Context size on every agent tile,** like `ctx 84k`, orange at 60% and red at 85%, so you can see when to `/compact` or start a fresh session before a big context starts costing you on every message.
+- **CodeGraph:** agents query a code index instead of grepping and reading whole files. Indexing runs on startup for projects that changed.
+- **Token usage pill** with today's total, a daily budget, and a graph over time; plan limit alerts at 80% and 95%.
+- **Subagents get their own tiles,** so you can see what one is doing without asking the agent to summarise it back to you.
+
+```
+operant run "npm test" --title tests
+operant wait 7 --errors
+```
+
 ## Install
 Download `Operant-<version>.msi` from the [latest release](https://github.com/doolecg/operant/releases/latest) and run it. It installs per-user, so there's no admin prompt, and adds Start menu and desktop shortcuts. Windows SmartScreen may warn because the installer isn't code-signed: choose *More info → Run anyway*.
 

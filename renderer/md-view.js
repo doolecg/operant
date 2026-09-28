@@ -9,7 +9,11 @@ const MdView = (() => {
     const codes = [];
     let t = esc(text).replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
     t = t
-      .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_, alt, src) => `<a href="#" data-href="${src}" class="md-img">🖼 ${alt || src}</a>`)
+      // Remote images stay links (CSP allows only data: images); local ones become <img>, resolved and
+      // loaded by the viewer after render (see drawView in renderer.js).
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_, alt, src) => /^https?:\/\//i.test(src)
+        ? `<a href="#" data-href="${src}" class="md-img">🖼 ${alt || src}</a>`
+        : `<img class="md-inline-img" alt="${alt}" data-src="${src}">`)
       .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, '<a href="#" data-href="$2">$1</a>')
       .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="#" data-href="$2">$2</a>')
       .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_, a, b) => `<b>${a || b}</b>`)

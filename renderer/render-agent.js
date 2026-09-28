@@ -18,7 +18,7 @@ const AgentRender = (() => {
   }
 
   function toolSummary(name, input = {}) {
-    const pick = input.command || input.file_path || input.path && input.pattern && `${input.pattern} in ${input.path}`
+    const pick = input.command || input.file_path || input.filePath || input.path && input.pattern && `${input.pattern} in ${input.path}`
       || input.pattern || input.url || input.query || input.description || input.prompt || input.skill;
     let s = pick ? String(pick) : JSON.stringify(input);
     s = s.replace(/\s+/g, ' ');

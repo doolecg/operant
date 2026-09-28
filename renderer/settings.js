@@ -33,6 +33,8 @@ const Panels = (() => {
       { key: 'borderAnimation', label: 'Animated border', hint: 'Only the border moves, never the tile behind it', type: 'select',
         options: [['active', 'Focused + running agents'], ['focused', 'Focused tile only'], ['off', 'Off']] },
       { key: 'borderAnimationSeconds', label: 'Border animation cycle', hint: 'Lower is faster', type: 'range', min: 2, max: 20, step: 1, fmt: v => v + 's' },
+      { key: 'animations', label: 'Animations', hint: 'Tile, workspace and border animations · Off is the lightest', type: 'select',
+        options: [['normal', 'Normal'], ['fast', 'Fast'], ['off', 'Off']] },
       { key: 'opacity', label: 'Tile opacity', type: 'range', min: 0.4, max: 1, step: 0.01, fmt: pct },
       { key: 'blur', label: 'Tile blur', type: 'range', min: 0, max: 40, step: 1, fmt: px },
       { key: 'rounding', label: 'Corner rounding', type: 'range', min: 0, max: 24, step: 1, fmt: px },
@@ -47,17 +49,25 @@ const Panels = (() => {
       { key: 'cursorStyle', label: 'Cursor', type: 'select', options: [['block', 'Block'], ['bar', 'Bar'], ['underline', 'Underline']] },
       { key: 'cursorBlink', label: 'Blinking cursor', type: 'toggle' },
       { key: 'scrollback', label: 'Scrollback lines', type: 'number', min: 1000, max: 200000, step: 1000 },
+      { key: 'gpuTerminals', label: 'GPU-accelerated terminals', hint: 'Draws terminal text with WebGL, much faster for busy tiles · needs hardware acceleration · turn off if text looks wrong', type: 'toggle' },
+      { key: 'hardwareAcceleration', label: 'Hardware acceleration', hint: 'Use the graphics card for the whole window · turn off if Operant flickers or draws wrongly · ' + RESTART, type: 'toggle' },
+      { key: 'copyOnSelect', label: 'Copy text when you select it', hint: 'In terminals, viewers and diffs · a small Copied note shows', type: 'toggle' },
     ]],
     ['Layout', [
       { key: 'defaultLayout', label: 'Default layout', hint: 'For empty workspaces; Alt+M switches the current one',
         type: 'select', options: [['master', 'Master + stack'], ['dwindle', 'Dwindle']] },
       { key: 'masterRatio', label: 'Master width', hint: 'For empty workspaces', type: 'range', min: 0.2, max: 0.85, step: 0.01, fmt: pct },
       { key: 'maxTilesPerWorkspace', label: 'Tiles per workspace', hint: 'New agents spill onto the next workspace past this', type: 'number', min: 1, max: 16 },
+      { key: 'moveFollowsTile', label: 'Go with a moved tile', hint: 'Alt+Shift+1–9 moves the focused tile to that workspace and takes you there', type: 'toggle' },
     ]],
     ['Agents', [
       { key: 'agents', type: 'agents' },
       { key: 'defaultAgent', label: 'Default agent', hint: 'Alt+Enter, the master tile and Explorer\'s entry open this', type: 'select',
         options: cfg => cfg.agents.map(a => [a.id, a.name]) },
+      { key: 'opencodeTheme', label: 'OpenCode uses Operant’s theme', hint: 'OpenCode tiles get the current theme and accent, with a see-through background · your own OpenCode settings stay as they are · applies to new OpenCode tiles', type: 'toggle' },
+      { key: 'installSkill', label: 'Operant skill for agents',
+        hint: 'Installs a skill that lets Claude Code and OpenCode use Operant: show you files, run commands in their own tiles, start other agents, ask you questions · the operant command works in every tile',
+        type: 'toggle' },
     ]],
     ['Notifications', [
       { key: 'notifications', label: 'Windows notifications', type: 'toggle' },
@@ -70,10 +80,16 @@ const Panels = (() => {
       { key: 'restoreSession', label: 'Reopen my tiles', hint: 'Same tiles, folders and layout · Claude Code conversations pick up where they left off',
         type: 'select', options: [['update', 'After an update'], ['always', 'Every time Operant starts'], ['never', 'Never']] },
       { key: 'updateWhenIdle', label: 'Wait for agents before updating', hint: 'Clicking Update while an agent is working installs once it finishes', type: 'toggle' },
-      { key: 'showExternalAgents', label: 'Show subagents from other Claude sessions', hint: 'Your IDE, other terminals', type: 'toggle' },
+      { key: 'showExternalAgents', label: 'Show subagents from other Claude Code and OpenCode sessions', hint: 'Your IDE, other terminals', type: 'toggle' },
       { key: 'autoCloseDoneAgentsSeconds', label: 'Close finished agents after', hint: 'Seconds after you first see them · running agents never close · 0 = never', type: 'number', min: 0, max: 86400 },
       { key: 'idleCloseTerminalMinutes', label: 'Close idle terminals after', hint: 'Minutes · 0 = never · the master and focused tile stay', type: 'number', min: 0, max: 1440 },
       { key: 'agentLookbackSeconds', label: 'Pick up agents started before launch', hint: 'Seconds · ' + RESTART, type: 'number', min: 0, max: 3600 },
+      { key: 'runawayGuard', label: 'Runaway guard', hint: 'A tile stuck in a loop, burning tokens or piling up subagents', type: 'select',
+        options: [['warn', 'Warn me'], ['stop', 'Stop it'], ['off', 'Off']] },
+      { key: 'runawayLoopRepeats', label: 'Same tool call repeated', hint: 'Times, within its last 20 tool calls', type: 'number', min: 3, max: 50 },
+      { key: 'runawayTokens', label: 'Tokens in 10 minutes', hint: '0 = off', type: 'tokens' },
+      { key: 'runawayMinutes', label: 'Working without a break, minutes', hint: '0 = off', type: 'number', min: 0, max: 600 },
+      { key: 'runawaySubagents', label: 'Subagents at once', hint: '0 = off', type: 'number', min: 0, max: 100 },
     ]],
     ['Sidebar', [
       { key: 'sidebar', label: 'Projects sidebar', hint: 'Pinned projects and a folder tree on the left · the ▭ in the bar or Alt+B toggles it', type: 'toggle' },
@@ -101,9 +117,12 @@ const Panels = (() => {
       { key: 'clockSeconds', label: 'Show seconds', type: 'toggle' },
       { key: 'clockDate', label: 'Show the date', type: 'toggle' },
       { key: 'barTitle', label: 'Focused tile’s title beside the clock', type: 'toggle' },
+      { key: 'gitButton', label: 'Git button', hint: 'The focused project’s branch and changes · click to see and commit them', type: 'toggle' },
     ]],
     ['Media', [
       { key: 'mediaControls', label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },
+      { key: 'mediaSize', label: 'Size', type: 'select',
+        options: [['compact', 'Compact: cover, title and play; the rest on hover'], ['full', 'Full: everything always shown']] },
     ]],
     ['Usage', [
       { key: 'tokenUsage', label: 'Token usage in the top bar', hint: 'Claude Code tokens used today, from its transcripts · click it (or Alt+U) for a graph over time', type: 'toggle' },
@@ -111,6 +130,7 @@ const Panels = (() => {
       { key: 'planLimits', label: 'Plan limits when hovering the pill', hint: 'Your Claude 5-hour session and weekly limits, as Claude Code’s /usage shows them · asked of Anthropic with your Claude Code login', type: 'toggle' },
       { key: 'planLimitAlerts', label: 'Session limit alerts', hint: 'A notification at 80% and 95% of your 5-hour session, and a ring on the pill showing how much is used', type: 'toggle' },
       { key: 'tokenBudget', label: 'Daily token budget', hint: 'Counted tokens a day, like 2M or 500k · the pill turns orange at 80% and red past it · 0 = off', type: 'tokens' },
+      { key: 'contextBadge', label: 'Context size on agent tiles', hint: 'How full each Claude Code and OpenCode tile’s context is · orange at 60%, red at 85% · big contexts cost more tokens per message · needs Token usage in the top bar for Claude Code', type: 'toggle' },
     ]],
     ['Startup', [
       { key: 'masterOnStartup', label: 'Open a master agent on startup', type: 'toggle' },
@@ -119,6 +139,14 @@ const Panels = (() => {
       { key: 'explorerContextMenu', label: 'Explorer right-click entry', hint: '"Open in Operant" on folders (installed app)', type: 'toggle' },
       { key: 'explorerOpensIn', label: '"Open in Operant" opens', hint: 'Starting Operant again always opens another window', type: 'select',
         options: [['tile', 'A tile in the window I used last'], ['window', 'A new Operant window']] },
+      { key: 'linkBrowser', label: 'Open links in', hint: 'Links from agents, viewers and release notes', type: 'select',
+        options: cfg => [['tile', 'A browser tile in Operant'], ['default', "Windows' default browser"],
+          ...cfg.__browsers.map(b => [b.id, b.name]), ['custom', 'Custom']] },
+      { key: 'linkBrowserCommand', label: 'Custom browser', hint: 'When Open links in is Custom · path to the browser\'s exe', type: 'text' },
+      { key: 'secondBrowser', label: 'Second browser', hint: 'Shift+click a link, or ↗ in a browser tile', type: 'select',
+        options: cfg => [['auto', 'Zen if installed, else Windows\' default'], ['default', "Windows' default browser"],
+          ...cfg.__browsers.map(b => [b.id, b.name]), ['custom', 'Custom']] },
+      { key: 'secondBrowserCommand', label: 'Custom second browser', hint: 'When Second browser is Custom · path to the browser\'s exe', type: 'text' },
     ]],
     ['Keybinds', [
       { key: 'vimKeys', label: 'Vim keys', hint: 'j/k and h/l scroll, gg/G top and end, Ctrl+D/U half a page, / finds, n/N next and previous in viewer and diff tiles ([ and ] change file); in the sidebar (Alt+Shift+B) j/k move, l opens, h closes, e edits, a and s open an agent or shell · Ctrl+J/K move in the pickers', type: 'toggle' },
@@ -180,7 +208,7 @@ const Panels = (() => {
         <input data-f="command" value="${esc(a.command)}" placeholder="command" spellcheck="false">
         <input data-f="args" value="${esc([].concat(a.args || []).join(' '))}" placeholder="--flags" spellcheck="false">
         <button class="rm" data-agent-rm="${i}" title="Remove">✕</button></div>`).join('')
-      + `</div><div class="set-row"><div class="lbl"><span class="hint">Any command that runs in a terminal works. Claude Code tiles also get their subagents as tiles. ${NEW_TILES}.</span></div>
+      + `</div><div class="set-row"><div class="lbl"><span class="hint">Any command that runs in a terminal works. Claude Code and OpenCode tiles also get their subagents as tiles. ${NEW_TILES}.</span></div>
         <div class="ctl"><button class="btn" data-agent-add>+ Add agent</button></div></div>`;
   }
 
@@ -204,7 +232,8 @@ const Panels = (() => {
       + (s.notes && (s.state === 'ready' || s.state === 'downloading')
         ? `<details class="uc-notes" open><summary>What's new in ${esc(s.version)}</summary><div class="md">${md(s.notes)}</div></details>`
         : s.notes && s.state === 'current' ? `<details class="uc-notes"><summary>What's new in this version</summary><div class="md">${md(s.notes)}</div></details>` : '')
-      + '<div class="uc-links"><button class="link" data-update="releases">All releases on GitHub ↗</button></div>';
+      + '<div class="uc-links"><button class="link" data-update="releases">All releases on GitHub ↗</button>'
+      + '<button class="link" data-update="log">Open log folder</button></div>';
   }
 
   // Release notes are Markdown: headings, lists, bold/italic, `code`, links and --- rules. HTML is escaped first.
@@ -308,9 +337,10 @@ const Panels = (() => {
         const a = b.dataset.update;
         if (a === 'check') { ext.checkUpdate(); b.disabled = true; b.textContent = 'Checking…'; }
         else if (a === 'install') ext.installUpdate();
+        else if (a === 'log') ext.openLogFolder();
         else ext.openReleases();
       });
-      pane.querySelectorAll('[data-link]').forEach(a => a.onclick = e => { e.preventDefault(); ext.openLink(a.dataset.link); });
+      pane.querySelectorAll('[data-link]').forEach(a => a.onclick = e => { e.preventDefault(); ext.openLink(a.dataset.link, e.shiftKey); });
       pane.querySelectorAll('[data-series]').forEach(b => b.onclick = () => {
         const on = new Set(cfg.usageSeries); const k = b.dataset.series;
         if (on.has(k)) { if (on.size > 1) on.delete(k); } else on.add(k);
@@ -378,15 +408,15 @@ const Panels = (() => {
 
   const GROUPS = [
     ['Tiles', { newAgent: 'New default agent', pickAgent: 'Pick an agent…', newAgentIn: 'New agent in folder…', newShell: 'New shell', close: 'Close tile',
-      fullscreen: 'Fullscreen tile', promoteMaster: 'Make focused tile the master', closeDoneAgents: 'Close finished subagents', toggleSidebar: 'Show / hide the sidebar', focusSidebar: 'Keyboard to the sidebar',
-      quickOpen: 'Quick open a file', showChanges: 'Show changes (git diff)', findInView: 'Find in a viewer or diff tile' }],
+      fullscreen: 'Fullscreen tile', promoteMaster: 'Make focused tile the master', closeDoneAgents: 'Close finished subagents', stopAgent: 'Stop the focused agent', toggleSidebar: 'Show / hide the sidebar', focusSidebar: 'Keyboard to the sidebar',
+      quickOpen: 'Quick open a file', showChanges: 'Show changes (git diff)', findInView: 'Find in a viewer or diff tile', openBrowser: 'Open browser…' }],
     ['Focus & swap', { focusLeft: 'Focus ←', focusRight: 'Focus →', focusUp: 'Focus ↑', focusDown: 'Focus ↓',
       swapLeft: 'Swap ←', swapRight: 'Swap →', swapUp: 'Swap ↑', swapDown: 'Swap ↓' }],
     ['Layout', { toggleLayout: 'Master ⇄ dwindle layout', toggleSplit: 'Flip split direction',
       resizeLeft: 'Resize ←', resizeRight: 'Resize →', resizeUp: 'Resize ↑', resizeDown: 'Resize ↓' }],
     ['Media', { mediaPlayPause: 'Play / pause', mediaNext: 'Next track', mediaPrev: 'Previous track', mediaShuffle: 'Shuffle' }],
     ['Workspaces', { prevWorkspace: 'Previous workspace', nextWorkspace: 'Next workspace' }],
-    ['App', { commandPalette: 'Command palette', help: 'Keybinds (this popup)', settings: 'Settings', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools' }],
+    ['App', { commandPalette: 'Command palette', help: 'Keybinds (this popup)', settings: 'Settings', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools', saveQuit: 'Save and quit' }],
   ];
   const actionName = a => GROUPS.map(g => g[1][a]).find(Boolean) || a;
 

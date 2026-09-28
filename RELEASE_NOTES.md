@@ -1,3 +1,36 @@
+# Operant 1.10.0
+
+Spend fewer tokens. Agents in Operant can now run long commands in their own tiles and read back only the errors or what's new, so test runs and builds stop flooding their context. Every agent tile shows how full its context is, and a guard warns you about (or stops) agents that loop or burn tokens. OpenCode's hidden subagents get their own tiles, agents can open and check web pages in a browser tile, and Operant is much smoother: GPU-drawn terminals, quicker animations and fast scrolling through huge files.
+
+**Install:** download `Operant-1.10.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **The Operant skill:** Operant installs a skill for Claude Code and OpenCode that teaches them to use the app. Agents run tests, builds and dev servers in a tile next to them and read back only the errors, the new output or the lines they're looking for, instead of pulling thousands of log lines into their context. They can also show you a plan in a viewer tile, start other agents in tiles beside them, ask you a question in a dialog, and notify you when they're done. Turn it off in ⚙ Settings › Agents › *Operant skill for agents*.
+- **The `operant` command:** works in every tile (PowerShell, cmd, Git Bash and any agent). `operant run`, `read --errors`, `read --new`, `read --grep`, `wait`, `view`, `diff`, `agent`, `ask`, `notify`, `tiles` and more. Run `operant help` in a tile for the list.
+- **Context size on agent tiles:** each Claude Code and OpenCode tile shows how full its context is, like `ctx 84k`. It turns orange at 60% and red at 85%, so you know when to `/compact` or start fresh. Turn it off in ⚙ Settings › Usage.
+- **OpenCode subagents as tiles:** when OpenCode starts a subagent, it opens in its own tile beside the OpenCode tile, with its messages and tool calls, and closes after it finishes, just like Claude Code's. OpenCode tiles also notify you when they're waiting for you. Subagents from OpenCode running outside Operant show up too (⚙ Settings › Tiles & subagents).
+- **Runaway guard:** Operant watches agent tiles for loops (the same tool call over and over), heavy token use, working for an hour without a break, or too many subagents at once. The tile gets a ⚠ badge and you get a notification; click the badge (or press `Alt+Shift+X`) to stop it (Claude Code gets Esc, so the conversation stays). ⚙ Settings › Tiles & subagents can make it stop agents by itself, and sets the limits. Agents can stop tiles they started with `operant stop`.
+- **Browser tile:** a real browser inside Operant, with back, forward, reload and DevTools. Open one from the command palette or with `operant browse localhost:3000`. Agents can look at the page (`operant shot`), read its text or console errors, and click or type for simple flows.
+- **OpenCode uses Operant's theme:** OpenCode tiles match your theme and accent, with a see-through background. Your own OpenCode settings aren't changed.
+- **Git button in the top bar:** the focused project's branch and changes; click it (or press `Alt+G`) to see and commit them.
+- **Save and quit:** the ⏻ button in the top bar (or `Alt+Shift+Q`) saves your open editor files and your whole layout, then closes Operant. Everything reopens next time, and Claude Code conversations carry on.
+- **Paste screenshots into agents:** with an image on the clipboard, `Ctrl+V` (or `Alt+V`) passes it to Claude Code and OpenCode as in Windows Terminal. Drop files onto a terminal to type their paths, or drag them from the sidebar.
+- **Copy on select:** selecting text in a terminal, viewer or changes tile copies it, with a small "Copied" note. Turn it off in ⚙ Settings › Terminal.
+- **Images:** the viewer fits images to the tile; click for actual size, `Ctrl`+wheel to zoom, drag to pan. Markdown files show their images inline. Image files always open in the viewer.
+- **Resumed agents come back:** a finished subagent's tile reopens when its agent is used again.
+- **Links open in Operant:** web links open in a browser tile next to you; Shift+click (or ↗ in a browser tile) sends them to your second browser, Zen if you have it, otherwise Windows' default. ⚙ Settings › Startup › *Open links in*.
+- **Crash logs:** Operant now keeps a log and local crash reports (never uploaded) so crashes can be tracked down. ⚙ Settings › Updates › *Open log folder*. If the window itself crashes, it reloads and your tiles come back.
+- **Animation setting:** ⚙ Settings › Appearance › *Animations*: Normal, Fast or Off.
+- **GPU-accelerated terminals:** terminals are drawn with WebGL, much faster when several tiles are busy. Turn it off in ⚙ Settings › Terminal, or turn off *Hardware acceleration* there for the whole window if Operant draws wrongly on your machine.
+
+## Changed
+- **Smoother everywhere:** tiles move and resize on the GPU, the tile borders animate only where you can see them, and huge files, long diffs and big folders scroll smoothly (an 80,000-line file used to freeze Operant).
+- **Moving a tile takes you with it:** `Alt+Shift+1`–`9` now switches to the workspace you moved the tile to. Turn it off in ⚙ Settings › Layout.
+- **Smaller music controls:** the cover, title and play button, with the rest on hover. ⚙ Settings › Media › *Size* brings back the full controls.
+- **Subagents from other sessions open where your master tile is**, not in whichever window you used last.
+
+---
+
 # Operant 1.9.0
 
 Git inside Operant: see what changed, commit and push like in IntelliJ. Also quick open, a command palette, vim keys, resizing tiles with the mouse, and a faster app all round.

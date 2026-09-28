@@ -10,11 +10,14 @@ const CHUNK = 4 << 20;
 // range -> [span, bucket] in ms. Hour and day buckets start on local hours and midnights.
 const RANGES = { '5h': [5 * 3600e3, 10 * 60e3], '24h': [24 * 3600e3, 30 * 60e3], '7d': [7 * 86400e3, 4 * 3600e3], '30d': [30 * 86400e3, 86400e3] };
 
-function createUsage({ projectsDir, send }) {
+function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
   const files = new Map(); // path -> { offset, partial, size }
   const seen = new Set();  // message id + request id: each content block repeats its message's usage
   let events = [];         // [time, input, output, cacheWrite, cacheRead, project]
   let timer = null, busy = false, scanned = false, lastSig = '';
+  const ctxLatest = new Map(); // sessionId -> { tokens, max }, the latest assistant turn seen this scan
+  const ctxSent = new Map();   // sessionId -> { tokens, max, at }, last value onContext was told about
+  const START = Date.now();    // the runaway guard ignores transcript history from before this run
 
   // Every transcript changed in the last month, down to the subagents folders.
   async function list(dir, depth, out) {
@@ -28,16 +31,34 @@ function createUsage({ projectsDir, send }) {
     return out;
   }
 
-  function take(line, fallbackProject) {
-    if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
+  // sessionId/isSubagent: the transcript's own session id and whether it's a subagent
+  // file (<session>/subagents/<id>.jsonl) — subagents don't count toward the tile's context, but
+  // their tool calls and tokens count toward the runaway guard on their PARENT session (owner).
+  function take(line, fallbackProject, sessionId, isSubagent, parentSessionId, agentId) {
+    if (!line.includes('"assistant"')) return;
     let o;
     try { o = JSON.parse(line); } catch { return; }
-    const m = o.message, u = m?.usage;
-    if (o.type !== 'assistant' || !u || m.model === '<synthetic>') return;
+    const m = o.message;
+    if (o.type !== 'assistant' || !m) return;
+    const t = Date.parse(o.timestamp);
+    const runawaySession = isSubagent ? parentSessionId : sessionId;
+    // Live only: history read back on startup (before this process existed) never flags a loop.
+    if (onToolUse && t >= START && Array.isArray(m.content)) {
+      for (const b of m.content) if (b.type === 'tool_use') onToolUse(runawaySession, b.name, b.input, isSubagent ? agentId : null);
+    }
+    const u = m.usage;
+    if (!u || m.model === '<synthetic>') return;
     const key = `${m.id}:${o.requestId || ''}`;
     if (seen.has(key)) return;
     seen.add(key);
-    const t = Date.parse(o.timestamp);
+    if (!isSubagent && sessionId) {
+      const tokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+      const max = tokens > 200000 || /\[1m\]/i.test(m.model || '') ? 1000000 : 200000;
+      ctxLatest.set(sessionId, { tokens, max });
+    }
+    if (onTokens && t >= START) {
+      onTokens(runawaySession, (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0));
+    }
     if (!(t > Date.now() - KEEP_MS)) return;
     // A session in a worktree (<repo>/.claude/worktrees/<name>) counts toward its repo.
     const cwd = o.cwd && o.cwd.replace(/[\\/]\.claude[\\/]worktrees[\\/].*$/i, '');
@@ -51,7 +72,13 @@ function createUsage({ projectsDir, send }) {
     if (st.size === f.size) return;
     if (st.size < f.offset) { f.offset = 0; f.partial = ''; }
     f.size = st.size;
-    const fallback = path.relative(projectsDir, file).split(path.sep)[0];
+    const relParts = path.relative(projectsDir, file).split(path.sep);
+    const fallback = relParts[0];
+    const isSubagent = relParts.includes('subagents');
+    const sessionId = path.basename(file, '.jsonl');
+    // Subagent layout: <project>/<parentSessionId>/subagents/agent-<id>.jsonl
+    const parentSessionId = isSubagent ? relParts[1] : null;
+    const agentId = isSubagent ? sessionId.replace(/^agent-/, '') : null;
     const fh = await fs.promises.open(file, 'r');
     try {
       while (f.offset < st.size) {
@@ -62,9 +89,22 @@ function createUsage({ projectsDir, send }) {
         f.offset += bytesRead;
         const lines = (f.partial + buf.toString('utf8', 0, bytesRead)).split('\n');
         f.partial = lines.pop();
-        for (const l of lines) take(l, fallback);
+        for (const l of lines) take(l, fallback, sessionId, isSubagent, parentSessionId, agentId);
       }
     } finally { await fh.close(); }
+  }
+
+  // Tells main which sessions' context size changed, at most once per session per 2s.
+  function flushContext() {
+    if (!onContext) return;
+    const now = Date.now();
+    for (const [sessionId, v] of ctxLatest) {
+      const prev = ctxSent.get(sessionId);
+      if (prev && prev.tokens === v.tokens && prev.max === v.max) continue;
+      if (prev && now - prev.at < 2000) continue;
+      ctxSent.set(sessionId, { tokens: v.tokens, max: v.max, at: now });
+      onContext(sessionId, v.tokens, v.max);
+    }
   }
 
   async function scan() {
@@ -78,6 +118,7 @@ function createUsage({ projectsDir, send }) {
         if (st.mtimeMs < since) continue;
         try { await readFile(file, st); } catch {}
       }
+      flushContext();
       if (events.length && events[0][0] < since) { events = events.filter(e => e[0] >= since); }
       events.sort((a, b) => a[0] - b[0]);
       scanned = true;

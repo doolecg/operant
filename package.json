@@ -1,11 +1,11 @@
 {
   "name": "operant",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenAI Codex, OpenCode, Gemini CLI and more",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --check main.js && node --check updater.js && node --check media.js && node --check usage.js && node --check renderer/renderer.js && node --check renderer/highlight.js && node --check renderer/settings.js && node --check renderer/themes.js && node --check shell-integration.js",
+    "test": "node --check main.js && node --check opencode.js && node --check opencode-theme.js && node --check updater.js && node --check media.js && node --check usage.js && node --check renderer/renderer.js && node --check renderer/highlight.js && node --check renderer/settings.js && node --check renderer/themes.js && node --check shell-integration.js",
     "dist": "electron-builder --win msi --x64",
     "pack": "electron-builder --dir --win --x64"
   },
@@ -21,6 +21,7 @@
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.15",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0"
   },
   "productName": "Operant",
@@ -42,16 +43,22 @@
       "updater.js",
       "media.js",
       "usage.js",
+      "opencode.js",
+      "opencode-theme.js",
       "media-helper.ps1",
       "renderer/**",
       "build/icon.png",
       "package.json",
-      "shell-integration.js"
+      "shell-integration.js",
+      "bin/**",
+      "skill/**"
     ],
     "asarUnpack": [
       "node_modules/@lydell/**",
       "media-helper.ps1",
-      "build/icon.png"
+      "build/icon.png",
+      "bin/**",
+      "skill/**"
     ],
     "win": {
       "target": [

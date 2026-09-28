@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('operant', {
   config: () => ipcRenderer.invoke('config'),
@@ -22,11 +22,14 @@ contextBridge.exposeInMainWorld('operant', {
   startupFolder: () => ipcRenderer.invoke('startup-folder'),
   takeSession: () => ipcRenderer.invoke('session:take'),
   saveSession: snap => ipcRenderer.send('session:save', snap),
+  saveAndQuit: () => ipcRenderer.send('app:save-quit'),
   checkUpdate: () => ipcRenderer.send('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
   updateState: () => ipcRenderer.invoke('update:state'),
   openReleases: () => ipcRenderer.send('open-releases'),
-  openLink: url => ipcRenderer.send('open-link', url),
+  openLogFolder: () => ipcRenderer.send('open-log-folder'),
+  openLink: (url, second) => ipcRenderer.send('open-link', { url, second }),
+  browsers: () => ipcRenderer.invoke('browsers:list'),
   listDir: (dir, hidden) => ipcRenderer.invoke('fs:list', { dir, hidden }),
   isDir: p => ipcRenderer.invoke('fs:is-dir', p),
   readFile: p => ipcRenderer.invoke('fs:read', p),
@@ -47,5 +50,10 @@ contextBridge.exposeInMainWorld('operant', {
   usageSummary: () => ipcRenderer.invoke('usage:summary'),
   usageSeries: range => ipcRenderer.invoke('usage:series', range),
   usageLimits: () => ipcRenderer.invoke('usage:limits'),
+  clipboardHasImage: () => ipcRenderer.invoke('clipboard:has-image'),
+  pathForFile: f => webUtils.getPathForFile(f),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
+  onControl: fn => ipcRenderer.on('control', (_e, d) => fn(d)),
+  controlReply: r => ipcRenderer.send('control:reply', r),
+  abortOpenCode: ptyId => ipcRenderer.invoke('opencode:abort', { ptyId }),
 });

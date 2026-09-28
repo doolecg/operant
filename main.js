@@ -2,18 +2,21 @@
 // Owns the pseudo-terminals (AI agent CLIs / shell sessions) and watches Claude Code's
 // transcript folders so every Claude subagent that starts gets its own tile.
 
-const { app, BrowserWindow, Menu, ipcMain, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, Notification, clipboard, crashReporter } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const http = require('http');
 const { spawn, execFile } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
 const { createMedia } = require('./media');
 const { createUsage } = require('./usage');
+const { createOpenCode, isOpenCode } = require('./opencode');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
+const opencodeTheme = require('./opencode-theme');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
@@ -22,6 +25,34 @@ if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_U
 const installed = app.isPackaged && !process.env.OPERANT_USER_DATA;
 // Windows only shows toast notifications for an app with an AppUserModelID (the installer's shortcut carries the same one).
 app.setAppUserModelId('com.doolecg.operant');
+
+// ------------------------------------------------------------ crash + error logging
+// Local-only minidumps (never uploaded) plus a plain-text log, so a native crash (Chromium/V8
+// fast-fail, OOM abort) leaves a trace instead of just vanishing.
+app.setPath('crashDumps', path.join(app.getPath('userData'), 'Crash Reports'));
+try { crashReporter.start({ uploadToServer: false, compress: true }); } catch {}
+// Keep only the 10 newest dumps.
+try {
+  const dir = app.getPath('crashDumps');
+  const files = fs.readdirSync(dir).map(n => { const p = path.join(dir, n); return { p, t: fs.statSync(p).mtimeMs }; })
+    .sort((a, b) => b.t - a.t);
+  for (const f of files.slice(10)) fs.rmSync(f.p, { recursive: true, force: true });
+} catch {}
+
+const LOG_PATH = path.join(app.getPath('userData'), 'operant.log');
+function logLine(msg) {
+  try {
+    fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] Operant ${app.getVersion()} ${msg}\n`);
+    const st = fs.statSync(LOG_PATH);
+    if (st.size > 1 << 20) { // cap ~1MB: keep the newer half
+      const buf = fs.readFileSync(LOG_PATH);
+      fs.writeFileSync(LOG_PATH, buf.subarray(buf.length >> 1));
+    }
+  } catch {}
+}
+app.on('child-process-gone', (_e, d) => logLine(`child-process-gone type=${d.type} reason=${d.reason} exitCode=${d.exitCode} serviceName=${d.serviceName || ''} name=${d.name || ''}`));
+process.on('uncaughtException', err => logLine(`uncaughtException ${err?.stack || err}`));
+process.on('unhandledRejection', err => logLine(`unhandledRejection ${err?.stack || err}`));
 
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 // Lives in %APPDATA%/Operant so it survives updates (the install dir is replaced).
@@ -37,6 +68,7 @@ const DEFAULT_KEYBINDS = {
   fullscreen: ['Alt+F'],
   toggleSplit: ['Alt+E'],
   closeDoneAgents: ['Alt+Shift+A'],
+  stopAgent: ['Alt+Shift+X'], // interrupt the focused tile's agent (runaway guard); Windows keeps Alt+Esc
   newWindow: ['Alt+Shift+N'],
   toggleSidebar: ['Alt+B'],
   focusSidebar: ['Alt+Shift+B'], // the keyboard to the sidebar (arrows, or vim keys), Esc gives it back
@@ -58,7 +90,9 @@ const DEFAULT_KEYBINDS = {
   tokenUsage: ['Alt+U'], // the token usage graph
   quickOpen: ['Ctrl+P'], commandPalette: ['Ctrl+Shift+P'],
   findInView: ['Ctrl+F'], // only in viewer and diff tiles; terminals keep the key
-  showChanges: [],        // the diff tile for the focused tile's project
+  showChanges: ['Alt+G'], // the changes tile (git) for the focused tile's project
+  saveQuit: ['Alt+Shift+Q'], // save every editor tile, snapshot the session, and quit
+  openBrowser: [], // browser tile
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
 
@@ -76,6 +110,8 @@ const DEFAULT_CONFIG = {
   shell: 'powershell.exe',
   showExternalAgents: true,       // subagents from Claude sessions not started inside Operant
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
+  installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
+  opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
   masterRatio: 0.55,
@@ -83,6 +119,7 @@ const DEFAULT_CONFIG = {
   autoCloseDoneAgentsSeconds: 15, // finished agent tiles, counted from when you first see them
   idleCloseTerminalMinutes: 10,   // Claude/shell tiles with no output and no typing
   maxTilesPerWorkspace: 6,        // new agents spill onto the next workspace past this
+  moveFollowsTile: true,          // Alt+Shift+1-9 takes you with the tile to its new workspace
   confirmClose: true,             // ask before closing a window that still has terminals running
   restoreSession: 'update',       // reopen the tiles you had open: 'update' (after an update) | 'always' | 'never'
   updateWhenIdle: true,           // clicking Update while an agent is working waits until it finishes
@@ -98,11 +135,15 @@ const DEFAULT_CONFIG = {
   cursorBlink: true,
   cursorStyle: 'block',           // 'block' | 'bar' | 'underline'
   scrollback: 10000,
+  copyOnSelect: true,              // selecting text in a terminal, viewer or diff copies it, with a short toast
+  gpuTerminals: true,             // terminals drawn with WebGL; off (or no WebGL) uses the normal renderer
+  hardwareAcceleration: true,     // the GPU for the whole window; applies after a restart
   theme: 'obsidian',              // see renderer/themes.js
   accent: '',                     // '' = the theme's own; otherwise a hex color
   wallpaper: 'glow-dots',         // 'glow-dots' | 'glow' | 'plain'
   borderAnimation: 'active',      // 'active' (focused + running agents) | 'focused' | 'off'
   borderAnimationSeconds: 8,
+  animations: 'normal',           // 'normal' | 'fast' | 'off'
   autoUpdate: true,               // check GitHub releases and install new versions
   explorerContextMenu: true,      // "Open in Operant" when right-clicking a folder
   explorerOpensIn: 'tile',        // 'tile' (in the window you used last) | 'window' (a new Operant window)
@@ -116,7 +157,9 @@ const DEFAULT_CONFIG = {
   ide: 'code',                    // "Open in IDE": a command that takes the folder, or 'custom' for ideCommand
   ideCommand: '',
   mediaControls: true,            // what Windows is playing, with its buttons, in the top bar
+  mediaSize: 'compact',           // 'compact' | 'full'
   tokenUsage: true,               // Claude Code's tokens today in the top bar; click for the graph
+  contextBadge: true,             // how full each agent tile's context is, in its title bar
   usageSeries: ['input', 'output', 'cacheWrite'], // what the pill and graph count; cache reads would swamp the rest
   planLimits: true,               // Claude plan limits (5-hour session, week) in the token pill's tooltip
   planLimitAlerts: true,          // a notification at 80% and 95% of the 5-hour session, and its ring on the pill
@@ -125,6 +168,7 @@ const DEFAULT_CONFIG = {
   clockSeconds: false,
   clockDate: true,
   barTitle: false,                // the focused tile's title beside the clock
+  gitButton: true,                // the focused project's branch and changes in the top bar · click to see and commit
   workspaceNames: [],             // names given to workspaces 1-9 (double-click one in the bar)
   editor: 'auto',                 // the editor tile's program: 'auto' | 'vim' | 'nvim' | 'micro' | 'nano' | 'edit' | 'custom'
   editorCommand: '',              // with 'custom': the command, the file is added at the end
@@ -139,7 +183,20 @@ const DEFAULT_CONFIG = {
   notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long is waiting for you
   notifySubagents: true,          // a Claude subagent finished
   notifyOnlyUnfocused: true,      // skip it when you're already looking at that tile
+  // Runaway guard: flags a tile whose agent may be stuck.
+  runawayGuard: 'warn',           // 'warn' (badge + notification) | 'stop' (also interrupts) | 'off'
+  runawayLoopRepeats: 5,          // same tool + same input this many times in a tile's last 20 tool calls
+  runawayTokens: 3000000,         // tokens (in+out+cache) one tile's session used in 10 minutes · 0 = off
+  runawayMinutes: 60,             // busy without a break this long (checked by the renderer) · 0 = off
+  runawaySubagents: 10,           // subagents running at once for one tile · 0 = off
   keybinds: DEFAULT_KEYBINDS,
+  // where links open: 'tile' (Operant's own browser tile) | 'default' (Windows' choice) | an installed browser id | 'custom'
+  linkBrowser: 'tile',
+  linkBrowserCommand: '',         // custom exe path, when linkBrowser is 'custom'
+  // second browser (Shift+click a link, or a browser tile's ↗): 'auto' (Zen if installed, else Windows' choice) |
+  // 'default' | an installed browser id | 'custom'
+  secondBrowser: 'auto',
+  secondBrowserCommand: '',       // custom exe path, when secondBrowser is 'custom'
 };
 
 // Only what the user changed is stored, so new defaults reach existing installs.
@@ -147,6 +204,8 @@ let user = {};
 try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')); } catch {} // a BOM from Notepad or PowerShell would fail the parse
 const merged = () => ({ ...DEFAULT_CONFIG, ...user, keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) } });
 const config = merged();
+// Read before the app is ready, so it only changes on a restart.
+if (!config.hardwareAcceleration) app.disableHardwareAcceleration();
 
 function saveUser() {
   try {
@@ -169,6 +228,8 @@ ipcMain.handle('config:set', (e, patch) => {
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
   if ('tokenUsage' in patch) { if (config.tokenUsage) usage.start(); else usage.stop(); }
   if ('planLimits' in patch || 'planLimitAlerts' in patch || 'tokenUsage' in patch) pollLimits();
+  if ('installSkill' in patch) syncSkill();
+  if ('theme' in patch || 'accent' in patch) opencodeTheme.writeTheme(config);
   // Other Operant windows pick the change up live.
   for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
   return config;
@@ -182,15 +243,187 @@ const alive = w => !!w && !w.isDestroyed();
 const sendTo = (w, ch, data) => { if (alive(w)) w.webContents.send(ch, data); };
 const broadcast = (ch, data) => { for (const w of windows) sendTo(w, ch, data); };
 const primary = () => (alive(lastFocused) ? lastFocused : [...windows].find(alive)) || null;
+// Where a subagent with no known parent tile should land: the window with a master tile
+// (preferring the last-focused one among those), else primary(). Uses the session snapshots
+// each renderer keeps main.js updated with (see session:save below).
+const agentWindow = () => {
+  const withMaster = [...windows].filter(w => alive(w) && snapshots.get(w.webContents.id)?.tiles?.some(t => t.master));
+  if (!withMaster.length) return primary();
+  return (alive(lastFocused) && withMaster.includes(lastFocused) && lastFocused) || withMaster[0];
+};
 const winOf = e => BrowserWindow.fromWebContents(e.sender);
 const sessionOwner = new Map(); // Claude --session-id -> window
 // Windows only lets a background app take the foreground in some cases; briefly going
 // always-on-top gets the window in front even when it doesn't.
+// Test runs (OPERANT_BACKGROUND=1) open behind other windows and never take focus.
 function bringUp(w) {
   if (!alive(w)) return;
+  if (process.env.OPERANT_BACKGROUND) return;
   if (w.isMinimized()) w.restore();
   w.show();
   w.setAlwaysOnTop(true); w.focus(); w.setAlwaysOnTop(false);
+}
+
+// -------------------------------------------------------------- browser tile
+// The <webview> guest gets no preload and no Node, its own session, and only http(s) navigation.
+// Its keyboard doesn't reach the host page (before-input-event is main's only hook on it), so
+// Alt/Ctrl combos that are Operant keybinds are forwarded to the host renderer to run instead.
+const BROWSER_URL_RE = /^https?:\/\//i;
+const GUEST_NORM = c => c.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Arrow/, '').replace(/^NumpadEnter$/, 'Enter');
+function guestCombo(input) {
+  return [...(input.control ? ['Ctrl'] : []), ...(input.alt ? ['Alt'] : []), ...(input.shift ? ['Shift'] : []), GUEST_NORM(input.code)].join('+');
+}
+function boundCombos() {
+  const set = new Set();
+  for (const combos of Object.values(config.keybinds || {})) for (const c of [].concat(combos)) if (c) set.add(c);
+  for (let i = 1; i <= 9; i++) { set.add(`Alt+${i}`); set.add(`Alt+Shift+${i}`); }
+  return set;
+}
+app.on('web-contents-created', (_e, contents) => {
+  if (contents.getType() !== 'webview') return;
+  contents.on('will-navigate', (e, url) => { if (!BROWSER_URL_RE.test(url)) e.preventDefault(); });
+  // target=_blank / window.open: navigate the same tile instead of opening a new Electron window.
+  contents.setWindowOpenHandler(({ url }) => {
+    if (BROWSER_URL_RE.test(url)) contents.loadURL(url);
+    return { action: 'deny' };
+  });
+  contents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || (!input.alt && !input.control)) return;
+    const combo = guestCombo(input);
+    if (!boundCombos().has(combo)) return;
+    event.preventDefault();
+    const host = contents.hostWebContents;
+    if (host && !host.isDestroyed()) host.send('browser:key', combo);
+  });
+});
+
+// ------------------------------------------------------------- skill install
+// Teaches Claude Code / OpenCode the `operant` CLI command (bin/operant.cmd) via a skill file,
+// so an agent running inside a tile knows it can drive Operant. Copied in, or removed, to match
+// Settings > Agents > installSkill. Never throws: a failure here shouldn't break startup.
+
+const SKILL_SRC = path.join(__dirname, 'skill', 'operant', 'SKILL.md').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+const SKILL_TARGETS = [
+  path.join(os.homedir(), '.claude', 'skills', 'operant', 'SKILL.md'),
+  path.join(os.homedir(), '.config', 'opencode', 'skills', 'operant', 'SKILL.md'),
+];
+function isOperantSkillFile(content) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content || '');
+  return !!m && /^name:\s*operant\s*$/m.test(m[1]);
+}
+function syncSkill() {
+  try {
+    if (!fs.existsSync(SKILL_SRC)) return; // not built yet (e.g. a fresh dev checkout)
+    const content = fs.readFileSync(SKILL_SRC, 'utf8');
+    for (const t of SKILL_TARGETS) {
+      try {
+        if (config.installSkill) {
+          let cur = null;
+          try { cur = fs.readFileSync(t, 'utf8'); } catch {}
+          if (cur !== content) { fs.mkdirSync(path.dirname(t), { recursive: true }); fs.writeFileSync(t, content); }
+        } else {
+          let cur = null;
+          try { cur = fs.readFileSync(t, 'utf8'); } catch {}
+          if (cur != null && isOperantSkillFile(cur)) {
+            fs.unlinkSync(t);
+            const dir = path.dirname(t);
+            try { if (!fs.readdirSync(dir).length) fs.rmdirSync(dir); } catch {}
+          }
+        }
+      } catch (e) { console.error('skill sync failed', t, e); }
+    }
+  } catch (e) { console.error('skill sync failed', e); }
+}
+
+// -------------------------------------------------------------- control API
+// An HTTP API (127.0.0.1, random port + token) that lets an agent running in a tile drive Operant
+// through the `operant` CLI (bin/operant-cli.js), e.g. `operant view plan.md` or `operant wait <id>`.
+// Commands Operant itself owns (ask/open/version) are answered here; everything else is forwarded
+// to the window that owns the calling tile and answered by the renderer over IPC.
+
+let controlPort = null, controlToken = null;
+let controlReadyResolve;
+const controlReady = new Promise(res => { controlReadyResolve = res; });
+const pendingControl = new Map(); // reqId -> { owner, resolve, timer }
+
+function ownerForTile(tile) {
+  const p = [...ptys.values()].find(p => p.tileId != null && String(p.tileId) === String(tile));
+  return (p && alive(p.owner) && p.owner) || primary();
+}
+
+function forwardControl(owner, cmd, args, tile, timeoutMs) {
+  return new Promise(resolve => {
+    if (!alive(owner)) return resolve({ ok: false, error: 'no Operant window is open' });
+    const reqId = crypto.randomUUID();
+    const timer = setTimeout(() => { pendingControl.delete(reqId); resolve({ ok: false, error: 'timed out' }); }, timeoutMs);
+    pendingControl.set(reqId, { owner, resolve, timer });
+    sendTo(owner, 'control', { reqId, cmd, args, tile });
+  });
+}
+ipcMain.on('control:reply', (e, { reqId, ok, result, error }) => {
+  const pend = pendingControl.get(reqId);
+  if (!pend) return;
+  if (pend.owner !== winOf(e)) return; // only the window that was asked may answer
+  clearTimeout(pend.timer);
+  pendingControl.delete(reqId);
+  pend.resolve({ ok, result, error });
+});
+
+async function controlAsk(owner, args = {}) {
+  if (!alive(owner)) owner = primary();
+  if (!alive(owner)) return { ok: false, error: 'no Operant window is open' };
+  bringUp(owner);
+  const options = Array.isArray(args.options) && args.options.length ? args.options : ['Yes', 'No'];
+  // cancelId -1: closing the dialog (Escape/X) resolves to answer: null, distinct from clicking a button.
+  const r = await dialog.showMessageBox(owner, {
+    type: 'question', title: 'Operant', message: String(args.question || ''), detail: args.detail,
+    buttons: options, defaultId: 0, cancelId: -1, noLink: true,
+  });
+  return { ok: true, result: { answer: options[r.response] ?? null } };
+}
+async function controlOpen(args = {}, owner = null) {
+  const target = String(args.target || '');
+  if (/^https?:\/\//i.test(target)) {
+    try { await openUrl(target, { owner }); return { ok: true, result: {} }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  const full = args.cwd && !path.isAbsolute(target) ? path.join(args.cwd, target) : target;
+  const err = await shell.openPath(full);
+  return err ? { ok: false, error: err } : { ok: true, result: {} };
+}
+
+function startControlServer() {
+  controlToken = crypto.randomBytes(32).toString('hex');
+  const server = http.createServer((req, res) => {
+    const reply = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (req.method !== 'POST' || req.url !== '/v1') return reply(404, { ok: false, error: 'not found' });
+    const auth = req.headers['authorization'] || '';
+    if (auth !== `Bearer ${controlToken}`) return reply(401, { ok: false, error: 'unauthorized' });
+    let body = '';
+    let tooBig = false;
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 1 << 20) { tooBig = true; reply(400, { ok: false, error: 'request too large' }); req.destroy(); }
+    });
+    req.on('end', async () => {
+      if (tooBig) return;
+      let data;
+      try { data = JSON.parse(body || '{}'); } catch { return reply(400, { ok: false, error: 'invalid JSON' }); }
+      const { cmd, args = {}, tile } = data || {};
+      if (!cmd) return reply(400, { ok: false, error: 'missing cmd' });
+      try {
+        if (cmd === 'version') return reply(200, { ok: true, result: { version: app.getVersion() } });
+        if (cmd === 'ask') { const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r); }
+        if (cmd === 'open') { const r = await controlOpen(args, ownerForTile(tile)); return reply(r.ok ? 200 : 400, r); }
+        const owner = ownerForTile(tile);
+        const timeoutMs = cmd === 'wait' ? (Number(args.timeout) || 600) * 1000 + 5000 : 20000;
+        const r = await forwardControl(owner, cmd, args, tile, timeoutMs);
+        return reply(r.ok ? 200 : 400, r);
+      } catch (e) { return reply(400, { ok: false, error: e.message }); }
+    });
+    req.on('error', () => {});
+  });
+  server.listen(0, '127.0.0.1', () => { controlPort = server.address().port; controlReadyResolve(); });
 }
 
 // ---------------------------------------------------------------- terminals
@@ -251,6 +484,89 @@ async function withFreshPath(env) {
 }
 const freshEnv = () => withFreshPath({ ...process.env });
 
+// ------------------------------------------------------------------ links: which browser they open in
+
+const KNOWN_BROWSERS = [
+  { id: 'zen', name: 'Zen', match: /zen/i, paths: () => [path.join(process.env.ProgramFiles || '', 'Zen Browser', 'zen.exe')] },
+  { id: 'firefox', name: 'Firefox', match: /firefox/i, paths: () => [
+    path.join(process.env.ProgramFiles || '', 'Mozilla Firefox', 'firefox.exe'),
+    path.join(process.env['ProgramFiles(x86)'] || '', 'Mozilla Firefox', 'firefox.exe') ] },
+  { id: 'chrome', name: 'Chrome', match: /chrome/i, paths: () => [
+    path.join(process.env.ProgramFiles || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(process.env['ProgramFiles(x86)'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(process.env.LocalAppData || '', 'Google', 'Chrome', 'Application', 'chrome.exe') ] },
+  { id: 'edge', name: 'Edge', match: /msedge|edge/i, paths: () => [
+    path.join(process.env['ProgramFiles(x86)'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(process.env.ProgramFiles || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe') ] },
+  { id: 'brave', name: 'Brave', match: /brave/i, paths: () => [
+    path.join(process.env.ProgramFiles || '', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+    path.join(process.env.LocalAppData || '', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe') ] },
+  { id: 'vivaldi', name: 'Vivaldi', match: /vivaldi/i, paths: () => [
+    path.join(process.env.LocalAppData || '', 'Vivaldi', 'Application', 'vivaldi.exe'),
+    path.join(process.env.ProgramFiles || '', 'Vivaldi', 'Application', 'vivaldi.exe') ] },
+  { id: 'opera', name: 'Opera', match: /^Opera(Stable)?$/i, paths: () => [
+    path.join(process.env.LocalAppData || '', 'Programs', 'Opera', 'launcher.exe') ] },
+  { id: 'floorp', name: 'Floorp', match: /floorp/i, paths: () => [path.join(process.env.ProgramFiles || '', 'Floorp', 'floorp.exe')] },
+  { id: 'librewolf', name: 'LibreWolf', match: /librewolf/i, paths: () => [path.join(process.env.ProgramFiles || '', 'LibreWolf', 'librewolf.exe')] },
+];
+
+// Detected once, then cached: static known install paths, plus the registry's list of browsers
+// Windows itself offers ("Default apps" > web browser), for installs off the beaten path.
+let browserCache = null; // Promise<[{ id, name, exe }]>
+function detectBrowsers() {
+  if (browserCache) return browserCache;
+  browserCache = (async () => {
+    const found = new Map();
+    for (const b of KNOWN_BROWSERS) {
+      const exe = b.paths().find(p => p && fs.existsSync(p));
+      if (exe) found.set(b.id, { id: b.id, name: b.name, exe });
+    }
+    for (const root of ['HKLM', 'HKCU']) {
+      const base = `${root}\\SOFTWARE\\Clients\\StartMenuInternet`;
+      const list = await run('reg.exe', ['query', base]);
+      const keys = [...list.stdout.matchAll(/^(HK\w+\\.*)$/gm)].map(m => m[1].trim()).filter(k => k.toLowerCase() !== base.toLowerCase());
+      for (const key of keys) {
+        const name = key.slice(key.lastIndexOf('\\') + 1);
+        const known = KNOWN_BROWSERS.find(b => b.match.test(name));
+        if (!known || found.has(known.id)) continue;
+        const cmd = await run('reg.exe', ['query', `${key}\\shell\\open\\command`, '/ve']);
+        const m = /^\s*\(Default\)\s+REG_SZ\s+(.*)$/mi.exec(cmd.stdout);
+        if (!m) continue;
+        const exe = m[1].trim().replace(/^"/, '').split('"')[0];
+        if (exe && fs.existsSync(exe)) found.set(known.id, { id: known.id, name: known.name, exe });
+      }
+    }
+    return [...found.values()];
+  })();
+  return browserCache;
+}
+ipcMain.handle('browsers:list', async () => (await detectBrowsers()).map(({ id, name }) => ({ id, name })));
+
+// Where a link goes: 'tile' opens Operant's own browser tile (in the asking window, or the
+// primary one); 'default' is shell.openExternal (Windows' own choice); otherwise it's a detected
+// browser id, or 'custom' (linkBrowserCommand/secondBrowserCommand). `second` picks secondBrowser
+// instead of linkBrowser (Shift+click, a browser tile's "open in system browser"). Never spawns
+// through a shell, so the URL can't inject arguments; only http(s)/file URLs go anywhere.
+async function openUrl(url, { second = false, owner = null } = {}) {
+  if (!/^(https?|file):\/\//i.test(String(url))) return;
+  let choice = second ? config.secondBrowser : config.linkBrowser;
+  if (choice === 'auto') { // secondBrowser's default: Zen if installed, else Windows' choice
+    const browsers = await detectBrowsers();
+    choice = browsers.some(b => b.id === 'zen') ? 'zen' : 'default';
+  }
+  if (choice === 'tile' && !second) {
+    const w = alive(owner) ? owner : primary();
+    if (w) return void sendTo(w, 'browse', url);
+    choice = 'default'; // no window to host a tile in
+  }
+  if (choice === 'default') return shell.openExternal(url);
+  const exe = choice === 'custom' ? (second ? config.secondBrowserCommand : config.linkBrowserCommand)
+    : (await detectBrowsers()).find(b => b.id === choice)?.exe;
+  if (!exe || !fs.existsSync(exe)) return shell.openExternal(url);
+  try { spawn(exe, [url], { detached: true, windowsHide: false, stdio: 'ignore' }).unref(); }
+  catch { shell.openExternal(url); }
+}
+
 const findAgent = id => config.agents.find(a => a.id === id) || config.agents.find(a => a.id === config.defaultAgent) || config.agents[0];
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
 const isClaude = agent => /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim());
@@ -286,7 +602,8 @@ const projectOf = dir => Object.keys(config.projectDefaults || {})
   .filter(p => { const a = path.resolve(dir).toLowerCase(), b = path.resolve(p).toLowerCase(); return a === b || a.startsWith(b.replace(/[\\/]$/, '') + path.sep); })
   .sort((a, b) => b.length - a.length)[0];
 
-ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit }) => {
+ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit, tileId, prompt }) => {
+  await controlReady;
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
   const resuming = !!(agent && isClaude(agent) && /^[0-9a-f-]{36}$/i.test(resume || '') && hasTranscript(resume));
@@ -309,10 +626,18 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     args = ['-NoLogo', '-Command', ed ? `& ${config.editor === 'custom' ? ed : q(ed)}${noSwap} ${q(edit)}`
       : `Write-Host 'No editor found. Install vim, neovim, micro or nano, or set one in Settings > Files.' -ForegroundColor Yellow; Read-Host 'Press Enter to close'`];
   }
+  let ocPort = null;
+  const isOc = agent && isOpenCode(agent);
+  if (isOc) { try { ocPort = await opencode.freePort(); } catch {} }
   if (agent) {
+    // PowerShell single-quoted string: '' escapes a literal quote, and newlines pass through as-is.
     const q = a => `'${String(a).replace(/'/g, "''")}'`;
     const extra = String(proj.args || '').trim().split(/\s+/).filter(Boolean);
-    const quoted = [...[].concat(agent.args || []), ...extra, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : [])].map(q).join(' ');
+    const exeBase = path.basename(String(agent.command).trim().split(/\s+/)[0]).replace(/\.(exe|cmd|ps1)$/i, '').toLowerCase();
+    // Claude Code and Codex take the prompt positionally, OpenCode as --prompt, Gemini as -i;
+    // anything else (a custom agent) also gets it positional, appended after the other args.
+    const promptArgs = !prompt ? [] : isOpenCode(agent) ? ['--prompt', prompt] : exeBase === 'gemini' ? ['-i', prompt] : [prompt];
+    const quoted = [...[].concat(agent.args || []), ...extra, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -327,7 +652,24 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // If Operant was itself started from inside a Claude session, don't let the
   // child claude think it's nested: that turns off transcript saving, which the
   // subagent tiles depend on.
-  const env = await withFreshPath({ ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' });
+  const envBase = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
+  // Every tile gets the control API in its env, and Operant's bin folder on PATH so `operant`
+  // is found. Spread from process.env above, so this also overwrites any of these vars Operant
+  // itself inherited (it may be running inside another Operant tile).
+  const binDir = path.join(__dirname, 'bin').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+  const pathKey = Object.keys(envBase).find(k => k.toUpperCase() === 'PATH') || 'Path';
+  envBase[pathKey] = binDir + path.delimiter + (envBase[pathKey] || '');
+  Object.assign(envBase, {
+    OPERANT: '1',
+    OPERANT_API: `http://127.0.0.1:${controlPort}`,
+    OPERANT_TOKEN: controlToken,
+    OPERANT_TILE: String(tileId ?? ''),
+    OPERANT_EXE: process.execPath,
+  });
+  // Selects the operant.json theme (renderer/themes.js) for just this OpenCode process, without
+  // touching the user's own ~/.config/opencode/tui.json.
+  if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
+  const env = await withFreshPath(envBase);
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];
   }
@@ -342,23 +684,33 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   });
   const owner = winOf(e);
   p.owner = owner;
+  p.tileId = tileId;
   p.label = agent ? agent.name : 'Shell';
   ptys.set(id, p);
   if (sessionId) sessionOwner.set(sessionId, owner);
+  if (ocPort) opencode.watch(id, ocPort, owner);
   p.onData(data => sendTo(owner, 'pty:data', { id, data }));
-  p.onExit(({ exitCode }) => { ptys.delete(id); sendTo(owner, 'pty:exit', { id, exitCode }); });
-  return { id, sessionId, cwd: dir, agent };
+  p.onExit(({ exitCode }) => { ptys.delete(id); opencode.unwatch(id); sendTo(owner, 'pty:exit', { id, exitCode }); });
+  return { id, sessionId: ocPort ? `oc:${id}` : sessionId, cwd: dir, agent };
 });
 
 ipcMain.on('pty:write', (_e, { id, data }) => ptys.get(id)?.write(data));
 ipcMain.on('pty:resize', (_e, { id, cols, rows }) => {
   try { if (cols > 1 && rows > 1) ptys.get(id)?.resize(cols, rows); } catch {}
 });
-ipcMain.on('pty:kill', (_e, { id }) => { try { ptys.get(id)?.kill(); } catch {} ptys.delete(id); });
+ipcMain.on('pty:kill', (_e, { id }) => { try { ptys.get(id)?.kill(); } catch {} ptys.delete(id); opencode.unwatch(id); });
 
 ipcMain.handle('pick-folder', async e => {
   const r = await dialog.showOpenDialog(winOf(e), { properties: ['openDirectory'], defaultPath: config.defaultCwd });
   return r.canceled ? null : r.filePaths[0];
+});
+// Ctrl+V in a terminal: an image on the clipboard (and no text) should reach the agent CLI itself,
+// not be typed as text. Electron's clipboard.read() works whether or not the window has focus,
+// unlike the renderer's navigator.clipboard.
+ipcMain.handle('clipboard:has-image', async () => {
+  const items = await clipboard.read();
+  if (!items.some(i => i.types.some(t => t.startsWith('image/')))) return false;
+  return !(await clipboard.readText());
 });
 ipcMain.handle('config:path', () => { if (!fs.existsSync(CONFIG_PATH)) saveUser(); return CONFIG_PATH; });
 ipcMain.on('open-config', () => {
@@ -665,8 +1017,10 @@ const updater = createUpdater({ send: broadcast, onInstall: () => { session.rest
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.on('update:check', () => updater.check());
 ipcMain.handle('update:state', () => updater.status);
-ipcMain.on('open-releases', () => shell.openExternal('https://github.com/doolecg/operant/releases'));
-ipcMain.on('open-link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) shell.openExternal(url); }); // links in release notes
+ipcMain.on('open-releases', e => openUrl('https://github.com/doolecg/operant/releases', { owner: winOf(e) }));
+ipcMain.on('open-log-folder', () => { if (!fs.existsSync(LOG_PATH)) logLine('log started'); shell.showItemInFolder(LOG_PATH); });
+// links in release notes, and viewer/agent tile output
+ipcMain.on('open-link', (e, { url, second } = {}) => openUrl(url, { second, owner: winOf(e) }));
 ipcMain.on('update:install', async () => {
   // Installing quits every window, so ask once for all of them before starting the installer.
   if (!await confirmClose([...windows].filter(alive), { update: true })) return;
@@ -681,9 +1035,34 @@ ipcMain.on('media:command', (_e, cmd) => media.command(String(cmd)));
 
 // -------------------------------------------------------------------- usage
 
-const usage = createUsage({ projectsDir: PROJECTS_DIR, send: broadcast });
+const usage = createUsage({
+  projectsDir: PROJECTS_DIR, send: broadcast,
+  onContext: (sessionId, tokens, max) => {
+    if (!config.contextBadge) return;
+    const owner = sessionOwner.get(sessionId);
+    if (owner) sendTo(owner, 'context', { sessionId, tokens, max });
+  },
+  // A subagent's tool calls/tokens count toward its parent tile (usage.js already resolves the
+  // session id to the parent for subagent transcripts, and gates out pre-startup history).
+  onToolUse: (sessionId, name, input, agentId) => {
+    const owner = sessionOwner.get(sessionId);
+    if (owner) noteToolUse(sessionId, owner, name, input, agentId ? (agents.get(agentId)?.description || null) : null);
+  },
+  onTokens: (sessionId, tokens) => {
+    const owner = sessionOwner.get(sessionId);
+    if (owner) noteTokens(sessionId, owner, tokens);
+  },
+});
 ipcMain.handle('usage:summary', () => usage.summary());
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
+
+const opencode = createOpenCode({
+  sendTo, primary: agentWindow, config,
+  onToolUse: (sessionId, owner, name, input, label) => noteToolUse(sessionId, owner, name, input, label),
+  onTokens: (sessionId, owner, tokens) => noteTokens(sessionId, owner, tokens),
+  onSubagentCount: (sessionId, owner, count) => checkSubagents(sessionId, owner, count),
+});
+ipcMain.handle('opencode:abort', (_e, { ptyId }) => opencode.abort(ptyId));
 
 // Claude plan limits (the 5-hour session and the week), as Claude Code's /usage shows them: asked of
 // Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, at most once a minute.
@@ -740,6 +1119,71 @@ function pollLimits() {
   limitsT = setInterval(fetchLimits, 120000);
 }
 
+// ---------------------------------------------------------------- runaway guard
+// Flags a tile whose agent may be stuck: a repeated tool call, a token burst, or too many
+// subagents at once. usage.js and opencode.js feed the raw signals in (already resolved to the
+// owning tile's session id — a subagent's activity counts toward its parent); the checks here
+// decide when to send `runaway { sessionId, reason, detail }`, rate-limited per (session, reason)
+// to once per 10 minutes. 'time' (busy too long) is detected client-side by the renderer.
+
+const toolHistory = new Map();  // sessionId -> [{ key, display }] last 20 tool calls
+const tokenEvents = new Map();  // sessionId -> [{ t, tokens }] in the last 10 minutes
+const runawaySent = new Map();  // "sessionId|reason" -> last-sent time
+
+// name+input -> a stable match key (sorted object keys, truncated) and a short display string.
+function stableToolKey(name, input) {
+  const norm = v => Array.isArray(v) ? v.map(norm)
+    : v && typeof v === 'object' ? Object.keys(v).sort().reduce((o, k) => (o[k] = norm(v[k]), o), {}) : v;
+  let s;
+  try { s = JSON.stringify(norm(input)); } catch { s = String(input); }
+  if (s && s.length > 500) s = s.slice(0, 500);
+  return `${name}\u0001${s}`;
+}
+function toolDisplay(name, input) {
+  const v = input && typeof input === 'object' ? (input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.query ?? input.url) : input;
+  return `${name}(${v == null ? '' : JSON.stringify(String(v)).slice(0, 60)})`;
+}
+
+function flagRunaway(sessionId, owner, reason, detail) {
+  if (config.runawayGuard === 'off' || !alive(owner)) return;
+  const key = `${sessionId}|${reason}`;
+  if (Date.now() - (runawaySent.get(key) || 0) < 10 * 60 * 1000) return;
+  runawaySent.set(key, Date.now());
+  sendTo(owner, 'runaway', { sessionId, reason, detail });
+}
+
+function noteToolUse(sessionId, owner, name, input, label) {
+  if (!config.runawayLoopRepeats) return;
+  const list = toolHistory.get(sessionId) || [];
+  list.push({ key: stableToolKey(name, input), display: toolDisplay(name, input) });
+  while (list.length > 20) list.shift();
+  toolHistory.set(sessionId, list);
+  const counts = new Map();
+  for (const c of list) counts.set(c.key, (counts.get(c.key) || 0) + 1);
+  for (const [key, n] of counts) {
+    if (n < config.runawayLoopRepeats) continue;
+    const display = list.find(c => c.key === key).display;
+    flagRunaway(sessionId, owner, 'loop', `${display}${label ? ` (${label})` : ''} ${n}× in its last 20 tool calls`);
+    break;
+  }
+}
+
+function noteTokens(sessionId, owner, tokens) {
+  if (!config.runawayTokens || !tokens) return;
+  const now = Date.now();
+  const list = tokenEvents.get(sessionId) || [];
+  list.push({ t: now, tokens });
+  const since = now - 10 * 60 * 1000;
+  while (list.length && list[0].t < since) list.shift();
+  tokenEvents.set(sessionId, list);
+  const sum = list.reduce((a, e) => a + e.tokens, 0);
+  if (sum >= config.runawayTokens) flagRunaway(sessionId, owner, 'tokens', `${(sum / 1e6).toFixed(1)}M tokens in 10 min`);
+}
+
+function checkSubagents(sessionId, owner, count) {
+  if (config.runawaySubagents && count >= config.runawaySubagents) flagRunaway(sessionId, owner, 'subagents', `${count} subagents running`);
+}
+
 // ---------------------------------------------------------- subagent watcher
 // Layout on disk: projects/<project>/<sessionId>/subagents/agent-<id>.jsonl (+ .meta.json)
 
@@ -778,12 +1222,16 @@ function tailAgent(a) {
     // meta.json can land a moment after the transcript; wait briefly for it.
     if (!meta && Date.now() - st.birthtimeMs < 1500) return;
     a.announced = true;
-    a.owner = sessionOwner.get(a.sessionId) || primary();
+    a.description = meta?.description || a.agentId;
+    a.owner = sessionOwner.get(a.sessionId) || agentWindow();
     sendTo(a.owner, 'agent:new', {
       agentId: a.agentId, sessionId: a.sessionId, project: a.project,
-      agentType: meta?.agentType || 'agent', description: meta?.description || a.agentId,
+      agentType: meta?.agentType || 'agent', description: a.description,
       spawnDepth: meta?.spawnDepth || 1,
     });
+    let live = 0;
+    for (const x of agents.values()) if (x.sessionId === a.sessionId && x.announced && !x.done) live++;
+    checkSubagents(a.sessionId, a.owner, live);
   }
   if (st.size === a.lastSize) return;
   a.lastSize = st.size;
@@ -803,7 +1251,11 @@ function tailAgent(a) {
       if (!l.trim()) continue;
       try { entries.push(JSON.parse(l)); } catch {}
     }
-    if (entries.length) sendTo(a.owner, 'agent:entries', { agentId: a.agentId, entries: entries.map(slimEntry).filter(Boolean) });
+    if (entries.length) {
+      const slim = entries.map(slimEntry).filter(Boolean);
+      if (slim.some(x => x.role === 'assistant' && x.stop)) a.done = true;
+      sendTo(a.owner, 'agent:entries', { agentId: a.agentId, entries: slim });
+    }
   } finally { fs.closeSync(fd); }
 }
 
@@ -892,6 +1344,14 @@ ipcMain.on('session:save', (e, snap) => {
 ipcMain.handle('session:take', e => { const s = restoreFor.get(e.sender.id) || null; restoreFor.delete(e.sender.id); return s; });
 app.on('before-quit', () => { quitting = true; });
 app.on('will-quit', () => { if (sessionT) writeSession(); });
+// "Save and quit": the renderer has already saved its editors and sent a fresh snapshot by the
+// time this arrives. Reopen everything next start, and skip the "terminals still running" dialog.
+ipcMain.on('app:save-quit', () => {
+  session.restoreNext = true;
+  writeSession();
+  for (const w of windows) w.closeConfirmed = true;
+  app.quit();
+});
 
 let started = false;
 function createWindow(startDir = null, restore = null) {
@@ -905,9 +1365,16 @@ function createWindow(startDir = null, restore = null) {
     backgroundColor: (THEMES[config.theme] || THEMES.obsidian).bg,
     title: 'Operant',
     icon: path.join(__dirname, 'build', 'icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, webviewTag: true },
+    ...(process.env.OPERANT_BACKGROUND ? { show: false } : {}),
   });
   const wcId = w.webContents.id;
+  // Guest webviews (browser tiles): no preload, no Node, isolated + sandboxed, own persistent session.
+  w.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload; delete webPreferences.preloadURL;
+    Object.assign(webPreferences, { nodeIntegration: false, contextIsolation: true, sandbox: true, partition: 'persist:operant-browser' });
+    if (params.src && params.src !== 'about:blank' && !BROWSER_URL_RE.test(params.src)) event.preventDefault();
+  });
   // Run from source the process is electron.exe, whose icon the taskbar would show; point it at Operant's.
   if (process.platform === 'win32' && !app.isPackaged) {
     w.setAppDetails({ appId: 'com.doolecg.operant', appIconPath: path.join(__dirname, 'build', 'icon.ico'), appIconIndex: 0, relaunchDisplayName: 'Operant' });
@@ -916,7 +1383,25 @@ function createWindow(startDir = null, restore = null) {
   lastFocused = w;
   if (startDir) startDirs.set(wcId, startDir);
   if (restore) restoreFor.set(wcId, restore);
+  if (process.env.OPERANT_BACKGROUND) w.once('ready-to-show', () => w.showInactive());
   w.on('focus', () => { lastFocused = w; });
+  // A crashed renderer (not a normal reload/navigation) gets reloaded so the window comes back;
+  // its ptys are orphaned (main owns them, the fresh renderer knows no ids), so they're killed and
+  // the window's last snapshot is queued for session:take, which reopens its tiles (Claude conversations resume).
+  w.webContents.on('render-process-gone', (_e, d) => {
+    logLine(`render-process-gone reason=${d.reason} exitCode=${d.exitCode} window=${wcId}`);
+    if (d.reason === 'clean-exit') return;
+    const snap = snapshots.get(wcId);
+    if (snap) restoreFor.set(wcId, snap);
+    for (const [id, p] of ptys) if (p.owner === w) { try { p.kill(); } catch {} ptys.delete(id); opencode.unwatch(id); }
+    if (config.notifications && Notification.isSupported()) {
+      const n = new Notification({ title: 'Operant', body: "Operant's window crashed and was reloaded", icon: ICON });
+      liveNotes.add(n);
+      n.show();
+    }
+    if (alive(w)) w.webContents.reload();
+  });
+  w.webContents.on('unresponsive', () => logLine(`unresponsive window=${wcId}`));
   w.on('close', e => {
     if (w.closeConfirmed || !running(w).length || !config.confirmClose) return;
     e.preventDefault();
@@ -931,7 +1416,7 @@ function createWindow(startDir = null, restore = null) {
     if (!quitting && windows.size) { snapshots.delete(wcId); sessionT ??= setTimeout(writeSession, 500); }
     if (lastFocused === w) lastFocused = null;
     // Its terminals go with it.
-    for (const [id, p] of ptys) if (p.owner === w) { try { p.kill(); } catch {} ptys.delete(id); }
+    for (const [id, p] of ptys) if (p.owner === w) { try { p.kill(); } catch {} ptys.delete(id); opencode.unwatch(id); }
     unwatchFile(w);
   });
   w.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -942,6 +1427,7 @@ function createWindow(startDir = null, restore = null) {
     if (config.autoUpdate) updater.start();
     if (config.mediaControls) media.start();
     if (config.tokenUsage) usage.start();
+    opencode.start();
     pollLimits();
   });
   return w;
@@ -1004,6 +1490,9 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
+    startControlServer();
+    syncSkill();
+    opencodeTheme.writeTheme(config);
     editorCommand(); // warms the PATH and editor lookups before the first tile needs them
     createWindow(folderArg(process.argv), toRestore[0]);
     for (const s of toRestore.slice(1)) createWindow(null, s);

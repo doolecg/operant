@@ -1,0 +1,9 @@
+#!/bin/sh
+# Operant control CLI wrapper for Git Bash / WSL-style shells.
+export ELECTRON_RUN_AS_NODE=1
+dir=$(dirname "$0")
+if [ -z "$OPERANT_EXE" ]; then
+  exec node "$dir/operant-cli.js" "$@"
+else
+  exec "$OPERANT_EXE" "$dir/operant-cli.js" "$@"
+fi
