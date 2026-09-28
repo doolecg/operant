@@ -53,8 +53,7 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
     seen.add(key);
     if (!isSubagent && sessionId) {
       const tokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-      const max = tokens > 200000 || /\[1m\]/i.test(m.model || '') ? 1000000 : 200000;
-      ctxLatest.set(sessionId, { tokens, max, model: m.model || null });
+      ctxLatest.set(sessionId, { tokens, max: contextMax(m.model, tokens), model: m.model || null });
     }
     if (onTokens && t >= START) {
       const breakdown = { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 };
@@ -314,4 +313,10 @@ async function computeBreakdown(projectsDir, { days = 1, project = null } = {}) 
   };
 }
 
-module.exports = { createUsage };
+// A model's context window: 1M for Claude Fable and Mythos, and Opus/Sonnet 4.6 and later; 200K for
+// Haiku and older models unless Claude Code runs them as [1m]. A context already past 200K is 1M.
+function contextMax(model, tokens) {
+  return tokens > 200000 || /\[1m\]|fable|mythos|(opus|sonnet)-(4-[6-9]|[5-9])/i.test(model || '') ? 1000000 : 200000;
+}
+
+module.exports = { createUsage, contextMax };

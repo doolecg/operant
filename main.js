@@ -14,7 +14,7 @@ const { createUpdater } = require('./updater');
 const hub = require('./hub');
 const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
-const { createUsage } = require('./usage');
+const { createUsage, contextMax } = require('./usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
@@ -1568,7 +1568,8 @@ function slimEntry(o) {
     stop: o.message?.stop_reason || null,
     // For the subagent tile's info bar: model, folder and token use (one message can span several lines, hence id).
     ...(o.cwd ? { cwd: o.cwd } : {}),
-    ...(u ? { id: o.message.id, model: o.message.model, usage: { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 } } : {}),
+    ...(u ? { id: o.message.id, model: o.message.model, usage: { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 },
+      ctxMax: contextMax(o.message.model, (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)) } : {}),
     blocks: blocks.map(b => {
       if (b.type === 'text') return { type: 'text', text: b.text };
       if (b.type === 'thinking') return b.thinking ? { type: 'thinking', text: b.thinking } : null;

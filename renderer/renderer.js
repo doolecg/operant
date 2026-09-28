@@ -459,7 +459,13 @@
     updateBadge(w);
     setTitle(w, name);
     ptyWins.set(info.id, w);
-    w.term.onData(d => { touch(w); w.lastInput = lastKey = Date.now(); w.typed = true; w.busySince = null; operant.writePty(info.id, d); });
+    w.term.onData(d => {
+      touch(w); w.lastInput = lastKey = Date.now(); w.typed = true; w.busySince = null;
+      // Text typed but not sent yet: auto compact waits instead of typing into it.
+      if (d.endsWith('\r') || d === '\x03') w.draft = false;
+      else if (/[^\x00-\x1f\x7f]/.test(d.replace(/\x1b(\[[\d;?]*[ -\/]*[@-~]|O.)?/g, ''))) w.draft = true;
+      operant.writePty(info.id, d);
+    });
     // The shell sets its own path as the title; only keep titles the agent sets. Vim's title ends in [+]
     // while the file has unsaved changes (main sets its titlestring).
     w.term.onTitleChange(t => {
@@ -636,7 +642,7 @@
       if (!w || !w.alive || !w.ptyId) { compacting.delete(id); continue; }
       if (sq && sq.ids.includes(id)) continue; // Save and quit is already talking to this tile
       if (st.stage === 'wait') {
-        if (isWorking(w)) { st.idleSince = null; continue; }
+        if (isWorking(w) || w.draft) { st.idleSince = null; continue; }
         if (st.idleSince == null) { st.idleSince = now; continue; }
         if (now - st.idleSince < 3000) continue;
         sendLine(w, COMPACT_MSG);
@@ -644,7 +650,7 @@
       } else if (st.stage === 'note-sent') {
         if (w.lastActivity > st.sentAt) st.seenActivity = true;
         const settled = st.seenActivity && now - w.lastActivity >= 3000;
-        if (settled || now - st.sentAt > 120000) { // give up waiting after 2 minutes and compact anyway
+        if ((settled || now - st.sentAt > 120000) && !w.draft) { // give up waiting after 2 minutes and compact anyway
           compacting.delete(id);
           runCompact(w);
         }
@@ -1629,7 +1635,7 @@
         const t = w.tok ||= { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
         for (const k of Object.keys(t)) t[k] += e.usage[k];
         const tokens = e.usage.input + e.usage.cacheRead + e.usage.cacheWrite;
-        w.ctx = { tokens, max: tokens > 200000 || /\[1m\]/i.test(e.model || '') ? 1000000 : 200000 };
+        w.ctx = { tokens, max: e.ctxMax };
       }
       text += AgentRender.entry(e, w.state);
       w.tools += e.blocks.filter(b => b.type === 'tool_use').length;

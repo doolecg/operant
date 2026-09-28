@@ -7,6 +7,7 @@
 const path = require('path');
 const os = require('os');
 const net = require('net');
+const { contextMax } = require('./usage');
 
 const DB_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -77,7 +78,7 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
     const ctx = (tokens.input || 0) + (tokens.cache?.read || 0) + (tokens.cache?.write || 0);
     if (!ctx || (ctx === t.ctx && modelID === t.ctxModel)) return;
     t.ctx = ctx; t.ctxModel = modelID;
-    sendTo(t.owner, 'context', { sessionId: `oc:${ptyId}`, tokens: ctx, max: ctx > 200000 ? 1000000 : 200000, model: modelID, free });
+    sendTo(t.owner, 'context', { sessionId: `oc:${ptyId}`, tokens: ctx, max: contextMax(modelID, ctx), model: modelID, free });
   }
 
   // ---------------------------------------------------------------- tiles started in Operant
