@@ -1,3 +1,18 @@
+# Operant 1.12.1
+
+Claude tiles no longer start with a stray "or" message, and the plan limits stop dropping out with a 429 error.
+
+**Install:** download `Operant-1.12.1.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## Changed
+- **Plan limits are checked every 10 minutes:** click the usage pill to check them right away. Hovering the pill shows the last numbers without asking again.
+
+## Fixed
+- **Claude tiles started with the message "or":** a double quote in Operant's instructions for agents split them apart under Windows PowerShell. Agents got only part of the instructions, and a stray "or" as their first prompt. Agents now get the full instructions and no stray prompt.
+- **Plan limits showed a 429 error:** when Anthropic says it's being asked too often, Operant now keeps showing the last numbers and waits longer before asking again.
+
+---
+
 # Operant 1.12.0
 
 Control team mode from the ⚙ quick menu: two sliders set how many workers can run at once and the highest tier they can use.
