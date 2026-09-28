@@ -1,3 +1,15 @@
+# Operant 1.17.1
+
+Auto compact no longer interrupts agents long before their context is full, and it no longer types into a message you're writing.
+
+**Install:** download `Operant-1.17.1.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## Fixed
+- **Auto compact started far too early:** Operant treated every Claude model as having a 200K context window. On models with 1M (Opus and Sonnet 4.6 and later, and Fable), it asked agents to compact at about 160K tokens, and again every time they got back there. It now uses each model's real context window, so the threshold in ⚙ Settings › Agents (80% by default) means 80% of 1M on those models. The context badge on agent and subagent tiles shows the right size too.
+- **Auto compact typed into your message:** if you had started typing in an agent's tile, Operant's "Before compacting" note and `/compact` could land in the middle of your text. It now waits until you've sent it.
+
+---
+
 # Operant 1.17.0
 
 Operant now asks where you want to work before it opens an agent. New agent terminals follow the tier slider all the way, links open in your own browser, and a few small bugs in Tidy agents and the tour are fixed.
