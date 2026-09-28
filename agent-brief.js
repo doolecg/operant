@@ -39,9 +39,17 @@ const RULES = {
   codex: path.join(home, '.codex', 'AGENTS.md'),
   gemini: path.join(home, '.gemini', 'GEMINI.md'),
 };
+// Once Operant's hub holds the rules (hub.js), that file is the main agent's rules for Claude Code:
+// ~/.claude/CLAUDE.md is then only an @import line pointing at it.
+let hubDir = null;
+function setHubDir(dir) { hubDir = dir; }
+function rulesFile(agent) {
+  const h = agent === 'claude' && hubDir && path.join(hubDir, 'rules.md');
+  return h && fs.existsSync(h) ? h : RULES[agent];
+}
 // The main agent's rules file, when the tile being launched is a different agent.
 function mainRules(mainAgent, launching) {
-  const p = mainAgent !== launching && RULES[mainAgent];
+  const p = mainAgent !== launching && rulesFile(mainAgent);
   return p && fs.existsSync(p) ? p : null;
 }
 function mainRulesText(mainAgent, launching) {
@@ -58,4 +66,4 @@ const opencodeConfigContent = (filePath, { mainAgent, pluginPath } = {}) => {
   return JSON.stringify(content);
 };
 
-module.exports = { BRIEF, briefPath, opencodeConfigContent, mainRulesText };
+module.exports = { BRIEF, briefPath, setHubDir, opencodeConfigContent, mainRulesText };

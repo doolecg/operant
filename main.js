@@ -11,6 +11,7 @@ const http = require('http');
 const { spawn, execFile } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
+const hub = require('./hub');
 const { createMedia } = require('./media');
 const { createUsage } = require('./usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
@@ -1257,6 +1258,34 @@ ipcMain.on('update:install', async () => {
   if (updater.install()) app.quit();
 });
 
+// ---------------------------------------------------------------------- hub
+// Operant's hub of skills and rules (hub.js). The audit is read-only and runs at startup and every
+// few hours; it only badges the Tidy agents button. Fixes happen when the user ticks and applies them.
+
+const HUB_DIR = path.join(app.getPath('userData'), 'hub');
+const HUB_CLAUDE_DIR = process.env.OPERANT_CLAUDE_DIR || path.join(os.homedir(), '.claude');
+agentBrief.setHubDir(HUB_DIR);
+function hubMemoryDirs() {
+  const dirs = [{ dir: memory.globalMemoryDir(app.getPath('userData')), writable: true }];
+  try {
+    const root = path.join(HUB_CLAUDE_DIR, 'projects');
+    for (const d of fs.readdirSync(root)) dirs.push({ dir: path.join(root, d, 'memory'), writable: false });
+  } catch {}
+  return dirs;
+}
+const hubArgs = () => ({ claudeDir: HUB_CLAUDE_DIR, hubDir: HUB_DIR, memoryDirs: hubMemoryDirs() });
+const hubState = () => ({ ...hub.audit(hubArgs()), canUndo: !!hub.lastBackup(HUB_DIR) });
+function hubCheck() { try { broadcast('hub:drift', hubState()); } catch (e) { logLine('hub audit failed: ' + e.message); } }
+ipcMain.handle('hub:audit', () => hubState());
+ipcMain.handle('hub:apply', (_e, ids) => {
+  try { const r = hub.apply({ ...hubArgs(), ids: Array.isArray(ids) ? ids : [] }); return { ...r, state: hubState() }; }
+  catch (e) { return { done: [], errors: [{ error: String(e.message || e) }], state: hubState() }; }
+});
+ipcMain.handle('hub:undo', () => {
+  try { const r = hub.undo({ hubDir: HUB_DIR }); return { ...r, state: hubState() }; }
+  catch (e) { return { errors: [{ error: String(e.message || e) }], state: hubState() }; }
+});
+
 // -------------------------------------------------------------------- media
 
 const media = createMedia({ send: broadcast });
@@ -1718,6 +1747,8 @@ function createWindow(startDir = null, restore = null) {
     started = true;
     startWatcher();
     if (config.autoUpdate) updater.start();
+    setTimeout(hubCheck, 8000);
+    setInterval(hubCheck, 3 * 60 * 60 * 1000);
     if (config.mediaControls) media.start();
     if (config.tokenUsage) usage.start();
     opencode.start();

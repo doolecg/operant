@@ -1,3 +1,23 @@
+# Operant 1.14.0
+
+Operant now keeps your agent skills and rules in one place it owns, the task board moves into a dropdown, and worker agents notify you only when they hand a result back.
+
+**Install:** download `Operant-1.14.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Tidy agents:** a new top-bar button audits your Claude setup (skills, CLAUDE.md, memory) and lists what is scattered, duplicated, broken or oversized. Nothing changes until you tick fixes and press Apply. Apply backs up everything it touches first, moves your skills into an Operant-owned hub with a link left in `~/.claude/skills`, and reduces `CLAUDE.md` to one import line. **Undo last apply** puts it all back exactly. It re-checks at startup and every few hours and shows a badge when something drifts, and it never applies anything by itself. Apply waits until no agent is running.
+- **Tasks dropdown:** the task board is now a top-bar panel with a count badge and **Clear done** and **Clear all** buttons.
+- **Tier dots:** worker tiles and task rows show a traffic-light dot for their tier: green for the first tier, orange for the second, red for any higher one.
+
+## Changed
+- **Fewer notifications:** worker agents no longer notify when they finish or go idle. You get one "Task N done" notification, carrying the result, when a worker reports back. Permission prompts still notify.
+- **Workers always report back:** a worker that goes idle without reporting gets a reminder typed into its terminal. If it still doesn't report, or its tile closes, you get a "Task N ended without a result" notification and the task is marked.
+- **The task board is no longer a tile.** `operant task` and `operant board` work as before, and tasks from an older saved session are kept.
+- **Agent rules:** other agents read your rules from the hub once Tidy agents has set it up.
+- **Folder label:** an agent tile's folder and branch now sit at the left of its info bar instead of under the close button.
+
+---
+
 # Operant 1.13.1
 
 Team mode now has five tiers, and agents use them by default according to your top-tier slider.

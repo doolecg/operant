@@ -41,6 +41,8 @@
       <span class="pill" id="stat-agents" title="Agents working / idle, subagents finished"></span>
       <button class="icon-btn" id="btn-new" title="New agent (Alt+N)">＋</button>
       <button class="icon-btn" id="btn-notifs" title="Notifications (Alt+I)"><svg viewBox="0 0 16 16"><path d="M8 1.3a4.3 4.3 0 0 0-4.3 4.3v2.1c0 .5-.2 1-.5 1.5l-.9 1.2a.9.9 0 0 0 .7 1.4h9.9a.9.9 0 0 0 .7-1.4l-.9-1.2a2.6 2.6 0 0 1-.5-1.5V5.6A4.3 4.3 0 0 0 8 1.3z" fill="currentColor"/><path d="M6.3 12.8a1.7 1.7 0 0 0 3.4 0z" fill="currentColor"/></svg><span class="badge hidden" id="notif-badge"></span></button>
+      <button class="icon-btn" id="btn-board" title="Tasks"><svg viewBox="0 0 16 16"><path d="M3 2.5h10a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm1.5 3v1.4h7V5.5zm0 3v1.4h7V8.5zm0 3v.9h4v-.9z" fill="currentColor"/></svg><span class="badge hidden" id="board-badge"></span></button>
+      <button class="icon-btn" id="btn-hub" title="Tidy agents: skills, rules and memory"><svg viewBox="0 0 16 16"><path d="M8 1l1.4 3.6L13 6l-3.6 1.4L8 11 6.6 7.4 3 6l3.6-1.4zM12.5 10l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7zM3.5 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor"/></svg><span class="badge hidden" id="hub-badge"></span></button>
       <button class="icon-btn" id="btn-gear" title="Quick menu">⚙</button>
       <div class="wc">
         <button id="wc-min" title="Minimize">─</button>
@@ -103,6 +105,21 @@
     <div class="card qm-card notif-card">
       <div class="card-head notif-head"><h2>Notifications</h2><button class="link" id="notif-clear">Clear all</button></div>
       <div class="card-body" id="notif-body"></div>
+    </div>
+  </div>
+
+  <div id="board" class="overlay anchor hidden">
+    <div class="card qm-card notif-card board-card">
+      <div class="card-head notif-head"><h2>Tasks</h2><button class="link" id="board-clear-done">Clear done</button><button class="link" id="board-clear">Clear all</button></div>
+      <div class="card-body" id="board-body"></div>
+    </div>
+  </div>
+
+  <div id="hub" class="overlay anchor hidden">
+    <div class="card qm-card notif-card board-card hub-card">
+      <div class="card-head notif-head"><h2>Tidy agents</h2><button class="link" id="hub-all">Select all</button><button class="link hidden" id="hub-undo">Undo last apply</button></div>
+      <div class="card-body" id="hub-body"></div>
+      <div class="card-foot"><span class="grow" id="hub-note"></span><button class="btn primary" id="hub-apply">Apply</button></div>
     </div>
   </div>
 

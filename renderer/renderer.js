@@ -294,7 +294,7 @@
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="waiting"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
+      <span class="title"></span><span class="tier"></span><span class="waiting"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -418,6 +418,7 @@
     w.title = t; w.el.querySelector('.title').textContent = t;
     if (focused() === w) drawBarTitle();
   }
+  function setTierDot(w) { w.el.querySelector('.tier').innerHTML = tierDot(w.tier); }
   function setBadge(w, html) { w.el.querySelector('.badge').innerHTML = html; }
 
   const defaultAgent = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
@@ -1173,54 +1174,46 @@
     return w;
   }
 
-  // Task board: one per window. `operant task add` opens it (without stealing focus) if none is open
-  // yet; `operant task claim/done/note` and `operant board` all read/write the same w.tasks array.
-  function getBoard() { return [...wins.values()].find(x => x.kind === 'board' && x.alive) || null; }
+  // Task board: one global list shown in the top-bar Tasks panel. `operant task add/claim/done/note`
+  // and `operant board` all read/write board.tasks; it is saved with the session.
+  const board = { tasks: [], nextTaskId: 1 };
   function fmtOwner(id) {
     if (id == null) return null;
     const t = wins.get(id);
     return { id, title: t && t.alive ? t.title : `tile ${id} (closed)` };
   }
-  function openBoard({ ws = current, focus = false, near = null, tasks = [] } = {}) {
-    const id = nextId++;
-    const el = document.createElement('div');
-    el.className = 'win board opening';
-    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">☰</span><span class="title">Task board</span><span class="badge"></span>
-      <button class="x" title="Close">✕</button></div>
-      <div class="view-wrap"><div class="view-page board-page" tabindex="-1"><div class="board-body"></div></div></div></div>`;
-    const w = { id, kind: 'board', el, term: null, title: 'Task board', alive: true, ws, lastActivity: Date.now(), closeIn: null,
-      cwd: near?.cwd || lastCwd, page: el.querySelector('.board-page'), tasks: tasks.map(t => ({ ...t })) };
-    w.nextTaskId = Math.max(0, ...w.tasks.map(t => t.id)) + 1;
-    el.querySelector('.title').textContent = w.title;
-    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
-    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
-    w.page.querySelector('.board-body').addEventListener('click', e => {
-      const b = e.target.closest('[data-owner]');
-      if (!b) return;
-      const t = wins.get(Number(b.dataset.owner));
-      if (t?.alive) { if (t.ws !== current) switchWorkspace(t.ws); focusWin(t); }
-    });
-    wins.set(id, w);
-    mount(w, ws, near, { focus });
-    renderBoard(w);
-    saveSession();
-    return w;
-  }
-  function renderBoard(w) {
-    if (!w.alive) return;
+  // Traffic light by tier position: first green, second orange, every higher one red.
+  const tierDot = tier => {
+    const i = Object.keys(cfg.team?.tiers || {}).indexOf(tier);
+    return i < 0 ? '' : `<i class="tier-dot t${Math.min(i, 2)}" title="Tier: ${esc(tier)}"></i>`;
+  };
+  function renderBoard() {
+    const open = board.tasks.filter(t => t.status !== 'done').length;
+    $('#board-badge').textContent = open > 99 ? '99+' : open || '';
+    $('#board-badge').classList.toggle('hidden', !open);
+    if (openPanel() !== 'board') return;
     const groups = [['todo', 'To do'], ['doing', 'Doing'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
-      return `<div class="board-row"><span class="board-id">#${t.id}</span><span class="board-text">${esc(t.text)}</span>`
+      return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text">${esc(t.text)}</span>`
         + (owner ? `<button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : '<span class="board-owner unassigned">unassigned</span>')
         + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '') + '</div>';
     };
-    w.page.querySelector('.board-body').innerHTML = groups.map(([k, label]) => {
-      const items = w.tasks.filter(t => t.status === k);
+    $('#board-body').innerHTML = groups.map(([k, label]) => {
+      const items = board.tasks.filter(t => t.status === k);
       return `<div class="board-group"><h3>${label} (${items.length})</h3>${items.length ? items.map(row).join('') : '<div class="board-empty">—</div>'}</div>`;
     }).join('');
-    setBadge(w, `${w.tasks.filter(t => t.status !== 'done').length} open`);
   }
+  function boardChanged() { renderBoard(); saveSession(); }
+  $('#board-body').addEventListener('click', e => {
+    const b = e.target.closest('[data-owner]');
+    if (!b) return;
+    const t = wins.get(Number(b.dataset.owner));
+    closePanels();
+    if (t?.alive) { if (t.ws !== current) switchWorkspace(t.ws); focusWin(t); }
+  });
+  $('#board-clear-done').onclick = () => { board.tasks = board.tasks.filter(t => t.status !== 'done'); boardChanged(); };
+  $('#board-clear').onclick = () => { board.tasks = []; boardChanged(); };
 
   function markAll(w) {
     const n = w.files.filter(f => !w.skip.has(f.path)).length, box = w.el.querySelector('.diff-all input');
@@ -1378,7 +1371,7 @@
         tiles.push({ kind: w.kind, agent: w.agentConf, cwd: w.cwd, title: w.customTitle, master: !!w.master,
           sessionId: w.sessionId && !w.sessionId.startsWith('oc:') ? w.sessionId : undefined,
           ...(w.kind === 'view' ? { file: w.file } : {}), ...(w.kind === 'browser' ? { url: w.url } : {}), ...(w.edit ? { edit: w.edit } : {}),
-          ...(w.kind === 'board' ? { tasks: w.tasks } : {}) });
+          });
         w.snapIndex = tiles.length - 1;
         return { tile: w.snapIndex };
       }
@@ -1390,7 +1383,7 @@
       const tree = ser(ws.tree);
       return { layout: ws.layout, mfact: ws.mfact, tree, focused: tree ? idx(ws.focused) : null, fullscreen: tree ? idx(ws.fullscreen) : null };
     });
-    return { current, tiles, workspaces: spaces };
+    return { current, tiles, workspaces: spaces, tasks: board.tasks, nextTaskId: board.nextTaskId };
   }
   let sessionT, lastSnap = '';
   function saveSession() {
@@ -1410,12 +1403,16 @@
 
   // Reopens a snapshot's tiles in their workspaces, then puts back each layout exactly.
   async function restore(snap) {
+    const oldBoard = snap.tiles.find(t => t.kind === 'board');
+    board.tasks = (snap.tasks || oldBoard?.tasks || []).map(t => ({ ...t }));
+    board.nextTaskId = Math.max(snap.nextTaskId || 1, ...board.tasks.map(t => t.id + 1));
+    renderBoard();
     const made = await Promise.all(snap.tiles.map((t, i) => {
       const ws = Math.max(snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`)), 0);
       if (t.kind === 'view') return openViewer(t.file, { ws, focus: false });
       if (t.kind === 'diff') return openDiff(t.cwd, { ws, focus: false });
       if (t.kind === 'browser') return openBrowser(t.url, { ws, focus: false });
-      if (t.kind === 'board') return openBoard({ ws, focus: false, tasks: t.tasks || [] });
+      if (t.kind === 'board') return null; // old sessions kept the tasks in a board tile
       if (t.edit) return openEditor(t.edit, { ws, focus: false });
       return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws, focus: false });
     }));
@@ -1450,6 +1447,12 @@
 
   function closeWin(w) {
     if (!w.alive) return;
+    // A worker that ends without `operant task done` still reports back: the master is told it never did.
+    for (const t of w.tier ? board.tasks.filter(x => x.owner === w.id && x.status !== 'done') : []) {
+      t.note = 'Worker closed without reporting a result';
+      notify(w, `Task ${t.id} ended without a result`, t.text, null, true);
+    }
+    if (w.tier) boardChanged();
     w.alive = false;
     if (w.planQueue?.length) { w.planQueue.forEach(r => r({ approved: false, note: '(closed without an answer)' })); w.planQueue = []; }
     const wsIndex = w.ws;
@@ -1554,9 +1557,12 @@
 
   // action (optional): { label, ... } shown as an extra link in the bell panel row; showAlwaysAllowCard
   // reads the rest of it (see the permission-prompt section below).
-  async function notify(w, title, body, action) {
+  // Worker tiles (w.tier) stay silent; their result reaches the master as the "Task N done" notification.
+  // force: for what needs the user regardless (permission prompts, a finished task).
+  async function notify(w, title, body, action, force) {
     if (!w.alive) return;
-    if (w.lastNotified && Date.now() - w.lastNotified < 5000) return;
+    if (w.tier && !force) return;
+    if (!force && w.lastNotified && Date.now() - w.lastNotified < 5000) return;
     logNotification(w, title, body, action); // kept for the bell panel even when the Windows toast below is off
     if (!cfg.notifications) return;
     if (cfg.notifyOnlyUnfocused && w.ws === current && workspaces[w.ws].focused === w.id && await operant.windowFocused()) return;
@@ -1624,6 +1630,9 @@
       w.busySince = null;
       if (w.runaway) { w.runaway = null; setRunawayBadge(w); }
       if (worked >= 2500) { w.unchecked = true; gitChanged(); }
+      const open = worked >= 2500 && w.tier && w.ptyId ? board.tasks.find(t => t.owner === w.id && t.status !== 'done') : null;
+      if (open && !w.nudged) { w.nudged = true; operant.writePty(w.ptyId, `Report back now: run operant task done ${open.id} --note '<the result>'\r`); }
+      else if (open) { open.note = 'Worker went idle without reporting a result'; notify(w, `Task ${open.id} ended without a result`, open.text, null, true); boardChanged(); }
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) notify(w, `${w.agentName} is waiting for you`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
     }
   }, 1000);
@@ -1812,7 +1821,7 @@
   function idleLimit(w) {
     if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
     // Viewers, diffs, browsers and the task board are read, not run; an editor with unsaved changes would lose them.
-    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'browser' || w.kind === 'board' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
+    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'browser' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
     if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
@@ -1926,7 +1935,7 @@
     const count = (waitingCounts.get(key) || 0) + 1;
     waitingCounts.set(key, count);
     const action = count >= 3 ? buildAlwaysAllowAction(w, kind, label, detail, key, count, extra) : null;
-    notify(w, `${w.agentName} is waiting for you`, `${label}${detail ? ': ' + detail : ''}`, action);
+    notify(w, `${w.agentName} is waiting for you`, `${label}${detail ? ': ' + detail : ''}`, action, true);
   }
 
   // Best-effort rule text; the user reviews and saves it themselves, Operant never writes it.
@@ -2288,7 +2297,7 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
     if (name === 'picker') return openPicker(pick.mode || 'commands');
@@ -2300,6 +2309,8 @@
     else if (name === 'usage') { usageHover = -1; renderUsage(); }
     else if (name === 'quickmenu') { drawGitButton(); drawTeamSliders(); }
     else if (name === 'notifications') { renderNotifications(); markAllNotifsRead(); }
+    else if (name === 'board') { $('#board').classList.remove('hidden'); renderBoard(); }
+    else if (name === 'hub') scanHub();
     else renderSettings();
     $('#' + name).classList.remove('hidden');
     $('#' + name + ' .card-body').scrollTop = 0;
@@ -2320,6 +2331,60 @@
   $('#btn-new').onclick = () => togglePanel('launcher');
   $('#btn-gear').onclick = () => togglePanel('quickmenu');
   $('#btn-notifs').onclick = () => togglePanel('notifications');
+  $('#btn-board').onclick = () => togglePanel('board');
+  $('#btn-hub').onclick = () => togglePanel('hub');
+
+  // Tidy agents: Operant's hub of skills and rules. The audit is read-only (hub.js); nothing changes
+  // until fixes are ticked and Apply is pressed, and the last apply can be undone.
+  let hubState = null, hubMsg = '';
+  const HUB_KINDS = { 'not-in-hub': 'Not in the hub', 'broken-link': 'Broken links', duplicate: 'Duplicates', conflict: 'Needs you', oversized: 'Oversized', stale: 'Stale', info: 'Info' };
+  function hubUpdate(state) {
+    hubState = state;
+    const n = state ? state.fixable : 0;
+    $('#hub-badge').textContent = n > 99 ? '99+' : n || '';
+    $('#hub-badge').classList.toggle('hidden', !n);
+    $('#btn-hub').title = n ? `Tidy agents: ${n} thing${n === 1 ? '' : 's'} to tidy` : 'Tidy agents: skills, rules and memory';
+    if (openPanel() === 'hub') renderHub();
+  }
+  async function scanHub() { $('#hub-body').innerHTML = '<div class="board-empty">Scanning…</div>'; try { hubUpdate(await operant.hubAudit()); } catch (e) { hubMsg = String(e.message || e); } }
+  function renderHub() {
+    const s = hubState;
+    $('#hub-undo').classList.toggle('hidden', !s?.canUndo);
+    if (!s) return;
+    const byKind = {};
+    for (const f of s.findings) (byKind[f.kind] ||= []).push(f);
+    const keep = new Set([...$('#hub-body').querySelectorAll('input:checked')].map(i => i.value));
+    $('#hub-body').innerHTML = Object.keys(HUB_KINDS).filter(k => byKind[k]).map(k => `<div class="board-group"><h3>${HUB_KINDS[k]} (${byKind[k].length})</h3>`
+      + byKind[k].map(f => `<label class="board-row hub-row${f.fix ? '' : ' report'}">`
+        + (f.fix ? `<input type="checkbox" value="${esc(f.id)}"${keep.has(f.id) ? ' checked' : ''}>` : '<span class="hub-dot">·</span>')
+        + `<span class="board-text">${esc(f.message)}</span></label>`).join('') + '</div>').join('')
+      || '<div class="board-empty">Everything is in the hub. Nothing to tidy.</div>';
+    hubCount();
+  }
+  function hubCount() {
+    const n = $('#hub-body').querySelectorAll('input:checked').length;
+    $('#hub-apply').disabled = !n;
+    $('#hub-apply').textContent = n ? `Apply ${n}` : 'Apply';
+    $('#hub-note').textContent = hubMsg || (n ? 'Everything it touches is backed up first' : 'Tick fixes to apply');
+  }
+  $('#hub-body').addEventListener('change', () => { hubMsg = ''; hubCount(); });
+  $('#hub-all').onclick = () => { const all = [...$('#hub-body').querySelectorAll('input')]; const on = all.some(i => !i.checked); all.forEach(i => { i.checked = on; }); hubMsg = ''; hubCount(); };
+  $('#hub-apply').onclick = async () => {
+    const ids = [...$('#hub-body').querySelectorAll('input:checked')].map(i => i.value);
+    if (!ids.length) return;
+    if ([...wins.values()].some(isWorking)) { hubMsg = 'Wait until agents are idle; a skill moving mid-turn can break it'; hubCount(); return; }
+    const r = await operant.hubApply(ids);
+    hubMsg = r.errors?.length ? `${r.done.length} applied, ${r.errors.length} failed: ${r.errors[0].error}` : `Applied ${r.done.length}. Backup ${r.backup}`;
+    hubUpdate(r.state);
+    hubCount();
+  };
+  $('#hub-undo').onclick = async () => {
+    const r = await operant.hubUndo();
+    hubMsg = r.errors?.length ? `Undo failed: ${r.errors[0].error}` : r.backup ? `Restored backup ${r.backup}` : 'Nothing to undo';
+    hubUpdate(r.state);
+    hubCount();
+  };
+  operant.on('hub:drift', hubUpdate);
   $('#qm-settings').onclick = () => togglePanel('settings');
   $('#btn-save-quit').onclick = () => { closePanels(); saveAndQuit(); };
   // Quick menu sliders for team mode: how many workers may run at once, and the highest tier they may use.
@@ -4205,12 +4270,10 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         // Item 33: with --tier, a board task is added automatically, owned by the new worker tile,
         // with a final line telling it how to hand the result back.
         let taskId = null, prompt = args.prompt;
-        let board = null;
         if (tier) {
-          board = getBoard() || openBoard({ ws: self?.ws ?? current, near: self, focus: false });
           taskId = board.nextTaskId++;
-          board.tasks.push({ id: taskId, text: String(args.prompt), status: 'todo', owner: null, note: null });
-          renderBoard(board); saveSession();
+          board.tasks.push({ id: taskId, text: String(args.prompt), status: 'todo', owner: null, note: null, tier });
+          boardChanged();
           // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
           // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
           prompt = `${args.prompt} — when done, run: operant task done ${taskId} --note '<what changed, files>'`;
@@ -4218,7 +4281,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
-        if (tier) { w.tier = tier; const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; renderBoard(board); saveSession(); } }
+        if (tier) { w.tier = tier; setTierDot(w); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; boardChanged(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}) };
       }
       case 'team': {
@@ -4324,27 +4387,30 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return new Promise(resolve => { w.planQueue.push(resolve); showPlanBar(w); });
       }
       case 'task': {
-        const w = getBoard() || openBoard({ ws: self?.ws ?? current, near: self, focus: false });
         if (args.sub === 'add') {
           if (!args.text) throw new Error('text required');
-          const id = w.nextTaskId++;
-          w.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null });
-          renderBoard(w); saveSession();
+          const id = board.nextTaskId++;
+          board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null });
+          boardChanged();
           return { id, sub: 'add' };
         }
         const id = Number(args.id);
-        const t = w.tasks.find(x => x.id === id);
+        const t = board.tasks.find(x => x.id === id);
         if (!t) throw new Error(`no task ${id}`);
         if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
-        else if (args.sub === 'done') { t.status = 'done'; if (args.note != null) t.note = String(args.note); }
+        else if (args.sub === 'done') {
+          t.status = 'done'; if (args.note != null) t.note = String(args.note);
+          const n = wins.get(t.owner);
+          const from = n?.alive ? n : self;
+          if (from) notify(from, `Task ${t.id} done`, t.note || '', null, true);
+        }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else throw new Error(`unknown task command "${args.sub}"`);
-        renderBoard(w); saveSession();
+        boardChanged();
         return { id: t.id, status: t.status, note: t.note, sub: args.sub };
       }
       case 'board': {
-        const w = getBoard();
-        return { tasks: w ? w.tasks.map(t => ({ id: t.id, status: t.status, text: t.text, note: t.note, owner: fmtOwner(t.owner) })) : [] };
+        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: t.text, note: t.note, owner: fmtOwner(t.owner) })) };
       }
       case 'remember': {
         if (!args.text) throw new Error('text required');

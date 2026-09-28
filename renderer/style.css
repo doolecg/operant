@@ -326,6 +326,8 @@ body.anim-off .win::before,
 .ibar .ib-cache.cold { opacity: .8; }
 .ibar .ib-sp { flex: 1; min-width: 0; }
 .ibar .ib-folder, .ibar .ib-branch { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.ibar .ib-folder { order: -2; }
+.ibar .ib-branch { order: -1; }
 .ibar .ib-branch { opacity: .8; }
 .spin { display: inline-block; animation: spin 1.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -359,7 +361,25 @@ body.anim-off .win::before,
 
 /* Task board tile (operant task/board): a list of tasks grouped by status. */
 .win.board .ico { color: var(--accent); }
-.board-page { padding: 10px 14px; }
+#btn-board svg, #btn-hub svg { width: 14px; height: 14px; vertical-align: middle; fill: currentColor; }
+#board-body { padding: 4px 14px 10px; }
+.board-card { width: 420px; }
+.notif-head { gap: 12px; }
+.hub-card { width: 480px; }
+.hub-row { cursor: pointer; }
+.hub-row.report { cursor: default; color: var(--dim); }
+.hub-row input { flex: none; accent-color: var(--accent); }
+.hub-dot { flex: none; width: 13px; text-align: center; color: var(--dim); }
+#hub-undo.hidden { display: none; }
+#hub-body { padding: 4px 14px 10px; }
+#hub-note { color: var(--dim); font-size: 11.5px; }
+#hub-apply:disabled { opacity: .45; }
+.tier-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.tier-dot.t0 { background: #3fb950; }
+.tier-dot.t1 { background: #f0883e; }
+.tier-dot.t2 { background: #f85149; }
+.tbar .tier:empty { display: none; }
+.tbar .tier { display: flex; align-items: center; }
 .board-group { margin: 0 0 16px; }
 .board-group h3 { margin: 0 0 6px; font: 600 10.5px 'Segoe UI', sans-serif; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
 .board-empty { color: var(--dim); font-size: 12px; padding: 4px 2px; }
