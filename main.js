@@ -123,6 +123,7 @@ const DEFAULT_CONFIG = {
   confirmClose: true,             // ask before closing a window that still has terminals running
   restoreSession: 'update',       // reopen the tiles you had open: 'update' (after an update) | 'always' | 'never'
   updateWhenIdle: true,           // clicking Update while an agent is working waits until it finishes
+  saveQuitWaits: true,            // Save and quit asks working agents to save a progress note and stop first; Force quit skips it
   gapsIn: 5,
   gapsOut: 12,
   rounding: 12,

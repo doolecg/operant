@@ -71,10 +71,18 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
 ## Next (asked for during 1.10.0)
 
 - [x] 22. Browser tile shipped in 1.10.0 (untested: Alt shortcuts while the page has focus, reopening its URL after restart).
-- [ ] **29. Safe Save and quit:** Save and quit tells agents to save their progress (the Operant skill teaches them to
+- [x] **29. Safe Save and quit:** Save and quit tells agents to save their progress (the Operant skill teaches them to
       write a progress note and finish their current step when Operant says it's closing), waits until every agent is
       at a safe point (idle), then closes; a "Force quit now" button for when you can't wait.
-- [ ] **31. Ship in 1.10.1 (already in the working tree, uncommitted):** browser detection matches by exe name, so Zen
+- [x] **31. Ship in 1.10.1 (already in the working tree, uncommitted):** browser detection matches by exe name, so Zen
       (which registers under a `Firefox-<hash>` key) isn't listed as Firefox in Settings › Startup.
-- [ ] **30. Check after 1.10.0:** crash log (`operant.log`, Settings › Updates › Open log folder) after a day of use;
+- [ ] **32. Auto compact:** when an agent tile's context passes a threshold (Settings › Agents, default 80%, off
+      switch), Operant waits until the agent is idle, asks it to write its progress note (as in 29), then types
+      `/compact` into it. OpenCode tiles use its server instead (`POST /session/<id>/summarize` on the tile's
+      `--port`, with the session's provider and model), falling back to typing `/compact`; context size comes from
+      its SSE token counts, same as the badge. Test both Claude Code and OpenCode (Zen free model). Agents can ask for it themselves with
+      `operant compact`, which queues it for their next idle moment. The skill teaches: check `operant usage`
+      (item 25) on long jobs, keep `.operant/progress.md` current, and re-read it after a compact.
+- [x] **30. Check after 1.10.0** (browser URL restore, crash reload and the WebGL cap pass; Alt keys inside a browser
+      tile need a real keypress to test, CDP key events skip `before-input-event`): crash log (`operant.log`, Settings › Updates › Open log folder) after a day of use;
       Alt+1 while a browser tile has focus; window reload after a renderer crash; the 12-context WebGL cap.

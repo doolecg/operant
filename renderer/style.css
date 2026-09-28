@@ -561,6 +561,9 @@ mark.hit.cur { background: rgba(227, 178, 122, .55); box-shadow: 0 0 0 1.5px var
 .launch-row .nm small { display: block; color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .launch-row .def { font-size: 10.5px; color: var(--accent); background: var(--accent-tint); padding: 1px 7px; border-radius: 99px; }
 
+/* save-and-quit overlay */
+.sq-row { padding: 7px 10px; font-size: 13px; color: var(--text); }
+
 /* agents editor (settings) */
 .agent-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
 .agent-row { display: grid; grid-template-columns: 34px 1.2fr 1fr 1.3fr 28px; gap: 6px; align-items: center; }

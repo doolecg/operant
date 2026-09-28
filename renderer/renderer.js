@@ -512,7 +512,7 @@
 
   // "Save and quit": save every dirty editor tile in place (no quitting them), snapshot the
   // session right now, and tell main to close everything and reopen it all next start.
-  async function saveAndQuit() {
+  async function doSaveQuit() {
     toast('Saving…', null, 4000);
     const dirty = [...wins.values()].filter(w => w.edit && w.ptyId && (w.tracksDirty ? w.dirty : w.typed));
     const keys = cfg.editor === 'custom' ? null : SAVE_ONLY[String(editorName || '').toLowerCase()];
@@ -523,6 +523,59 @@
     saveSessionNow();
     operant.saveAndQuit();
   }
+
+  // Working agent tiles that Save and quit should wait for: busy 'ai' tiles, plus the parent
+  // of any running subagent ('agent') tile (subagents have no terminal of their own to warn).
+  function busyAgentTiles() {
+    const set = new Map();
+    for (const w of wins.values()) {
+      if (w.kind === 'ai' && aiWorking(w)) set.set(w.id, w);
+      else if (w.kind === 'agent' && w.status === 'running') {
+        const parent = sessionWin.get(w.sessionId);
+        if (parent) set.set(parent.id, parent);
+      }
+    }
+    return [...set.values()];
+  }
+
+  const SAVE_QUIT_MSG = "Operant is closing. Finish your current step (don't start anything new), then write a "
+    + 'short progress note to .operant/progress.md in the project (what\'s done, what\'s next, open questions), then stop.';
+  let sq = null; // { ids, idleSince, timer } while the "saving and quitting" overlay is up
+  async function saveAndQuit() {
+    const busy = cfg.saveQuitWaits ? busyAgentTiles() : [];
+    if (!busy.length) return doSaveQuit();
+    for (const w of busy) if (w.ptyId) operant.writePty(w.ptyId, SAVE_QUIT_MSG + '\r');
+    sq = { ids: busy.map(w => w.id), idleSince: new Map() };
+    $('#savequit').classList.remove('hidden');
+    renderSaveQuit();
+    sq.timer = setInterval(tickSaveQuit, 1000);
+  }
+  function tickSaveQuit() {
+    const now = Date.now();
+    for (const id of sq.ids) {
+      const w = wins.get(id);
+      if (w && w.alive && isWorking(w)) sq.idleSince.delete(id);
+      else if (!sq.idleSince.has(id)) sq.idleSince.set(id, now);
+    }
+    renderSaveQuit();
+    if (sq.ids.every(id => now - (sq.idleSince.get(id) ?? now) >= 3000)) forceSaveQuit();
+  }
+  function renderSaveQuit() {
+    $('#savequit-body').innerHTML = sq.ids.map(id => {
+      const w = wins.get(id);
+      const done = !w || !w.alive || sq.idleSince.has(id);
+      return `<div class="sq-row">${done ? '✓' : '…'} ${esc(w ? w.title : 'closed tile')}</div>`;
+    }).join('');
+  }
+  function endSaveQuitOverlay() {
+    if (sq) clearInterval(sq.timer);
+    sq = null;
+    $('#savequit').classList.add('hidden');
+  }
+  function cancelSaveQuit() { endSaveQuitOverlay(); }
+  function forceSaveQuit() { endSaveQuitOverlay(); doSaveQuit(); }
+  $('#sq-force').onclick = forceSaveQuit;
+  $('#sq-cancel').onclick = cancelSaveQuit;
 
   const FIND_BAR = '<div class="find-bar hidden"><input placeholder="Find" spellcheck="false"><span class="find-n"></span>'
     + '<button data-f="prev" title="Previous (Shift+Enter)">↑</button><button data-f="next" title="Next (Enter)">↓</button><button data-f="close" title="Close (Esc)">✕</button></div>';

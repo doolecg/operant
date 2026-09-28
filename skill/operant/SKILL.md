@@ -10,6 +10,9 @@ Works in any shell in an Operant tile (PowerShell, cmd, Git Bash) and any agent 
 ## Don't run away
 Cap fan-out: start at most ~4 agent tiles at once unless the user asked for more. When waiting on tiles you started, check `operant tiles` — a `⚠` flag means Operant thinks that tile is looping, burning tokens or stuck: `operant read <id> --new` to look, then `operant stop <id>` if it's looping or off-task, and tell the user. Stop and use `operant ask` instead of retrying the same failing command more than twice. Never restart a stopped agent in a loop.
 
+## When Operant says it's closing
+If a message says "Operant is closing": finish only the step you're on (start nothing new), write a short note to `.operant/progress.md` in the project (done, next, open questions), then stop and wait. Operant closes once you're idle. When you start and `.operant/progress.md` exists, read it first and carry on from it.
+
 ## Save tokens on long output
 For anything with long output — test suites, builds, installs, dev servers, linters — use `operant run "<cmd>"` instead of your own shell tool, then `operant wait <id> --errors` (or `--new`). The full log stays in the tile for the user; only the part you asked for enters your context. Your own shell is still right for short commands whose whole output you need.
 - Checking a tile again later: add `--new` to get only what changed since your last read.

@@ -129,6 +129,18 @@
     </div>
   </div>
 
+  <div id="savequit" class="overlay hidden">
+    <div class="card narrow">
+      <div class="card-head"><h2><span class="logo">◈</span> Saving and quitting</h2><span class="sub">Waiting for working agents to reach a safe point</span></div>
+      <div class="card-body" id="savequit-body"></div>
+      <div class="card-foot">
+        <span class="grow"></span>
+        <button class="btn" id="sq-cancel">Cancel</button>
+        <button class="btn primary" id="sq-force">Force quit now</button>
+      </div>
+    </div>
+  </div>
+
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
