@@ -72,6 +72,9 @@ const Panels = (() => {
       { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Claude Code only: a hook rewrites test/build/install commands to operant run/wait automatically, so the savings don\'t depend on the agent remembering', type: 'toggle' },
       { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
         type: 'number', min: 0, max: 100 },
+      { key: 'cacheTtlMinutes', label: 'Prompt cache lifetime', hint: 'Minutes an idle tile\'s cache stays warm before its next message pays full price · 60 if your setup uses the 1-hour cache', type: 'number', min: 1, max: 120 },
+      { key: 'compactBeforeCold', label: 'Compact before the cache goes cold', hint: 'Compact big idle agents just before their prompt cache expires, instead of paying to rebuild it', type: 'toggle' },
+      { key: 'team', type: 'team' },
     ]],
     ['Notifications', [
       { key: 'notifications', label: 'Windows notifications', type: 'toggle' },
@@ -292,10 +295,30 @@ const Panels = (() => {
       + '</div><div class="set-row"><div class="lbl"><span class="hint">The agent is used by ＋ in the sidebar, Alt+Enter and new tiles in that folder. The startup command runs in PowerShell before the agent or shell starts. Applies to new tiles.</span></div></div>';
   }
 
+  // Settings › Agents › Team (item 33): enable toggle, one row per tier (agent, model, "use for"), max workers.
+  function teamEditor(cfg) {
+    const team = cfg.team || {};
+    const tiers = team.tiers || {};
+    const tierBlock = (id, label) => {
+      const t = tiers[id] || {};
+      return `<div class="set-row"><div class="lbl">${label} tier</div><div class="ctl">
+          <select data-team-f="${id}.agent">${cfg.agents.map(a => `<option value="${esc(a.id)}"${a.id === t.agent ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+          <input data-team-f="${id}.model" value="${esc(t.model || '')}" placeholder="model id" spellcheck="false"></div></div>
+        <div class="set-row"><div class="lbl">${label} use for<span class="hint">Shown to the lead agent, and taught in the skill</span></div>
+          <div class="ctl"><input data-team-f="${id}.use" value="${esc(t.use || '')}" placeholder="what this tier is for" spellcheck="false"></div></div>`;
+    };
+    return `<div class="set-row"><div class="lbl">Team mode<span class="hint">A lead agent hands small tasks to cheaper workers, in their own tiles</span></div>
+        <div class="ctl"><button class="toggle${team.enabled ? ' on' : ''}" data-team-enabled></button></div></div>
+      ${tierBlock('small', 'Small')}
+      ${tierBlock('medium', 'Medium')}
+      <div class="set-row"><div class="lbl">Max workers at once</div><div class="ctl"><input type="number" data-team-max min="1" max="16" value="${team.maxWorkers ?? 4}"></div></div>`;
+  }
+
   function rowHtml(it, cfg, ext) {
     if (it.type === 'projects') return projectsEditor(cfg);
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
+    if (it.type === 'team') return teamEditor(cfg);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
     if (it.type === 'updates') return updatesCard(ext.update());
@@ -375,6 +398,17 @@ const Panels = (() => {
         set('projectDefaults', all);
       });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
+      pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
+      pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {
+        const n = Math.min(16, Math.max(1, Math.round(+el.value || 4)));
+        el.value = n; set('team', { ...(cfg.team || {}), maxWorkers: n });
+      });
+      pane.querySelectorAll('[data-team-f]').forEach(el => el.onchange = () => {
+        const [tierId, field] = el.dataset.teamF.split('.');
+        const tiers = { ...(cfg.team?.tiers || {}) };
+        tiers[tierId] = { ...(tiers[tierId] || {}), [field]: el.value.trim() };
+        set('team', { ...(cfg.team || {}), tiers });
+      });
       const add = pane.querySelector('[data-agent-add]');
       if (add) add.onclick = () => {
         setAgents([...cfg.agents, { id: 'agent-' + Date.now().toString(36), name: 'New agent', command: '', args: [], icon: '●' }]);

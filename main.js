@@ -139,6 +139,16 @@ const DEFAULT_CONFIG = {
   longCommandHook: false,         // Claude Code hook: reroute long commands (test/build/install) through operant run/wait automatically (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
+  cacheTtlMinutes: 5,              // Claude's prompt cache lifetime; 60 if your setup uses the 1-hour cache (Settings > Agents)
+  compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
+  team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
+    enabled: false,
+    tiers: {
+      small: { agent: 'opencode', model: 'opencode/big-pickle', use: 'look things up, read and summarise files, renames, run tests, simple edits, docs tweaks' },
+      medium: { agent: 'claude', model: 'sonnet', use: 'a feature across a few files, a normal bug fix' },
+    },
+    maxWorkers: 4,
+  },
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
   masterRatio: 0.55,
@@ -234,7 +244,12 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
   // Keep a config that doesn't parse, so the next save (which writes only what changed) can't lose it.
   if (e.code !== 'ENOENT') try { fs.copyFileSync(CONFIG_PATH, CONFIG_PATH.replace(/\.json$/, '.broken.json')); } catch {}
 } // a BOM from Notepad or PowerShell would fail the parse
-const merged = () => ({ ...DEFAULT_CONFIG, ...user, keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) } });
+// team is nested (tiers keyed by name), so a user override of just `team.enabled` shouldn't drop
+// the default tiers - same idea as keybinds below.
+const merged = () => ({ ...DEFAULT_CONFIG, ...user,
+  keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) },
+  team: { ...DEFAULT_CONFIG.team, ...(user.team || {}), tiers: { ...DEFAULT_CONFIG.team.tiers, ...(user.team?.tiers || {}) } },
+});
 const config = merged();
 // Read before the app is ready, so it only changes on a restart.
 if (!config.hardwareAcceleration) app.disableHardwareAcceleration();
@@ -456,6 +471,9 @@ function startControlServer() {
           if (!r.ok) return reply(400, r);
           return reply(200, { ok: true, result: { ...r.result, limits: await fetchLimits() }, warn: r.warn });
         }
+        // Item 35: cheap readers run a hidden child process, no tile, no forward to the renderer's
+        // command switch (only a couple of small side-calls into it, for the caller's cwd/tile output).
+        if (cmd === 'summarize' || cmd === 'find') { const r = await controlSummarize(cmd, args, tile); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // plan: waits on the user, same as ask, so it gets an ask-length leash rather than the 20s default.
         const timeoutMs = cmd === 'wait' ? (Number(args.timeout) || 600) * 1000 + 5000 : cmd === 'plan' ? 7 * 24 * 3600 * 1000 : 20000;
@@ -507,12 +525,30 @@ function registryPath() {
 }
 
 // A child process's output and exit code, never rejecting (a missing program gives code -1).
+// None of our callers write to stdin, and leaving it open as an untouched pipe makes some CLIs
+// (OpenCode's `run`, notably) hang forever waiting on it instead of just running - so it's closed
+// right away, which reads as a normal empty/closed stdin rather than main.js's own inherited one.
 function run(cmd, args, opts = {}) {
   return new Promise(resolve => {
-    execFile(cmd, args, { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, ...opts }, (err, stdout, stderr) => {
+    const child = execFile(cmd, args, { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, ...opts }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: stdout || '', stderr: stderr || '' });
     });
+    try { child.stdin?.end(); } catch {}
   });
+}
+
+// execFile('opencode', ...) with a `cwd` option set fails ENOENT on Windows for PATH-only (shim)
+// executables - a real Node/libuv quirk, not a missing-PATH problem (works fine with no cwd, or
+// with the full path). Resolve to the full path first so item 35's cwd-scoped run doesn't hit it.
+async function resolveExe(cmd) {
+  if (path.isAbsolute(cmd)) return cmd;
+  const r = await run('where.exe', [cmd]);
+  const lines = r.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  // `where` checks the current directory before PATH, so it can turn up one of Operant's own
+  // source files (e.g. opencode.js) ahead of the real executable - only .exe/.cmd/.bat can be
+  // spawned directly, so prefer those over whatever came first.
+  const runnable = lines.find(l => /\.(exe|cmd|bat)$/i.test(l));
+  return runnable || lines[0] || cmd;
 }
 
 async function withFreshPath(env) {
@@ -619,6 +655,70 @@ const hasTranscript = id => {
   try { return fs.readdirSync(PROJECTS_DIR).some(p => fs.existsSync(path.join(PROJECTS_DIR, p, id + '.jsonl'))); } catch { return false; }
 };
 
+// Item 35: cheap readers. Runs the team's small tier agent non-interactively, in a hidden child
+// process (no tile), and hands back its answer only - never the file/log/page itself. Only OpenCode
+// and Claude Code are supported (the two agents with a documented non-interactive print mode).
+async function controlSummarize(cmd, args, tile) {
+  const team = config.team || DEFAULT_CONFIG.team;
+  const tierCfg = team?.tiers?.small;
+  if (!tierCfg?.agent) return { ok: false, error: 'no small tier configured (Settings › Agents › Team)' };
+  const agent = findAgent(tierCfg.agent);
+  if (!agent) return { ok: false, error: `small tier agent "${tierCfg.agent}" isn't configured in Settings › Agents` };
+  const isOc = isOpenCode(agent), isCl = isClaude(agent);
+  if (!isOc && !isCl) return { ok: false, error: 'the small tier agent must be OpenCode or Claude Code for cheap reads' };
+
+  const owner = ownerForTile(tile);
+  const statusR = await forwardControl(owner, 'status', {}, tile, 10000);
+  const cwd = (statusR.ok && statusR.result?.cwd) || config.defaultCwd;
+  let tmpFile = null;
+  try {
+    let instruction;
+    if (cmd === 'find') {
+      const question = String(args.question || args.target || '').trim();
+      if (!question) return { ok: false, error: 'question required' };
+      instruction = `Search the project at ${cwd} to answer this question. Give a short answer (a few sentences) with file:line references.\n\nQuestion: ${question}`;
+    } else {
+      const target = String(args.target || '').trim();
+      const question = String(args.question || '').trim();
+      if (!target) return { ok: false, error: 'a file, tile id or url is required' };
+      const ask = question ? `Question: ${question}` : 'Give a short summary.';
+      if (/^https?:\/\//i.test(target)) {
+        instruction = `Fetch ${target} and answer this in a short paragraph, with references to what you read.\n\n${ask}`;
+      } else if (/^\d+$/.test(target)) {
+        const r = await forwardControl(owner, 'read', { id: Number(target), lines: 2000 }, tile, 15000);
+        if (!r.ok) return { ok: false, error: r.error || `couldn't read tile ${target}` };
+        tmpFile = path.join(os.tmpdir(), `operant-tile-${target}-${Date.now()}.txt`);
+        fs.writeFileSync(tmpFile, r.result?.text || '');
+        instruction = `Read the file at ${tmpFile} (captured terminal output of Operant tile ${target}) and answer this in a short paragraph with line references.\n\n${ask}`;
+      } else {
+        const file = path.isAbsolute(target) ? target : path.resolve(cwd, target);
+        if (!fs.existsSync(file)) return { ok: false, error: `no such file: ${file}` };
+        instruction = `Read the file at ${file} and answer this in a short paragraph with file:line references.\n\n${ask}`;
+      }
+    }
+
+    const exe = await resolveExe(String(agent.command).trim().split(/\s+/)[0]);
+    // --auto: opencode run otherwise blocks forever on its own permission prompt with no TTY to
+    // answer it, since this runs headless with no tile. Reads only (the instruction never asks it
+    // to change anything), so auto-approving is safe here.
+    const cmdArgs = isOc
+      ? ['run', '--auto', ...(tierCfg.model ? ['-m', tierCfg.model] : []), instruction]
+      : ['-p', ...(tierCfg.model ? ['--model', tierCfg.model] : []), instruction];
+    const env = await withFreshPath({ ...process.env });
+    const r = await run(exe, cmdArgs, { cwd, env, timeout: 120000 });
+    if (r.code !== 0 && !r.stdout.trim()) {
+      const msg = r.stderr.trim().split('\n').slice(0, 5).join('\n');
+      return { ok: false, error: msg || `${agent.name} exited with code ${r.code}` };
+    }
+    const CAP = 6000;
+    let text = r.stdout.trim();
+    if (text.length > CAP) text = text.slice(0, CAP) + '\n… (truncated)';
+    return { ok: true, result: { text } };
+  } finally {
+    if (tmpFile) { try { fs.unlinkSync(tmpFile); } catch {} }
+  }
+}
+
 // The editor tile's program: Settings › Files › Editor, or the first one found. Git for Windows brings
 // vim and nano without putting them on PATH, so its usr\bin is looked in too.
 const GIT_BIN = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin');
@@ -644,7 +744,7 @@ const projectOf = dir => Object.keys(config.projectDefaults || {})
   .filter(p => { const a = path.resolve(dir).toLowerCase(), b = path.resolve(p).toLowerCase(); return a === b || a.startsWith(b.replace(/[\\/]$/, '') + path.sep); })
   .sort((a, b) => b.length - a.length)[0];
 
-ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit, tileId, prompt }) => {
+ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit, tileId, prompt, model, worker }) => {
   await controlReady;
   const id = crypto.randomUUID();
   const agent = kind === 'ai' ? findAgent(agentId) : null;
@@ -687,11 +787,14 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Item 43: Claude Code gets the brief on every launch, including resumed/reopened tiles —
     // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
     // own env below; Codex and Gemini CLI have no equivalent flag, so they're skipped.
-    const briefArgs = config.briefAgents && isClaude(agent) ? ['--append-system-prompt', agentBrief.BRIEF] : [];
+    const briefArgs = config.briefAgents && isClaude(agent) ? ['--append-system-prompt', [agentBrief.BRIEF, agentBrief.mainRulesText(config.defaultAgent, 'claude')].filter(Boolean).join('\n\n')] : [];
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
     const hookArgs = config.longCommandHook && isClaude(agent) ? ['--settings', HOOK_SETTINGS_PATH] : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
+    // Item 33: team mode picks the agent and passes its model straight through — OpenCode takes it as
+    // -m, Claude Code as --model. Other agents don't get a model flag (none of the built-in ones need it).
+    const modelArgs = model ? (isOpenCode(agent) ? ['-m', String(model)] : isClaude(agent) ? ['--model', String(model)] : []) : [];
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -719,13 +822,15 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     OPERANT_TOKEN: controlToken,
     OPERANT_TILE: String(tileId ?? ''),
     OPERANT_EXE: process.execPath,
+    // Item 33: a tile opened as a team worker can't itself start workers (operant-cli.js checks this).
+    ...(worker ? { OPERANT_WORKER: '1' } : {}),
   });
   // Selects the operant.json theme (renderer/themes.js) for just this OpenCode process, without
   // touching the user's own ~/.config/opencode/tui.json.
   if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
   // Item 43: the brief as an `instructions` file, through OpenCode's own per-process config env var
   // (merged with the user's real opencode.json/opencode.jsonc, never replacing it).
-  if (isOc && config.briefAgents) envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(BRIEF_PATH);
+  if (isOc && config.briefAgents) envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(BRIEF_PATH, config.defaultAgent);
   const env = await withFreshPath(envBase);
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];

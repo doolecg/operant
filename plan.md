@@ -89,7 +89,7 @@ workspaces, CodeGraph on startup and tiles reopening after updates. Everything b
 
 ## Next: team workflow (asked for after the 1.10.1 work)
 
-- [ ] **33. Team mode (Settings › Agents › Team):** a lead agent (Claude Code by default) hands tasks to cheaper
+- [x] **33. Team mode (Settings › Agents › Team):** a lead agent (Claude Code by default) hands tasks to cheaper
       workers in their own tiles, so the lead's tokens go on the hard parts.
       - **Tiers**, each an agent + model + a one-line "use for": `small` = OpenCode with `opencode/big-pickle` (free
         Zen: look things up, read and summarise files, renames, run tests, simple edits, docs tweaks); `medium` =
@@ -119,10 +119,10 @@ team mode (33). In order of how much each should save:
       jest, pytest, cargo, go test, tsc, eslint, gradle/maven, dotnet) and return only the summary line plus each
       failure with its file:line and the first project frame of the stack; everything else stays in the tile.
       Unknown runners fall back to `--errors`.
-- [ ] **35. Cheap readers on free models:** `operant summarize <file|tile|url> ["question"]` and
+- [x] **35. Cheap readers on free models:** `operant summarize <file|tile|url> ["question"]` and
       `operant find "<question>"` hand the big read to a small-tier worker (Big Pickle by default, from 33) and
       return a short answer with file:line references, so the lead never loads the big file, log or page itself.
-- [ ] **36. Don't let the prompt cache go cold:** Claude's cache lasts minutes; an agent left idle past it pays
+- [x] **36. Don't let the prompt cache go cold:** Claude's cache lasts minutes; an agent left idle past it pays
       full price to re-read its whole context on the next message. Show a "cache cold" mark on idle tiles, and an
       option to compact big idle contexts before the cache expires (or when you leave the tile for a set time).
 - [x] **37. Big commands never flood the context:** an optional Claude Code hook (installed with the skill, off
@@ -153,3 +153,19 @@ team mode (33). In order of how much each should save:
       before grep/reading files; if `.operant/progress.md` exists read it first; long commands through
       `operant run`/`wait --errors`. Setting: Settings › Agents › "Brief agents at launch" (on). Test on a master
       tile for both Claude Code and OpenCode: the first action on a repo with `.codegraph/` is a CodeGraph query.
+- [ ] **44. Agents waiting on a permission prompt ask you:** an agent stuck on "Do you want to proceed?" (Claude
+      Code) or a permission request (OpenCode's `permission.updated` SSE event) just sits there, often in a tile
+      you're not looking at. Operant spots it (Claude: the prompt in the tile's output; OpenCode: the event), marks
+      the tile ("waiting for you" in its title and the status pill), sends a notification to the bell and Windows,
+      and clicking it focuses the tile. If the same kind of command keeps asking, the notification offers "Always
+      allow…", which shows the exact permission rule to add and opens the right settings file (Claude
+      `.claude/settings.local.json`, OpenCode `opencode.json` `permission`) in the editor tile, for the user to
+      save; Operant never writes permission rules itself.
+- [ ] **45. Shared memory across agents:** Operant keeps one memory per project that every agent reads and adds
+      to, so what one agent learns (a user preference, a gotcha, a decision) reaches the next one, whichever CLI it
+      is. `operant remember "<fact>" [--type user|feedback|project|reference]` saves one fact as a small file with
+      a one-line index entry; `operant recall ["query"]` returns the index or the matching facts. Stored in the
+      project's `.operant/memory/` (index `MEMORY.md`), with user-wide facts in Operant's userData. The launch
+      brief tells agents to read the index at start and to save durable facts they learn; the main agent's own
+      memory (Claude: `~/.claude/projects/<project>/memory/`) is included read-only so other agents see it too.
+      A Memory page in Settings lists, edits and deletes facts.

@@ -430,7 +430,7 @@
 
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
-  async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt } = {}) {
+  async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt, model, worker } = {}) {
     agentId ??= projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent;
     const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
@@ -440,7 +440,7 @@
     if (edit && /vim/i.test(editorName || '')) w.el.querySelector('.inner').insertAdjacentHTML('beforeend', VIM_KEYS);
     if (master) { w.master = true; w.el.classList.add('master'); }
     mount(w, ws, near, { focus });
-    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run, resume, edit, tileId: w.id, prompt });
+    const info = await operant.createPty({ kind, agentId: agent?.id, cwd: cwd || lastCwd, cols: w.term.cols, rows: w.term.rows, run, resume, edit, tileId: w.id, prompt, model, worker });
     w.ptyId = info.id;
     w.sessionId = info.sessionId;
     w.cwd = info.cwd;
@@ -3990,11 +3990,42 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'agent': {
         if (!args.prompt) throw new Error('prompt required');
-        if (args.agent && !cfg.agents.some(a => a.id === args.agent)) throw new Error(`unknown agent "${args.agent}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
+        let agentId = args.agent, model = args.model, tier = null;
+        if (args.tier) {
+          tier = String(args.tier);
+          const t = cfg.team?.tiers?.[tier];
+          if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
+          const maxWorkers = cfg.team?.maxWorkers || 4;
+          const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
+          if (workers >= maxWorkers) throw new Error(`max workers already running (${maxWorkers}) - wait for one to finish`);
+          agentId = t.agent;
+          model = model || t.model;
+        }
+        if (agentId && !cfg.agents.some(a => a.id === agentId)) throw new Error(`unknown agent "${agentId}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
+        // Item 33: with --tier, a board task is added automatically, owned by the new worker tile,
+        // with a final line telling it how to hand the result back.
+        let taskId = null, prompt = args.prompt;
+        let board = null;
+        if (tier) {
+          board = getBoard() || openBoard({ ws: self?.ws ?? current, near: self, focus: false });
+          taskId = board.nextTaskId++;
+          board.tasks.push({ id: taskId, text: String(args.prompt), status: 'todo', owner: null, note: null });
+          renderBoard(board); saveSession();
+          // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
+          // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
+          prompt = `${args.prompt} — when done, run: operant task done ${taskId} --note '<what changed, files>'`;
+        }
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
-          agentId: args.agent, prompt: args.prompt, title: args.title, ws: self?.ws ?? current, near: self, focus: !!args.focus,
+          agentId, prompt, title: args.title, model, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
-        return { id: w.id };
+        if (tier) { w.tier = tier; const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; renderBoard(board); saveSession(); } }
+        return { id: w.id, ...(tier ? { tier, taskId } : {}) };
+      }
+      case 'team': {
+        const team = cfg.team || {};
+        if (!team.enabled) return { enabled: false };
+        const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
+        return { enabled: true, tiers: team.tiers || {}, maxWorkers: team.maxWorkers || 4, workers };
       }
       case 'read': {
         const w = needTile(args.id);

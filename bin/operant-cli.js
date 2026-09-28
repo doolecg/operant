@@ -13,10 +13,12 @@ const POSITIONAL = {
   browse: ['url'], shot: ['id'], console: ['id'], url: ['id'],
   text: ['id', 'selector'], click: ['id', 'selector'], type: ['id', 'selector', 'text'],
   ports: [], watch: ['id'],
-  plan: ['path'], board: [],
+  plan: ['path'], board: [], team: [],
+  summarize: ['target', 'question'], find: ['question'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
-const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text', test: 'command', build: 'command' };
+const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', type: 'text', test: 'command', build: 'command',
+  summarize: 'question', find: 'question' };
 
 // Single source of truth for command help: group (for the grouped list) plus
 // usage/description/examples (for `operant help <cmd>`). Keeps the two in sync.
@@ -50,12 +52,15 @@ const COMMANDS = {
   type: { group: 'browser', usage: 'operant type <id> <selector> <text...> [--enter]', desc: 'type into an element in a browser tile', examples: ['operant type 5 "#q" hi --enter'] },
   url: { group: 'browser', usage: 'operant url <id>', desc: "a browser tile's current url/title", examples: ['operant url 5'] },
 
-  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--cwd c] [--title t]', desc: 'start a new agent tile with a prompt', examples: ['operant agent "task..." --title worker'] },
+  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier small|medium] [--model id] [--cwd c] [--title t]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier small'] },
   ask: { group: 'agents & tasks', usage: 'operant ask <question...> [--options "A|B|C"] [--detail d]', desc: 'blocking dialog, returns the choice', examples: ['operant ask "Delete old migrations?" --options "Delete|Keep"'] },
   notify: { group: 'agents & tasks', usage: 'operant notify <text...> [--title t]', desc: 'Windows notification', examples: ['operant notify "Tests pass, ready for review"'] },
   plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'] },
   task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | done <id> [--note n] | note <id> "<text>"', desc: 'add/claim/finish/note a board task', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --note "fixed in login.js"'] },
   board: { group: 'agents & tasks', usage: 'operant board', desc: 'list every task: id, status, owner, text, last note', examples: ['operant board'] },
+  team: { group: 'agents & tasks', usage: 'operant team', desc: 'team mode: enabled/disabled, each tier (agent, model, use), running workers', examples: ['operant team'] },
+  summarize: { group: 'agents & tasks', usage: 'operant summarize <file|tile-id|url> ["question"]', desc: 'a small-tier worker reads it and answers, so you never load it yourself', examples: ['operant summarize RELEASE_NOTES.md "what shipped in 1.10.0, 3 bullets"', 'operant summarize 7 "why did it fail"'] },
+  find: { group: 'agents & tasks', usage: 'operant find "<question>"', desc: 'a small-tier worker searches the project and answers with file:line references', examples: ['operant find "where is the auto compact threshold checked"'] },
 
   usage: { group: 'context', usage: 'operant usage', desc: "your tile's context size and the plan limits", examples: ['operant usage'] },
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'] },
@@ -186,7 +191,15 @@ function formatResult(cmd, result) {
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
     case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}${result.tokens ? '  ' + result.tokens + ' tokens' : ''}`;
-    case 'view': case 'edit': case 'diff': case 'run': case 'agent': return `tile ${result.id}`;
+    case 'view': case 'edit': case 'diff': case 'run': return `tile ${result.id}`;
+    case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}]  task ${result.taskId}` : '');
+    case 'summarize': case 'find': return result.text || '(no answer)';
+    case 'team': {
+      if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
+      const lines = [`team mode: enabled  ·  ${result.workers}/${result.maxWorkers} workers running`];
+      for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}  —  ${t.use}`);
+      return lines.join('\n');
+    }
     case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : (result.text || '(no output)');
     case 'read': return ('digest' in result) ? fmtDigest(result.digest) : (result.text || '') + footer(result);
     case 'wait': return ('digest' in result) ? (result.exited ? '[exited]\n' : '') + fmtDigest(result.digest) : (result.exited ? '[exited]\n' : '') + (result.text || '') + footer(result);
@@ -242,6 +255,13 @@ async function main() {
   const { cmd, positionals, flags } = parseArgs(argv);
   const args = buildArgs(cmd, positionals, flags);
   const asJson = !!flags.json;
+
+  // Item 33 guardrail: a tile opened as a team worker (env set in main.js's pty:create) can't start
+  // its own workers - checked here, before any request, since it's this process's own env.
+  if (cmd === 'agent' && process.env.OPERANT_WORKER === '1') {
+    console.error("operant: workers can't start workers");
+    process.exit(1);
+  }
 
   let res;
   try {
