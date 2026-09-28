@@ -2298,7 +2298,7 @@
     if (name === 'keys') { keysTarget = $('#keys-body'); renderKeys(); }
     else if (name === 'launcher') renderLauncher();
     else if (name === 'usage') { usageHover = -1; renderUsage(); }
-    else if (name === 'quickmenu') drawGitButton();
+    else if (name === 'quickmenu') { drawGitButton(); drawTeamSliders(); }
     else if (name === 'notifications') { renderNotifications(); markAllNotifsRead(); }
     else renderSettings();
     $('#' + name).classList.remove('hidden');
@@ -2322,6 +2322,20 @@
   $('#btn-notifs').onclick = () => togglePanel('notifications');
   $('#qm-settings').onclick = () => togglePanel('settings');
   $('#btn-save-quit').onclick = () => { closePanels(); saveAndQuit(); };
+  // Quick menu sliders for team mode: how many workers may run at once, and the highest tier they may use.
+  const tierNames = () => Object.keys(cfg.team?.tiers || {});
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  function drawTeamSliders() {
+    const names = tierNames(), team = cfg.team || {};
+    const ti = names.includes(team.maxTier) ? names.indexOf(team.maxTier) : names.length - 1;
+    $('#qm-workers').value = team.maxWorkers || 4;
+    $('#qm-workers-val').textContent = team.maxWorkers || 4;
+    $('#qm-tier').max = Math.max(0, names.length - 1);
+    $('#qm-tier').value = ti;
+    $('#qm-tier-val').textContent = names[ti] ? cap(names[ti]) : '-';
+  }
+  $('#qm-workers').oninput = e => { setSetting('team', { ...(cfg.team || {}), maxWorkers: +e.target.value }); drawTeamSliders(); };
+  $('#qm-tier').oninput = e => { const n = tierNames()[+e.target.value]; if (n) setSetting('team', { ...(cfg.team || {}), maxTier: n }); drawTeamSliders(); };
 
   // Agent launcher: 1-9 (or a click) opens that agent, Shift picks a folder first.
   // On first run it asks which agent to use instead; the answer becomes the default.
@@ -3785,6 +3799,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     for (const w of wins.values()) if (w.alive) { renderIbar(w); scheduleFit(w, 0); }
     if (openPanel() === 'settings') renderSettings();
     if (openPanel() === 'keys') renderKeys();
+    if (openPanel() === 'quickmenu') drawTeamSliders();
   });
 
   // ------------------------------------------------------------- control API
@@ -4177,6 +4192,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           tier = String(args.tier);
           const t = cfg.team?.tiers?.[tier];
           if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
+          const names = Object.keys(cfg.team.tiers), top = names.indexOf(cfg.team.maxTier);
+          if (top >= 0 && names.indexOf(tier) > top) throw new Error(`tier "${tier}" is above the top tier allowed (${cfg.team.maxTier}) - use --tier ${names.slice(0, top + 1).join(' or ')}`);
           const maxWorkers = cfg.team?.maxWorkers || 4;
           const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
           if (workers >= maxWorkers) throw new Error(`max workers already running (${maxWorkers}) - wait for one to finish`);
@@ -4207,7 +4224,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const team = cfg.team || {};
         if (!team.enabled) return { enabled: false };
         const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
-        return { enabled: true, tiers: team.tiers || {}, maxWorkers: team.maxWorkers || 4, workers };
+        const names = Object.keys(team.tiers || {}), top = names.indexOf(team.maxTier);
+        const tiers = top < 0 ? team.tiers || {} : Object.fromEntries(names.slice(0, top + 1).map(n => [n, team.tiers[n]]));
+        return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers };
       }
       case 'read': {
         const w = needTile(args.id);

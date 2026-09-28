@@ -1,3 +1,15 @@
+# Operant 1.12.0
+
+Control team mode from the ⚙ quick menu: two sliders set how many workers can run at once and the highest tier they can use.
+
+**Install:** download `Operant-1.12.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Team sliders in the ⚙ quick menu:** "Max workers" (1 to 16) sets how many workers can run at once. "Top tier" sets the highest tier they can use (Small or Medium). Changes apply straight away and are saved.
+- **Top tier allowed:** also in ⚙ Settings › Agents › Team. When it's set to Small, `operant agent --tier medium` is refused, and `operant team` lists only the tiers that are allowed.
+
+---
+
 # Operant 1.11.0
 
 Spend less on agents and ship faster. Team mode hands tasks to cheaper workers (`operant agent "<task>" --tier small`), and every agent reads what it learned in shared memory. The `operant` command now covers usage with a token breakdown, team tasks and permissions, and compacting. Every agent tile shows how many tokens it's used and warns you when the prompt cache is about to go cold. Test and build commands return just the failures. Save and quit tells agents to wrap up and waits until they're all done before closing. Every agent follows your main agent's rules, MCP servers and plugin skills.

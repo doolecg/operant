@@ -318,7 +318,8 @@ const Panels = (() => {
         <div class="ctl"><button class="toggle${team.enabled ? ' on' : ''}" data-team-enabled></button></div></div>
       ${tierBlock('small', 'Small')}
       ${tierBlock('medium', 'Medium')}
-      <div class="set-row"><div class="lbl">Max workers at once</div><div class="ctl"><input type="number" data-team-max min="1" max="16" value="${team.maxWorkers ?? 4}"></div></div>`;
+      <div class="set-row"><div class="lbl">Max workers at once</div><div class="ctl"><input type="number" data-team-max min="1" max="16" value="${team.maxWorkers ?? 4}"></div></div>
+      <div class="set-row"><div class="lbl">Top tier allowed<span class="hint">Workers can't be started on a tier above this</span></div><div class="ctl"><select data-team-top>${Object.keys(tiers).map(n => `<option value="${esc(n)}"${n === (team.maxTier || Object.keys(tiers).pop()) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div></div>`;
   }
 
   function rowHtml(it, cfg, ext) {
@@ -416,6 +417,7 @@ const Panels = (() => {
         const n = Math.min(16, Math.max(1, Math.round(+el.value || 4)));
         el.value = n; set('team', { ...(cfg.team || {}), maxWorkers: n });
       });
+      pane.querySelectorAll('[data-team-top]').forEach(el => el.onchange = () => set('team', { ...(cfg.team || {}), maxTier: el.value }));
       pane.querySelectorAll('[data-team-f]').forEach(el => el.onchange = () => {
         const [tierId, field] = el.dataset.teamF.split('.');
         const tiers = { ...(cfg.team?.tiers || {}) };

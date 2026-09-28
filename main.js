@@ -159,6 +159,7 @@ const DEFAULT_CONFIG = {
       medium: { agent: 'claude', model: 'sonnet', use: 'a feature across a few files, a normal bug fix' },
     },
     maxWorkers: 4,
+    maxTier: 'medium',            // highest tier workers may be started on (gear menu slider)
   },
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
