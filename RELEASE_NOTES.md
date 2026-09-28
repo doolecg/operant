@@ -1,3 +1,48 @@
+# Operant 1.11.0
+
+Spend less on agents and ship faster. Team mode hands tasks to cheaper workers (`operant agent "<task>" --tier small`), and every agent reads what it learned in shared memory. The `operant` command now covers usage with a token breakdown, team tasks and permissions, and compacting. Every agent tile shows how many tokens it's used and warns you when the prompt cache is about to go cold. Test and build commands return just the failures. Save and quit tells agents to wrap up and waits until they're all done before closing. Every agent follows your main agent's rules, MCP servers and plugin skills.
+
+**Install:** download `Operant-1.11.0.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves.
+
+## New
+- **Safe Save and quit:** Save and quit in the ⚙ quick menu (default `Alt+Shift+Q`) tells agents to save their progress, waits until they're all idle, then closes Operant. A "Force quit now" button if you can't wait. The Operant skill teaches agents to write a progress note and finish their step when they see this.
+- **Auto compact:** when an agent tile's context passes a threshold (⚙ Settings › Agents, default 80%), Operant waits until it's idle and asks it to write a progress note, then types `/compact`. OpenCode tiles use its server instead. Agents can ask for it themselves with `operant compact`.
+- **Team mode:** in ⚙ Settings › Agents › Team, set up cheaper worker tiers (e.g. OpenCode with a free model for small tasks like reading files, running tests or simple edits). Run `operant agent "<task>" --tier small` to hand off a task to a worker tile; the lead agent stays focused on the hard parts. Each worker's progress shows on the task board. Max workers at once (default 4), and workers can't start their own workers. `operant team` shows the available tiers and how many workers are running. Off by default.
+- **Info bar under each agent tile:** model, context size (e.g. `ctx 84k`), and tokens used since the tile opened (input, output, cache reads). Hover for the breakdown; free-model tiles show free/paid split separately. ⚙ Settings › Usage and `operant usage --breakdown` show where tokens go per project, per tile, and per turn.
+- **`operant usage`:** shows the agent's own context size, tokens used, and the plan limits, so it can compact or hand off in time. Add `--breakdown` to see per-project and per-tile counts.
+- **`operant summarize` and `operant find`:** pass big reads to a cheap worker (small tier by default), get back a short answer with file:line references. The lead agent never loads the huge file or log itself.
+- **Shared memory:** `operant remember "<fact>"` saves a durable fact (user preference, gotcha, decision); `operant recall` lists or searches the index. Facts are stored in the project's `.operant/memory/`, and every agent in that project reads them. `--about <file or function>` ties a fact to code (found through CodeGraph). The launch brief tells agents to check the index at start and save what they learn; ⚙ Settings › Memory lists, edits and deletes facts.
+- **`operant compact`:** agents can request compacting their own context; Operant queues it for their next idle moment.
+- **`operant ports`:** lists dev servers running in your tiles, with their URLs. Operant spots them in the tile's output.
+- **`operant watch`:** notifies when a long-running tile prints an error. Sends a notification and tells the agent on its next call.
+- **`operant plan`:** shows a plan in a viewer tile and asks Approve or Change. Returns the user's note if they choose Change, so agents know what to adjust.
+- **`operant task`:** agents can split work onto a shared board with `operant task add|claim|done|note`. `operant board` and `operant tiles` show every task, its owner and status.
+- **`operant test` and `operant build`:** spot the runner (npm, pytest, cargo, go test, tsc, gradle, dotnet and more) and return only the summary line plus each failure with its file:line. Unknown runners fall back to just the error lines.
+- **`operant help`:** the full command reference. Agents call it when they need details on a command.
+- **Task board:** a shared tile for fanned-out agents. Every task, owner and status in one place. Add, claim, mark done or leave a note with `operant task`.
+- **Plan approval:** agents show you a plan in a viewer and wait for Approve or Change before proceeding.
+- **Agents waiting on permission:** when an agent is stuck on a permission prompt (e.g. "Do you want to proceed?"), Operant spots it, marks the tile "waiting for you", sends a notification to the bell and Windows, and shows the exact rule to add to settings. Click the notification to jump to the tile.
+- **Cache-cold mark:** when an agent tile sits idle long enough that Claude's prompt cache expires (5 minutes by default), its info bar says "cache cold", so you know the next message re-reads the whole context at full price; big contexts get a countdown in the last minute. Prompt cache settings (lifetime, compact before cold) are in ⚙ Settings › Agents.
+- **Launch brief:** every agent tile gets a short Operant brief at startup: you're in Operant, use the skill; if `.codegraph/` exists use CodeGraph first; if `.operant/progress.md` exists read it; use `operant run` + `wait --errors` for long commands; check shared memory. Saves teaching it each time. Every agent shares your main agent's rules file, MCP servers and plugin skills.
+- **Reroute long commands:** an optional hook (⚙ Settings › Agents › Reroute long commands) moves test, build and install commands from an agent's own shell into `operant run` tiles + `wait --errors`, so the agent stays focused and saves context. Works for Claude Code's PowerShell tool on Windows and OpenCode's equivalent.
+- **Notification panel:** a bell in the top bar (or press `Alt+I`) keeps every notification (agents finishing or waiting on you, `operant watch` errors, runaway and plan-limit alerts), even with Windows notifications off. Click one to jump to its tile.
+- **Gear quick menu:** the ⚙ button in the top bar opens a menu with Git (branch and changes), Shortcuts (a key reference) and Save and quit, replacing the old settings button.
+- **Compact media player:** cover, title and play button, with controls on hover. ⚙ Settings › Media › *Size* brings back the full controls.
+- **Smaller screenshots:** `operant shot` defaults to a downscaled JPEG, with `--selector` and `--region` to capture only part of the page, and `--full` for the old behaviour.
+
+## Changed
+- **Smaller Operant skill:** essentials only (~40 lines). The full command reference is in `operant help [cmd]`, which agents call when needed.
+- **Every agent follows your main agent's rules file:** the rules (CLAUDE.md), MCP servers, and plugin skills from your main agent are shared with every agent Operant starts, per process. CodeGraph queries are guided by the same prompt instructions.
+- **Top bar layout:** the gear menu replaced the settings button, with Git, Shortcuts and Save and quit all there.
+- **CLI paths resolve from the shell's folder:** `operant plan ./my-plan.md` and file paths in agent commands now resolve from where the agent is, not Operant's folder.
+
+## Fixed
+- **Zen isn't detected as Firefox:** the browser detection now matches by exe name, so Zen (which registers under a `Firefox-<hash>` key) shows as Zen in ⚙ Settings › Startup › *Open links in*.
+- **Messages to Claude sometimes left as unsent drafts:** messages Operant types into an agent tile (Save and quit, auto compact) are now sent, not left in the input box.
+- **config.json that fails to parse:** is kept as `config.broken.json` instead of lost, so you can recover it.
+
+---
+
 # Operant 1.10.0
 
 Spend fewer tokens. Agents in Operant can now run long commands in their own tiles and read back only the errors or what's new, so test runs and builds stop flooding their context. Every agent tile shows how full its context is, and a guard warns you about (or stops) agents that loop or burn tokens. OpenCode's hidden subagents get their own tiles, agents can open and check web pages in a browser tile, and Operant is much smoother: GPU-drawn terminals, quicker animations and fast scrolling through huge files.
