@@ -26,7 +26,14 @@ function briefPath(userDataDir) {
 
 // OPENCODE_CONFIG_CONTENT is merged by OpenCode with the user's own opencode.json/opencode.jsonc
 // (models, providers, keys, mcp servers) rather than replacing it — confirmed with
-// `opencode debug config`.
-const opencodeConfigContent = filePath => JSON.stringify({ instructions: [filePath] });
+// `opencode debug config`. `pluginPath`, when given, is item 37's long-command reroute
+// (hooks/opencode-long-commands.js), added to the same object alongside `instructions` rather than
+// a separate env var, so both still merge into one config.
+const opencodeConfigContent = (filePath, pluginPath) => {
+  const content = {};
+  if (filePath) content.instructions = [filePath];
+  if (pluginPath) content.plugin = [pluginPath];
+  return JSON.stringify(content);
+};
 
 module.exports = { BRIEF, briefPath, opencodeConfigContent };

@@ -69,6 +69,9 @@ const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
 // the brief file, so turning the setting on doesn't need a restart.
 const HOOK_CMD_PATH = path.join(__dirname, 'hooks', 'long-commands.cmd').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 const HOOK_SETTINGS_PATH = path.join(app.getPath('userData'), 'hook-settings.json');
+// Same setting, for OpenCode: a plugin (tool.execute.before) rather than a --settings hook, wired up
+// below next to OPENCODE_CONFIG_CONTENT.
+const OC_HOOK_PATH = path.join(__dirname, 'hooks', 'opencode-long-commands.mjs').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 function writeHookSettings() {
   try {
     const content = JSON.stringify({
@@ -724,8 +727,15 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // touching the user's own ~/.config/opencode/tui.json.
   if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
   // Item 43: the brief as an `instructions` file, through OpenCode's own per-process config env var
-  // (merged with the user's real opencode.json/opencode.jsonc, never replacing it).
-  if (isOc && config.briefAgents) envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(BRIEF_PATH);
+  // (merged with the user's real opencode.json/opencode.jsonc, never replacing it). Item 37: the same
+  // env var also carries the long-command reroute plugin when that setting is on, merged into the
+  // same object rather than a second env var.
+  if (isOc && (config.briefAgents || config.longCommandHook)) {
+    envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(
+      config.briefAgents ? BRIEF_PATH : null,
+      config.longCommandHook ? OC_HOOK_PATH : null,
+    );
+  }
   const env = await withFreshPath(envBase);
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];
