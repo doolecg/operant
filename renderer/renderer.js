@@ -434,15 +434,16 @@
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
   async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt, model, effort, worker } = {}) {
-    agentId ??= projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent;
-    const agent = kind === 'ai' ? cfg.agents.find(a => a.id === agentId) || defaultAgent() : null;
+    const chosen = agentId ?? projectDefaults(cwd || lastCwd).agent;
+    let agent = kind === 'ai' ? cfg.agents.find(a => a.id === (chosen || cfg.defaultAgent)) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
-    // With team mode on, a new agent with no model of its own runs as the top tier (quick menu slider)
-    // for that agent: the highest allowed tier using the same CLI.
+    // With team mode on, a new agent with no model of its own runs as the top tier (quick menu slider):
+    // that tier's agent and model, or, for an agent picked by name, its highest allowed tier using the same CLI.
     if (kind === 'ai' && !model && !resume && cfg.team?.enabled) {
       const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
-      const tier = names.slice(0, top < 0 ? names.length : top + 1).reverse().map(n => activeTiers()[n]).find(t => t.agent === agent.id && t.model);
-      if (tier) { model = tier.model; effort ??= tier.effort || null; }
+      const tier = names.slice(0, top < 0 ? names.length : top + 1).reverse().map(n => activeTiers()[n])
+        .find(t => t.model && (chosen ? t.agent === agent.id : cfg.agents.some(a => a.id === t.agent)));
+      if (tier) { agent = cfg.agents.find(a => a.id === tier.agent); model = tier.model; effort ??= tier.effort || null; }
     }
     const name = title || (agent ? agent.name : 'Shell');
     const w = makeWin(kind, name, icon || agent?.icon || '●');
@@ -2412,7 +2413,7 @@
     $('#hub-badge').classList.toggle('hidden', !n);
     if (openPanel() === 'hub') renderHub();
   }
-  async function scanHub() { hubDetails = false; $('#hub-body').innerHTML = '<div class="board-empty">Scanning…</div>'; try { hubUpdate(await operant.hubAudit()); } catch (e) { hubMsg = String(e.message || e); } }
+  async function scanHub() { hubDetails = false; $('#hub-body').innerHTML = '<div class="board-empty">Scanning…</div>'; try { hubUpdate(await operant.hubAudit()); } catch (e) { hubMsg = String(e.message || e); $('#hub-body').innerHTML = `<div class="board-empty">${esc(hubMsg)}</div>`; hubCount(); } }
   function renderHub() {
     const s = hubState;
     $('#hub-undo').classList.toggle('hidden', !s?.canUndo);
@@ -2529,7 +2530,7 @@
   function renderLauncher() {
     $('#launcher-title').textContent = welcome ? 'Choose your agent' : 'New agent';
     $('#launcher-sub').textContent = welcome ? '1–9 or click to choose' : '1–9 opens one · Shift picks a folder first';
-    $('#launcher-foot').textContent = welcome ? 'It opens now and each time Operant starts. Change it in Settings › Agents.' : 'Add or change agents in Settings › Agents';
+    $('#launcher-foot').textContent = welcome ? 'Your default agent from now on. Change it in Settings › Agents.' : 'Add or change agents in Settings › Agents';
     $('#launcher-body').innerHTML = cfg.agents.map((a, i) => `<button class="launch-row" data-i="${i}">
       <span class="ico">${esc(a.icon || '●')}</span><span class="nm">${esc(a.name)}<small>${esc([a.command, ...[].concat(a.args || [])].join(' '))}</small></span>
       ${a.id === cfg.defaultAgent && !welcome ? '<span class="def">default</span>' : ''}${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}</button>`).join('')
@@ -2549,6 +2550,7 @@
     closePanels(false);
     if (first) {
       setSetting('defaultAgent', a.id);
+      if (!first.dir) return togglePanel('startpick');
       return newTerminal('ai', first.dir, { agentId: a.id, master: true });
     }
     let dir;
@@ -3978,7 +3980,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   const startFresh = () => {
     if (!cfg.agentChosen && cfg.agents.length > 1) {
       togglePanel('launcher');
-      welcome = { dir: startDir || cfg.defaultCwd };
+      welcome = { dir: startDir || (cfg.masterOnStartup ? null : cfg.defaultCwd) };
       renderLauncher();
     } else if (startDir) newTerminal('ai', startDir, { master: true });
     else if (cfg.masterOnStartup) togglePanel('startpick');

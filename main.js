@@ -166,7 +166,7 @@ const DEFAULT_CONFIG = {
     maxWorkers: 4,
     maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
   },
-  masterOnStartup: true,          // open a "master" agent terminal when Operant starts
+  masterOnStartup: true,          // ask which folder to work in when Operant starts, then open a "master" agent there
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
   masterRatio: 0.55,
   // Idle reaping (0 disables each). The focused tile and the master terminal are never reaped.
