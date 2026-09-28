@@ -72,6 +72,9 @@ const Panels = (() => {
       { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Claude Code only: a hook rewrites test/build/install commands to operant run/wait automatically, so the savings don\'t depend on the agent remembering', type: 'toggle' },
       { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
         type: 'number', min: 0, max: 100 },
+      { key: 'shareSetup', label: 'Share your main agent\'s setup',
+        hint: 'Rules, MCP servers and skills from your default agent (above) reach every agent you launch, for that process only · never edits your agents\' own config files',
+        type: 'toggle' },
     ]],
     ['Notifications', [
       { key: 'notifications', label: 'Windows notifications', type: 'toggle' },

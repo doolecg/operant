@@ -19,6 +19,7 @@ const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
 const agentBrief = require('./agent-brief');
+const agentSetup = require('./agent-setup');
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
@@ -83,6 +84,9 @@ function writeHookSettings() {
   } catch (e) { console.error('hook settings write failed', e.message); }
 }
 writeHookSettings();
+// Where agent-setup.js keeps generated, per-process-only files (a mirrored skills folder, a
+// --mcp-config file for Claude tiles) — never ~/.claude or ~/.config/opencode.
+const AGENT_SETUP_DIR = path.join(app.getPath('userData'), 'agent-setup');
 
 // Alt is the "Super" key here: Windows reserves most Win+ combos for itself.
 const DEFAULT_KEYBINDS = {
@@ -140,6 +144,7 @@ const DEFAULT_CONFIG = {
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
   longCommandHook: false,         // Claude Code hook: reroute long commands (test/build/install) through operant run/wait automatically (Settings > Agents)
+  shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   masterOnStartup: true,          // open a "master" agent terminal when Operant starts
@@ -693,11 +698,16 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Item 43: Claude Code gets the brief on every launch, including resumed/reopened tiles —
     // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
     // own env below; Codex and Gemini CLI have no equivalent flag, so they're skipped.
-    const briefArgs = config.briefAgents && isClaude(agent) ? ['--append-system-prompt', agentBrief.BRIEF] : [];
+    // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
+    const rules = config.shareSetup ? agentBrief.mainRulesText(config.defaultAgent, 'claude') : '';
+    const briefText = [config.briefAgents && agentBrief.BRIEF, rules].filter(Boolean).join('\n\n');
+    const briefArgs = briefText && isClaude(agent) ? ['--append-system-prompt', briefText] : [];
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
     const hookArgs = config.longCommandHook && isClaude(agent) ? ['--settings', HOOK_SETTINGS_PATH] : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
+    // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
+    const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...setupArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -737,6 +747,14 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(config.briefAgents ? BRIEF_PATH : null, {
       mainAgent: config.shareSetup ? config.defaultAgent : null,
       pluginPath: config.longCommandHook ? OC_HOOK_PATH : null,
+    });
+  }
+  // Folds the main agent's MCP servers, plugin skills and CodeGraph hook into whatever
+  // OPENCODE_CONFIG_CONTENT already carries (brief instructions, rules, other plugin entries),
+  // rather than replacing it. Per process only — never touches ~/.config/opencode.
+  if (isOc && config.shareSetup) {
+    envBase.OPENCODE_CONFIG_CONTENT = agentSetup.buildOpencodeConfigContent({
+      base: envBase.OPENCODE_CONFIG_CONTENT, cwd: dir, userDataDir: AGENT_SETUP_DIR, config,
     });
   }
   const env = await withFreshPath(envBase);
