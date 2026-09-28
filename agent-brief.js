@@ -27,10 +27,28 @@ function briefPath(userDataDir) {
 // OPENCODE_CONFIG_CONTENT is merged by OpenCode with the user's own opencode.json/opencode.jsonc
 // (models, providers, keys, mcp servers) rather than replacing it — confirmed with
 // `opencode debug config`.
-// OpenCode skips ~/.claude/CLAUDE.md once a global AGENTS.md exists, so it's listed explicitly:
-// OpenCode tiles follow the same personal rules as Claude Code tiles.
-const CLAUDE_RULES = path.join(require('os').homedir(), '.claude', 'CLAUDE.md');
-const opencodeConfigContent = filePath =>
-  JSON.stringify({ instructions: [filePath, ...(fs.existsSync(CLAUDE_RULES) ? [CLAUDE_RULES] : [])] });
+// Every agent follows the personal rules of the user's main agent (defaultAgent): e.g. with Claude
+// Code as main, OpenCode tiles also load ~/.claude/CLAUDE.md (which OpenCode skips once a global
+// AGENTS.md exists). The main agent itself already loads its own file.
+const home = require('os').homedir();
+const RULES = {
+  claude: path.join(home, '.claude', 'CLAUDE.md'),
+  opencode: path.join(home, '.config', 'opencode', 'AGENTS.md'),
+  codex: path.join(home, '.codex', 'AGENTS.md'),
+  gemini: path.join(home, '.gemini', 'GEMINI.md'),
+};
+// The main agent's rules file, when the tile being launched is a different agent.
+function mainRules(mainAgent, launching) {
+  const p = mainAgent !== launching && RULES[mainAgent];
+  return p && fs.existsSync(p) ? p : null;
+}
+function mainRulesText(mainAgent, launching) {
+  const p = mainRules(mainAgent, launching);
+  try { return p ? fs.readFileSync(p, 'utf8') : ''; } catch { return ''; }
+}
+const opencodeConfigContent = (filePath, mainAgent) => {
+  const rules = mainRules(mainAgent, 'opencode');
+  return JSON.stringify({ instructions: [filePath, ...(rules ? [rules] : [])] });
+};
 
-module.exports = { BRIEF, briefPath, opencodeConfigContent };
+module.exports = { BRIEF, briefPath, opencodeConfigContent, mainRulesText };
