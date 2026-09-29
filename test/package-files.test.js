@@ -40,3 +40,11 @@ test('every locally required file is packaged', () => {
   }
   assert.deepEqual(missing, [], 'add these to "build.files" in package.json');
 });
+
+// macOS and Linux run these directly, so git must keep them executable: a Windows checkout can't tell,
+// and the packaged app keeps the mode git gave them.
+test('POSIX wrappers are executable in git', () => {
+  const wrappers = ['bin/operant', 'hooks/long-commands.sh'];
+  const out = require('node:child_process').execFileSync('git', ['ls-files', '-s', ...wrappers], { cwd: root, encoding: 'utf8' });
+  for (const f of wrappers) assert.match(out, new RegExp(`^100755 \\S+ \\d\\t${f}$`, 'm'), `run: git update-index --chmod=+x ${f}`);
+});

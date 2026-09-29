@@ -23,6 +23,22 @@ const teamTiers = require('./team-tiers');
 const agentBrief = require('./agent-brief');
 const agentSetup = require('./agent-setup');
 const memory = require('./memory');
+// macOS and Linux: tiles run zsh/bash (platform/unix.js), and each OS keeps its own browser and IDE
+// locations (plus the macOS menus and Keychain).
+const unix = require('./platform/unix');
+const mac = process.platform === 'darwin' ? require('./platform/mac') : null;
+const osApps = mac || (process.platform === 'linux' ? require('./platform/linux') : null);
+
+// Inside a tile `operant <command>` is the control CLI (bin/operant, first on the tile's PATH), but a
+// login shell that resets PATH (Debian's /etc/profile does) can find this app's own launcher instead,
+// which the Linux .deb links as /usr/bin/operant. Answer as the CLI rather than open a window.
+if (process.platform === 'linux' && app.isPackaged && process.env.OPERANT_API && /^[a-z]/.test(process.argv[1] || '')
+  && !fs.existsSync(path.resolve(process.argv[1]))) {
+  const cli = path.join(__dirname, 'bin', 'operant-cli.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+  const r = require('child_process').spawnSync(process.execPath, [cli, ...process.argv.slice(1)],
+    { stdio: 'inherit', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+  process.exit(r.status ?? 1);
+}
 
 // Dev runs can use their own profile (config + single-instance lock) beside an installed copy.
 if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_USER_DATA);
@@ -30,7 +46,9 @@ if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_U
 // app's Explorer entry, operant:// links or jump list.
 const installed = app.isPackaged && !process.env.OPERANT_USER_DATA;
 // Windows only shows toast notifications for an app with an AppUserModelID (the installer's shortcut carries the same one).
-app.setAppUserModelId('com.doolecg.operant');
+if (process.platform === 'win32') app.setAppUserModelId('com.doolecg.operant');
+// macOS and Linux: Operant's own calls (git, codegraph, agent CLIs) find what a terminal would.
+if (process.platform !== 'win32') unix.freshPath(process.env.PATH).then(p => { if (p) process.env.PATH = p; });
 
 // ------------------------------------------------------------ crash + error logging
 // Local-only minidumps (never uploaded) plus a plain-text log, so a native crash (Chromium/V8
@@ -71,7 +89,8 @@ const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
 // Off by default; wired into Claude Code's args via --settings when config.longCommandHook is on
 // (see below, next to the --append-system-prompt brief). Written unconditionally at startup, like
 // the brief file, so turning the setting on doesn't need a restart.
-const HOOK_CMD_PATH = path.join(__dirname, 'hooks', 'long-commands.cmd').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+const HOOK_CMD_PATH = path.join(__dirname, 'hooks', process.platform === 'win32' ? 'long-commands.cmd' : 'long-commands.sh')
+  .replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 const HOOK_SETTINGS_PATH = path.join(app.getPath('userData'), 'hook-settings.json');
 // Same setting, for OpenCode: a plugin (tool.execute.before) rather than a --settings hook, wired up
 // below next to OPENCODE_CONFIG_CONTENT.
@@ -130,6 +149,8 @@ const DEFAULT_KEYBINDS = {
   notifications: ['Alt+I'], // the notification panel
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
+// macOS uses Cmd for these; its Ctrl keys go on to the terminal.
+if (process.platform === 'darwin') Object.assign(DEFAULT_KEYBINDS, { devtools: ['Cmd+Alt+I'], quickOpen: ['Cmd+P'], commandPalette: ['Cmd+Shift+P'], findInView: ['Cmd+F'] });
 
 const DEFAULT_CONFIG = {
   defaultCwd: os.homedir(),
@@ -141,7 +162,7 @@ const DEFAULT_CONFIG = {
   defaultAgent: 'claude',          // what Alt+Enter, the master and Explorer's entry open
   onboarded: false,               // false until the first-run tour is finished or skipped
   agentChosen: false,             // false until the first-run "which agent?" prompt is answered
-  shell: 'powershell.exe',
+  shell: process.platform === 'win32' ? 'powershell.exe' : unix.defaultShell(),
   showExternalAgents: true,       // subagents from Claude sessions not started inside Operant
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
@@ -182,7 +203,9 @@ const DEFAULT_CONFIG = {
   rounding: 12,
   borderSize: 2,
   fontSize: 13,
-  fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, monospace",
+  fontFamily: process.platform === 'darwin' ? "'SF Mono', Menlo, Monaco, monospace"
+    : process.platform === 'linux' ? "'DejaVu Sans Mono', 'Ubuntu Mono', 'Liberation Mono', monospace"
+    : "'Cascadia Mono', 'Cascadia Code', Consolas, monospace",
   opacity: 0.86,
   blur: 20,
   lineHeight: 1,
@@ -274,10 +297,12 @@ const dropRemoved = u => {
 };
 // The in-app browser tile is gone: a saved 'tile' link choice means Windows' default.
 const dropTileLinks = u => u.linkBrowser === 'tile' ? { ...u, linkBrowser: 'default' } : u;
-const merged = () => withTiers({ ...DEFAULT_CONFIG, ...dropTileLinks(dropRemoved(user)),
+// shellSyntax is derived too: the language a shell tile's `run` string is written in (sh or PowerShell).
+const withShell = c => ({ ...c, shellSyntax: unix.usesSh(c.shell) ? 'sh' : 'powershell' });
+const merged = () => withShell(withTiers({ ...DEFAULT_CONFIG, ...dropTileLinks(dropRemoved(user)),
   keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) },
   team: { ...DEFAULT_CONFIG.team, ...(user.team || {}), tiers: { ...DEFAULT_CONFIG.team.tiers, ...(user.team?.tiers || {}) } },
-});
+}));
 const config = merged();
 // Read before the app is ready, so it only changes on a restart.
 if (!config.hardwareAcceleration) app.disableHardwareAcceleration();
@@ -297,7 +322,7 @@ ipcMain.handle('config:set', (e, patch) => {
   }
   saveUser();
   Object.assign(config, merged());
-  if ('explorerContextMenu' in patch && installed) {
+  if ('explorerContextMenu' in patch && installed && process.platform === 'win32') {
     if (config.explorerContextMenu) shellIntegration.register(process.execPath); else shellIntegration.unregister();
   }
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
@@ -565,7 +590,7 @@ async function scanOpencodeModels() {
 // executables - a real Node/libuv quirk, not a missing-PATH problem (works fine with no cwd, or
 // with the full path). Resolve to the full path first so item 35's cwd-scoped run doesn't hit it.
 async function resolveExe(cmd) {
-  if (path.isAbsolute(cmd)) return cmd;
+  if (path.isAbsolute(cmd) || process.platform !== 'win32') return cmd;
   const r = await run('where.exe', [cmd]);
   const lines = r.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   // `where` checks the current directory before PATH, so it can turn up one of Operant's own
@@ -576,7 +601,7 @@ async function resolveExe(cmd) {
 }
 
 async function withFreshPath(env) {
-  if (process.platform !== 'win32') return env;
+  if (process.platform !== 'win32') { env.PATH = await unix.freshPath(env.PATH); return env; }
   const key = Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'Path';
   const seen = new Set();
   env[key] = [...(env[key] || '').split(';'), ...(await registryPath()).split(';')]
@@ -619,6 +644,7 @@ const KNOWN_BROWSERS = [
 let browserCache = null; // Promise<[{ id, name, exe }]>
 function detectBrowsers() {
   if (browserCache) return browserCache;
+  if (osApps) return (browserCache = freshEnv().then(env => osApps.detectBrowsers(env)));
   browserCache = (async () => {
     const found = new Map();
     for (const b of KNOWN_BROWSERS) {
@@ -659,7 +685,9 @@ async function openUrl(url, { second = false } = {}) {
   const exe = choice === 'custom' ? (second ? config.secondBrowserCommand : config.linkBrowserCommand)
     : (await detectBrowsers()).find(b => b.id === choice)?.exe;
   if (!exe || !fs.existsSync(exe)) return shell.openExternal(url);
-  try { spawn(exe, [url], { detached: true, windowsHide: false, stdio: 'ignore' }).unref(); }
+  // A macOS browser is an .app bundle, which `open -a` starts (or hands the link to).
+  const [file, argv] = /\.app\/?$/i.test(exe) ? ['/usr/bin/open', ['-a', exe, url]] : [exe, [url]];
+  try { spawn(file, argv, { detached: true, windowsHide: false, stdio: 'ignore' }).unref(); }
   catch { shell.openExternal(url); }
 }
 
@@ -748,7 +776,8 @@ function editorCommand() {
   const value = (async () => {
     const env = await freshEnv();
     const order = key !== 'auto' ? [key] : ['nvim', 'vim', 'micro', 'edit', 'nano'];
-    const found = await Promise.all(order.map(async c => (await run('where', [c], { env })).code === 0 ? c
+    const found = await Promise.all(order.map(async c => process.platform !== 'win32' ? ((await unix.which(c, env)) ? c : null)
+      : (await run('where', [c], { env })).code === 0 ? c
       : fs.existsSync(path.join(GIT_BIN, c + '.exe')) ? path.join(GIT_BIN, c + '.exe') : null));
     return found.find(Boolean) || null;
   })();
@@ -774,8 +803,11 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
 
   // Run the agent through the shell (PATH lookup, .cmd shims). The tile closes when it
   // exits cleanly; on failure it waits so the error stays readable.
+  // macOS and Linux (and a POSIX shell set on Windows) get the same launches in sh (platform/unix.js).
+  const sh = unix.usesSh(config.shell);
   let command = config.shell;
   let args = run && !agent ? ['-NoLogo', '-NoExit', '-Command', run] : startup && !edit ? ['-NoLogo', '-NoExit', '-Command', startup] : ['-NoLogo'];
+  if (sh) ({ command, args } = unix.tileLaunch(config.shell, run && !agent ? { script: run, keepOpen: true } : startup && !edit ? { script: startup, keepOpen: true } : {}));
   // An editor tile: the editor on that file, and the tile closes when you quit it.
   if (edit && !agent) {
     const q = a => `'${String(a).replace(/'/g, "''")}'`;
@@ -783,7 +815,8 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Vim gets line numbers, and no swap file (it would be left beside the file whenever the tile is closed with vim still open).
     // Its title carries vim's modified flag ([+]), which is how the tile knows to ask before closing.
     const noSwap = ed && /(^|[\\/])n?vim(\.exe)?$/i.test(ed) ? " -n -c 'set number title titlestring=%t%m'" : '';
-    args = ['-NoLogo', '-Command', ed ? `& ${config.editor === 'custom' ? ed : q(ed)}${noSwap} ${q(edit)}`
+    if (sh) ({ command, args } = unix.tileLaunch(config.shell, { script: unix.editScript(ed && (config.editor === 'custom' ? ed : unix.sq(ed)), noSwap, edit) }));
+    else args = ['-NoLogo', '-Command', ed ? `& ${config.editor === 'custom' ? ed : q(ed)}${noSwap} ${q(edit)}`
       : `Write-Host 'No editor found. Install vim, neovim, micro or nano, or set one in Settings > Files.' -ForegroundColor Yellow; Read-Host 'Press Enter to close'`];
   }
   let ocPort = null;
@@ -818,12 +851,14 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Item 33: team mode picks the agent and passes its model straight through — OpenCode takes it as
     // -m, Claude Code as --model. Other agents don't get a model flag (none of the built-in ones need it).
     const modelArgs = model ? (isOpenCode(agent) ? ['-m', String(model)] : isClaude(agent) ? ['--model', String(model), ...(effort ? ['--effort', String(effort)] : [])] : []) : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...setupArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(q).join(' ');
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...setupArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(sh ? unix.sq : q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
     const exe = String(agent.command).trim().split(/\s+/)[0];
-    args = ['-NoLogo', '-Command', [
+    if (sh) ({ command, args } = unix.tileLaunch(config.shell, { script: unix.agentScript({ startup, exe, line: `${agent.command} ${quoted}`,
+      missing, failed: `${agent.name} exited with an error, press Enter to close` }) }));
+    else args = ['-NoLogo', '-Command', [
       ...(startup ? [startup] : []),
       `if (-not (Get-Command ${q(exe)} -ErrorAction SilentlyContinue)) { Write-Host ${q(missing)} -ForegroundColor Yellow; Read-Host 'Press Enter to close'; exit }`,
       `& ${agent.command} ${quoted}; if (-not $?) { Read-Host ${q(`${agent.name} exited with an error, press Enter to close`)} }`,
@@ -838,8 +873,6 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // is found. Spread from process.env above, so this also overwrites any of these vars Operant
   // itself inherited (it may be running inside another Operant tile).
   const binDir = path.join(__dirname, 'bin').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-  const pathKey = Object.keys(envBase).find(k => k.toUpperCase() === 'PATH') || 'Path';
-  envBase[pathKey] = binDir + path.delimiter + (envBase[pathKey] || '');
   Object.assign(envBase, {
     OPERANT: '1',
     OPERANT_API: `http://127.0.0.1:${controlPort}`,
@@ -878,6 +911,11 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     envBase.OPENCODE_CONFIG_CONTENT = JSON.stringify(oc);
   }
   const env = await withFreshPath(envBase);
+  // The bin folder goes in front of the fresh PATH, which on macOS and Linux starts with the login
+  // shell's folders (and on Linux the .deb links the app itself as /usr/bin/operant).
+  const pathKey = Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'Path';
+  env[pathKey] = binDir + path.delimiter + (env[pathKey] || '');
+  if (process.platform !== 'win32') unix.withLocale(env, app.getSystemLocale?.() || app.getLocale());
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_PID' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SESSION_|BRIDGE_|MESSAGING_)/.test(k)) delete env[k];
   }
@@ -1066,9 +1104,10 @@ ipcMain.handle('git:diff', async (_e, { root, file, code }) => {
 
 // Committing from the diff tile. Git never waits on a prompt (it would hang with no terminal); a login it
 // needs comes from Git Credential Manager's own window. Each resolves to { ok, out } with git's messages.
-const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
+// Read per call: on macOS and Linux PATH changes once the login shell's has been read.
+const gitEnv = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' });
 const git = async (root, args) => {
-  const r = await run('git', ['-C', root, ...args], { env: gitEnv, timeout: 120000 });
+  const r = await run('git', ['-C', root, ...args], { env: gitEnv(), timeout: 120000 });
   return { ok: r.code === 0, out: (r.stdout + r.stderr).trim() };
 };
 // files: [{ path, orig }] relative to root. Only those are committed; anything else staged stays staged.
@@ -1125,8 +1164,9 @@ const IDE_PATHS = {
 async function ideCommand() {
   if (config.ide === 'custom') return (config.ideCommand || '').trim();
   const cmd = config.ide || 'code';
-  if (!IDE_PATHS[cmd] || (await run('where', [cmd])).code === 0) return cmd;
-  const found = IDE_PATHS[cmd]().find(p => fs.existsSync(p));
+  const paths = osApps ? osApps.IDE_PATHS : IDE_PATHS;
+  if (!paths[cmd] || (osApps ? await unix.which(cmd, await freshEnv()) : (await run('where', [cmd])).code === 0)) return cmd;
+  const found = paths[cmd]().find(p => fs.existsSync(p));
   return found ? `"${found}"` : cmd;
 }
 const codegraphVersion = async () => {
@@ -1165,7 +1205,8 @@ ipcMain.handle('codegraph:startup', async () => {
 ipcMain.handle('ide:open', async (_e, dir) => { const cmd = await ideCommand(); return new Promise(resolve => {
   if (!cmd) return resolve('Set a custom IDE command in Settings › Sidebar');
   let child;
-  try { child = spawn(`${cmd} "${dir}"`, { shell: true, cwd: dir, detached: true, stdio: 'ignore', windowsHide: true }); }
+  const arg = process.platform === 'win32' ? `"${dir}"` : unix.sq(dir);
+  try { child = spawn(`${cmd} ${arg}`, { shell: true, cwd: dir, detached: true, stdio: 'ignore', windowsHide: true }); }
   catch (err) { return resolve(err.message); }
   // Launchers hand off and exit 0 at once; "not recognized" exits non-zero. A GUI exe that keeps running is fine.
   const timer = setTimeout(() => { child.unref(); resolve(null); }, 4000);
@@ -1173,6 +1214,12 @@ ipcMain.handle('ide:open', async (_e, dir) => { const cmd = await ideCommand(); 
   child.on('exit', code => { clearTimeout(timer); resolve(code ? `"${cmd}" didn't start (exit ${code}). Is it installed and on PATH?` : null); });
 }); });
 
+// A click anywhere in a window brings it to the front, also where Windows leaves it behind (a touch, as
+// from a remote desktop app on a phone). Test runs (OPERANT_BACKGROUND) stay behind.
+ipcMain.on('win:raise', e => {
+  const w = winOf(e);
+  if (alive(w) && !process.env.OPERANT_BACKGROUND && !w.isFocused()) { w.moveTop(); w.focus(); }
+});
 ipcMain.on('win:minimize', e => winOf(e)?.minimize());
 ipcMain.on('win:maximize', e => { const w = winOf(e); if (w?.isMaximized()) w.unmaximize(); else w?.maximize(); });
 ipcMain.on('win:close', e => winOf(e)?.close());
@@ -1347,15 +1394,21 @@ async function fetchLimits(force = false) {
   if (!config.planLimits) return null;
   if (limitsCache && !force && Date.now() - limitsCache.at < LIMITS_EVERY - 5000) return limitsCache;
   if (limitsCache && Date.now() < limitsBackoff) return limitsCache;
-  const got = await askLimits();
+  const got = await askLimits(force);
   broadcast('usage:limits', got);
   limitAlerts(got);
   return got;
 }
 ipcMain.handle('usage:limits', (e, force) => fetchLimits(!!force));
-async function askLimits() {
+async function askLimits(force) {
   let token;
   try { token = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8')).claudeAiOauth?.accessToken; } catch {}
+  // On macOS Claude Code keeps the login in the Keychain instead.
+  if (!token && mac) {
+    const k = await mac.claudeToken(force);
+    if (k.refused) return (limitsCache = { at: Date.now(), error: 'Allow Keychain access to see your plan limits · click to ask again' });
+    token = k.token;
+  }
   if (!token) return (limitsCache = { at: Date.now(), error: 'Sign in to Claude Code to see your plan limits' });
   try {
     const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
@@ -1664,7 +1717,8 @@ function createWindow(startDir = null, restore = null) {
   const w = new BrowserWindow({
     width: b?.width || 1600, height: b?.height || 950, minWidth: 700, minHeight: 450,
     ...(b ? { x: b.x + 32, y: b.y + 32 } : {}),
-    frame: false,
+    // macOS keeps its own window buttons, inset into the top bar; elsewhere the bar draws them.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 12 } } : { frame: false }),
     backgroundColor: (THEMES[config.theme] || THEMES.obsidian).bg,
     title: 'Operant',
     icon: path.join(__dirname, 'build', 'icon.png'),
@@ -1769,8 +1823,9 @@ function confirmClose(wins, { update = false } = {}) {
   return asking;
 }
 
-// Right-click the taskbar icon for another window.
+// Right-click the taskbar icon (or the Dock icon on macOS) for another window.
 function setJumpList() {
+  if (mac) return mac.setDockMenu(() => createWindow());
   if (process.platform !== 'win32' || !installed) return;
   app.setUserTasks([{ program: process.execPath, arguments: '--new-window', iconPath: process.execPath, iconIndex: 0,
     title: 'New window', description: 'Open another Operant window' }]);
@@ -1778,29 +1833,38 @@ function setJumpList() {
 
 // Launching Operant again opens another window in this one process. A folder from Explorer's
 // "Open in Operant" becomes a tile in the window you used last, or a new window (Settings).
+function openFolder(dir) {
+  const target = primary();
+  if (dir && target && config.explorerOpensIn === 'tile') { bringUp(target); sendTo(target, 'open-folder', dir); }
+  else createWindow(dir);
+}
+// macOS hands over a folder dropped on the Dock icon, or opened with Operant from Finder, this way.
+let openAtStart = null;
+app.on('open-file', (e, p) => {
+  e.preventDefault();
+  if (!isDir(p)) return;
+  if (app.isReady()) openFolder(p); else openAtStart = p;
+});
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
     const link = focusLink(argv);
     if (link) return focusTile(link.wcId, link.tileId);
-    const dir = folderArg(argv);
-    const target = primary();
-    if (dir && target && config.explorerOpensIn === 'tile') { bringUp(target); sendTo(target, 'open-folder', dir); }
-    else createWindow(dir);
+    openFolder(folderArg(argv));
   });
   app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    if (mac) mac.setAppMenu(); else Menu.setApplicationMenu(null);
     startControlServer();
     syncSkill();
     opencodeTheme.writeTheme(config);
     editorCommand(); // warms the PATH and editor lookups before the first tile needs them
-    createWindow(folderArg(process.argv), toRestore[0]);
+    createWindow(openAtStart || folderArg(process.argv), toRestore[0]);
     for (const s of toRestore.slice(1)) createWindow(null, s);
     // Restore once after an update; the next start is a normal one.
     if (session.restoreNext) { session.restoreNext = false; writeSession(); }
     setJumpList();
-    if (installed) {
+    if (installed && process.platform === 'win32') {
       if (config.explorerContextMenu) shellIntegration.register(process.execPath);
       else shellIntegration.unregister();
     }

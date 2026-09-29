@@ -1,5 +1,5 @@
 #!/bin/sh
-# Operant control CLI wrapper for Git Bash / WSL-style shells.
+# Operant control CLI wrapper for macOS, Linux and Git Bash (operant.cmd on Windows).
 export ELECTRON_RUN_AS_NODE=1
 dir=$(dirname "$0")
 if [ -z "$OPERANT_EXE" ]; then
