@@ -272,6 +272,47 @@ check in an isolated profile before release.
       loads back, and is read somewhere outside settings/defaults (a dead setting fails the test); fix what it finds.
 - [ ] **72. 2.1 docs, release.**
 
+## Operant Terminal: one prompt box per project that plans, dispatches and reports (asked 29 Sept)
+The user's words: "a Single Operant Terminal, look and act like Claude but cooler. It takes a prompt from me and
+edits it, cleans it, makes it efficient using either free OpenCode or local Gemma. This then gets processed, sent to
+the relevant agents, then receives the answers back of what the agents did. This is for each project."
+It is the front door for the spec's core flow (first spec 90; master prompt 7/8/27/53/81): request -> refine ->
+classify -> route -> run -> verify -> report. Built into the existing tiled UI (84A), not a separate app.
+
+- [ ] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
+      `operant terminal`). Looks and behaves like Claude Code: transcript above, a multi-line prompt box below,
+      streaming text, collapsible tool/agent cards, slash commands, history with up/down, Esc to interrupt, paste
+      images. "Cooler": the Operant themes, live agent cards with their tier dot, tokens and cost as they run, a
+      one-line "what Operant decided and why" under each step. The conversation is saved per project
+      (userData/terminal/<project>.jsonl, atomic, included in backups) and comes back after a restart.
+- [ ] **74. Prompt refiner:** your prompt plus a small project brief (from prime: branch, recent changes, project
+      memory, known commands) goes to a refiner model that returns a cleaned, efficient prompt, split into
+      independent tasks with a suggested type, tier and the files it expects to touch. Providers: OpenCode's free
+      model (`opencode run` headless, no tools, in the project folder) by default; a local model (Ollama / LM Studio
+      / llama.cpp OpenAI-compatible URL) when configured; off = pass through unchanged. If the refiner is down, the
+      original prompt goes through (graceful degradation). Its tokens are counted as orchestration cost, so the
+      terminal can show net savings honestly (spec 19/45).
+- [ ] **75. Review before sending:** the refined prompt is shown against your original (what changed and why, the
+      task split, estimated tokens before/after); Enter sends it, E edits it, O sends your original instead. An
+      "auto-send" setting skips the review for trusted projects.
+- [ ] **76. Dispatch:** each task goes through routing (tier from outcomes, explained) to a worker tile on the board,
+      or to the project's lead agent when it's one conversational job; independent tasks run in parallel up to the
+      worker limit; Claude or OpenCode per the tier. Nothing new about how workers run: board, budgets, stuck
+      detection, checks before review all apply.
+- [ ] **77. Results back:** each task reports into the terminal as a card: status, the worker's hand-back note,
+      files changed, checks and diff size, tokens and cost; approve / reject (with a note) / open the tile /
+      message the worker, right in the card. When everything is in, a short summary of what was done and what's
+      left, and a notification if you're away.
+- [ ] **78. Follow-ups in context:** replying in the terminal continues the same job (a follow-up goes to the worker
+      that did the task, or becomes a new task), without resending the whole history to anyone.
+- [ ] **79. Settings (Settings › Terminal):** refiner provider and model, auto-send, max workers per request,
+      show savings, where it opens. All real, saved, validated (84B-84E).
+- [ ] **80. Local Gemma (was item 64; ask first, ~3 GB):** one-click install of llama.cpp `llama-server` + a
+      small Gemma build as the refiner, only after an explicit yes; until then OpenCode's free model or a URL the
+      user supplies.
+- [ ] **81. Measure it:** evals for the refiner (does the refined prompt keep success while cutting tokens? net of
+      the refiner's own cost), a live test per project, and the terminal's numbers shown only when measured.
+
 ## Operant 2.0 master spec: everything, and where it stands (mapped 29 Sept)
 Two versions: `docs/operant-2.0-spec.md` (first, with UI/operations 84A-84S) and `docs/operant-2.0-master-prompt.md`
 (the full 100-section edition). The first spec is `docs/operant-2.0-spec.md` (pasted 28 Sept; 2.0.0 was built from a short outline of it, so most
