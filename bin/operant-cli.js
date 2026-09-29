@@ -437,7 +437,7 @@ function formatResult(cmd, result) {
     case 'view': case 'edit': case 'diff': return `tile ${result.id}`;
     // A bare "tile 12" was once read as "the tests passed": say it only started, and how to get the outcome.
     case 'run': return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
-    case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', suggested: ' + result.reason : ''}]  task ${result.taskId}` : '');
+    case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', ' + (result.basis || 'suggested') + ': ' + result.reason : ''}]  task ${result.taskId}` : '');
     case 'summarize': case 'find': return result.text || '(no answer)';
     case 'msg': return result.delivered ? `delivered to tile ${result.to}` : `queued for tile ${result.to} (${result.queued} waiting); it gets it when it is between steps`;
     case 'inbox': return result.text || '(no messages)';

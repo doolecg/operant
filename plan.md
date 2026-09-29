@@ -218,7 +218,7 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
       at recall, never deleted. Recall ranks by BM25 (pure JS) × usefulness `(uses−rejects+1)/(recalls+2)` × decay
       (14-day half-life), logs which ids it injected, and `operant memory used|wrong <id>` feeds usefulness.
       `operant remember --supersedes <id>` chains facts. Existing memories keep working unchanged.
-- [ ] **59. Routing from outcomes:** `operant agent` without a tier picks the cheapest tier whose success rate for
+- [x] **59. Routing from outcomes:** `operant agent` without a tier picks the cheapest tier whose success rate for
       that task type is ≥ 80% over at least 5 recent tasks; with fewer, it says `insufficient data` and uses today's
       keyword suggestion. Every choice is explained in one line ("small: 7/8 fixes passed, $0.03 avg"). One task in
       ten tries the tier below a proven one so a tier can earn its way back. Never above the top tier allowed.

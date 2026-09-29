@@ -1442,6 +1442,15 @@ ipcMain.handle('outcome:record', async (_e, o) => {
     return { ok: true };
   } catch { return { ok: false }; }
 });
+// Item 59: summary of the last 30 days, at most the 20 most recent entries per type and tier.
+ipcMain.handle('outcome:stats', async () => {
+  try {
+    const recent = outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 }).sort((a, b) => b.t - a.t);
+    const seen = {}, kept = [];
+    for (const e of recent) { const k = (e.type || 'other') + ' ' + (e.tier || 'none'); if ((seen[k] = (seen[k] || 0) + 1) <= 20) kept.push(e); }
+    return outcomes.summarize(kept);
+  } catch { return {}; }
+});
 // Claude transcripts plus OpenCode's database, tagged; days/sinceMs pick the window.
 async function usageBreakdown(opts = {}) {
   const days = opts.days === 7 ? 7 : 1;

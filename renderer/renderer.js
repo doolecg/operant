@@ -4480,7 +4480,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt.
         if (!args.tier && !args.agent && !args.model && cfg.team?.enabled) {
           const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
-          suggested = TeamTiers.suggestTier(args.prompt, top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]])));
+          const capped = top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]]));
+          const fallback = TeamTiers.suggestTier(args.prompt, capped);
+          const key = 'operant.route.' + TaskType.classifyTask(args.prompt);
+          let counter = 0;
+          try { counter = +localStorage.getItem(key) || 0; } catch {}
+          suggested = Routing.route({ prompt: args.prompt, tiers: Object.keys(capped), stats: await operant.outcomeStats().catch(() => ({})), counter, fallback });
+          try { localStorage.setItem(key, String(counter + 1)); } catch {}
         }
         if (args.tier || suggested) {
           tier = String(args.tier || suggested.tier);
@@ -4511,7 +4517,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
         if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; boardChanged(); } }
-        return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(suggested ? { reason: suggested.reason } : {}) };
+        return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}) };
       }
       case 'team':
         return teamInfo();
