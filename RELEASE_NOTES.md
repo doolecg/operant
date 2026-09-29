@@ -1,11 +1,11 @@
-# Operant 2.3.3
+# Operant 2.3.4
 
 OpenCode tiles open again, and the local fallback model is now Gemma 4, which can actually run as an agent.
 
 **Install:** download the file for your system.
-- **Windows:** `Operant-2.3.3-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
-- **macOS:** `Operant-2.3.3-mac-arm64.dmg` (Apple Silicon) or `Operant-2.3.3-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
-- **Linux:** `Operant-2.3.3-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.3.3-linux-amd64.deb` (`sudo apt install ./Operant-2.3.3-linux-amd64.deb`).
+- **Windows:** `Operant-2.3.4-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.3.4-mac-arm64.dmg` (Apple Silicon) or `Operant-2.3.4-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.3.4-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.3.4-linux-amd64.deb` (`sudo apt install ./Operant-2.3.4-linux-amd64.deb`).
 
 ## Changed
 - **Local fallback model is Gemma 4:** Gemma 3 can't call tools in Ollama, so it could never do a tier's work. The default is now `gemma4:e4b` (also `gemma4:e2b`, `gemma4:12b`). A saved Gemma 3 choice moves to the new default; install it again from Settings › Agents › Team › Local model.
