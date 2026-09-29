@@ -289,15 +289,20 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       (userData/terminal/<project>.jsonl, atomic, included in backups) and comes back after a restart.
 - [ ] **74. Prompt refiner:** your prompt plus a small project brief (from prime: branch, recent changes, project
       memory, known commands) goes to a refiner model that returns a cleaned, efficient prompt, split into
-      independent tasks with a suggested type, tier and the files it expects to touch. Providers: OpenCode's free
+      independent tasks, and for each task picks the agent (Claude Code or OpenCode), the model and the effort,
+      aiming for the cheapest that can do it well (free OpenCode models and Haiku first, low effort by default), plus
+      the type and the files it expects to touch. Providers: OpenCode's free
       model (`opencode run` headless, no tools, in the project folder) by default; a local model (Ollama / LM Studio
       / llama.cpp OpenAI-compatible URL) when configured; off = pass through unchanged. If the refiner is down, the
       original prompt goes through (graceful degradation). Its tokens are counted as orchestration cost, so the
       terminal can show net savings honestly (spec 19/45).
 - [ ] **75. Review before sending:** the refined prompt is shown against your original (what changed and why, the
-      task split, estimated tokens before/after); Enter sends it, E edits it, O sends your original instead. An
+      task split with each task's agent, model and effort, estimated tokens and cost before/after); Enter sends it, E edits it, O sends your original instead. An
       "auto-send" setting skips the review for trusted projects.
-- [ ] **76. Dispatch:** each task goes through routing (tier from outcomes, explained) to a worker tile on the board,
+- [ ] **76. Dispatch:** the refiner's pick (agent, model, effort) is checked against the outcome history before it
+      runs: routing keeps it unless the record shows that choice failing for this kind of task (then the cheapest
+      proven one), never above the top tier allowed, and never a model that isn't available; the review (75) shows
+      the pick and why, and you can change it. Each task then goes to a worker tile on the board,
       or to the project's lead agent when it's one conversational job; independent tasks run in parallel up to the
       worker limit; Claude or OpenCode per the tier. Nothing new about how workers run: board, budgets, stuck
       detection, checks before review all apply.
