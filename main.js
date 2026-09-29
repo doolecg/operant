@@ -1561,8 +1561,15 @@ function flagRunaway(sessionId, owner, reason, detail) {
   sendTo(owner, 'runaway', { sessionId, reason, detail });
 }
 
+// Read-only `operant` status calls (a worker waiting on the board) aren't a runaway loop.
+const READONLY_OPERANT = /^\s*operant\s+(board|tiles|team|prime|usage|inbox|recall|help)(\s|$)/;
+function isReadonlyOperantCall(input) {
+  const c = input && typeof input === 'object' ? (input.command ?? input.cmd) : null;
+  return typeof c === 'string' && READONLY_OPERANT.test(c);
+}
+
 function noteToolUse(sessionId, owner, name, input, label) {
-  if (!config.runawayLoopRepeats) return;
+  if (!config.runawayLoopRepeats || isReadonlyOperantCall(input)) return;
   const list = toolHistory.get(sessionId) || [];
   list.push({ key: stableToolKey(name, input), display: toolDisplay(name, input) });
   while (list.length > 20) list.shift();

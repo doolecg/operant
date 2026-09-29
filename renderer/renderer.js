@@ -1231,7 +1231,7 @@
   // Back to 'doing' in the same tile; with no live tile left, a new worker on the same tier.
   async function retryTask(t, w, lead) {
     boardChanged();
-    if (w?.alive && w.ptyId) { sendLine(w, `${lead}, then ${reportLine(t.id)}`); return; }
+    if (w?.alive && w.ptyId) { sendLine(w, `${lead}. Redo the task now, without polling the board, then ${reportLine(t.id)}`); return; }
     t.failure = Board.failureNote(t, t.note);
     t.attempts = Board.attempts(t) + 1; t.retried = false; t.owner = null;
     try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }

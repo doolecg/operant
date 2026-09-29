@@ -204,7 +204,7 @@ Branch `dev-2.0.0`. One item per commit, tests with each, a live check where it 
 a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research and open-source decisions: see
 ~/.claude/plans/federated-painting-summit.md (memor-ai, agentmemory, opencode-x: borrow ideas, no dependencies).
 
-- [ ] **56. 1.19 leftovers:** agents reach for `operant notify` when asked to say when long work is done (eval
+- [x] **56. 1.19 leftovers:** agents reach for `operant notify` when asked to say when long work is done (eval
       notify-when-done 33% → pass; fix in the skill/brief wording, confirmed with that eval case only); a rejected
       worker isn't flagged as a runaway for re-running `operant board` (the reject message says exactly what to do
       next, and read-only `operant` status calls don't count toward the loop guard); `evals/results/` ignored.
