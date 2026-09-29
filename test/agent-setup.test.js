@@ -232,3 +232,38 @@ test('hookSettingsContent: the reroute, a worker Stop hook, both, or nothing', (
   assert.equal(m.hooks.PostToolUse[0].hooks[0].timeout, 5);
   assert.deepEqual(Object.keys(setup.hookSettingsContent({ ...opts, reroute: true, worker: true, messaging: true }).hooks), ['PreToolUse', 'PostToolUse', 'Stop']);
 });
+
+test('worker settings allow read-only commands and operant reporting; others get no permissions', () => {
+  const opts = { rerouteCmd: 'r', operantCmd: 'o', reroute: false };
+  const w = setup.hookSettingsContent({ ...opts, worker: true });
+  const allow = w.permissions.allow;
+  for (const r of ['Bash(git status *)', 'Bash(operant task *)', 'PowerShell(git diff *)', 'PowerShell(operant task *)', 'PowerShell(Get-ChildItem *)', 'Bash(ls *)'])
+    assert.ok(allow.includes(r), r);
+  assert.ok(!allow.some(r => /operant (run|agent|send|close|test|build|focus)/.test(r)), 'nothing that launches or types into tiles');
+  assert.ok(!allow.some(r => /^\w+\(\*\)$|git \*|operant \*/.test(r)), 'no blanket rule');
+  assert.equal(setup.hookSettingsContent({ ...opts, worker: false, messaging: true }).permissions, undefined);
+  assert.equal(setup.hookSettingsContent({ ...opts, worker: false }), null);
+});
+
+test('opencodeWorkerPermission allows the same read-only list as bash patterns', () => {
+  const { bash } = setup.opencodeWorkerPermission();
+  assert.equal(bash['git status *'], 'allow');
+  assert.equal(bash['operant task *'], 'allow');
+  assert.equal(bash['operant task'], 'allow');
+  assert.ok(!Object.keys(bash).some(k => /operant (run|agent|send|close)/.test(k)));
+});
+
+test("opencodeWorkerPermission leaves out commands the user's own deny/ask patterns cover", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ocperm-'));
+  try {
+    const g = path.join(home, '.config', 'opencode');
+    fs.mkdirSync(g, { recursive: true });
+    fs.writeFileSync(path.join(g, 'opencode.json'), JSON.stringify({ permission: { bash: { 'git log*': 'deny', 'operant msg *': 'ask' } } }));
+    const { bash } = setup.opencodeWorkerPermission({ dir: home, homeDir: home });
+    assert.ok(!('git log' in bash) && !('git log *' in bash));
+    assert.ok(!('operant msg *' in bash));
+    assert.equal(bash['git status *'], 'allow');
+    fs.writeFileSync(path.join(g, 'opencode.json'), JSON.stringify({ permission: { bash: 'ask' } }));
+    assert.deepEqual(setup.opencodeWorkerPermission({ dir: home, homeDir: home }).bash, {});
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

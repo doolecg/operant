@@ -322,7 +322,9 @@ function pluginDirsEnv(current, dir, add) {
 // their own skill folders off. Read the way OpenCode finds its config: the global file, then each
 // opencode.json(c) and .opencode/ from the project's git root down to `dir`. Their paths stay as written
 // (OpenCode resolves relative ones from the tile's folder, the same with or without ours).
-function opencodeSkillPaths(dir, ours, { homeDir = os.homedir() } = {}) {
+// OpenCode's config files in the order it reads them: the global file, then each opencode.json(c) and .opencode/
+// from the project's git root down to `dir`.
+function opencodeConfigFiles(dir, { homeDir = os.homedir() } = {}) {
   const files = [];
   const globalDir = path.join(homeDir, '.config', 'opencode');
   files.push(path.join(globalDir, 'opencode.json'), path.join(globalDir, 'opencode.jsonc'));
@@ -335,6 +337,10 @@ function opencodeSkillPaths(dir, ours, { homeDir = os.homedir() } = {}) {
   for (const d of chain) {
     for (const base of [d, path.join(d, '.opencode')]) files.push(path.join(base, 'opencode.json'), path.join(base, 'opencode.jsonc'));
   }
+  return files;
+}
+function opencodeSkillPaths(dir, ours, { homeDir = os.homedir() } = {}) {
+  const files = opencodeConfigFiles(dir, { homeDir });
   const same = p => { const s = p.replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? s.toLowerCase() : s; };
   const out = [];
   for (const f of files) {
@@ -369,13 +375,50 @@ const probeOpencodeSkillPaths = (command, { env } = {}) =>
 // (`operantCmd`, the operant wrapper). null when there is nothing to register.
 function hookSettingsContent({ reroute, worker, messaging, rerouteCmd, operantCmd }) {
   const hooks = {};
+  const permissions = worker ? { allow: workerAllowRules() } : null;
   // "Bash" on macOS/Linux, "PowerShell" on Windows — Claude Code's shell tool is named
   // differently per platform, and a matcher that misses one never even calls the hook script.
   if (reroute) hooks.PreToolUse = [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `"${rerouteCmd}"` }] }];
   // Messaging: pending agent messages arrive between tool calls, and a turn can't end with some waiting.
   if (messaging) hooks.PostToolUse = [{ hooks: [{ type: 'command', command: `"${operantCmd}" hook post-tool-use`, timeout: 5 }] }];
   if (worker || messaging) hooks.Stop = [{ hooks: [{ type: 'command', command: `"${operantCmd}" hook stop`, timeout: 8 }] }];
-  return Object.keys(hooks).length ? { hooks } : null;
+  if (!Object.keys(hooks).length && !permissions) return null;
+  return { ...(Object.keys(hooks).length ? { hooks } : {}), ...(permissions ? { permissions } : {}) };
+}
+
+// Read-only commands a team worker may run without a permission prompt (nothing that runs arbitrary code),
+// and the operant subcommands it needs to report. Never `run`, `test`, `build`, `agent`, `send`, `close`...
+// (they launch processes or type into other tiles). Claude Code splits compound commands (`;`, `&&`, `|`)
+// and needs every part to match, so `git status; rm x` still prompts.
+const WORKER_GIT = ['status', 'diff', 'log', 'show', 'branch', 'rev-parse', 'ls-files', 'blame'];
+const WORKER_OPERANT = ['task', 'board', 'read', 'wait', 'notify', 'prime', 'team', 'recall', 'remember', 'help', 'msg', 'inbox', 'usage', 'tiles', 'ports', 'title'];
+const WORKER_COMMANDS = [...WORKER_GIT.map(c => `git ${c}`), ...WORKER_OPERANT.map(c => `operant ${c}`), 'ls', 'pwd'];
+function workerAllowRules() {
+  return [
+    ...WORKER_COMMANDS.map(c => `Bash(${c} *)`),
+    ...[...WORKER_COMMANDS.filter(c => c !== 'ls' && c !== 'pwd'), 'Get-ChildItem', 'Get-Location'].map(c => `PowerShell(${c} *)`),
+  ];
+}
+
+// The same list as OpenCode `permission.bash` patterns (wildcard -> "allow"). A bare command is listed too,
+// since OpenCode's `git status *` needs the trailing text. Ours are merged after the user's and a later pattern
+// wins there, so a command one of the user's own "deny"/"ask" patterns covers is left out (and none at all when
+// their bash permission is a plain "deny"/"ask"): the user's rule stays in charge.
+function opencodeWorkerPermission({ dir, homeDir } = {}) {
+  let userBash = {};
+  for (const f of dir ? opencodeConfigFiles(dir, { homeDir }) : []) {
+    const b = readJson(f)?.permission?.bash;
+    if (typeof b === 'string') userBash = { '*': b };
+    else if (b && typeof b === 'object') userBash = { ...userBash, ...b };
+  }
+  const blockers = Object.entries(userBash).filter(([, v]) => v !== 'allow')
+    .map(([pat]) => new RegExp('^' + String(pat).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i'));
+  const bash = {};
+  for (const c of [...WORKER_COMMANDS, 'Get-ChildItem', 'Get-Location']) {
+    if (blockers.some(re => re.test(c) || re.test(`${c} x`))) continue;
+    bash[c] = 'allow'; bash[`${c} *`] = 'allow';
+  }
+  return { bash };
 }
 
 // -------------------------------------------------------------------- desire paths
@@ -407,7 +450,7 @@ module.exports = {
   claudeExtraArgs, writeClaudeMcpConfigFile,
   findPluginSkillDirs, syncPluginSkillsMirror,
   findCodegraphPromptHookCommand, codegraphPluginEntry,
-  buildOpencodeConfigContent,
+  buildOpencodeConfigContent, workerAllowRules, opencodeWorkerPermission, opencodeConfigFiles,
   isOperantSkillFile, removeLegacySkillCopies, pluginDirsEnv, opencodeSkillPaths,
   probeClaudePluginDir, probeOpencodeSkillPaths,
   desirePathLine, appendDesirePath, hookSettingsContent,

@@ -26,6 +26,7 @@ Agents get cheaper and better briefed: the Operant skill loads per session, a li
 - **The long-command reroute could approve a command for you.** It never does now.
 - **`operant test` and `operant build` gave up after about 20 seconds** on slower suites. They now wait for the result.
 - **OpenCode tokens were counted too often:** every update re-added the running total, inflating usage, budgets and the runaway guard. Each message is now counted once.
+- **Team workers stopped on permission prompts** for harmless commands like `git status`. Workers may now run read-only git commands, folder listings and the `operant` commands they report with; anything else still asks, and your own deny or ask rules still win.
 - **Retries, report nudges and `operant send --enter` left the text in the prompt** without submitting it. They now submit.
 
 ---
