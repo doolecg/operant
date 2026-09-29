@@ -1,0 +1,23 @@
+{
+  "name": "handoff",
+  "kind": "use",
+  "prompt": "Three things: add a multiply() to src/sum.js, add a test for it, and write FILES.md with a one-line description of every file in the repo. Team mode is on.",
+  "baselinePrompt": "Three things: add a multiply() to src/sum.js, add a test for it, and write FILES.md with a one-line description of every file in the repo.",
+  "scenario": {
+    "team": "on"
+  },
+  "env": {},
+  "extraTools": [
+    "Agent",
+    "Edit",
+    "Write"
+  ],
+  "maxTurns": 20,
+  "expect": {
+    "delegated": true,
+    "agentTier": [
+      "xsmall",
+      "small"
+    ]
+  }
+}

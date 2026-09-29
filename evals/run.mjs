@@ -28,8 +28,16 @@ const SAFE_API = 'http://127.0.0.1:9'; // the discard port: nothing listens ther
 const BASE_TOOLS = ['Read', 'Glob', 'Grep', 'Skill', 'Bash(operant *)', 'PowerShell(operant *)', 'Bash(git *)', 'Bash(ls *)', 'Bash(cat *)',
   'Bash(node -e *)', 'Bash(echo *)', 'PowerShell(git *)', 'PowerShell(Get-ChildItem *)', 'PowerShell(Get-Content *)', 'PowerShell(node -e *)'];
 
+// The baseline arm has no operant at all, so the agent gets the tools it would normally have for this
+// work: the same set minus operant, plus npm and node (still inside the throwaway workspace).
+const BASELINE_TOOLS = [...BASE_TOOLS.filter(t => !/operant/.test(t)), 'Bash(npm *)', 'Bash(node *)', 'PowerShell(npm *)', 'PowerShell(node *)'];
+// OpenCode has no allowlist mode that the free tier accepts; it gets everything except deletes, pushes,
+// the web and anything outside its workspace, and the workspace is a throwaway copy.
+const OPENCODE_PERMISSION = { bash: { '*': 'allow', 'rm *': 'deny', 'git push*': 'deny', 'Remove-Item*': 'deny', 'del *': 'deny' }, webfetch: 'deny', external_directory: 'deny' };
+
 const USAGE = `usage: node run.mjs --arm <label> [--brief-ref <git ref> | --brief-file <path>] [--plugin-dir <path>]
-                   [--cases a,b,c] [--runs 3] [--model sonnet] [-j 3] [--repo <path>] [--keep] [--dry-run]`;
+                   [--cases a,b,c] [--runs 3] [--model sonnet] [-j 3] [--repo <path>] [--keep] [--dry-run]
+                   [--no-operant] [--agent claude|opencode]`;
 
 function die(msg) { console.error(`run.mjs: ${msg}`); process.exit(1); }
 
@@ -40,8 +48,9 @@ function parseOptions() {
     ({ values } = parseArgs({
       options: {
         arm: { type: 'string' }, 'brief-ref': { type: 'string' }, 'brief-file': { type: 'string' }, 'plugin-dir': { type: 'string', multiple: true },
-        cases: { type: 'string' }, runs: { type: 'string', default: '3' }, model: { type: 'string', default: 'sonnet' },
+        cases: { type: 'string' }, runs: { type: 'string', default: '3' }, model: { type: 'string' },
         jobs: { type: 'string', short: 'j', default: '3' }, repo: { type: 'string' }, keep: { type: 'boolean', default: false },
+        'no-operant': { type: 'boolean', default: false }, agent: { type: 'string', default: 'claude' },
         'dry-run': { type: 'boolean', default: false }, help: { type: 'boolean', short: 'h', default: false },
       },
     }));
@@ -49,11 +58,14 @@ function parseOptions() {
   if (values.help) { console.log(USAGE); process.exit(0); }
   if (!values.arm) die(`--arm is required\n${USAGE}`);
   if (values['brief-ref'] && values['brief-file']) die('use either --brief-ref or --brief-file, not both');
+  if (!['claude', 'opencode'].includes(values.agent)) die('--agent must be claude or opencode');
+  if (values['no-operant'] && (values['brief-ref'] || values['brief-file'] || (values['plugin-dir'] || []).length)) die('--no-operant runs with no brief and no plugin dir; drop --brief-ref/--brief-file/--plugin-dir');
   const int = (name, v) => { const n = Number(v); if (!Number.isInteger(n) || n < 1) die(`--${name} must be a positive integer`); return n; };
   return {
     arm: values.arm, briefRef: values['brief-ref'], briefFile: values['brief-file'], pluginDirs: (values['plugin-dir'] || []).map(p => path.resolve(p)),
     cases: values.cases ? values.cases.split(',').map(s => s.trim()).filter(Boolean) : null,
-    runs: int('runs', values.runs), model: values.model, jobs: int('jobs', values.jobs),
+    runs: int('runs', values.runs), model: values.model || (values.agent === 'opencode' ? 'opencode/big-pickle' : 'sonnet'), jobs: int('jobs', values.jobs),
+    noOperant: values['no-operant'], agent: values.agent,
     repo: values.repo || process.env.OPERANT_EVAL_REPO || DEFAULT_REPO, keep: values.keep, dryRun: values['dry-run'],
   };
 }
@@ -112,7 +124,7 @@ function hasOperant(dir) {
   return OPERANT_FILES.some(f => { try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; } });
 }
 
-function childEnv(caseEnv, files) {
+function childEnv(caseEnv, files, noOperant = false) {
   const env = {};
   const removed = [];
   for (const [k, v] of Object.entries(process.env)) {
@@ -126,6 +138,7 @@ function childEnv(caseEnv, files) {
     const d = raw.replace(/^"|"$/g, '');
     if (d) (hasOperant(d) ? dropped : kept).push(d);
   }
+  if (noOperant) { env[pathKey] = kept.join(path.delimiter); return { env, removed, dropped, pathKey }; }
   env[pathKey] = [STUB_DIR, ...kept].join(path.delimiter);
   Object.assign(env, {
     OPERANT: '1', OPERANT_API: SAFE_API, OPERANT_TOKEN: 'eval', OPERANT_TILE: '7',
@@ -149,6 +162,11 @@ function resolveClaude() {
   if (process.env.OPERANT_EVAL_CLAUDE) return process.env.OPERANT_EVAL_CLAUDE;
   const found = findOnPath(process.platform === 'win32' ? ['claude.exe', 'claude.cmd', 'claude.bat'] : ['claude']);
   return found || die('claude not found on PATH (set OPERANT_EVAL_CLAUDE to its path)');
+}
+
+function resolveOpencode() {
+  if (process.env.OPERANT_EVAL_OPENCODE) return process.env.OPERANT_EVAL_OPENCODE;
+  return findOnPath(process.platform === 'win32' ? ['opencode.exe', 'opencode.cmd', 'opencode.bat'] : ['opencode']) || die('opencode not found on PATH (set OPERANT_EVAL_OPENCODE to its path)');
 }
 
 // A .exe (native install, scoop shim) spawns directly. An npm .cmd shim is unwrapped to the file it
@@ -175,9 +193,13 @@ function claudeArgs(c, o, brief) {
   args.push('--strict-mcp-config');
   for (const p of o.pluginDirs) args.push('--plugin-dir', p);
   // Last: --allowedTools is variadic, which is also why the prompt goes in on stdin.
-  args.push('--allowedTools', ...BASE_TOOLS, ...c.extraTools);
+  args.push('--allowedTools', ...(o.noOperant ? BASELINE_TOOLS : BASE_TOOLS), ...c.extraTools);
   return args;
 }
+
+const opencodeArgs = (c, o) => ['run', '--format', 'json', '--model', o.model, promptFor(c, o)];
+const promptFor = (c, o) => o.noOperant && c.baselinePrompt ? c.baselinePrompt : c.prompt;
+const buildArgs = (c, o, brief) => o.agent === 'opencode' ? opencodeArgs(c, o) : claudeArgs(c, o, brief);
 
 const display = a => /^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`;
 
@@ -234,6 +256,41 @@ function parseStream(raw) {
       const i = ev.rate_limit_info, w = i.unifiedWindows || {};
       s.rateLimit = { status: i.status, fiveHour: w.five_hour?.utilization ?? null, sevenDay: w.seven_day?.utilization ?? null };
     }
+  }
+  s.result = s.resultEvents.at(-1) || null;
+  return s;
+}
+
+// `opencode run --format json`: one JSON event per line (step_start, tool_use, text, step_finish, error).
+// Mapped onto parseStream's shape (Claude tool names, one synthetic result event) so grading and totals
+// work unchanged; an opencode turn is one model step.
+const OPENCODE_TOOLS = { bash: 'Bash', read: 'Read', edit: 'Edit', write: 'Write', glob: 'Glob', grep: 'Grep', task: 'Agent', skill: 'Skill', patch: 'Edit' };
+function parseOpencode(raw) {
+  const s = { init: null, toolUses: [], results: new Map(), resultEvents: [], result: null, denied: new Map(), rateLimit: null, bad: 0, messageIds: new Set(), apiError: null };
+  let steps = 0, cost = 0, lastText = null, reason = null;
+  const tok = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
+  for (const line of raw.split(/\r?\n/)) {
+    const l = line.trim();
+    if (!l) continue;
+    let ev;
+    try { ev = JSON.parse(l); } catch { s.bad++; continue; }
+    const p = ev.part || {};
+    if (ev.type === 'tool_use' && p.tool) {
+      const id = p.callID || p.id;
+      s.toolUses.push({ id, name: OPENCODE_TOOLS[p.tool] || p.tool, input: p.state?.input || {}, sub: false });
+      if (p.state?.status === 'error') s.results.set(id, { isError: true, text: String(p.state.error || '').slice(0, 200) });
+      else if (p.state?.status === 'completed') s.results.set(id, { isError: false, text: String(p.state.output || '').slice(0, 200) });
+    } else if (ev.type === 'text' && typeof p.text === 'string') lastText = p.text;
+    else if (ev.type === 'step_finish') {
+      steps++; cost += p.cost || 0; reason = p.reason || reason;
+      tok.input += p.tokens?.input || 0; tok.output += p.tokens?.output || 0;
+      tok.cacheRead += p.tokens?.cache?.read || 0; tok.cacheCreate += p.tokens?.cache?.write || 0;
+    } else if (ev.type === 'error') s.apiError = ev.error?.data?.message || ev.error?.name || 'error';
+  }
+  if (steps) {
+    s.resultEvents.push({ type: 'result', subtype: 'success', is_error: false, num_turns: steps, total_cost_usd: cost, result: lastText, terminal_reason: reason,
+      usage: { input_tokens: tok.input, output_tokens: tok.output, cache_read_input_tokens: tok.cacheRead, cache_creation_input_tokens: tok.cacheCreate } });
+    s.messageIds = new Set(Array.from({ length: steps }, (_, i) => i));
   }
   s.result = s.resultEvents.at(-1) || null;
   return s;
@@ -315,7 +372,7 @@ const SKILL_RE = /"skill"\s*:\s*"(?:[\w-]+:)?operant"/;
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const startsWith = (argv, want) => want.every((w, i) => argv[i] === w);
 
-function grade(c, s, logCalls) {
+function grade(c, s, logCalls, opts = {}) {
   const skillCalls = s.toolUses.filter(t => t.name === 'Skill');
   const skillInvoked = skillCalls.some(t => SKILL_RE.test(JSON.stringify(t.input)));
 
@@ -332,12 +389,18 @@ function grade(c, s, logCalls) {
 
   const e = c.expect || {};
   const checks = {};
-  if ('routed' in e) checks.routed = routed === e.routed;
-  if ('delegated' in e) checks.delegated = delegated === e.delegated;
-  for (const want of e.operant || []) checks[`operant ${want}`] = calls.some(a => startsWith(a, want.split(/\s+/)));
-  if (e.noOperant) {
-    const banned = new Set(e.noOperant);
-    checks[`no operant ${e.noOperant.join('|')}`] = ![...calls.map(a => a[0]), ...attempts.map(w => w[0])].some(w => banned.has(w));
+  if (!opts.baseline) { // the baseline arm has no operant, so only its outcome is graded (see outcomeCheck)
+    if ('routed' in e) checks.routed = routed === e.routed;
+    if ('delegated' in e) checks.delegated = delegated === e.delegated;
+    for (const want of e.operant || []) checks[`operant ${want}`] = calls.some(a => startsWith(a, want.split(/\s+/)));
+    for (const group of e.operantAny || []) checks[`operant any of ${group.join(' | ')}`] = group.some(want => calls.some(a => startsWith(a, want.split(/\s+/))));
+    if (e.noOperant) {
+      const banned = new Set(e.noOperant);
+      checks[`no operant ${e.noOperant.join('|')}`] = ![...calls.map(a => a[0]), ...attempts.map(w => w[0])].some(w => banned.has(w));
+    }
+    if (e.agentTier) checks[`agent --tier ${e.agentTier.join('|')}`] = calls.some(a => a[0] === 'agent' && e.agentTier.includes(a[a.indexOf('--tier') + 1]));
+    for (const [cmd, max] of Object.entries(e.maxCalls || {})) checks[`at most ${max} operant ${cmd}`] = calls.filter(a => a[0] === cmd).length <= max;
+    for (const re of e.noShell || []) checks[`no shell /${re}/`] = !shell.some(x => new RegExp(re, 'i').test(String(x.t.input.command || '')));
   }
 
   const toolCounts = {};
@@ -355,26 +418,40 @@ function grade(c, s, logCalls) {
   };
 }
 
+// expect.outcome: a command run in the workspace after the session (e.g. `node --test`); exit 0 passes.
+// Used in every arm, so the baseline and operant arms are judged on the same thing.
+function outcomeCheck(c, ws) {
+  const cmd = c.expect && c.expect.outcome;
+  if (!cmd) return null;
+  const r = spawnSync(cmd, { cwd: ws, shell: true, encoding: 'utf8', timeout: 60000, windowsHide: true });
+  return { cmd, ok: r.status === 0, code: r.status, tail: `${r.stdout || ''}${r.stderr || ''}`.trim().slice(-300) };
+}
+
 // ------------------------------------------------------------ one run
 const active = new Set();
 let aborting = false;
 
-async function runOne(job, o, brief, claudeBin, runDir) {
+async function runOne(job, o, brief, agentBin, runDir) {
   const { c, n } = job;
   const files = {
     log: path.join(runDir, 'stub', `${c.name}-${n}.log.jsonl`),
     scenario: path.join(runDir, 'stub', `${c.name}-${n}.scenario.json`),
     raw: path.join(runDir, 'raw', `${c.name}-${n}.jsonl`),
   };
-  const rec = { arm: o.arm, case: c.name, kind: c.kind, run: n, model: o.model, pass: false, error: null };
+  const rec = { arm: o.arm, agent: o.agent, noOperant: o.noOperant, case: c.name, kind: c.kind, run: n, model: o.model, pass: false, error: null };
   const started = Date.now();
   let ws = null;
   try {
     ws = prepareWorkspace(c.name, n);
     fs.writeFileSync(files.scenario, JSON.stringify(c.scenario || {}, null, 2));
     fs.writeFileSync(files.log, '');
-    const { env } = childEnv(c.env || {}, files);
-    const spec = spawnSpec(claudeBin, claudeArgs(c, o, brief));
+    const { env } = childEnv(o.noOperant ? {} : c.env || {}, files, o.noOperant);
+    if (o.agent === 'opencode') {
+      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: OPENCODE_PERMISSION });
+      // opencode reads AGENTS.md from the working directory: that is where the brief goes.
+      if (brief) fs.writeFileSync(path.join(ws, 'AGENTS.md'), brief.text);
+    }
+    const spec = spawnSpec(agentBin, buildArgs(c, o, brief));
     const out = await new Promise(resolve => {
       const chunks = [], errChunks = [];
       let done = false, timedOut = false, seenResult = false, timer = null, grace = null;
@@ -391,19 +468,23 @@ async function runOne(job, o, brief, claudeBin, runDir) {
       child.stdout.on('data', d => {
         chunks.push(d);
         // A finished session can linger on child processes; give it a moment, then end it.
-        if (!seenResult && d.includes('"type":"result"')) { seenResult = true; grace = setTimeout(() => killTree(child.pid), 20000); }
+        if (!seenResult && (d.includes('"type":"result"') || d.includes('"reason":"stop"'))) { seenResult = true; grace = setTimeout(() => killTree(child.pid), 20000); }
       });
       child.stderr.on('data', d => errChunks.push(d));
       child.on('error', e => finish(null, e.message));
       child.on('close', code => finish(code));
       child.stdin.on('error', () => {});
-      child.stdin.end(c.prompt);
+      child.stdin.end(o.agent === 'opencode' ? '' : promptFor(c, o));
     });
 
     fs.writeFileSync(files.raw, out.stdout);
-    const s = parseStream(out.stdout);
+    const s = o.agent === 'opencode' ? parseOpencode(out.stdout) : parseStream(out.stdout);
     const logCalls = fs.readFileSync(files.log, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-    Object.assign(rec, grade(c, s, logCalls));
+    Object.assign(rec, grade(c, s, logCalls, { baseline: o.noOperant }));
+    const outcome = outcomeCheck(c, ws);
+    if (outcome) { rec.outcome = outcome; rec.checks.outcome = outcome.ok; rec.checksPassed = Object.values(rec.checks).every(Boolean); }
+    // Without operant only the outcome can be graded; a case with none isn't counted in the pass rate.
+    rec.graded = !o.noOperant || !!outcome;
 
     const r = s.result || {};
     Object.assign(rec, totals(s), {
@@ -416,12 +497,13 @@ async function runOne(job, o, brief, claudeBin, runDir) {
     });
     // Running out of turns is an outcome to grade; an API failure or a crash is not (it would let a
     // negative case pass just by never getting to act).
-    if (out.spawnError) rec.error = `spawn: ${out.spawnError}`;
+    if (s.apiError && !s.result) rec.error = `${o.agent}: ${s.apiError}`;
+    else if (out.spawnError) rec.error = `spawn: ${out.spawnError}`;
     else if (aborting && !s.result) rec.error = 'aborted';
     else if (out.timedOut) rec.error = 'timeout';
     else if (!s.result) rec.error = `no result event (exit ${out.code})`;
     else if (rec.isError && rec.subtype !== 'error_max_turns') rec.error = `result: ${rec.subtype}`;
-    rec.pass = !rec.error && rec.checksPassed;
+    rec.pass = rec.graded ? !rec.error && rec.checksPassed : null;
   } catch (e) {
     rec.error = `harness: ${e.message}`;
   } finally {
@@ -455,7 +537,7 @@ const usd = x => x === null ? '-' : `$${x.toFixed(3)}`;
 
 function aggregate(rs) {
   return {
-    runs: rs.length, errors: rs.filter(r => r.error).length, pass: rs.filter(r => r.pass).length,
+    runs: rs.length, graded: rs.filter(r => r.graded !== false).length, errors: rs.filter(r => r.error).length, pass: rs.filter(r => r.pass).length,
     skill: rs.filter(r => r.skillInvoked).length, routed: rs.filter(r => r.routed).length,
     rawLongAvg: avg(rs.map(r => r.rawLongAttempts)), turnsAvg: avg(rs.map(r => r.turns)),
     costAvg: avg(rs.map(r => r.costUsd)), costTotal: rs.reduce((a, r) => a + (r.costUsd || 0), 0),
@@ -471,7 +553,7 @@ function claudeVersion(bin) {
 function setupInfo(o, brief, claudeBin) {
   const skillFile = path.join(os.homedir(), '.claude', 'skills', 'operant', 'SKILL.md');
   return {
-    model: o.model, claude: claudeBin, claudeVersion: claudeVersion(claudeBin),
+    agent: o.agent, noOperant: o.noOperant, model: o.model, claude: claudeBin, claudeVersion: claudeVersion(claudeBin),
     brief: brief ? { source: brief.source, via: brief.via, bytes: Buffer.byteLength(brief.text), sha1: crypto.createHash('sha1').update(brief.text).digest('hex') } : null,
     pluginDirs: o.pluginDirs,
     globalSkill: fs.existsSync(skillFile) ? { path: skillFile, bytes: fs.statSync(skillFile).size, sha1: sha1(skillFile) } : null,
@@ -480,7 +562,7 @@ function setupInfo(o, brief, claudeBin) {
 }
 
 function summaryMarkdown(o, setup, records, meta) {
-  const row = (label, kind, a) => `| ${label} | ${kind} | ${a.runs} | ${pct(a.pass, a.runs)} | ${pct(a.skill, a.runs)} | ${pct(a.routed, a.runs)} | ${num(a.rawLongAvg)} | ${num(a.turnsAvg)} | ${usd(a.costAvg)} | ${a.errors} |`;
+  const row = (label, kind, a) => `| ${label} | ${kind} | ${a.runs} | ${pct(a.pass, a.graded)} | ${pct(a.skill, a.runs)} | ${pct(a.routed, a.runs)} | ${num(a.rawLongAvg)} | ${num(a.turnsAvg)} | ${usd(a.costAvg)} | ${a.errors} |`;
   const head = '| case | kind | runs | pass | skill | routed | raw long/run | turns | cost/run | err |\n|---|---|---|---|---|---|---|---|---|---|';
   const byCase = new Map();
   for (const r of records) byCase.set(r.case, [...(byCase.get(r.case) || []), r]);
@@ -490,7 +572,7 @@ function summaryMarkdown(o, setup, records, meta) {
   const lines = [
     `# Operant eval: ${o.arm}`, '',
     `- when: ${meta.startedAt} (${Math.round(meta.wallMs / 1000)}s wall)`,
-    `- model: ${setup.model}; claude ${setup.claudeVersion || '?'} at ${setup.claude}`,
+    `- agent: ${setup.agent}${setup.noOperant ? ' (baseline: no operant, no brief, no plugin, no stub; graded on outcome only)' : ''}; model: ${setup.model}; ${setup.agent} ${setup.claudeVersion || '?'} at ${setup.claude}`,
     `- brief: ${setup.brief ? `${setup.brief.source}, ${setup.brief.via}, ${setup.brief.bytes} bytes, sha1 ${setup.brief.sha1.slice(0, 12)}` : 'none (no --append-system-prompt-file)'}`,
     `- plugin dir: ${setup.pluginDirs.length ? setup.pluginDirs.join(', ') : 'none'}`,
     `- ~/.claude/skills/operant/SKILL.md: ${setup.globalSkill ? `exists, ${setup.globalSkill.bytes} bytes, sha1 ${setup.globalSkill.sha1}` : 'not present'}`,
@@ -510,7 +592,7 @@ function summaryMarkdown(o, setup, records, meta) {
   lines.push('', 'skill = loaded the operant skill; routed = an operant test/build/run call came before any raw long command; raw long/run = shell attempts at tests/builds/installs/dev servers without operant (denied by the harness, still counted).');
   const denied = records.filter(r => r.operantDenied);
   if (denied.length) lines.push('', `${denied.reduce((a, r) => a + r.operantDenied, 0)} operant command(s) in ${denied.length} run(s) were refused by the harness's permission rules (typically a PowerShell line starting with \`cd <dir>;\`), so those runs may understate operant use: ${denied.map(r => `${r.case}#${r.run}`).join(', ')}.`);
-  const bad = records.filter(r => !r.pass);
+  const bad = records.filter(r => r.graded !== false && !r.pass);
   if (bad.length) {
     lines.push('', '## Not passing', '');
     for (const r of bad) {
@@ -523,22 +605,24 @@ function summaryMarkdown(o, setup, records, meta) {
 
 // ------------------------------------------------------------ dry run
 function printDryRun(cases, o, brief, claudeBin, runDir) {
-  console.log(`arm ${o.arm}, model ${o.model}, ${o.runs} run(s) per case, -j ${o.jobs}`);
-  console.log(`claude: ${claudeBin}`);
+  console.log(`arm ${o.arm}, agent ${o.agent}${o.noOperant ? ' (baseline, --no-operant)' : ''}, model ${o.model}, ${o.runs} run(s) per case, -j ${o.jobs}`);
+  console.log(`${o.agent}: ${claudeBin}`);
   console.log(`brief: ${brief ? `${brief.source} via ${brief.via}, ${Buffer.byteLength(brief.text)} bytes -> ${brief.file}` : 'none'}`);
   console.log(`plugin dirs: ${o.pluginDirs.join(', ') || 'none'}`);
   let shown = false;
   for (const c of cases) {
     const files = { log: path.join(runDir, 'stub', `${c.name}-1.log.jsonl`), scenario: path.join(runDir, 'stub', `${c.name}-1.scenario.json`) };
-    const { env, removed, dropped, pathKey } = childEnv(c.env || {}, files);
-    const spec = spawnSpec(claudeBin, claudeArgs(c, o, brief));
+    const { env, removed, dropped, pathKey } = childEnv(o.noOperant ? {} : c.env || {}, files, o.noOperant);
+    const spec = spawnSpec(claudeBin, buildArgs(c, o, brief));
     console.log(`\n=== ${c.name} (${c.kind}) ===`);
     console.log(`cwd:   ${path.join(fs.realpathSync.native(os.tmpdir()), `operant-eval-${c.name}-<n>-XXXXXX`)}  (fresh fixture copy + git repo per run)`);
     console.log(`cmd:   ${[spec.cmd, ...spec.args].map(display).join(' ')}`);
-    console.log(`stdin: ${c.prompt}`);
+    console.log(`${o.agent === 'opencode' ? 'prompt' : 'stdin'}: ${promptFor(c, o)}${o.agent === 'opencode' ? '' : ''}`);
+    if (o.agent === 'opencode') console.log(`env:   OPENCODE_CONFIG_CONTENT=${JSON.stringify({ permission: OPENCODE_PERMISSION })}${brief ? '  (brief written to AGENTS.md in the workspace)' : ''}`);
     console.log(`env:   ${Object.keys(env).filter(k => k.toUpperCase().startsWith('OPERANT')).sort().map(k => `${k}=${env[k]}`).join(' ')}`);
     const dirs = env[pathKey].split(path.delimiter);
-    console.log(`${pathKey}:  ${dirs[0]}  (stub, first)  then ${dirs.length - 1} inherited dirs`);
+    console.log(o.noOperant ? `${pathKey}:  ${dirs.length} inherited dirs, no stub, no operant` : `${pathKey}:  ${dirs[0]}  (stub, first)  then ${dirs.length - 1} inherited dirs`);
+    if (c.expect && c.expect.outcome) console.log(`outcome: ${c.expect.outcome}  (run in the workspace after the session)`);
     if (!shown) {
       shown = true;
       console.log(`removed from env (${removed.length}, same for every case): ${removed.join(', ') || 'none'}`);
@@ -564,14 +648,18 @@ async function main() {
   process.on('exit', () => { if (!launched) fs.rmSync(workDir, { recursive: true, force: true }); });
   for (const sub of o.dryRun ? [''] : ['raw', 'stub']) fs.mkdirSync(path.join(workDir, sub), { recursive: true });
 
-  const claudeBin = resolveClaude();
+  const claudeBin = o.agent === 'opencode' ? resolveOpencode() : resolveClaude();
+  if (o.agent === 'opencode' && o.pluginDirs.length) console.error('note: --plugin-dir has no effect with --agent opencode');
   const brief = loadBrief(o, workDir);
   if (o.dryRun) { printDryRun(cases, o, brief, claudeBin, runDir); return; }
 
+  if (o.agent === 'opencode' && process.env.OPERANT_EVAL_OPENCODE_UNSAFE !== '1') {
+    die('opencode has no sandbox: in a trial run it left its workspace and edited a file in the Operant repo (evals/fixtures). Set OPERANT_EVAL_OPENCODE_UNSAFE=1 to run it anyway, then `git status` the repo afterwards.');
+  }
   const setup = setupInfo(o, brief, claudeBin);
   const jobs = [];
   for (let n = 1; n <= o.runs; n++) for (const c of cases) jobs.push({ c, n }); // run 1 of every case first, so a stop still covers all cases
-  console.log(`arm ${o.arm}: ${cases.length} cases x ${o.runs} runs = ${jobs.length} claude sessions on ${o.model} (-j ${o.jobs}); results in ${runDir}`);
+  console.log(`arm ${o.arm}: ${cases.length} cases x ${o.runs} runs = ${jobs.length} ${o.agent} sessions on ${o.model} (-j ${o.jobs}); results in ${runDir}`);
 
   process.on('SIGINT', () => { aborting = true; console.error('\ninterrupted: stopping the runs I started'); for (const pid of active) killTree(pid); });
 
@@ -584,7 +672,7 @@ async function main() {
     fs.appendFileSync(path.join(runDir, 'runs.jsonl'), JSON.stringify(r) + '\n');
     // Once the plan says no, the remaining sessions would only fail.
     if (r.rateLimit && !/^allowed/.test(r.rateLimit.status || 'allowed') && !aborting) { aborting = true; console.error(`plan limit hit (${r.rateLimit.status}): not starting more runs`); }
-    console.log(`[${records.length}/${jobs.length}] ${r.case}#${r.run} ${r.pass ? 'PASS' : 'FAIL'} ${r.error ? `(${r.error}) ` : r.subtype && r.subtype !== 'success' ? `(${r.subtype}) ` : ''}turns=${r.turns ?? '-'} ${usd(r.costUsd ?? null)} ${Math.round((r.wallMs || 0) / 1000)}s skill=${r.skillInvoked ? 'y' : 'n'} routed=${r.routed ? 'y' : 'n'} raw=${r.rawLongAttempts ?? '-'}`);
+    console.log(`[${records.length}/${jobs.length}] ${r.case}#${r.run} ${r.pass === null ? 'n/a ' : r.pass ? 'PASS' : 'FAIL'} ${r.error ? `(${r.error}) ` : r.subtype && r.subtype !== 'success' ? `(${r.subtype}) ` : ''}turns=${r.turns ?? '-'} ${usd(r.costUsd ?? null)} ${Math.round((r.wallMs || 0) / 1000)}s skill=${r.skillInvoked ? 'y' : 'n'} routed=${r.routed ? 'y' : 'n'} raw=${r.rawLongAttempts ?? '-'}`);
   });
 
   const meta = { startedAt: new Date(started).toISOString(), wallMs: Date.now() - started };
@@ -593,7 +681,7 @@ async function main() {
   const byKind = {};
   for (const k of KINDS) byKind[k] = aggregate(records.filter(r => r.kind === k));
   const first = records.find(r => r.init);
-  fs.writeFileSync(path.join(runDir, 'summary.json'), JSON.stringify({ arm: o.arm, ...meta, setup, initSample: first && first.init, cases: byCase, kinds: byKind, totals: aggregate(records) }, null, 2));
+  fs.writeFileSync(path.join(runDir, 'summary.json'), JSON.stringify({ arm: o.arm, agent: o.agent, noOperant: o.noOperant, ...meta, setup, initSample: first && first.init, cases: byCase, kinds: byKind, totals: aggregate(records) }, null, 2));
   const md = summaryMarkdown(o, setup, records.sort((a, b) => a.case.localeCompare(b.case) || a.run - b.run), meta);
   fs.writeFileSync(path.join(runDir, 'summary.md'), md);
   console.log(`\n${md}`);
@@ -602,4 +690,4 @@ async function main() {
 
 // Importable (for checking the grader) without starting a run.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e.stack || e.message); process.exit(1); });
-export { classifyCommand, grade, parseStream, totals, childEnv, spawnSpec };
+export { classifyCommand, grade, outcomeCheck, parseOpencode, parseStream, totals, childEnv, spawnSpec };

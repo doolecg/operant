@@ -1,0 +1,36 @@
+{
+  "name": "rejected-worker",
+  "kind": "behaviour",
+  "prompt": "Redo task 16; your context is in `operant prime`. When done run: operant task done 16 --note '<what changed, files>'",
+  "baselinePrompt": "Fix the bug in src/sum.js that makes test/sum.test.js fail. Don't change the tests.",
+  "scenario": {
+    "team": "off",
+    "prime": "You are a worker (tile 7) on task 16: \"Fix the bug in src/sum.js that makes test/sum.test.js fail.\" The lead rejected your last done once: \"src/sum.js still skips the last number, the loop bound is wrong. Fix it and run operant test before you report.\" This is your one retry. Do it now, then operant task done 16 --note \"<what changed, files>\". Don't poll operant board.",
+    "tasks": [
+      {
+        "id": 16,
+        "text": "Fix the bug in src/sum.js that makes test/sum.test.js fail.",
+        "status": "doing",
+        "owner": 7,
+        "tier": "small",
+        "note": "rejected: src/sum.js still skips the last number, the loop bound is wrong"
+      }
+    ]
+  },
+  "env": {
+    "OPERANT_WORKER": "1"
+  },
+  "extraTools": [
+    "Edit"
+  ],
+  "maxTurns": 12,
+  "expect": {
+    "operant": [
+      "task done 16"
+    ],
+    "maxCalls": {
+      "board": 2
+    },
+    "outcome": "node --test"
+  }
+}

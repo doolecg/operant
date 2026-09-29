@@ -278,6 +278,7 @@ function testBody(fixed) {
 // What the tile's terminal shows for the command it was given.
 function tileLines(t) {
   if (t.id === SELF) return ['(this is your own tile)'];
+  if (Array.isArray(t.lines)) return t.lines;
   if (t.kind === 'ai') return ['Claude Code v2.1.284', '', `> ${String(t.prompt || '').split('\n')[0].slice(0, 200)}`, '', '● Done.'];
   if (t.kind !== 'shell') return [];
   const prompt = process.platform === 'win32' ? `PS ${t.cwd}>` : `${t.cwd} $`;
@@ -382,7 +383,7 @@ const SUMMARIES = {
 const stateFile = logFile ? logFile + '.state.json' : null;
 function initialState() {
   const tasks = (scenario.tasks || []).map(t => ({ status: 'todo', owner: null, note: null, title: null, ...t }));
-  return { nextTile: scenario.nextTile || 12, nextTask: Math.max(0, ...tasks.map(t => t.id)) + 1, tiles: [], tasks, watches: {}, memory: [] };
+  return { nextTile: scenario.nextTile || 12, nextTask: Math.max(0, ...tasks.map(t => t.id)) + 1, tiles: (scenario.tiles || []).map(t => ({ kind: 'ai', cwd: ROOT, ...t })), tasks, watches: {}, memory: [] };
 }
 function sleep(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 // A directory as lock: calls in one run are normally sequential, but parallel tool calls happen.
@@ -574,6 +575,12 @@ const HANDLERS = {
     if (!t) throw new Error(`no task ${Number(a.id)}`);
     if (a.sub === 'claim') { t.owner = SELF; t.status = 'doing'; }
     else if (a.sub === 'done') { t.status = 'done'; if (a.note != null) t.note = String(a.note); }
+    else if (a.sub === 'approve') { if (t.status !== 'review') throw new Error(`task ${t.id} is not in review`); t.status = 'done'; }
+    else if (a.sub === 'reject') {
+      if (t.status !== 'review') throw new Error(`task ${t.id} is not in review`);
+      if (a.note == null || a.note === true) throw new Error('--note required: say why');
+      t.status = 'doing'; t.note = String(a.note);
+    }
     else if (a.sub === 'note') { if (!a.text) throw new Error('text required'); t.note = String(a.text); }
     else throw new Error(`unknown task command "${a.sub}"`);
     return { id: t.id, status: t.status, note: t.note, sub: a.sub };

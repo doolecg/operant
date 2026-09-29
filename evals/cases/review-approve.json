@@ -1,0 +1,52 @@
+{
+  "name": "review-approve",
+  "kind": "behaviour",
+  "prompt": "Worker task 14 is waiting in review. Check it, then approve it or reject it with the reason. Your context: `operant prime`.",
+  "baselinePrompt": "Someone claims src/sum.js now sums every number in the list. Check that it does and tell me yes or no.",
+  "scenario": {
+    "team": "on",
+    "prime": "You are the lead (tile 7). Team mode is on. Board: task 14 [review] owner tile 20 (xsmall) \"Fix the off-by-one in src/sum.js\"; worker note: \"src/sum.js: loop bound fixed; tests not run\". Check the work (operant read 20, operant board, the files), then operant task approve 14, or operant task reject 14 --note \"<why>\".",
+    "tasks": [
+      {
+        "id": 14,
+        "text": "Fix the off-by-one in src/sum.js so test/sum.test.js passes.",
+        "status": "review",
+        "owner": 20,
+        "tier": "xsmall",
+        "note": "src/sum.js: loop bound fixed; tests not run"
+      }
+    ],
+    "tiles": [
+      {
+        "id": 20,
+        "title": "sum fix",
+        "tier": "xsmall",
+        "lines": [
+          "Claude Code v2.1.284",
+          "",
+          "> Fix the off-by-one in src/sum.js so test/sum.test.js passes.",
+          "",
+          "Edit src/sum.js",
+          "● Loop bound fixed. Ran out of budget before running the tests.",
+          "● Done."
+        ]
+      }
+    ]
+  },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 10,
+  "expect": {
+    "operantAny": [
+      [
+        "read 20",
+        "board",
+        "diff"
+      ],
+      [
+        "task approve 14",
+        "task reject 14"
+      ]
+    ]
+  }
+}

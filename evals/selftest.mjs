@@ -3,7 +3,9 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyCommand, grade, parseStream, totals, childEnv } from './run.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import { classifyCommand, grade, outcomeCheck, parseOpencode, parseStream, totals, childEnv } from './run.mjs';
 
 const cc = classifyCommand;
 const sub = c => cc(c).operant.map(w => w[0]);
@@ -123,6 +125,46 @@ assert.equal(grade({ expect: { operant: ['task done 12'] } }, parseStream(''), [
 assert.equal(grade({ expect: { delegated: true } }, parseStream(''), [{ argv: ['task', 'add', 'x'] }]).checksPassed, true);
 assert.equal(grade({ expect: { delegated: true } }, parseStream(asst(tu('1', 'TaskCreate', {}))), []).delegated, false);
 
+// team-work keys: operantAny (each group needs one hit), agentTier, maxCalls, noShell
+const gA = (expect, calls, blocks = []) => grade({ expect }, parseStream(blocks.join('\n')), calls.map(argv => ({ argv }))).checks;
+assert.deepEqual(Object.values(gA({ operantAny: [['read 20', 'board'], ['task approve 14', 'task reject 14']] }, [['board'], ['task', 'reject', '14', '--note', 'x']])), [true, true]);
+assert.deepEqual(Object.values(gA({ operantAny: [['read 20', 'board'], ['task approve 14', 'task reject 14']] }, [['board']])), [true, false]);
+assert.equal(Object.values(gA({ agentTier: ['xsmall', 'small'] }, [['agent', 'do it', '--tier', 'xsmall']]))[0], true);
+assert.equal(Object.values(gA({ agentTier: ['xsmall', 'small'] }, [['agent', 'do it']]))[0], false);
+assert.equal(Object.values(gA({ agentTier: ['xsmall'] }, [['agent', 'do it', '--tier', 'medium']]))[0], false);
+assert.equal(Object.values(gA({ maxCalls: { board: 2 } }, [['board'], ['board']]))[0], true);
+assert.equal(Object.values(gA({ maxCalls: { board: 2 } }, [['board'], ['board'], ['board']]))[0], false);
+assert.equal(Object.values(gA({ noShell: ['npm '] }, [], [asst(tu('1', 'Bash', { command: 'operant test' }))]))[0], true);
+assert.equal(Object.values(gA({ noShell: ['npm '] }, [], [asst(tu('1', 'Bash', { command: 'npm test' }))]))[0], false);
+// baseline arm: operant expectations are not graded
+assert.deepEqual(grade({ expect: { operant: ['task done 1'], delegated: true } }, parseStream(''), [], { baseline: true }).checks, {});
+
+// expect.outcome runs in the workspace; exit 0 passes
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-eval-selftest-'));
+assert.equal(outcomeCheck({ expect: {} }, tmp), null);
+assert.equal(outcomeCheck({ expect: { outcome: 'node -e "process.exit(0)"' } }, tmp).ok, true);
+assert.equal(outcomeCheck({ expect: { outcome: 'node -e "process.exit(3)"' } }, tmp).ok, false);
+fs.rmSync(tmp, { recursive: true, force: true });
+
+// opencode --format json events map onto the same shape
+const ocLine = o => JSON.stringify({ sessionID: 's', ...o });
+const oc = parseOpencode([
+  ocLine({ type: 'step_start', part: { type: 'step-start' } }),
+  ocLine({ type: 'tool_use', part: { type: 'tool', tool: 'bash', callID: 'c1', state: { status: 'completed', input: { command: 'operant test' }, output: 'ok' } } }),
+  ocLine({ type: 'step_finish', part: { reason: 'tool-calls', tokens: { input: 10, output: 2, cache: { read: 5, write: 1 } }, cost: 0.01 } }),
+  ocLine({ type: 'text', part: { type: 'text', text: 'done' } }),
+  ocLine({ type: 'step_finish', part: { reason: 'stop', tokens: { input: 1, output: 1, cache: { read: 0, write: 0 } }, cost: 0.02 } }),
+].join('\n'));
+assert.equal(oc.toolUses[0].name, 'Bash');
+assert.equal(classifyCommand(oc.toolUses[0].input.command).first, 'operant');
+const ot = totals(oc);
+assert.equal(ot.turns, 2);
+assert.ok(Math.abs(ot.costUsd - 0.03) < 1e-9);
+assert.equal(ot.usage.cacheRead, 5);
+assert.equal(ot.finalText, 'done');
+assert.equal(parseOpencode(ocLine({ type: 'error', error: { data: { message: 'boom' } } })).apiError, 'boom');
+assert.equal(parseOpencode('').result, null);
+
 // child env: nothing OPERANT-ish or session-ish from the parent survives, the stub is first on PATH
 process.env.OPERANT_API = 'http://127.0.0.1:1234';
 process.env.OPERANT_TOKEN = 'secret';
@@ -137,6 +179,10 @@ assert.equal(env.OPERANT_EXE, undefined);
 assert.equal(env.CLAUDE_CODE_SESSION_ID, undefined);
 assert.equal(env.CLAUDECODE, undefined);
 assert.equal((env.Path || env.PATH).split(path.delimiter)[0], path.join(path.dirname(fileURLToPath(import.meta.url)), 'stub'));
+// baseline env: no stub on PATH, no OPERANT vars at all
+const base = childEnv({ OPERANT_WORKER: '1' }, { log: 'l', scenario: 's' }, true).env;
+assert.ok(!Object.keys(base).some(k => k.toUpperCase().startsWith('OPERANT')));
+assert.ok(!(base.Path || base.PATH).split(path.delimiter).includes(path.join(path.dirname(fileURLToPath(import.meta.url)), 'stub')));
 const realExit = process.exit, realErr = console.error;
 process.exit = c => { throw new Error('exit ' + c); };
 console.error = () => {};

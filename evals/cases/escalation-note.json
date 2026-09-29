@@ -1,0 +1,37 @@
+{
+  "name": "escalation-note",
+  "kind": "behaviour",
+  "prompt": "Take over task 18; your context is in `operant prime`. When done run: operant task done 18 --note '<what changed, files>'",
+  "baselinePrompt": "Fix the bug in src/sum.js that makes test/sum.test.js fail. Don't change the tests. Don't run npm test (it hangs here); use node --test.",
+  "scenario": {
+    "team": "off",
+    "prime": "You are a worker (tile 7) on task 18, escalated from tier xsmall after it failed: \"Fix the bug in src/sum.js that makes test/sum.test.js fail.\" The failure note from xsmall: \"Ran npm test directly, it hung the tile and never returned; then rewrote sum() with numbers.reduce((a, b) => a * b, 1), which gave wrong totals. Neither works. Use operant test to run the suite; the bug is a loop bound.\" Don't repeat those. Then operant task done 18 --note \"<what changed, files>\".",
+    "tasks": [
+      {
+        "id": 18,
+        "text": "Fix the bug in src/sum.js that makes test/sum.test.js fail.",
+        "status": "doing",
+        "owner": 7,
+        "tier": "small",
+        "note": "escalated from xsmall: npm test hung; reduce with * gave wrong totals"
+      }
+    ]
+  },
+  "env": {
+    "OPERANT_WORKER": "1"
+  },
+  "extraTools": [
+    "Edit"
+  ],
+  "maxTurns": 12,
+  "expect": {
+    "operant": [
+      "task done 18"
+    ],
+    "noShell": [
+      "npm ",
+      "reduce"
+    ],
+    "outcome": "node --test"
+  }
+}

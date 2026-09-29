@@ -229,9 +229,10 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
 - [ ] **61. Verification by risk:** before a code task reaches review, Operant runs the project's test/build
       (detected as `operant test` does) and attaches the result and diff size to the review card; docs/lookup tasks
       skip it. A failing check goes back to the worker once, like a reject.
-- [ ] **62. Benchmark suite:** the eval harness grows cases for team work (hand-off, escalation, review) and can
+- [x] **62. Benchmark suite:** the eval harness grows cases for team work (hand-off, escalation, review) and can
       run the same cases on two providers (Claude tier vs OpenCode tier) and without Operant as a baseline; one
-      summary table per run.
+      summary table per run. (OpenCode arm gated behind OPERANT_EVAL_OPENCODE_UNSAFE=1: `opencode run` edited the
+      repo's own fixture instead of the temp copy; fix before using it.)
 - [ ] **63. Provider seams, only where two implementations exist:** model launching (Claude Code, OpenCode) and
       code context (CodeGraph, grep fallback) behind small interfaces, so a third can be added without touching the
       renderer. (A refactor: ask the user before starting; Opus medium.)
