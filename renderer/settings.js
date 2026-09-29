@@ -72,7 +72,7 @@ const Panels = (() => {
         hint: 'Installs a skill that lets Claude Code and OpenCode use Operant: show you files, run commands in their own tiles, start other agents, ask you questions · the operant command works in every tile',
         type: 'toggle' },
       { key: 'briefAgents', label: 'Brief agents at launch', hint: 'A short brief in every agent tile\'s first message (master, workers, reopened) so the rules apply from the start, not only once it loads the skill', type: 'toggle' },
-      { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Claude Code only: a hook rewrites test/build/install commands to operant run/wait automatically, so the savings don\'t depend on the agent remembering', type: 'toggle' },
+      { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Claude Code and OpenCode: a hook rewrites test/build/install commands to operant test/build/run so only the failures reach the agent; the rewritten command still asks for permission like any other, and ending a command with # raw leaves it alone', type: 'toggle' },
       { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
         type: 'number', min: 0, max: 100 },
       { key: 'cacheTtlMinutes', label: 'Prompt cache lifetime', hint: 'Minutes an idle tile\'s cache stays warm before its next message pays full price · 60 if your setup uses the 1-hour cache', type: 'number', min: 1, max: 120 },

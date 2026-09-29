@@ -84,9 +84,9 @@ const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 // The file OpenCode's per-process `instructions` config points at (item 43); Claude Code gets the
 // same text inline via --append-system-prompt.
 const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
-// Item 37: the optional PreToolUse hook that reroutes long-running commands (test/build/install)
+// Item 37: the PreToolUse hook that reroutes long-running commands (test/build/install)
 // through `operant test`/`operant build`/`operant run`+`wait` instead of the agent's own shell.
-// Off by default; wired into Claude Code's args via --settings when config.longCommandHook is on
+// On by default (Settings > Agents); wired into Claude Code's args via --settings when config.longCommandHook is on
 // (see below, next to the --append-system-prompt brief). Written unconditionally at startup, like
 // the brief file, so turning the setting on doesn't need a restart.
 const HOOK_CMD_PATH = path.join(__dirname, 'hooks', process.platform === 'win32' ? 'long-commands.cmd' : 'long-commands.sh')
@@ -167,7 +167,7 @@ const DEFAULT_CONFIG = {
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
-  longCommandHook: false,         // Claude Code hook: reroute long commands (test/build/install) through operant run/wait automatically (Settings > Agents)
+  longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
@@ -500,8 +500,10 @@ function startControlServer() {
         // command switch (only a couple of small side-calls into it, for the caller's cwd/tile output).
         if (cmd === 'summarize' || cmd === 'find') { const r = await controlSummarize(cmd, args, tile); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
-        // plan: waits on the user, same as ask, so it gets an ask-length leash rather than the 20s default.
-        const timeoutMs = cmd === 'wait' ? (Number(args.timeout) || 600) * 1000 + 5000 : cmd === 'plan' ? 7 * 24 * 3600 * 1000 : 20000;
+        // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
+        // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
+        const long = cmd === 'wait' || cmd === 'test' || cmd === 'build';
+        const timeoutMs = long ? (Number(args.timeout) || 600) * 1000 + 15000 : cmd === 'plan' ? 7 * 24 * 3600 * 1000 : 20000;
         const r = await forwardControl(owner, cmd, args, tile, timeoutMs);
         return reply(r.ok ? 200 : 400, r);
       } catch (e) { return reply(400, { ok: false, error: e.message }); }

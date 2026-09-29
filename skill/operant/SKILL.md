@@ -1,6 +1,19 @@
 ---
 name: operant
-description: Use when running inside the Operant terminal app (env OPERANT=1, or `operant` on PATH). Run long commands (tests, builds, installs, dev servers) in a tile via operant run/wait instead of your shell, reading back only errors/new/matching lines to save context tokens. Also: get plans approved, split work across agent tiles with a task board, check context and compact, find dev servers, watch for errors, ask, notify.
+description: >-
+  Drives the Operant desktop app from inside its tiles through the `operant` CLI: runs long or
+  noisy commands in their own tile and returns only the failures, hands work to worker tiles
+  through a task board, gets plans approved, asks or notifies the user, checks context size and
+  compacts, and keeps shared project memory. Use when running inside Operant (env OPERANT=1, or
+  `operant` on PATH) and about to run a test suite, build, install, linter or dev server that may
+  print a lot; when work can run in parallel or belongs on a cheaper team tier; when a plan needs
+  the user's approval; when a question or status should reach the user without ending the turn;
+  when a long session nears its context limit; or when a fact is worth keeping across sessions.
+  Not for short commands whose full output is needed (git status, ls, a one-liner): run those in
+  the normal shell.
+compatibility: >-
+  Needs the Operant desktop app: a tile with OPERANT=1 and the operant CLI on PATH. Works in Claude
+  Code and OpenCode tiles.
 ---
 
 # Operant control
