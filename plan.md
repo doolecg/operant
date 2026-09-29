@@ -270,7 +270,7 @@ check in an isolated profile before release.
       unknown future version is left untouched and read as far as possible.
 - [x] **71. Every setting works:** a test walks every Settings control and every DEFAULT_CONFIG key: each one saves,
       loads back, and is read somewhere outside settings/defaults (a dead setting fails the test); fix what it finds.
-- [ ] **72. 2.1 docs, release.**
+- [x] **72. 2.1 docs, release.**
 
 ## Operant Terminal: one prompt box per project that plans, dispatches and reports (asked 29 Sept)
 The user's words: "a Single Operant Terminal, look and act like Claude but cooler. It takes a prompt from me and

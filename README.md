@@ -59,6 +59,11 @@ You need the agent CLIs themselves installed and on your `PATH`, for example:
 - **macOS:** the new app replaces the old one in place, so Operant has to be in a folder you can write to, like Applications, not run from the DMG. If macOS says Operant was prevented from modifying apps, allow it under System Settings › Privacy & Security › App Management.
 - **Linux:** an AppImage replaces itself, in a folder you can write to. A `.deb` install downloads the new `.deb` and installs it through a password prompt when you click *Update*, never on quit.
 
+## Backups and updates
+Operant backs up its own state (config, personal memory, board, usage tags, outcomes) daily, checks each backup by reading it back, and tests a restore weekly. It also backs up before every update and config upgrade. Secrets are left out. Manage them in Settings › Backups. Restoring upgrades and health-checks the backup, and refuses one from a newer Operant.
+
+Updates are checked against GitHub's sha256 and kept in an update history. If a new version fails to start twice, Operant offers to reinstall the previous one. The health panel in the top bar shows what's working.
+
 ## Agents
 The first time Operant starts, it asks which agent you'd like to use. That agent opens right away and becomes your default.
 
@@ -126,7 +131,9 @@ Plan limits use Claude Code's login. On macOS that login is in the Keychain, so 
 - **Terminal:** font, size, line height, cursor, scrollback.
 - **Agents, notifications, layout, idle closing, sidebar, media controls, token usage and startup:** everything above, plus the default folder and the shell.
 - **Keybinds:** the same editor as the keybinds popup.
-- **Updates:** your version, **Check for updates**, and *Update automatically*. When a new version has downloaded, this is where you see what's new and can restart to install it.
+- **Updates:** your version, **Check for updates**, and *Update automatically*. When a new version has downloaded, this is where you see what's new and can restart to install it. You can also pick the stable or beta channel and how often it checks, and see the update history.
+- **Backups:** *Back up now*, *Restore*, *Test restore*, *Open folder*, and where backups go, how often and how many to keep.
+- **Reset:** every setting and section can be reset to its default. A setting that needs a restart says so and offers *Restart now*.
 
 ## Keys (Alt is the "Super" key; Alt+K shows them all)
 `Alt+K` (or the ⌨ in the top bar) opens the **keybinds** popup. Hover a row and click **+** to add a key, or **✕** to remove one. A key that's already used moves to the new action.

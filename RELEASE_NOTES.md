@@ -1,3 +1,37 @@
+# Operant 2.1.0
+
+Operant now looks after itself: it backs up its own state, updates can be undone, settings and config carry over between versions, and a health panel shows what's actually working.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.1.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.1.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.1.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.1.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.1.0-linux-amd64.deb` (`sudo apt install ./Operant-2.1.0-linux-amd64.deb`).
+
+## New
+- **Backups of Operant's own state:** your config, personal memory, board, usage tags, outcomes and memory stats are backed up daily. Each backup is read back and checked after it's written, and once a week a test restore proves a backup can really be restored. Under Settings › Backups you can *Back up now*, *Restore*, *Test restore* and *Open folder*, and choose where backups go, how often they run and how many are kept. A backup is also taken before every update and before a config upgrade. Secrets are left out of backups.
+- **Updates you can undo:** a backup is taken before an update installs. The download is checked against the sha256 GitHub publishes for it, and every update is recorded in an update history (from, to, when, result). If a new version fails to start twice, Operant offers to reinstall the previous one; it never does it on its own.
+- **Update channel and frequency:** pick stable or beta, and how often Operant checks. It checks there's enough disk space before downloading. Settings › Updates shows your current version, the latest one and when it last checked.
+- **A health panel in the top bar:** shows what's working and what isn't, with real states. A configured MCP server or an installed model shows as available, not healthy, until it has been shown to work.
+- **First run, upgrade and recovery are noticed:** Operant knows when it's a fresh install, a new version or a recovery after a problem, and treats each accordingly.
+- **Restart-only settings say so:** a setting that needs a restart shows a notice with *Restart now*.
+- **Reset to default:** reset a single setting, or a whole section.
+- **Leads hand out cheap work:** a lead gives independent parts of a request to a cheap tier, and always approves or rejects a review.
+
+## Changed
+- **Restore is safer:** restoring a backup upgrades it to the current version, validates it and health-checks the result. A backup from a newer Operant is refused. A safety backup is taken first.
+- **Config carries a version:** upgrades run as migrations, after keeping a copy of your old config. A config from a newer Operant is left alone.
+- **Saves are crash-safe:** config, session, memory, usage tags and outcomes are written to a temporary file and renamed, so a crash or power cut never leaves a half-written file.
+- **Settings are checked:** an invalid value is refused with a clear error that names the setting.
+- **Secrets stay out of logs.**
+- **Every setting is tested (for developers):** a test checks each setting saves, loads back and is actually used.
+
+## Fixed
+- **`operant remember` outside a project** (home folder, drive root) no longer creates `.operant/memory` there; it saves to personal memory.
+- **Restart-only settings looked like they'd applied.** They now tell you a restart is needed.
+- **A crash while saving could leave a half-written config or memory file.**
+
+---
+
 # Operant 2.0.0
 
 Team work learns from what happened: every task's outcome is recorded, `operant agent` picks a tier from those results, a stuck worker moves up a tier on evidence, code tasks are checked before you review them, and remembered facts now know when they've gone stale.
