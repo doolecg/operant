@@ -16,6 +16,9 @@ function classifyTask(text) {
   return 'other';
 }
 
-const api = { classifyTask, TYPES: [...RULES.map(r => r[0]), 'other'] };
+// Code tasks get the project's checks run before review; docs, lookups and the rest don't.
+const needsVerification = task => ['fix', 'feature', 'refactor', 'test'].includes(classifyTask(task && task.text));
+
+const api = { classifyTask, needsVerification, TYPES: [...RULES.map(r => r[0]), 'other'] };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.TaskType = api;
 })();

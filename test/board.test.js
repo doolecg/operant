@@ -55,3 +55,15 @@ test('failure note is two lines', () => {
   assert.equal(n.split('\n').length, 2);
   assert.match(n, /Attempt 2 on the small tier did not work: budget 300000/);
 });
+
+test('verifying is not open; failed checks go back once, then wait in review', () => {
+  assert.ok(b.STATUSES.includes('verifying'));
+  assert.equal(b.isOpen(mk({ status: 'verifying' })), false);
+  const t = b.handback(mk(), 'done', 'ok');
+  assert.equal(b.verifyFailed(t, 'checks failed: npm test'), 'retry');
+  assert.equal(t.status, 'doing');
+  assert.equal(t.note, 'checks failed: npm test');
+  b.handback(t, 'done', 'again');
+  assert.equal(b.verifyFailed(t, 'checks failed again'), 'review');
+  assert.equal(t.status, 'review');
+});

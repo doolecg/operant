@@ -226,7 +226,7 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
 - [x] **60. Outcome signals and doom-loop guard:** a worker is escalated a tier on evidence, not only on reject:
       the same error twice, the same command failing twice with the same output, or no file change after N turns on
       a code task. Clean passes at a tier count toward trying the cheaper one (item 59). The guard explains itself.
-- [ ] **61. Verification by risk:** before a code task reaches review, Operant runs the project's test/build
+- [x] **61. Verification by risk:** before a code task reaches review, Operant runs the project's test/build
       (detected as `operant test` does) and attaches the result and diff size to the review card; docs/lookup tasks
       skip it. A failing check goes back to the worker once, like a reject.
 - [x] **62. Benchmark suite:** the eval harness grows cases for team work (hand-off, escalation, review) and can

@@ -24,3 +24,9 @@ const cases = [
   ['', 'other'],
 ];
 for (const [text, want] of cases) test(`${want}: ${text || '(empty)'}`, () => assert.equal(classifyTask(text), want));
+
+test('needsVerification: code tasks only', () => {
+  const { needsVerification } = require('../task-type.js');
+  for (const text of ['fix the login bug', 'add a settings page', 'refactor the parser', 'write tests for board']) assert.equal(needsVerification({ text }), true, text);
+  for (const text of ['update the README', 'where is the config read?', 'hello']) assert.equal(needsVerification({ text }), false, text);
+});

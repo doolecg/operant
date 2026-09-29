@@ -2,7 +2,8 @@
 // Task board rules, pure over a board object { tasks, nextTaskId }. A worker's "done" is only a
 // handback: the task waits in 'review' until the lead approves it. A failure or a rejection gets one
 // retry in the same tile, then the task moves one tier up (as far as the top tier allowed) or fails.
-const STATUSES = ['todo', 'doing', 'review', 'done', 'failed', 'blocked'];
+// 'verifying': Operant is running the project's checks before the task reaches review.
+const STATUSES = ['todo', 'doing', 'verifying', 'review', 'done', 'failed', 'blocked'];
 const isOpen = t => t.status === 'todo' || t.status === 'doing';
 
 // A worker reports done, blocked or failed. Done waits for review.
@@ -38,6 +39,14 @@ function failure(task, note, { noRetry } = {}) {
   return strike(task);
 }
 
+// The checks failed on a task in 'verifying': the first time it goes back like a reject, then the lead sees it in review.
+function verifyFailed(task, note) {
+  task.status = 'review';
+  if (task.verifyRetried) { task.note = String(note || 'checks failed'); return 'review'; }
+  task.verifyRetried = true;
+  return reject(task, note);
+}
+
 // The next tier above the task's, up to maxTier; null at the top. `tiers` is an ordered list of names.
 function escalation(task, tiers, maxTier) {
   const names = Array.isArray(tiers) ? tiers : Object.keys(tiers || {});
@@ -64,6 +73,6 @@ function failureNote(task, why) {
   return `Attempt ${attempts(task)} on the ${task.tier || 'previous'} tier did not work: ${clean(why)}\nThe repo may hold its partial changes: check them, do not repeat the same approach.`;
 }
 
-const api = { STATUSES, isOpen, handback, approve, reject, failure, escalation, moveUp, failureNote, attempts };
+const api = { STATUSES, isOpen, handback, approve, reject, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
 })();

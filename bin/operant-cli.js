@@ -461,11 +461,11 @@ function formatResult(cmd, result) {
         : '(no watches)';
       return result.off ? `stopped watching tile ${result.id}` : `watching tile ${result.id}`;
     case 'plan': return result.approved ? 'approved' : `change: ${result.note || ''}`;
-    case 'task': return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}`;
+    case 'task': return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}${result.verify ? `\nverifying: operant runs ${result.verify} before review` : ''}`;
     case 'board': {
       const owner = o => o ? `${o.id} ${o.title}` : '-';
       const via = t => (t.tier ? t.tier + (t.attempts > 1 ? ` try ${t.attempts}` : '') : '-');
-      return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${via(t)}  ${owner(t.owner)}  ${t.text}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
+      return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${via(t)}  ${owner(t.owner)}  ${t.text}${t.check ? `  [${t.check.ok ? 'checks ok' : 'checks failed'}: ${t.check.command}]` : ''}${t.diffStat ? `  (${t.diffStat})` : ''}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
     }
     case 'prime': {
       const prime = require('./operant-prime');

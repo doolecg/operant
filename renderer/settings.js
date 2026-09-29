@@ -336,6 +336,8 @@ const Panels = (() => {
         <div class="ctl"><button class="toggle${team.enabled ? ' on' : ''}" data-team-enabled></button></div></div>
       <div class="set-row"><div class="lbl">Let agents message each other<span class="hint">Adds operant msg and operant inbox: an agent can send another tile a short message, delivered when that tile is between steps · off by default · a Claude Code tile started before you turned this on only gets messages when it is idle</span></div>
         <div class="ctl"><button class="toggle${cfg.messaging ? ' on' : ''}" data-messaging></button></div></div>
+      <div class="set-row"><div class="lbl">Run checks before review<span class="hint">When a worker finishes a fix, feature, refactor or test task, Operant runs the project's test (else build) command and attaches the result; a failing check sends the task back once</span></div>
+        <div class="ctl"><button class="toggle${team.verifyBeforeReview !== false ? ' on' : ''}" data-team-verify></button></div></div>
       ${ocNote}${fbNote}
       ${tierBlock('xsmall', 'XSmall')}
       ${tierBlock('small', 'Small')}
@@ -482,6 +484,7 @@ const Panels = (() => {
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
       pane.querySelectorAll('[data-messaging]').forEach(b => b.onclick = () => { set('messaging', !cfg.messaging); draw(); });
       pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
+      pane.querySelectorAll('[data-team-verify]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), verifyBeforeReview: cfg.team?.verifyBeforeReview === false }); draw(); });
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {
         const n = Math.min(16, Math.max(1, Math.round(+el.value || 4)));
         el.value = n; set('team', { ...(cfg.team || {}), maxWorkers: n });

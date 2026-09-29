@@ -1145,12 +1145,13 @@
     $('#board-badge').textContent = open > 99 ? '99+' : open || '';
     $('#board-badge').classList.toggle('hidden', !open);
     if (openPanel() !== 'board') return;
-    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['done', 'Done']];
+    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
       return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text" title="${esc(t.text)}">${esc(taskTldr(t))}</span>`
         + (owner ? `<button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : '<span class="board-owner unassigned">unassigned</span>')
         + (Board.attempts(t) > 1 ? `<span class="board-note">attempt ${Board.attempts(t)}${t.tier ? ' · ' + esc(t.tier) : ''}</span>` : '')
+        + (t.check ? `<span class="board-note" title="${esc(t.check.summary || '')}">${t.check.ok ? '✓' : '✗'} ${esc(t.check.command || 'checks')}${t.diffStat ? ' · ' + esc(t.diffStat) : ''}</span>` : '')
         + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '') + '</div>';
     };
     $('#board-body').innerHTML = groups.map(([k, label]) => {
@@ -1241,6 +1242,29 @@
     const w = wins.get(t.owner);
     if (Board.failure(t, why, opts) === 'retry') retryTask(t, w, `Your attempt did not work: ${oneLine(why)}. Try once more, differently`);
     else escalateTask(t, why);
+  }
+
+  // A code task's handback: run its checks in a background shell tile and attach the result before review.
+  async function verifyTask(t, command, from) {
+    let ok = true, summary = '', w;
+    const cwd = t.cwd || from?.cwd || lastCwd;
+    try {
+      w = await newTerminal('shell', cwd, { run: command, title: command.slice(0, 40), ws: from?.ws ?? current, near: from, focus: false });
+      await waitQuiet(w, 3000, 600 * 1000);
+      const d = digestOf(from, w);
+      ok = d ? d.ok !== false : !/\b(fail(ed|ures?)?|error)\b/i.test(readOutput(from, w, { lines: 60 }).text.slice(-2000));
+      summary = d ? [d.summary, ...(d.failures || []).map(f => typeof f === 'string' ? f : f.name || f.message || '')].filter(Boolean).join(' ')
+        : readOutput(from, w, { lines: 400, errors: !ok }).text.trim().split('\n').slice(-8).join('\n');
+    } catch (e) { ok = false; summary = String(e.message || e); }
+    if (w?.alive) closeWin(w);
+    t.check = { command, ok, summary: summary.slice(0, 600), at: Date.now() };
+    try { t.diffStat = await operant.git('diffstat', cwd) || null; } catch {}
+    if (t.status !== 'verifying') { boardChanged(); return; }
+    if (ok) { t.status = 'review'; boardChanged(); if (from) notify(from, `Task ${t.id} ready for review: ${taskTldr(t)}`, `checks passed: ${command}`, null, true); return; }
+    const first = oneLine(summary.split('\n').find(l => /error|fail|not ok/i.test(l)) || summary.split('\n')[0] || 'no output').slice(0, 160);
+    const why = `checks failed: ${command} - ${first}`;
+    if (Board.verifyFailed(t, why) === 'retry') retryTask(t, wins.get(t.owner), `Operant's checks failed (${oneLine(why)}). Fix it`);
+    else { boardChanged(); if (from) notify(from, `Task ${t.id} ready for review, checks failed: ${taskTldr(t)}`, why, null, true); }
   }
 
   // Back to 'doing' in the same tile; with no live tile left, a new worker on the same tier.
@@ -4701,9 +4725,17 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const n = wins.get(t.owner);
           const from = n?.alive ? n : self;
           Board.handback(t, status, args.note);
+          let verify = null;
+          if (status === 'done' && cfg.team?.verifyBeforeReview !== false && TaskType.needsVerification(t)) {
+            const cwd = t.cwd || from?.cwd || lastCwd;
+            verify = await detectProjectCommand(cwd, 'test') || await detectProjectCommand(cwd, 'build');
+            if (verify) t.status = 'verifying';
+            else t.note = [t.note, 'no test/build command found'].filter(Boolean).join(' · ');
+          }
           if (n?.sessionId) operant.stuckReset(n.sessionId);
           if (status === 'blocked' || (status === 'failed' && !t.tier)) recordOutcome(t, status);
           if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
+          else if (verify) { verifyTask(t, verify, from); boardChanged(); return { id: t.id, status: t.status, note: t.note, sub: args.sub, verify }; }
           else if (from) notify(from, status === 'done' ? `Task ${t.id} ready for review: ${taskTldr(t)}` : `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);
         }
         else if (args.sub === 'approve') { Board.approve(t); recordOutcome(t, 'done'); }
@@ -4719,7 +4751,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return { id: t.id, status: t.status, note: t.note, sub: args.sub };
       }
       case 'board': {
-        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: args.full ? t.text : taskTldr(t), note: t.note, owner: fmtOwner(t.owner), tier: t.tier || null, attempts: Board.attempts(t) })) };
+        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: args.full ? t.text : taskTldr(t), note: t.note, owner: fmtOwner(t.owner), tier: t.tier || null, attempts: Board.attempts(t), check: t.check ? { command: t.check.command, ok: t.check.ok, summary: t.check.summary } : null, diffStat: t.diffStat || null })) };
       }
       case 'remember': {
         if (!args.text) throw new Error('text required');

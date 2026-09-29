@@ -203,6 +203,7 @@ const DEFAULT_CONFIG = {
     budgets: { xsmall: 150000, small: 300000, medium: 600000, high: 1200000, max: 2000000 }, // tokens per task (input + output + cache writes); 0 = no limit
     maxWorkers: 4,
     maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
+    verifyBeforeReview: true,   // run the project's test/build command on a code task's handback, before review
   },
   masterOnStartup: true,          // ask which folder to work in when Operant starts, then open a "master" agent there
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
@@ -1130,6 +1131,11 @@ ipcMain.handle('git:status', async (_e, dir) => {
     files.push({ code, path: file, ...(code[0] === 'R' || code[0] === 'C' ? { orig: parts[++i] } : {}) });
   }
   return { root: top.stdout.trim().replace(/\//g, path.sep), branch, ahead, behind, files };
+});
+// The summary line of `git diff --stat` against HEAD ('' when nothing changed or not a repository).
+ipcMain.handle('git:diffstat', async (_e, dir) => {
+  const r = await run('git', ['-C', dir, 'diff', 'HEAD', '--stat']);
+  return r.code === 0 ? (r.stdout.trim().split('\n').pop() || '').trim() : '';
 });
 // One file's changes against HEAD (staged and not), as a unified diff. An untracked file is all added lines.
 ipcMain.handle('git:diff', async (_e, { root, file, code }) => {
