@@ -1,3 +1,14 @@
+# Operant 1.17.4
+
+Team mode opens fewer terminals: agents only start Operant tiles when Claude Code and OpenCode work together.
+
+**Install:** download `Operant-1.17.4.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## Changed
+- **Subagents before tiles:** when a tier runs the same agent as the one handing out work (Claude Code to a Claude tier, OpenCode to an OpenCode tier), the agent uses its own subagents with that tier's model instead of opening a new Operant terminal. Worker tiles are now only for Claude Code and OpenCode teamwork, one tile per tier with all its tasks.
+
+---
+
 # Operant 1.17.3
 
 Notifications now say what they are about in the title, so you can tell at a glance whether to switch.
