@@ -922,7 +922,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
     // own env below; other agents have no equivalent flag, so they're skipped.
     // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
-    const rules = config.shareSetup ? agentBrief.mainRulesText(config.defaultAgent, 'claude') : '';
+    const rules = config.shareSetup ? agentBrief.mainRulesText(agentSetup.mainAgentId(config), 'claude') : '';
     const briefText = [config.briefAgents && agentBrief.briefFor('claude'), rules].filter(Boolean).join('\n\n');
     const briefArgs = briefText && isClaude(agent) ? ['--append-system-prompt', briefText] : [];
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
@@ -985,7 +985,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     const skillPaths = config.installSkill && pluginReady() && await agentCan(agent, 'skillPaths')
       ? agentSetup.opencodeSkillPaths(dir, path.join(PLUGIN_DIR, 'skills')) : [];
     envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(config.briefAgents ? BRIEF_PATH : null, {
-      mainAgent: config.shareSetup ? config.defaultAgent : null,
+      mainAgent: config.shareSetup ? agentSetup.mainAgentId(config) : null,
       plugins: [config.longCommandHook && OC_HOOK_PATH, config.briefAgents && OC_OPERANT_PATH].filter(Boolean),
       skillPaths,
     });

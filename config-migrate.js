@@ -137,10 +137,10 @@ function validatePatch(patch, defaults, opts = {}) {
       }
     }
   }
-  // Conflict: the default agent has to be one of the agents, in this patch or already saved.
+  // Conflict: the default agent has to be one of the agents (or 'operant', the Operant Terminal), in this patch or already saved.
   const dAgent = typeof patch.defaultAgent === 'string' ? patch.defaultAgent : 'agents' in patch ? current.defaultAgent : null;
-  if (typeof dAgent === 'string' && agentIds.size && !agentIds.has(dAgent) && !errors.some(e => e.key === 'defaultAgent' || e.key === 'agents')) {
-    bad('defaultAgent', 'one of the agents: ' + [...agentIds].join(', '), 'the agents in this change do not include it');
+  if (typeof dAgent === 'string' && dAgent !== 'operant' && agentIds.size && !agentIds.has(dAgent) && !errors.some(e => e.key === 'defaultAgent' || e.key === 'agents')) {
+    bad('defaultAgent', 'operant or one of the agents: ' + [...agentIds].join(', '), 'the agents in this change do not include it');
   }
   return errors;
 }

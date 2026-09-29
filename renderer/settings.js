@@ -77,7 +77,7 @@ const Panels = (() => {
     ['Agents', [
       { key: 'agents', type: 'agents' },
       { key: 'defaultAgent', label: 'Default agent', hint: IS_WIN ? 'Alt+Enter, the master tile and Explorer\'s entry open this' : 'Alt+Enter and the master tile open this', type: 'select',
-        options: cfg => cfg.agents.map(a => [a.id, a.name]) },
+        options: cfg => [...cfg.agents.map(a => [a.id, a.name]), ['operant', 'Operant (the Operant Terminal)']] },
       { key: 'opencodeTheme', label: 'OpenCode uses Operant’s theme', hint: 'OpenCode tiles get the current theme and accent, with a see-through background · your own OpenCode settings stay as they are · applies to new OpenCode tiles', type: 'toggle' },
       { key: 'installSkill', label: 'Operant skill for agents',
         hint: 'Gives Claude Code and OpenCode tiles the Operant skill for each session, straight from the app, so it always matches this version. Nothing is written to your agents’ own folders, and copies older versions put there are removed. Applies to new tiles',

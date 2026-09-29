@@ -136,10 +136,18 @@ function writeClaudeMcpConfigFile(userDataDir, openCodeServers) {
 
 // Extra CLI args for a Claude tile when the main agent is OpenCode and shareSetup is on.
 // Only kicks in when OpenCode actually has servers to share.
+// The user's main agent: the default one, or with Operant (the Operant Terminal) as the default, the first Claude Code
+// agent (else the first agent), since only a CLI has rules, hooks and MCP servers to share.
+function mainAgentId(config) {
+  const agents = config.agents || [];
+  if (config.defaultAgent !== 'operant') return config.defaultAgent;
+  return (agents.find(a => isClaudeCmd(a.command)) || agents[0])?.id || null;
+}
+
 function claudeExtraArgs({ agent, config, cwd, userDataDir }) {
   if (!config.shareSetup) return [];
   if (!isClaudeCmd(agent && agent.command)) return [];
-  const mainAgent = (config.agents || []).find(a => a.id === config.defaultAgent);
+  const mainAgent = (config.agents || []).find(a => a.id === mainAgentId(config));
   if (!mainAgent || !isOpenCodeCmd(mainAgent.command)) return []; // main agent isn't OpenCode: nothing to bring over
   const file = writeClaudeMcpConfigFile(userDataDir, getOpenCodeOwnMcpServers());
   return file ? ['--mcp-config', file] : [];
@@ -234,7 +242,7 @@ const CODEGRAPH_PLUGIN_SRC = path.join(__dirname, 'hooks', 'codegraph-prompt.js'
 // agent's config actually runs a codegraph prompt hook, and the plugin file exists.
 function codegraphPluginEntry(config) {
   if (!config.shareSetup) return null;
-  const mainAgent = (config.agents || []).find(a => a.id === config.defaultAgent);
+  const mainAgent = (config.agents || []).find(a => a.id === mainAgentId(config));
   if (!mainAgent || !isClaudeCmd(mainAgent.command)) return null; // only Claude's hook is understood here
   const command = findCodegraphPromptHookCommand();
   if (!command) return null;
@@ -254,7 +262,7 @@ function buildOpencodeConfigContent({ base, cwd, userDataDir, config }) {
 
   if (!config.shareSetup) return JSON.stringify(obj);
 
-  const mainAgent = (config.agents || []).find(a => a.id === config.defaultAgent);
+  const mainAgent = (config.agents || []).find(a => a.id === mainAgentId(config));
   if (mainAgent && isClaudeCmd(mainAgent.command)) {
     const mcp = mcpForOpenCodeTiles(cwd);
     if (Object.keys(mcp).length) obj.mcp = { ...(obj.mcp || {}), ...mcp };
@@ -447,7 +455,7 @@ function appendDesirePath(file, args, { now, maxBytes = 200 * 1024, keepBytes = 
 
 module.exports = {
   getClaudeMcpServers, getOpenCodeOwnMcpServers, mcpForOpenCodeTiles,
-  claudeExtraArgs, writeClaudeMcpConfigFile,
+  claudeExtraArgs, writeClaudeMcpConfigFile, mainAgentId,
   findPluginSkillDirs, syncPluginSkillsMirror,
   findCodegraphPromptHookCommand, codegraphPluginEntry,
   buildOpencodeConfigContent, workerAllowRules, opencodeWorkerPermission, opencodeConfigFiles,

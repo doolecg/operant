@@ -117,6 +117,7 @@ test('an unknown enum value is refused', () => {
 test('a default agent or tier agent that does not exist is refused', () => {
   assert.deepStrictEqual(keys(v({ defaultAgent: 'ghost' })), ['defaultAgent']);
   assert.deepStrictEqual(v({ defaultAgent: 'opencode' }), []);
+  assert.deepStrictEqual(v({ defaultAgent: 'operant' }), [], 'Operant itself, the Operant Terminal');
   assert.deepStrictEqual(keys(v({ team: { tiers: { small: { agent: 'ghost' } } } })), ['team']);
   assert.deepStrictEqual(v({ team: { tiers: { small: { agent: 'claude' } }, maxWorkers: 8 } }), []);
   assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agent: 'ghost' } } })), ['projectDefaults']);

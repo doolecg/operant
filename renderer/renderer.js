@@ -429,7 +429,10 @@
   function setTierDot(w) { w.el.querySelector('.tier').innerHTML = tierDot(w.tier); }
   function setBadge(w, html) { w.el.querySelector('.badge').innerHTML = html; }
 
-  const defaultAgent = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
+  // The default agent can be Operant itself (item 87): new agents then open the folder's Operant Terminal.
+  const OPERANT_AGENT = { id: 'operant', name: 'Operant Terminal', icon: '◆', command: '' };
+  const defaultCli = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
+  const defaultAgent = () => cfg.defaultAgent === 'operant' ? OPERANT_AGENT : defaultCli();
   // The team tiers for the default agent (main's team-tiers.js); OpenCode gets its own set.
   const activeTiers = () => cfg.teamTiers || cfg.team?.tiers || {};
   // Item 82: a project can be limited to Claude only or OpenCode only. The tiers then come from main's
@@ -455,11 +458,14 @@
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
   async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt, model, effort, worker } = {}) {
+    // Operant as the default agent: a plain new agent (Alt+Enter, the master, "New … here", Explorer) opens the folder's Operant Terminal.
+    if (kind === 'ai' && agentId == null && !prompt && !worker && !resume && !run && (projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent) === 'operant')
+      return openOperantTerminal(projectDir(cwd || lastCwd), { ws, focus, near });
     let chosen = agentId ?? projectDefaults(cwd || lastCwd).agent;
     // A project set to Claude only / OpenCode only opens that CLI for a new agent tile, unless one was named.
     const mode = kind === 'ai' && agentId == null ? agentMode(cwd || lastCwd) : 'both';
     if (mode !== 'both' && agentKind(chosen || cfg.defaultAgent) !== mode) chosen = cfg.agents.find(a => agentKind(a.id) === mode)?.id || chosen;
-    let agent = kind === 'ai' ? cfg.agents.find(a => a.id === (chosen || cfg.defaultAgent)) || defaultAgent() : null;
+    let agent = kind === 'ai' ? cfg.agents.find(a => a.id === (chosen || cfg.defaultAgent)) || defaultCli() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
     // With team mode on, a new agent with no model of its own runs as the top tier (quick menu slider):
     // that tier's agent and model, or, for an agent picked by name, its highest allowed tier using the same CLI.
@@ -2765,8 +2771,9 @@
     $('#launcher-title').textContent = welcome ? 'Choose your agent' : 'New agent';
     $('#launcher-sub').textContent = welcome ? '1–9 or click to choose' : '1–9 opens one · Shift picks a folder first';
     $('#launcher-foot').textContent = welcome ? 'Your default agent from now on. Change it in Settings › Agents.' : 'Add or change agents in Settings › Agents';
-    $('#launcher-body').innerHTML = cfg.agents.map((a, i) => `<button class="launch-row" data-i="${i}">
-      <span class="ico">${esc(a.icon || '●')}</span><span class="nm">${esc(a.name)}<small>${esc([a.command, ...[].concat(a.args || [])].join(' '))}</small></span>
+    const rows = [...cfg.agents, { ...OPERANT_AGENT, small: 'Plans, hands out and reports on the work in one prompt box' }];
+    $('#launcher-body').innerHTML = rows.map((a, i) => `<button class="launch-row" data-i="${i}">
+      <span class="ico">${esc(a.icon || '●')}</span><span class="nm">${esc(a.name)}<small>${esc(a.small || [a.command, ...[].concat(a.args || [])].join(' '))}</small></span>
       ${a.id === cfg.defaultAgent && !welcome ? '<span class="def">default</span>' : ''}${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}</button>`).join('')
       + (welcome ? '' : `<button class="launch-row" data-shell><span class="ico">❯</span><span class="nm">Shell<small>${esc(cfg.shell)}</small></span>${k('newShell')}</button>`
         + `<button class="launch-row" data-window><span class="ico">◈</span><span class="nm">New Operant window<small>Its own workspaces and tiles</small></span>${k('newWindow')}</button>`);
@@ -2777,18 +2784,20 @@
     if (nw) nw.onclick = () => { closePanels(false); operant.newWindow(); };
   }
   const k = a => bindLabel(a) ? `<kbd>${esc(Panels.pretty(bindLabel(a)))}</kbd>` : '';
+  // The row after the agents is Operant itself (the Operant Terminal).
   async function launch(i, pickDir) {
-    const a = cfg.agents[i];
+    const a = i === cfg.agents.length ? OPERANT_AGENT : cfg.agents[i];
     if (!a) return;
     const first = welcome;
     closePanels(false);
     if (first) {
       setSetting('defaultAgent', a.id);
       if (!first.dir) return togglePanel('startpick');
-      return newTerminal('ai', first.dir, { agentId: a.id, master: true });
+      return a === OPERANT_AGENT ? openOperantTerminal(projectDir(first.dir)) : newTerminal('ai', first.dir, { agentId: a.id, master: true });
     }
     let dir;
     if (pickDir) { dir = await operant.pickFolder(); if (!dir) return; lastCwd = dir; }
+    if (a === OPERANT_AGENT) return openOperantTerminal(projectDir(dir || lastCwd));
     newTerminal('ai', dir, { agentId: a.id });
   }
   // Settings save a moment after the last change, so dragging a slider writes once.
