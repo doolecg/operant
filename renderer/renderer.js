@@ -1486,6 +1486,7 @@
   // reads the rest of it (see the permission-prompt section below).
   // Worker tiles (w.tier) stay silent; their result reaches the master as the "Task N done" notification.
   // force: for what needs the user regardless (permission prompts, a finished task).
+  const clip = (t, n) => { t = String(t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
   async function notify(w, title, body, action, force) {
     if (!w.alive) return;
     if (w.tier && !force) return;
@@ -1560,7 +1561,10 @@
       const open = worked >= 2500 && w.tier && w.ptyId ? board.tasks.find(t => t.owner === w.id && t.status !== 'done') : null;
       if (open && !w.nudged) { w.nudged = true; operant.writePty(w.ptyId, `Report back now: run operant task done ${open.id} --note '<the result>'\r`); }
       else if (open) { open.note = 'Worker went idle without reporting a result'; notify(w, `Task ${open.id} ended without a result`, open.text, null, true); boardChanged(); }
-      if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) notify(w, `${w.agentName} is waiting for you`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
+      if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) {
+        const what = w.title !== w.agentName ? w.title : shortPath(w.cwd || '').split(/[\\/]/).filter(Boolean).pop();
+        notify(w, `${w.agentName} is waiting${what ? ': ' + clip(what, 50) : ''}`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
+      }
     }
   }, 1000);
 
@@ -1879,7 +1883,7 @@
     const count = (waitingCounts.get(key) || 0) + 1;
     waitingCounts.set(key, count);
     const action = count >= 3 ? buildAlwaysAllowAction(w, kind, label, detail, key, count, extra) : null;
-    notify(w, `${w.agentName} is waiting for you`, `${label}${detail ? ': ' + detail : ''}`, action, true);
+    notify(w, `${w.agentName} needs approval: ${clip(`${label}${detail ? ' ' + detail : ''}`, 50)}`, `${label}${detail ? ': ' + detail : ''}`, action, true);
   }
 
   // Best-effort rule text; the user reviews and saves it themselves, Operant never writes it.

@@ -1,3 +1,14 @@
+# Operant 1.17.3
+
+Notifications now say what they are about in the title, so you can tell at a glance whether to switch.
+
+**Install:** download `Operant-1.17.3.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## Changed
+- **Notification titles carry a short summary:** an agent that has gone quiet now reads "Claude is waiting: <tile title or folder>", and a permission prompt reads "Claude needs approval: <what it wants to run>", instead of just "is waiting for you".
+
+---
+
 # Operant 1.17.2
 
 The info bar under each tile's title no longer overlaps, and shell tiles now have it too.
