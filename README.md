@@ -71,6 +71,15 @@ The first time Operant starts, it asks which agent you'd like to use. That agent
 
 In **Settings › Agents** you can add any command that runs in a terminal (Aider, Goose, Amp, a local model wrapper), give it a name, icon and arguments, and choose the default. Each agent runs through the shell set in Settings: PowerShell on Windows, your login shell on macOS and Linux (zsh or bash; fish and others work too). If it exits with an error, the tile stays open so you can read it. The `operant` command works the same in every shell.
 
+## Operant Terminal
+Each project has one Operant Terminal: the ◆ in the projects sidebar, `Alt+Shift+O`, or `operant terminal`. It looks and works like Claude Code. You type what you want; Operant cleans up your prompt with OpenCode's free model (or a local model you point it at, or nothing if you turn that off) and splits it into tasks. Each task gets the agent, model and effort that will do the job as cheaply as possible. Risky work never goes to the cheapest tier, picks are checked against past results, and nothing goes above your top tier.
+
+A review shows your original next to the cleaned prompt, the tasks and token estimates. `Enter` sends, `E` edits, `O` sends your original, `Esc` discards. Auto-send can be turned on per project. It may ask one question instead of guessing.
+
+Tasks run as workers and report back as cards with status, a note, check results, diff size, paid and free tokens and cost, and *Approve*, *Reject*, *Open* and *Message* buttons. Follow-ups go to the same worker or start a new task. The conversation is saved per project and comes back after a restart. Settings › Operant Terminal has the options.
+
+In the project's sidebar menu you can choose **Claude only**, **OpenCode only** or **both**. That applies to the picks, routing, escalation, workers and new agent tiles.
+
 ## Notifications
 Operant sends a Windows notification when:
 - an agent that was working goes quiet (it finished, or it's asking you something),

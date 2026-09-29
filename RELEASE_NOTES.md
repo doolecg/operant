@@ -1,3 +1,33 @@
+# Operant 2.2.0
+
+Every project now has an Operant Terminal: type what you want, and Operant cleans up the prompt, splits it into tasks and sends each one to the cheapest agent and model that will do the job.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.2.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.2.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.2.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.2.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.2.0-linux-amd64.deb` (`sudo apt install ./Operant-2.2.0-linux-amd64.deb`).
+
+## New
+- **The Operant Terminal:** one per project. Open it with the ◆ in the projects sidebar, `Alt+Shift+O` or `operant terminal`. It looks and works like Claude Code. Settings › Operant Terminal has its options.
+- **Your prompt is cleaned up and split into tasks:** OpenCode's free model (or a local model you point it at, or nothing if you turn it off) tidies your prompt and splits it into tasks. Each task gets the agent, model and effort picked as cheaply as will do the job. High-risk work never goes to the cheapest tier, picks are checked against past results, and nothing goes above your top tier. It may ask you one question instead of guessing.
+- **A review before anything is sent:** it shows your original next to the cleaned prompt, the tasks and token estimates. `Enter` sends, `E` edits, `O` sends your original, `Esc` discards. Auto-send can be turned on per project.
+- **Tasks run as workers and report back as cards:** status, a note, check results, diff size, paid and free tokens and cost, with *Approve*, *Reject*, *Open* and *Message*. Tasks past the worker limit wait in a queue. When everything has settled you get a summary.
+- **Follow-ups:** send one to the same worker with a short handoff (it waits until the worker is between steps), or start a new task.
+- **The conversation is kept:** saved per project, included in backups, and back after a restart.
+- **Claude only, OpenCode only, or both, per project:** choose it in the project's menu in the sidebar. It applies to the refiner's picks, routing, escalation, workers and new agent tiles.
+- **Approving a finished job closes its worker tile.**
+
+## Changed
+- **The refiner is faster and lighter:** it uses a lean OpenCode server, about 4 seconds and a few thousand free tokens per prompt.
+- **A worker that changed files but didn't report goes to review** with a note, instead of failing.
+- **Follow-ups and Terminal messages are delivered between steps,** whatever the messaging setting.
+
+## Fixed
+- **Tasks that moved up a tier show their cost** instead of "unknown".
+- **Cards showed "Queued" while the worker was already running.**
+
+---
+
 # Operant 2.1.0
 
 Operant now looks after itself: it backs up its own state, updates can be undone, settings and config carry over between versions, and a health panel shows what's actually working.

@@ -1,7 +1,7 @@
 # Progress
 
-2.1.0 released 29 Sept (operations, plan.md items 66-72 and the 84D-84S list). Next: **2.2 = the Operant
-Terminal** (plan.md items 73-81 and what it needs, see "Release order (final)" at the end of plan.md). The 2.0
+2.2.0 released 29 Sept (the Operant Terminal, plan.md items 73-79, 81, 82). Next: **2.3** (see "Release order (final)"
+at the end of plan.md; it starts with the pieces moved from 2.2). The 2.0
 specs are docs/operant-2.0-master-prompt.md (100 sections) and docs/operant-2.0-spec.md (with 84A-84S); plan.md
 maps both. Read them before planning.
 
