@@ -204,8 +204,8 @@ const OperantTerminal = (() => {
       const e = c.entry;
       if (e.final) return { ...e.final };
       const t = taskOf(e), u = t ? host.usageOf(t) : null;
-      const status = e.error ? 'error' : e.queued ? 'queued' : t?.status || null;
-      const total = u ? (u.tokens.input || 0) + (u.tokens.output || 0) + (u.tokens.cacheWrite || 0) : 0, free = !!u?.free;
+      const status = e.error ? 'error' : e.queued ? 'queued' : t?.status === 'todo' && tileOf(c) != null ? 'doing' : t?.status || null; // a worker only claims the task when it starts; its tile being open means it is working
+      const total = u ? (u.tokens.input || 0) + (u.tokens.output || 0) + (u.tokens.cacheWrite || 0) : 0, free = !!u?.free || (!u?.escalated && /^opencode\/big-pickle$|-free$/i.test(e.model || '')); // the tile's last usage event can lack the free flag; the model is also known free
       const usd = free ? 0 : c.usd === undefined ? null : c.usd;
       return { status, note: t?.note || null, check: t?.check ? { ok: !!t.check.ok, command: t.check.command || 'checks', summary: t.check.summary || '' } : null, diffStat: t?.diffStat || null,
         total, free, usd, paid: free ? 0 : total, ms: e.startedAt ? Date.now() - e.startedAt : null, u };

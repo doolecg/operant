@@ -1151,7 +1151,7 @@
       setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
       allowedTiers: allowedTierNames,
       freeWorkers: () => Math.max(0, (cfg.team?.maxWorkers || 4) - [...wins.values()].filter(x => x.alive && x.tier).length),
-      usageOf: t => { const tok = wins.get(t.owner)?.tok; return { tokens: addTok(t.tokens, tok), free: !!tok?.free, model: t.model || null, escalated: (t.escalations || 0) > 0 }; },
+      usageOf: t => { const tok = wins.get(t.owner)?.tok; return { tokens: addTok(t.tokens, tok), free: tok ? !!tok.free : !!t.free, model: t.model || null, escalated: (t.escalations || 0) > 0 }; },
       message: async (tid, text) => cfg.messaging ? runControl('msg', { id: tid, text }, w) : runControl('send', { id: tid, text, enter: true }, null),
       notifyAway: async (title, body) => { if (!(await operant.windowFocused().catch(() => false))) notify(w, title, body, null, true); },
       refinerLabel: () => { const m = [cfg.terminal?.refiner, cfg.terminal?.refinerModel].filter(x => typeof x === 'string' && x && x !== 'off').join(' '); return m ? `Cleaning your prompt with ${m}…` : 'Cleaning your prompt…'; },
@@ -4871,7 +4871,15 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           else if (verify) { verifyTask(t, verify, from); boardChanged(); return { id: t.id, status: t.status, note: t.note, sub: args.sub, verify }; }
           else if (from) notify(from, status === 'done' ? `Task ${t.id} ready for review: ${taskTldr(t)}` : `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);
         }
-        else if (args.sub === 'approve') { Board.approve(t); recordOutcome(t, 'done'); }
+        else if (args.sub === 'approve') {
+          Board.approve(t); recordOutcome(t, 'done');
+          // An approved worker has nothing left to do: its tile closes, unless it still owns another open task.
+          const w = wins.get(t.owner);
+          if (w?.alive && w.tier && !board.tasks.some(x => x !== t && x.owner === w.id && !['done', 'failed'].includes(x.status))) {
+            t.free = !!w.tok?.free; // the card keeps the free flag after the tile is gone
+            closeWin(w);
+          }
+        }
         else if (args.sub === 'reject') {
           if (!args.note) throw new Error('--note "<why>" required');
           const w = wins.get(t.owner);
