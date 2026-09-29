@@ -273,7 +273,8 @@ check in an isolated profile before release.
 - [ ] **72. 2.1 docs, release.**
 
 ## Operant 2.0 master spec: everything, and where it stands (mapped 29 Sept)
-The full spec is `docs/operant-2.0-spec.md` (pasted 28 Sept; 2.0.0 was built from a short outline of it, so most
+Two versions: `docs/operant-2.0-spec.md` (first, with UI/operations 84A-84S) and `docs/operant-2.0-master-prompt.md`
+(revised). The first spec is `docs/operant-2.0-spec.md` (pasted 28 Sept; 2.0.0 was built from a short outline of it, so most
 of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers are the spec's sections.
 
 **Model orchestration**
@@ -360,7 +361,7 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
 - [ ] 93 Docs: architecture, providers, routing, memory, analytics, configuration, security, privacy,
       troubleshooting.
 
-**Order**
+**Order (first spec; superseded by the revised order below)**
 - 2.1 (in progress) also takes the ops gaps: update channel and check frequency, disk-space check, backup
   location/frequency/count, backup before migration, restore validation, reset-to-default, failure tests.
 - 2.2 Measure everything: SQLite analytics (33), token economy with net savings and orchestration cost (18/19/45),
@@ -372,3 +373,73 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
 - 2.5 Smarter decisions: classification by complexity/risk (39), verification by risk incl. type check, lint and a
   second model (40), collaboration and parallel measurement (16/43), replay benchmarks (47), stop conditions (91),
   optional local model (17, item 64, ask first), docs (93).
+
+**Added by the revised master prompt (`docs/operant-2.0-master-prompt.md`, uploaded 29 Sept; its section numbers)**
+- [ ] 8 Routing by expected utility: P(success) x value minus model, context, orchestration, verification,
+      expected-retry and latency costs (today: pass-rate threshold only).
+- [~] 9 Learning from history with EMAs / time decay / rolling windows / confidence intervals, per task type and
+      per project: today a 30-day window, last 20 per type x tier, no decay, no per-project split, no interval.
+      Also record verification result, human intervention, context size, compression/memory/context provider used.
+- [~] 10 Bounded exploration: 1-in-10 cheaper try. Missing: bounded by budget, user setting and task risk (never
+      explore on high-risk work).
+- [~] 11 Collaboration with explicit roles: planner -> implementer, implementer -> reviewer, dual reasoning with a
+      compare step, a local mediator. Today: free-form `operant msg` only.
+- [ ] 20 Context overflow recovery: detect pressure early, drop low-value context, compress, split the task,
+      checkpoint, switch to a larger-context model (today: auto compact at a threshold).
+- [~] 21 Doom loops: missing reverting-and-reapplying the same change, endless test/fix cycles, repeated retrieval
+      with nothing new, and "classify the failure, change strategy" before escalating.
+- [~] 22 Verification by risk tiers (low: syntax/type/targeted test; medium: broader tests, static analysis, diff
+      review; high: full tests, independent review, security, possibly a second model).
+- [~] 23 Budgets: money, time, model-call, retry, parallel-agent and verification budgets (today: tokens only).
+- [ ] 26 Versioned local database: tasks, task_runs, model_runs, provider_calls, token_events,
+      routing_decisions, context_events, memory_events, tool_calls, verification_runs, failures, benchmarks,
+      provider_health, component_registry; migrations, retention, project scoping, correlation ids.
+- [~] 27 Explainable routing with evidence (success rate over N tasks, expected cost and latency, the rejected
+      alternative); conservative defaults when evidence is thin.
+- [~] 28 Human override: force provider/model (--tier/--agent/--model exist). Missing: switch off automatic
+      routing, memory, third-party integrations, cloud providers, local models; privacy choices; inspect routing
+      decisions; clear local history; retention setting; trigger benchmarks from the app.
+- [ ] 29 Component registry with decision + reason + security notes per component.
+- [~] 30 Graceful degradation chains: code graph -> semantic search -> ripgrep -> manual; premium model -> other
+      hosted -> local -> user-chosen.
+- [ ] 31 Security: treat tools, MCP servers, plugins and tool output as untrusted (prompt injection, secrets never
+      exposed to models/tools unnecessarily).
+- [ ] 33/34 CLI for operations: `operant doctor` (providers, credentials, optional deps, versions, MCP, local models,
+      database, context providers), `providers`, `models`, `route explain`, `stats`, `benchmark`, `components`,
+      `context`.
+- [~] 35-37 Benchmarks by category (simple/medium/complex coding, debugging, refactor, architecture, exploration,
+      docs, tests, failure recovery) with human-intervention counts; baseline vs Operant with gross/net token, cost,
+      success, latency, retry deltas; replay of past tasks with synthetic fixtures.
+- [~] 38 Caching economics: cached vs uncached tokens and cost (hit rate shipped in 1.19; cache-aware cost and
+      latency per decision missing).
+- [~] 39/40/45 Git awareness and adaptive context: branch, staged/changed files, recent commits, conflicts; widen
+      context only on evidence; link memory to symbols and commits (today: file hashes).
+- [ ] 41 Model handoffs: pass structured task state (decisions, constraints, needed files, verification state),
+      measured, skipped when it costs more than it saves (today: a two-line failure note on escalation).
+- [ ] 42 Failure classification: model, provider, tool, context, retrieval, memory, environment, ambiguity, bug,
+      test failure, timeout, rate limit, auth; fed back into routing.
+- [~] 43 Retries must change something (model, provider, context, strategy, tool, prompt, verification) or stop
+      and classify (today: one same-tile retry with the reject note, then a tier up).
+- [~] 44 Escalation/downgrade signals: low confidence, high risk, big dependency graph, ambiguity, failed
+      verification, context insufficiency; downgrade on simplicity, low risk, small context.
+- [ ] 52 Measure Operant's own latency: routing, retrieval, compression, database, model start-up, MCP/tool.
+- [~] 54/56 Settings and backups: credentials handled securely and never backed up in plain form (check what
+      config.json and backups hold); settings included in backups (done).
+- [~] 55 Auto-updates opt-in and explicitly configurable (check the default), validate the environment first.
+- [x] 16/17/18 Memory metadata, staleness by file hash, usefulness from used/wrong (1.19-2.0).
+- Note: section 1 says "Do not build a dashboard around Claude/OpenCode. Build the system that coordinates them",
+  so the dashboard (first spec, 84) is a window onto the analytics, not the product.
+
+**Order, revised with both specs**
+- 2.1 (in progress): operations, plus secure handling of credentials in config and backups, auto-update opt-in check.
+- 2.2 Measure everything: the versioned local database (26), token/cost/latency/cache events incl. Operant's own
+      overhead (12/38/52), failure classification (42), stored routing decisions with evidence (27), provider and
+      model health, `operant doctor` / `stats` / `route explain` (33/34), then the dashboard and health strip.
+- 2.3 Decide better: expected-utility routing with decayed, per-project stats and intervals (8/9), risk-bounded
+      exploration (10), retries that change something (43), escalation/downgrade signals (44), verification by
+      risk tier (22), budgets beyond tokens (23), human-override switches and clear-history/retention (28).
+- 2.4 Context: context engine and adaptive context (13/40), git awareness (39), overflow recovery (20), tool-output
+      compression with a worth check (12/19), structured model handoffs (41), memory linked to symbols/commits (45).
+- 2.5 Providers and collaboration: provider interfaces and capability routing (5/6), component registry (29),
+      degradation chains (30), MCP, security for tools and tool output (31), collaboration roles (11), benchmarks
+      by category with replay (35-37), optional local model (ask first), docs.
