@@ -31,6 +31,31 @@ function claudeMemoryDir(cwd, homeDir = os.homedir()) {
   return path.join(homeDir, '.claude', 'projects', mangled, 'memory');
 }
 function projectMemoryDir(cwd) { return path.join(cwd, '.operant', 'memory'); }
+
+// The project a fact belongs to: the nearest folder at or above cwd that is a git repo or already has
+// a `.operant/` folder, or null (the home folder, a drive root, or no project found). Project facts are
+// only ever written inside a project.
+function memoryProjectDir(cwd, { homeDir = os.homedir() } = {}) {
+  if (!cwd) return null;
+  const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  let dir = path.resolve(String(cwd));
+  for (;;) {
+    if (homeDir && same(dir, homeDir)) return null;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null; // drive root
+    if (['.git', '.operant'].some(n => fs.existsSync(path.join(dir, n)))) return dir;
+    dir = parent;
+  }
+}
+// Where recall reads project facts: the project's memory, or (outside a project) an existing
+// `<cwd>/.operant/memory` that already holds facts, so older facts saved there stay readable.
+function readableProjectMemoryDir(cwd, homeDir) {
+  if (!cwd) return null;
+  const root = memoryProjectDir(cwd, { homeDir });
+  if (root) return projectMemoryDir(root);
+  const legacy = projectMemoryDir(cwd);
+  return listFacts(legacy).length ? legacy : null;
+}
 function globalMemoryDir(userDataDir) { return path.join(userDataDir, 'memory'); }
 
 function parseFrontmatter(raw) {
@@ -181,17 +206,19 @@ function staleAbout(cwd, fact) {
   return null;
 }
 
-function targetDir(cwd, userDataDir, type, global) {
-  return (global || type === 'user') ? globalMemoryDir(userDataDir) : projectMemoryDir(cwd);
+function targetDir(cwd, userDataDir, type, global, homeDir) {
+  const root = (global || type === 'user') ? null : memoryProjectDir(cwd, { homeDir });
+  return root ? projectMemoryDir(root) : globalMemoryDir(userDataDir);
 }
 
 // Saves one fact, updating an existing one instead of adding a duplicate when its name or
 // description (normalized) matches a fact already in the same memory dir.
-function remember({ cwd, userDataDir, text, type = 'project', global = false, about = [], confidence, supersedes }) {
+function remember({ cwd, userDataDir, text, type = 'project', global = false, about = [], confidence, supersedes, homeDir }) {
   const fact = String(text || '').trim();
   if (!fact) throw new Error('text required');
   const kind = TYPES.includes(type) ? type : 'project';
-  const dir = targetDir(cwd, userDataDir, kind, global);
+  const dir = targetDir(cwd, userDataDir, kind, global, homeDir);
+  const fellBack = !global && kind !== 'user' && dir === globalMemoryDir(userDataDir);
   fs.mkdirSync(dir, { recursive: true });
 
   const aboutList = [...new Set([].concat(about).map(a => String(a).trim()).filter(Boolean)
@@ -210,7 +237,7 @@ function remember({ cwd, userDataDir, text, type = 'project', global = false, ab
   let supId = '';
   if (supersedes) {
     const want = String(supersedes).trim().replace(/\.md$/i, '');
-    const target = [dir, projectMemoryDir(cwd), globalMemoryDir(userDataDir)].flatMap(d => listFacts(d))
+    const target = [dir, readableProjectMemoryDir(cwd, homeDir), globalMemoryDir(userDataDir)].filter(Boolean).flatMap(d => listFacts(d))
       .find(f => f.id === want || slugify(f.name) === slugify(want));
     if (!target) throw new Error(`no fact "${want}" to supersede`);
     supId = target.id;
@@ -225,7 +252,8 @@ function remember({ cwd, userDataDir, text, type = 'project', global = false, ab
   // An older fact's frontmatter counters move to the sidecar, since remember no longer writes them.
   if (existing && (existing.recalls || existing.uses || existing.rejects || existing.lastUsed)) updateStats(userDataDir, [[existing, {}]]);
   rebuildIndex(dir);
-  return { name, id: file.replace(/\.md$/i, ''), type: kind, file, dir, updated: !!existing };
+  return { name, id: file.replace(/\.md$/i, ''), type: kind, file, dir, updated: !!existing,
+    ...(fellBack ? { note: `saved to your personal memory (${cwd} isn't a project)` } : {}) };
 }
 
 // Rough token cap (~4 chars/token). Cuts at a whole entry boundary and reports how many were left out.
@@ -261,9 +289,9 @@ function aboutMatches(fact, target, resolvedTargetFile) {
 // (read-only) the main agent's own memory folder for this project.
 function allSources(cwd, userDataDir, homeDir) {
   const sources = [
-    { dir: projectMemoryDir(cwd), label: null, readOnly: false },
+    { dir: readableProjectMemoryDir(cwd, homeDir), label: null, readOnly: false },
     { dir: globalMemoryDir(userDataDir), label: 'global', readOnly: false },
-  ];
+  ].filter(s => s.dir);
   if (cwd) sources.push({ dir: claudeMemoryDir(cwd, homeDir), label: 'main agent, read-only', readOnly: true });
   return sources;
 }
@@ -414,10 +442,10 @@ function recallAbout({ cwd, userDataDir, about, tokenCap, homeDir, all }) {
 
 // `operant memory used|wrong <id>`: an agent's verdict on a fact it was handed. Two rejects that
 // outnumber the uses mark it stale (never deleted).
-function feedback({ cwd, userDataDir, id, kind, note }) {
+function feedback({ cwd, userDataDir, id, kind, note, homeDir }) {
   const want = String(id || '').trim().replace(/\.md$/i, '');
   if (!want) throw new Error('id required');
-  const fact = [projectMemoryDir(cwd), globalMemoryDir(userDataDir)].flatMap(d => listFacts(d, userDataDir)).find(f => f.id === want);
+  const fact = [readableProjectMemoryDir(cwd, homeDir), globalMemoryDir(userDataDir)].filter(Boolean).flatMap(d => listFacts(d, userDataDir)).find(f => f.id === want);
   if (!fact) throw new Error(`no fact "${want}"`);
   if (kind === 'used') updateStats(userDataDir, [[fact, { uses: fact.uses + 1 }]]);
   else if (kind === 'wrong') {
@@ -431,7 +459,7 @@ function feedback({ cwd, userDataDir, id, kind, note }) {
 
 function recall(args) {
   const { cwd, userDataDir, query, about, tokenCap = 2000, homeDir, all } = args;
-  if (args.feedback) return feedback({ cwd, userDataDir, id: args.id, kind: args.feedback, note: args.note });
+  if (args.feedback) return feedback({ cwd, userDataDir, id: args.id, kind: args.feedback, note: args.note, homeDir });
   if (about) return recallAbout({ cwd, userDataDir, about, tokenCap, homeDir, all });
   if (query) return recallQuery({ cwd, userDataDir, query, tokenCap, homeDir, all });
   return recallIndex({ cwd, userDataDir, tokenCap, homeDir, all });
@@ -450,7 +478,7 @@ function deleteFact({ dir, file }) {
 
 module.exports = {
   TYPES, remember, recall, listAll, deleteFact,
-  projectMemoryDir, globalMemoryDir, claudeMemoryDir,
+  projectMemoryDir, memoryProjectDir, globalMemoryDir, claudeMemoryDir,
   // exported for tests
   slugify, shortName, weight, bm25, parseFrontmatter, toFrontmatter, listFacts, rebuildIndex, resolveAbout,
 };

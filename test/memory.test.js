@@ -14,10 +14,15 @@ function tmpDir(name) {
   madeDirs.push(dir);
   return dir;
 }
+function tmpProj() {
+  const dir = tmpDir('proj');
+  fs.mkdirSync(path.join(dir, '.git'));
+  return dir;
+}
 test.after(() => { for (const d of madeDirs) fs.rmSync(d, { recursive: true, force: true }); });
 
 test('remember saves a fact with frontmatter, and rebuilds the index', () => {
-  const cwd = tmpDir('proj');
+  const cwd = tmpProj();
   const userDataDir = tmpDir('user');
   const r = memory.remember({ cwd, userDataDir, text: 'Ship on dev-<version>, fast-forward main at release', type: 'project' });
   assert.equal(r.updated, false);
@@ -34,7 +39,7 @@ test('remember saves a fact with frontmatter, and rebuilds the index', () => {
 });
 
 test('remember with --type user / --global saves to Operant userData, not the project', () => {
-  const cwd = tmpDir('proj');
+  const cwd = tmpProj();
   const userDataDir = tmpDir('user');
   memory.remember({ cwd, userDataDir, text: 'Prefers plain commit messages, no AI attribution', type: 'user' });
   assert.equal(memory.listFacts(memory.projectMemoryDir(cwd)).length, 0);
@@ -45,7 +50,7 @@ test('remember with --type user / --global saves to Operant userData, not the pr
 });
 
 test('remember dedupes: a matching name or description updates instead of duplicating', () => {
-  const cwd = tmpDir('proj');
+  const cwd = tmpProj();
   const userDataDir = tmpDir('user');
   const dir = memory.projectMemoryDir(cwd);
 
@@ -65,7 +70,7 @@ test('remember dedupes: a matching name or description updates instead of duplic
 });
 
 test('recall with no query returns the index; a query returns full matching facts', () => {
-  const cwd = tmpDir('proj');
+  const cwd = tmpProj();
   const userDataDir = tmpDir('user');
   memory.remember({ cwd, userDataDir, text: 'The build lives in build/ and is gitignored' });
   memory.remember({ cwd, userDataDir, text: 'Release notes go at the top of RELEASE_NOTES.md' });
@@ -85,7 +90,7 @@ test('recall with no query returns the index; a query returns full matching fact
 });
 
 test('recall caps output and reports how many more matched', () => {
-  const cwd = tmpDir('proj');
+  const cwd = tmpProj();
   const userDataDir = tmpDir('user');
   for (let i = 0; i < 40; i++) {
     memory.remember({ cwd, userDataDir, text: `Fact number ${i} about the widget subsystem and its quirks and history` });
@@ -98,7 +103,7 @@ test('recall caps output and reports how many more matched', () => {
 });
 
 test('remember --about links a fact to files/symbols, and recall --about finds it', () => {
-  const cwd = tmpDir('proj'); // no .codegraph/ here, so about entries are kept as-is
+  const cwd = tmpProj(); // no .codegraph/ here, so about entries are kept as-is
   const userDataDir = tmpDir('user');
   memory.remember({ cwd, userDataDir, text: 'recall() caps output around 2k tokens', about: ['memory.js', 'recall'] });
   memory.remember({ cwd, userDataDir, text: 'unrelated fact with no links' });
@@ -117,7 +122,7 @@ test('remember --about links a fact to files/symbols, and recall --about finds i
 test("recall folds in the main agent's own memory, read-only", () => {
   // A fake home directory, never the user's real ~/.claude.
   const homeDir = tmpDir('home');
-  const cwd = tmpDir('proj');
+  const cwd = tmpProj();
   const userDataDir = tmpDir('user');
   const claudeDir = memory.claudeMemoryDir(cwd, homeDir);
   fs.mkdirSync(claudeDir, { recursive: true });
@@ -134,7 +139,7 @@ test("recall folds in the main agent's own memory, read-only", () => {
 });
 
 test('deleteFact removes the file and rebuilds the index', () => {
-  const cwd = tmpDir('proj');
+  const cwd = tmpProj();
   const userDataDir = tmpDir('user');
   const f = memory.remember({ cwd, userDataDir, text: 'Temporary fact to delete' });
   const dir = memory.projectMemoryDir(cwd);
@@ -154,7 +159,7 @@ function patch(cwd, id, edit) {
 }
 
 test('a fact written before item 58 (no new fields) is still recalled', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   const dir = memory.projectMemoryDir(cwd);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'old.md'), '---\nname: "Old fact"\ndescription: "the deploy uses rsync"\ntype: "project"\n---\n\nthe deploy uses rsync\n');
@@ -165,7 +170,7 @@ test('a fact written before item 58 (no new fields) is still recalled', () => {
 });
 
 test('remember writes confidence, dates, counters and aboutSig', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   fs.writeFileSync(path.join(cwd, 'a.js'), 'one');
   memory.remember({ cwd, userDataDir, text: 'a.js does one thing', about: ['a.js'], confidence: 'verified' });
   const [f] = facts(cwd, userDataDir);
@@ -176,7 +181,7 @@ test('remember writes confidence, dates, counters and aboutSig', () => {
 });
 
 test('BM25 ranks the relevant fact first', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   memory.remember({ cwd, userDataDir, text: 'The build server caches nothing' });
   memory.remember({ cwd, userDataDir, text: 'Database migrations run through flyway migrations only, flyway is required' });
   memory.remember({ cwd, userDataDir, text: 'Logs rotate daily' });
@@ -185,7 +190,7 @@ test('BM25 ranks the relevant fact first', () => {
 });
 
 test('usefulness and decay change the order', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   const a = memory.remember({ cwd, userDataDir, text: 'Cache layer uses redis alpha' });
   const b = memory.remember({ cwd, userDataDir, text: 'Cache layer uses redis beta' });
   const first = () => memory.recall({ cwd, userDataDir, query: 'cache redis' }).text.split('\n')[0];
@@ -202,7 +207,7 @@ test('usefulness and decay change the order', () => {
 });
 
 test('an about file that changed or vanished shows a stale marker and ranks lower', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   fs.writeFileSync(path.join(cwd, 'a.js'), 'one');
   memory.remember({ cwd, userDataDir, text: 'Widget rendering goes through a.js', about: ['a.js'] });
   memory.remember({ cwd, userDataDir, text: 'Widget rendering is cached elsewhere' });
@@ -217,7 +222,7 @@ test('an about file that changed or vanished shows a stale marker and ranks lowe
 });
 
 test('a superseded fact is hidden unless --all', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   const old = memory.remember({ cwd, userDataDir, text: 'Deploys go out through ftp' });
   memory.remember({ cwd, userDataDir, text: 'Deploys go out through rsync', supersedes: old.id });
   const r = memory.recall({ cwd, userDataDir, query: 'deploys' });
@@ -228,7 +233,7 @@ test('a superseded fact is hidden unless --all', () => {
 });
 
 test('used and wrong update counters; repeated wrong marks the fact stale', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   const { id } = memory.remember({ cwd, userDataDir, text: 'Tabs are four wide' });
   memory.recall({ cwd, userDataDir, query: 'tabs', feedback: 'used', id });
   assert.equal(facts(cwd, userDataDir)[0].uses, 1);
@@ -241,7 +246,7 @@ test('used and wrong update counters; repeated wrong marks the fact stale', () =
 });
 
 test('recall increments recalls and lastUsed, and logs the injected ids', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   const { id } = memory.remember({ cwd, userDataDir, text: 'Ports start at 4100' });
   memory.recall({ cwd, userDataDir, query: 'ports' });
   memory.recall({ cwd, userDataDir, query: 'ports' });
@@ -258,7 +263,7 @@ test('recall increments recalls and lastUsed, and logs the injected ids', () => 
 });
 
 test('recall and used leave fact files byte-identical; counters live in the sidecar', () => {
-  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const cwd = tmpProj(), userDataDir = tmpDir('user');
   const { id, file, dir } = memory.remember({ cwd, userDataDir, text: 'Lint runs before tests' });
   const before = fs.readFileSync(path.join(dir, file));
   memory.recall({ cwd, userDataDir, query: 'lint' });
@@ -270,4 +275,34 @@ test('recall and used leave fact files byte-identical; counters live in the side
   // A corrupt sidecar is tolerated.
   fs.writeFileSync(path.join(userDataDir, 'memory-stats.json'), '{nope');
   assert.equal(memory.recall({ cwd, userDataDir, query: 'lint' }).total, 1);
+});
+
+test('memoryProjectDir: only a git repo or a .operant folder is a project', () => {
+  const homeDir = tmpDir('home');
+  assert.equal(memory.memoryProjectDir(homeDir, { homeDir }), null);
+  const plain = path.join(homeDir, 'notes');
+  fs.mkdirSync(plain);
+  assert.equal(memory.memoryProjectDir(plain, { homeDir }), null);
+  const repo = path.join(homeDir, 'repo');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'src', 'deep'), { recursive: true });
+  assert.equal(memory.memoryProjectDir(path.join(repo, 'src', 'deep'), { homeDir }), repo);
+  const op = path.join(homeDir, 'op');
+  fs.mkdirSync(path.join(op, '.operant'), { recursive: true });
+  assert.equal(memory.memoryProjectDir(op, { homeDir }), op);
+  assert.equal(memory.memoryProjectDir(path.parse(homeDir).root, { homeDir }), null);
+});
+
+test('remember outside a project saves to global memory and says so; recall still reads old home facts', () => {
+  const homeDir = tmpDir('home'), userDataDir = tmpDir('user');
+  const r = memory.remember({ cwd: homeDir, homeDir, userDataDir, text: 'A fact said from the home folder' });
+  assert.equal(r.dir, memory.globalMemoryDir(userDataDir));
+  assert.match(r.note, /saved to your personal memory \(.* isn't a project\)/);
+  assert.equal(fs.existsSync(path.join(homeDir, '.operant')), false);
+  const old = memory.projectMemoryDir(homeDir);
+  fs.mkdirSync(old, { recursive: true });
+  fs.writeFileSync(path.join(old, 'legacy.md'), ['---', 'name: legacy', 'description: Legacy home fact', 'type: project', '---', 'Legacy home fact', ''].join(String.fromCharCode(10)));
+  const idx = memory.recall({ cwd: homeDir, homeDir, userDataDir });
+  assert.match(idx.text, /Legacy home fact/);
+  assert.match(idx.text, /home folder/);
 });

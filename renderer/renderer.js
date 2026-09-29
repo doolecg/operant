@@ -4757,7 +4757,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!args.text) throw new Error('text required');
         const r = await operant.memory('remember', { cwd: projectDir(self?.cwd || lastCwd), text: args.text, type: args.type, global: !!args.global, confidence: args.confidence, supersedes: args.supersedes, about: args.about ? String(args.about).split(',').map(s => s.trim()).filter(Boolean) : [] });
         if (!r.ok) throw new Error(r.error);
-        return r.result;
+        return r.result.note ? { ...r.result, type: r.result.note } : r.result;
       }
       case 'recall': {
         const r = await operant.memory('recall', { cwd: projectDir(self?.cwd || lastCwd), query: args.query, about: args.about, all: !!args.all, feedback: args.feedback, id: args.id, note: args.note });
