@@ -1203,7 +1203,7 @@
     $('#board-badge').textContent = open > 99 ? '99+' : open || '';
     $('#board-badge').classList.toggle('hidden', !open);
     if (openPanel() !== 'board') return;
-    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['done', 'Done']];
+    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['cancelled', 'Closed'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
       return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text" title="${esc(t.text)}">${esc(taskTldr(t))}</span>`
@@ -4618,6 +4618,14 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           ...(w.runaway ? { runaway: w.runaway.reason } : {}),
           ...(w.waitingPrompt ? { waiting: true } : {}),
         }));
+      // `operant ask` from a worker the Operant Terminal started: the question shows in that project's Terminal and waits
+      // for your answer there. Anyone else (or no Terminal open) -> { dialog: true }, and main shows its dialog.
+      case 'ask': {
+        const t = self?.tier ? openTaskOf(self) : null;
+        const ot = t?.source === 'terminal' && [...wins.values()].find(x => x.kind === 'operant' && x.alive && x.cwd === projectDir(t.cwd || self.cwd || lastCwd));
+        if (!ot?.ui?.ask) return { dialog: true };
+        return { answer: await ot.ui.ask({ taskId: t.id, tile: self.id, question: String(args.question || ''), detail: args.detail ? String(args.detail) : '', options: Array.isArray(args.options) ? args.options.map(String) : [] }) };
+      }
       case 'stop': {
         const w = needTile(args.id);
         const how = stopTile(w);
@@ -4944,6 +4952,12 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           else escalateTask(t, `rejected twice: ${oneLine(args.note)}`);
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
+        else if (args.sub === 'cancel') {
+          // Closed by you, with or without a reason: its worker stops and its tile closes; never retried, not an outcome.
+          Board.cancel(t, args.note);
+          const w = wins.get(t.owner);
+          if (w?.alive && w.tier && !board.tasks.some(x => x !== t && x.owner === w.id && Board.isOpen(x))) { t.free = !!w.tok?.free; closeWin(w); }
+        }
         else throw new Error(`unknown task command "${args.sub}"`);
         boardChanged();
         return { id: t.id, status: t.status, note: t.note, sub: args.sub };

@@ -3,7 +3,7 @@
 // handback: the task waits in 'review' until the lead approves it. A failure or a rejection gets one
 // retry in the same tile, then the task moves one tier up (as far as the top tier allowed) or fails.
 // 'verifying': Operant is running the project's checks before the task reaches review.
-const STATUSES = ['todo', 'doing', 'verifying', 'review', 'done', 'failed', 'blocked'];
+const STATUSES = ['todo', 'doing', 'verifying', 'review', 'done', 'failed', 'blocked', 'cancelled'];
 const isOpen = t => t.status === 'todo' || t.status === 'doing';
 
 // A worker reports done, blocked or failed. Done waits for review.
@@ -17,6 +17,15 @@ function handback(task, status, note) {
 function approve(task) {
   if (task.status !== 'review') throw new Error(`task ${task.id} is ${task.status}, not waiting for review`);
   task.status = 'done';
+  return task;
+}
+
+// You closed the task (the Terminal's Close / Close with reason): it ends here, is never retried or moved up, and is not
+// a model failure. Anything not already finished can be closed.
+function cancel(task, reason) {
+  if (task.status === 'done' || task.status === 'cancelled') throw new Error(`task ${task.id} is already ${task.status}`);
+  task.status = 'cancelled';
+  task.note = reason ? `Closed: ${String(reason).trim()}` : 'Closed';
   return task;
 }
 
@@ -84,6 +93,6 @@ function unreportedChange(before, after) {
   return { changed: true, note: `The worker made changes but didn't report; Operant found: ${found}` };
 }
 
-const api = { unreportedChange, STATUSES, isOpen, handback, approve, reject, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
+const api = { unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
 })();

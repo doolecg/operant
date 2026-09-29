@@ -85,7 +85,7 @@ const OperantTerminal = (() => {
   }
   // Board status -> [label, look].
   const STATUS = { todo: ['Queued', 'wait'], doing: ['Working', 'run'], verifying: ['Running checks', 'run'], review: ['Ready for review', 'ok'],
-    done: ['Done', 'ok'], failed: ['Failed', 'bad'], blocked: ['Blocked', 'bad'],
+    done: ['Done', 'ok'], failed: ['Failed', 'bad'], blocked: ['Blocked', 'bad'], cancelled: ['Closed', 'wait'],
     queued: ['Queued: waiting for a free worker', 'wait'], error: ['Not started', 'bad'] };
   const statusOf = t => STATUS[t?.status] || ['Not on the board', 'wait'];
 
@@ -162,7 +162,7 @@ const OperantTerminal = (() => {
   // Open = a live worker is on it; anything else gets a new task.
   const LIVE = ['todo', 'doing', 'verifying'];
   const isLive = (status, tileAlive) => !!tileAlive && LIVE.includes(status);
-  const SETTLED = ['done', 'failed', 'blocked', 'error'];
+  const SETTLED = ['done', 'failed', 'blocked', 'cancelled', 'error'];
   const isSettled = (status, error) => !!error || SETTLED.includes(status);
   // The follow-up target offered by default: the last task still running or waiting, else a new request.
   function defaultTarget(items) {
@@ -206,7 +206,7 @@ const OperantTerminal = (() => {
     const $ = s => el.querySelector(s);
     const log = $('.ot-log'), box = $('.ot-box textarea'), status = $('.ot-status'), autoBtn = $('[data-v="auto"]');
     const st = { review: null, question: null, refining: null, hist: [], histIdx: 0, draft: '', queue: [], pumping: false, restored: false, latest: null, picked: false };
-    const cards = new Map(); // requestId:idx -> { entry, node, input, usd, costKey, html, task }
+    const cards = new Map(); // requestId:idx -> { entry, node, input, usd, costKey, html, task, ask }
     const reqs = new Map(); // requestId -> { refiner, foot, summarized }
     const target = $('.ot-target select'), targetRow = $('.ot-target');
     let statusTimer = null;
@@ -275,7 +275,7 @@ const OperantTerminal = (() => {
           }
         }
       }
-      if ((v.status === 'done' || v.status === 'failed') && (c.usd !== undefined || !v.total || v.free)) {
+      if ((v.status === 'done' || v.status === 'failed' || v.status === 'cancelled') && (c.usd !== undefined || !v.total || v.free)) {
         const { u: _u, ...rest } = v;
         e.final = { ...rest, ms: e.startedAt ? Date.now() - e.startedAt : null };
         persist(e);
@@ -287,15 +287,27 @@ const OperantTerminal = (() => {
       const check = v.check ? `<span class="${v.check.ok ? 'ot-ok' : 'ot-bad'}" title="${esc(v.check.summary || '')}">${v.check.ok ? '✓' : '✗'} ${esc(v.check.command)}</span>` : '';
       const tile = tileOf(c), reviewing = !e.final && (t?.status === 'review' || t?.status === 'blocked');
       const facts = [check, v.diffStat && esc(v.diffStat), tokenLine(v) && esc(tokenLine(v)), v.ms != null && v.status !== 'queued' && esc(fmtMs(v.ms))].filter(Boolean).join(' · ');
-      const inp = c.input;
+      const inp = c.input, open = !e.final && !e.error && t && !isSettled(v.status) && t.status !== 'review', ask = c.ask;
+      const INPUT = { msg: 'Message for the worker', reject: 'Why? The worker is told this', close: 'Why are you closing it? Saved on the task', reply: 'Your answer; the worker is told this' };
+      const askHtml = ask ? `<div class="ot-ask"><div class="ot-ask-q"><b>The worker asks:</b> ${renderText(ask.question)}</div>${ask.detail ? `<div class="ot-dim">${renderText(ask.detail)}</div>` : ''}
+        <div class="ot-card-acts">${ask.options.map((o, i) => `<button class="btn${i ? '' : ' primary'}" data-c="ask-opt" data-i="${i}">${esc(o)}</button>`).join('')}<button class="btn" data-c="ask-type">Type an answer</button></div></div>` : '';
+      const acts = [
+        reviewing ? '<button class="btn primary" data-c="approve">Approve</button><button class="btn" data-c="reject">Reject</button>' : '',
+        t?.status === 'blocked' && !e.final ? '<button class="btn" data-c="reply">Reply</button>' : '',
+        tile != null ? '<button class="btn" data-c="open">Open tile</button>' : '',
+        tile != null && t && !e.final ? '<button class="btn" data-c="msg">Message worker</button>' : '',
+        open && tile != null ? '<button class="btn" data-c="stop" title="Interrupt the worker&#39;s current step (like Esc); the task stays open">Stop</button>' : '',
+        (t || e.queued) && !e.final && !e.error && !['done', 'cancelled'].includes(t?.status) ? '<button class="btn" data-c="close" title="Stop the worker and close the task">Close</button><button class="btn" data-c="close-why">Close with reason</button>' : '',
+      ].join('');
       return `<div class="ot-card-head">${host.tierDot(e.tier)}<b class="ot-card-title">${esc(`#${e.idx + 1} ${e.title || 'Task'}`)}</b><span class="ot-pill ${look}">${esc(label)}</span></div>
         ${pick ? `<div class="ot-dim">${esc(pick)}${e.tier ? ' · ' + esc(e.tier) : ''}${e.boardId != null ? ' · task #' + e.boardId : ''}</div>` : ''}
         ${e.why ? `<div class="ot-why">${esc(e.why)}</div>` : ''}
         ${e.error ? `<div class="ot-bad">${esc(e.error)}</div>` : ''}
         ${v.note ? `<div class="ot-note">${renderText(v.note)}</div>` : ''}
         ${facts ? `<div class="ot-dim">${facts}</div>` : ''}
-        <div class="ot-card-acts">${reviewing ? '<button class="btn primary" data-c="approve">Approve</button><button class="btn" data-c="reject">Reject</button>' : ''}${tile != null ? '<button class="btn" data-c="open">Open tile</button>' : ''}${tile != null && t && !e.final ? '<button class="btn" data-c="msg">Message worker</button>' : ''}</div>
-        ${inp ? `<div class="ot-reject"><input class="ot-reject-note" type="text" placeholder="${inp.kind === 'msg' ? 'Message for the worker' : 'Why? The worker is told this'}" value="${esc(inp.text)}"><button class="btn primary" data-c="input-send">Send</button><button class="btn" data-c="input-cancel">Cancel</button></div>` : ''}`;
+        ${askHtml}
+        <div class="ot-card-acts">${acts}</div>
+        ${inp ? `<div class="ot-reject"><input class="ot-reject-note" type="text" placeholder="${INPUT[inp.kind] || ''}" value="${esc(inp.text)}"><button class="btn primary" data-c="input-send">${inp.kind === 'close' ? 'Close task' : 'Send'}</button><button class="btn" data-c="input-cancel">Cancel</button></div>` : ''}`;
     }
     function card(entry) {
       const key = `${entry.requestId}:${entry.idx}`, old = cards.get(key);
@@ -306,7 +318,11 @@ const OperantTerminal = (() => {
       cards.set(key, c);
       st.latest = entry.requestId;
       const r = req(entry.requestId);
-      if (!r.foot) { r.foot = document.createElement('div'); r.foot.className = 'ot-foot ot-dim'; }
+      if (!r.foot) {
+        r.foot = document.createElement('div'); r.foot.className = 'ot-foot ot-dim';
+        r.foot.innerHTML = '<span class="ot-foot-text"></span><button class="btn ot-stop-all hidden" title="Interrupt every running task of this request">Stop all</button>';
+        r.foot.querySelector('.ot-stop-all').addEventListener('click', () => stopAll(entry.requestId).catch(err => host.toast(`<b>${esc(err.message || err)}</b>`)));
+      }
       log.appendChild(r.foot); // the request's footer stays under its newest card
       return c.node;
     }
@@ -335,7 +351,9 @@ const OperantTerminal = (() => {
         if (!r.foot || !cs.length) continue;
         const paidCards = cs.map(view).filter(v => v.paid);
         const text = requestFooter({ refiner: r.refiner, paid: paidCards.reduce((n, v) => n + v.paid, 0), usd: paidCards.reduce((n, v) => n + (v.usd || 0), 0), unknown: paidCards.filter(v => v.usd == null).length });
-        if (r.foot.textContent !== text) r.foot.textContent = text;
+        const ft = r.foot.querySelector('.ot-foot-text');
+        if (ft.textContent !== text) ft.textContent = text;
+        r.foot.querySelector('.ot-stop-all').classList.toggle('hidden', cs.filter(c => !isSettled(view(c).status)).length < 2);
       }
       drawTarget();
       if (st.restored) checkSummaries();
@@ -353,7 +371,63 @@ const OperantTerminal = (() => {
         host.notifyAway(`Operant: ${vs.filter(v => v.status === 'done').length} of ${cs.length} tasks done`, clip(text, 200));
       }
     }
-    function refreshCards() { pump(); paint(); }
+    function refreshCards() { dropStaleAsks(); pump(); paint(); }
+
+    // ---- stopping, closing and answering (item 83)
+    const stopCard = async c => { const tile = tileOf(c); if (tile != null) await host.control('stop', { id: tile }); };
+    // Close = the worker stops, its tile closes and the task ends as Closed (with your reason, if any); a queued one never starts.
+    async function closeCard(c, reason) {
+      if (c.ask) answerAsk(c, null);
+      const qi = st.queue.indexOf(c);
+      if (qi >= 0 || (c.entry.queued && c.entry.boardId == null)) {
+        if (qi >= 0) st.queue.splice(qi, 1);
+        Object.assign(c.entry, { queued: false, error: reason ? `Closed before it started: ${reason}` : 'Closed before it started' });
+        persist(c.entry); c.html = null; return;
+      }
+      const t = taskOf(c.entry);
+      if (t) await host.control('task', { sub: 'cancel', id: t.id, ...(reason ? { note: reason } : {}) });
+    }
+    // Your answer: to the worker's open question if it has one; a live worker gets it as a message; else a follow-up task.
+    async function replyCard(c, text) {
+      if (c.ask) return answerAsk(c, text);
+      if (tileOf(c) != null) {
+        await host.message(tileOf(c), flatText(text));
+        line(save({ role: 'operant', kind: 'info', requestId: c.entry.requestId, text: `Answer sent to #${c.entry.idx + 1}.` }));
+      } else await followUp(c, text);
+    }
+    function answerAsk(c, answer) {
+      const a = c.ask; if (!a) return;
+      c.ask = null; c.html = null;
+      a.resolve(answer ?? null);
+      line(save({ role: 'operant', kind: 'info', requestId: c.entry.requestId, text: answer == null ? `#${c.entry.idx + 1}'s question was dismissed.` : `Answered #${c.entry.idx + 1}: ${clip(answer, 200)}` }));
+      paint();
+    }
+    // A question whose worker is gone resolves as dismissed.
+    function dropStaleAsks() { for (const c of cards.values()) if (c.ask && !host.tileAlive(c.ask.tile)) answerAsk(c, null); }
+    // `operant ask` from one of this Terminal's workers: its card shows the question; resolves with your answer (null = dismissed).
+    function ask({ taskId, tile, question, detail, options }) {
+      const c = [...cards.values()].find(x => x.entry.boardId === taskId);
+      if (!c) return Promise.resolve(null);
+      if (c.ask) c.ask.resolve(null);
+      return new Promise(resolve => {
+        c.ask = { tile, question, detail: detail || '', options: options?.length ? options : ['Yes', 'No'], resolve };
+        c.html = null;
+        line(save({ role: 'operant', kind: 'question', requestId: c.entry.requestId, text: `#${c.entry.idx + 1} ${clip(c.entry.title, 60)} asks: ${question}` }));
+        paint();
+        c.node.scrollIntoView({ block: 'nearest' });
+        st.picked = true; if ([...target.options].some(o => o.value === c.key)) target.value = c.key; // what you type next answers it
+        host.notifyAway('Operant: a worker has a question', clip(question, 200));
+      });
+    }
+    async function stopAll(rid) {
+      for (const c of cardsOf(rid)) {
+        const qi = st.queue.indexOf(c);
+        if (qi >= 0) { st.queue.splice(qi, 1); Object.assign(c.entry, { queued: false, error: 'Stopped before it started' }); persist(c.entry); c.html = null; }
+        else if (!isSettled(view(c).status)) await stopCard(c).catch(() => {});
+      }
+      line(save({ role: 'operant', kind: 'info', requestId: rid, text: 'Stopped every running task of this request. Each stays open: message it, or close it.' }));
+      paint();
+    }
     log.addEventListener('click', async e => {
       const b = e.target.closest('[data-c]');
       const node = b?.closest('.ot-card'), c = node && [...cards.values()].find(x => x.node === node);
@@ -362,7 +436,13 @@ const OperantTerminal = (() => {
       try {
         if (what === 'open') host.focusTile(tileOf(c));
         else if (what === 'approve' && t) await host.control('task', { sub: 'approve', id: t.id });
-        else if (what === 'reject' || what === 'msg') { c.input = { kind: what, text: '' }; c.node.innerHTML = cardHtml(c); c.node.querySelector('.ot-reject-note').focus(); return; }
+        else if (what === 'stop') await stopCard(c);
+        else if (what === 'close') await closeCard(c, '');
+        else if (what === 'ask-opt' && c.ask) answerAsk(c, c.ask.options[Number(b.dataset.i)]);
+        else if (['reject', 'msg', 'reply', 'ask-type', 'close-why'].includes(what)) {
+          c.input = { kind: what === 'ask-type' ? 'reply' : what === 'close-why' ? 'close' : what, text: '' };
+          c.node.innerHTML = cardHtml(c); c.node.querySelector('.ot-reject-note').focus(); return;
+        }
         else if (what === 'input-cancel') { c.input = null; }
         else if (what === 'input-send') {
           const note = c.node.querySelector('.ot-reject-note').value.trim(), kind = c.input?.kind;
@@ -370,6 +450,8 @@ const OperantTerminal = (() => {
           c.input = null;
           if (kind === 'reject' && t) await host.control('task', { sub: 'reject', id: t.id, note });
           else if (kind === 'msg' && tileOf(c) != null) await host.message(tileOf(c), flatText(note));
+          else if (kind === 'close') await closeCard(c, note);
+          else if (kind === 'reply') await replyCard(c, note);
         }
       } catch (err) { host.toast(`<b>${esc(err.message || err)}</b>`); }
       c.html = null; paint();
@@ -543,6 +625,7 @@ const OperantTerminal = (() => {
       st.question = null;
       const tc = !q && !targetRow.classList.contains('hidden') && target.value !== 'new' ? cards.get(target.value) : null;
       st.picked = false;
+      if (tc?.ask) { answerAsk(tc, text); return; }
       if (tc) { followUp(tc, text); return; }
       refine(q ? `${q.original}\n\nYou asked: ${q.question}\nMy answer: ${text}` : text);
     }
@@ -605,7 +688,7 @@ const OperantTerminal = (() => {
     const pulse = setInterval(() => { if (w.alive === false) return clearInterval(pulse); if (st.restored && (st.queue.length || [...cards.values()].some(c => !isSettled(view(c).status)))) refreshCards(); }, 5000);
     autosize();
 
-    return { refresh: refreshCards, focus: () => box.focus({ preventScroll: true }), drawAuto };
+    return { refresh: refreshCards, focus: () => box.focus({ preventScroll: true }), drawAuto, ask };
   }
 
   const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, bundleTasks, masterPrompt, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };

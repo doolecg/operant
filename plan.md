@@ -348,6 +348,22 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       launches, `operant agent` without a tier, and the Terminal's review (shows the mode). A tier the mode rules out
       is skipped, not faked; if nothing is left (e.g. OpenCode only but it isn't installed) the Terminal says so.
       The refiner's own model stays its own setting (free OpenCode, local, or off), with a note when it differs.
+**Terminal parity with Claude Code (asked 29 Sept, after 2.2.0; on dev-2.3.0)**
+- [x] Handed-out work goes to one master worker per CLI (Claude, OpenCode) that runs the parts as parallel
+      subagents up to the subagent limit; worker notes start with a TL;DR.
+- [ ] **83. Questions and closing:** a Terminal worker's `operant ask` shows in the Terminal as a question card
+      (option buttons, or type an answer), not a system dialog; a blocked worker's note is answerable the same way.
+      Each card: Stop (stops the worker, task stays open), Close (stops it and closes the task) and Close with
+      reason (the reason is saved on the board task, shown on the card, and not counted as a model failure);
+      Stop all for a request.
+- [ ] **84. Slash commands:** `/` opens a menu (arrows, Tab completes, Enter runs): /help /clear /stop /close
+      /retry /approve /reject /tasks /cost /status /tier <name> /auto /original /diff /settings; `#n` picks a card.
+- [ ] **85. Claude-style input:** `!cmd` runs a shell command in a tile and shows the result card; `#text` saves a
+      project memory; `@` completes file paths; Ctrl+R searches history; Esc Esc clears the box; pasted images are
+      saved to the project's temp folder and passed to the worker as file paths.
+- [ ] **86. Live worker activity:** each running card has a collapsible feed of what its worker is doing (tool
+      calls, last message, subagents), from the same sources the tiles use.
+
 - [ ] **80. Local Gemma (was item 64; ask first, ~3 GB):** one-click install of llama.cpp `llama-server` + a
       small Gemma build as the refiner, only after an explicit yes; until then OpenCode's free model or a URL the
       user supplies.

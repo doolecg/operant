@@ -996,7 +996,11 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 .ot-target { flex: none; padding: 0 12px 4px; }
 .ot-target.hidden { display: none; }
 .ot-target select { max-width: 100%; padding: 2px 6px; border-radius: 8px; border: 1px solid rgba(var(--ink-rgb), .15); background: rgba(var(--bar-rgb), .7); color: var(--text); font: inherit; font-size: 12px; }
-.ot-foot { padding: 0 4px; font-size: 12px; }
+.ot-foot { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 12px; }
+.ot-foot-text { flex: 1; min-width: 0; }
+.ot-stop-all.hidden { display: none; }
+.ot-ask { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-tint); }
+.ot-ask-q b { color: var(--accent); margin-right: 4px; }
 .ot-review:focus { outline: none; }
 .ot-status { flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 14px; color: var(--accent-soft); font-size: 12px; }
 .ot-status.hidden { display: none; }

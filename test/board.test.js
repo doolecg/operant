@@ -86,3 +86,13 @@ test('escalation only reaches tiers the project mode allows', () => {
   assert.equal(b.escalation(mk({ tier: 'medium' }), claudeOnly, 'max'), null);
   assert.equal(b.escalation(mk({ tier: 'xsmall' }), ['xsmall'], 'max'), null);
 });
+
+test('closing a task ends it with your reason, never retried or open again', () => {
+  const t = b.cancel(mk(), 'not needed any more');
+  assert.equal(t.status, 'cancelled');
+  assert.equal(t.note, 'Closed: not needed any more');
+  assert.equal(b.isOpen(t), false);
+  assert.equal(b.cancel(mk({ status: 'review' })).note, 'Closed');
+  assert.throws(() => b.cancel(mk({ status: 'done' })), /already done/);
+  assert.throws(() => b.cancel(t), /already cancelled/);
+});
