@@ -169,3 +169,31 @@ team mode (33). In order of how much each should save:
       brief tells agents to read the index at start and to save durable facts they learn; the main agent's own
       memory (Claude: `~/.claude/projects/<project>/memory/`) is included read-only so other agents see it too.
       A Memory page in Settings lists, edits and deletes facts.
+
+## 1.19: token-saving Operant skill, both CLIs' tiers, Claude↔OpenCode messaging (asked 29 Sept)
+
+Clean restart; code comes from the local `salvage/skill-redesign` branch where it fits, reviewed first. One item per
+commit, each tested and checked before the next. Full plan with research: ~/.claude/plans/federated-painting-summit.md.
+
+- [ ] **46. Correctness fixes:** the skill's frontmatter is valid YAML (Claude only ever saw "Operant control"),
+      the long-command reroute never auto-approves and is on by default, `operant test/build` wait past 20 s.
+- [ ] **47. CLI reliability:** no 5-minute limit on plan/ask/wait (node:http, not fetch), `--cwd` defaults to the
+      shell's folder, `--options` takes commas (PowerShell), `run` names the next step, aliases and closest-match
+      errors, `operant help <topic>`.
+- [ ] **48. Skill per session:** an `agent-plugin/` loaded with `--plugin-dir` (Claude) and `skills.paths`
+      (OpenCode); nothing written to the user's home, old copies removed.
+- [ ] **49. Live context:** `operant prime` injected at session start and after every compact (SessionStart hook,
+      OpenCode plugin), a short brief for subagents, a ~600-byte launch brief.
+- [ ] **50. Skill body and worker discipline:** a lean skill; workers hand back `task done --status
+      done|blocked|failed --note` (files, one line each; open issues; ≤100 words).
+- [ ] **51. Tiers across Claude and OpenCode by availability:** Haiku/Sonnet/Opus plus OpenCode's free and paid
+      tiers, fallback when a CLI or model is missing, OpenCode tier subagents, a tier suggested when none is given.
+- [ ] **52. Review, escalation, budgets:** results wait for approval; one retry then one tier up; per-tier token
+      budgets stop and escalate a worker.
+- [ ] **53. Messaging (opt-in):** `operant msg <tile> "<text>"` between any agents, Claude and OpenCode included.
+- [ ] **54. Token and cost tracking:** OpenCode history from opencode.db, usage by model/tier/task/project, prices
+      with source (unknown stays unknown), cache hit rate.
+- [ ] **55. Evals, docs, release notes:** back-to-back before/after evals when usage allows.
+
+Later: 2.0 core (providers, memory confidence/staleness, adaptive routing, benchmarks, optional local model) and
+operations (update rollback, validated backups/restore, config migrations).
