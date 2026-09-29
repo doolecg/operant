@@ -306,13 +306,13 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
 - Accounting: the refiner's tokens are recorded as an orchestration event with the requestId; the card footer shows
   "refiner used N tokens; the refined prompt is M tokens shorter" (net figure, only from real counts).
 
-- [~] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
+- [x] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
       `operant terminal`). Looks and behaves like Claude Code: transcript above, a multi-line prompt box below,
       streaming text, collapsible tool/agent cards, slash commands, history with up/down, Esc to interrupt, paste
       images. "Cooler": the Operant themes, live agent cards with their tier dot, tokens and cost as they run, a
       one-line "what Operant decided and why" under each step. The conversation is saved per project
       (userData/terminal/<project>.jsonl, atomic, included in backups) and comes back after a restart.
-- [~] **74. Prompt refiner:** (built: `opencode run -m opencode/big-pickle --format json --pure` in an empty temp dir, ~17 s,
+- [x] **74. Prompt refiner:** (built: `opencode run -m opencode/big-pickle --format json --pure` in an empty temp dir, ~17 s,
       ~14k input tokens of OpenCode's own prompt per call, all free; savings must be shown as paid vs free tokens). Now a lazy `opencode serve` with a lean config: ~4 s, ~3.5k input
       tokens; refiner eval 7/8 (the miss: a high-risk task on the cheapest tier, now always raised a tier). your prompt plus a small project brief (from prime: branch, recent changes, project
       memory, known commands) goes to a refiner model that returns a cleaned, efficient prompt, split into
@@ -323,23 +323,23 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       / llama.cpp OpenAI-compatible URL) when configured; off = pass through unchanged. If the refiner is down, the
       original prompt goes through (graceful degradation). Its tokens are counted as orchestration cost, so the
       terminal can show net savings honestly (spec 19/45).
-- [~] **75. Review before sending:** the refined prompt is shown against your original (what changed and why, the
+- [x] **75. Review before sending:** the refined prompt is shown against your original (what changed and why, the
       task split with each task's agent, model and effort, estimated tokens and cost before/after); Enter sends it, E edits it, O sends your original instead. An
       "auto-send" setting skips the review for trusted projects.
-- [~] **76. Dispatch:** the refiner's pick (agent, model, effort) is checked against the outcome history before it
+- [x] **76. Dispatch:** the refiner's pick (agent, model, effort) is checked against the outcome history before it
       runs: routing keeps it unless the record shows that choice failing for this kind of task (then the cheapest
       proven one), never above the top tier allowed, and never a model that isn't available; the review (75) shows
       the pick and why, and you can change it. Each task then goes to a worker tile on the board,
       or to the project's lead agent when it's one conversational job; independent tasks run in parallel up to the
       worker limit; Claude or OpenCode per the tier. Nothing new about how workers run: board, budgets, stuck
       detection, checks before review all apply.
-- [~] **77. Results back:** each task reports into the terminal as a card: status, the worker's hand-back note,
+- [x] **77. Results back:** each task reports into the terminal as a card: status, the worker's hand-back note,
       files changed, checks and diff size, tokens and cost; approve / reject (with a note) / open the tile /
       message the worker, right in the card. When everything is in, a short summary of what was done and what's
       left, and a notification if you're away.
-- [~] **78. Follow-ups in context:** replying in the terminal continues the same job (a follow-up goes to the worker
+- [x] **78. Follow-ups in context:** replying in the terminal continues the same job (a follow-up goes to the worker
       that did the task, or becomes a new task), without resending the whole history to anyone.
-- [~] **79. Settings (Settings › Terminal):** refiner provider and model, auto-send, max workers per request,
+- [x] **79. Settings (Settings › Terminal):** refiner provider and model, auto-send, max workers per request,
       show savings, where it opens. All real, saved, validated (84B-84E).
 - [x] **82. Per-project agent choice (asked 29 Sept):** each project can be set to Claude and OpenCode (default), Claude
       only, or OpenCode only, from the project's menu in the sidebar and Settings › Operant Terminal. It limits
@@ -351,7 +351,7 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
 - [ ] **80. Local Gemma (was item 64; ask first, ~3 GB):** one-click install of llama.cpp `llama-server` + a
       small Gemma build as the refiner, only after an explicit yes; until then OpenCode's free model or a URL the
       user supplies.
-- [ ] **81. Measure it:** evals for the refiner (does the refined prompt keep success while cutting tokens? net of
+- [x] **81. Measure it:** evals for the refiner (does the refined prompt keep success while cutting tokens? net of
       the refiner's own cost), a live test per project, and the terminal's numbers shown only when measured.
 
 ## Operant 2.0 master spec: everything, and where it stands (mapped 29 Sept)
@@ -609,6 +609,11 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
       conversation;
     - clarification gate (82): the refiner can come back with one question instead of guessing;
     - evals for the refiner (does it keep success while cutting tokens, net of its own cost).
+- Moved from 2.2 to the start of 2.3 (user, 29 Sept: release the Terminal first): the stored decision trace with
+      correlation ids (83), structured routing explanations shared by the CLI and Terminal cards (27/90),
+      deterministic complexity/risk classification alongside the refiner's (78/39), a gross-vs-net savings figure
+      from real comparisons (81), and the local Gemma refiner (item 80, ask first). Known edge: a project opened
+      through a Windows short path (8.3) isn't matched to its per-project settings.
 - 2.3 Measure and decide: versioned local database with migrations and retention (26/84N), token/latency/failure
       events incl. Operant's own overhead (12/52), failure classification (42), provider health with decay (87),
       model profiles per task type and project with uncertainty (88/9), expected-utility routing as a configurable
