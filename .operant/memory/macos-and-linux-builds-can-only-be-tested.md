@@ -1,0 +1,8 @@
+---
+name: "macOS and Linux builds can only be tested"
+description: "macOS and Linux builds can only be tested on GitHub Actions (this machine has no WSL or Docker): push the dev branch and run release.yml by hand for a build-only run (installers as run artifacts, nothing published). Locally, SMOKE_SHELL='C:\\Program Files\\Git\\bin\\bash.exe' node test/smoke.mjs ... runs the sh tile code; Git Bash turns \\ into \\ in its command line, so avoid double backslashes in test args."
+type: "project"
+about: ["test/smoke.mjs", ".github/workflows/release.yml"]
+---
+
+macOS and Linux builds can only be tested on GitHub Actions (this machine has no WSL or Docker): push the dev branch and run release.yml by hand for a build-only run (installers as run artifacts, nothing published). Locally, SMOKE_SHELL='C:\Program Files\Git\bin\bash.exe' node test/smoke.mjs ... runs the sh tile code; Git Bash turns \ into \ in its command line, so avoid double backslashes in test args.
