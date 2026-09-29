@@ -281,6 +281,31 @@ classify -> route -> run -> verify -> report. Built into the existing tiled UI (
 after 2.1 ships; the cleaned prompt is shown for review and Enter sends it (auto-send is a per-project setting).
 What it needs from later milestones is pulled into 2.2: see "Release order (final)" at the end of this file.
 
+**2.2 design (29 Sept): how the Terminal is built**
+- Pieces: `refiner.js` (main: builds the brief, calls a refiner provider, validates its JSON), `terminal-store.js`
+  (main: per-project conversation, userData/terminal/<project-key>.jsonl, atomic, in backups), `renderer/terminal.js`
+  (the tile UI, a new tile kind `operant`, one per project), dispatch and results wiring in renderer.js (board).
+- Refiner providers: `opencode` = `opencode run` headless with the free model, run in an empty temp folder with the
+  brief inside the prompt (so it can't touch the project, and its tools have nothing to act on); `local` = an
+  OpenAI-compatible `/v1/chat/completions` URL (Ollama, LM Studio, llama.cpp); `off` = pass-through. Timeout 60 s,
+  then pass-through with a note.
+- The refiner is given: your prompt, the project brief (branch, changed files, last 5 commits, known test/build
+  commands, top 5 memory facts, redacted), and the real options (each active tier's agent, model, effort, price per
+  million tokens, free or not, and the allowed top tier). It must answer with JSON only:
+  `{ question?: string, summary: string, cleaned: string,
+     tasks: [{ title, prompt, type, complexity: low|medium|high, risk: low|medium|high, files: [],
+               agent, model, effort, tier, why }] }`
+  Validation: unknown agent/model/tier -> replaced by routing's pick with the reason; above the top tier -> capped;
+  more tasks than max workers -> merged or queued; a `question` means ask the user before anything else.
+- IPC: `terminal:refine {project, prompt}` -> `{ requestId, original, refined | null, question?, tasks, brief (token
+  count only), refiner: {provider, model, tokens: {input, output}, ms, usd|null}, error? }`;
+  `terminal:history {project}`, `terminal:append {project, entry}`; dispatch goes through the renderer's existing
+  `agent` control path with `{ agent, model, effort, tier, requestId }`.
+- Correlation: every task and outcome carries `requestId`; the Terminal shows cards by requestId and updates them on
+  board changes (status, hand-back note, checks, diff size, tokens, cost).
+- Accounting: the refiner's tokens are recorded as an orchestration event with the requestId; the card footer shows
+  "refiner used N tokens; the refined prompt is M tokens shorter" (net figure, only from real counts).
+
 - [ ] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
       `operant terminal`). Looks and behaves like Claude Code: transcript above, a multi-line prompt box below,
       streaming text, collapsible tool/agent cards, slash commands, history with up/down, Esc to interrupt, paste
