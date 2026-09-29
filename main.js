@@ -11,6 +11,7 @@ const http = require('http');
 const { spawn, execFile } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { createUpdater, healthState: updateHealthState } = require('./updater');
+const health = require('./health');
 const hub = require('./hub');
 const skillsBackup = require('./backup');
 const stateBackup = require('./state-backup');
@@ -18,6 +19,8 @@ const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
 const { writeFileAtomic } = require('./atomic-write');
 const configMigrate = require('./config-migrate');
+const installState = require('./install-state');
+const { redactText } = require('./redact');
 const { createStuckTracker } = require('./stuck');
 const outcomes = require('./outcomes');
 const { priceOf } = require('./pricing');
@@ -73,7 +76,7 @@ try {
 const LOG_PATH = path.join(app.getPath('userData'), 'operant.log');
 function logLine(msg) {
   try {
-    fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] Operant ${app.getVersion()} ${msg}\n`);
+    fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] Operant ${app.getVersion()} ${redactText(msg)}\n`);
     const st = fs.statSync(LOG_PATH);
     if (st.size > 1 << 20) { // cap ~1MB: keep the newer half
       const buf = fs.readFileSync(LOG_PATH);
@@ -306,7 +309,9 @@ const DEFAULT_CONFIG = {
 
 // Only what the user changed is stored, so new defaults reach existing installs.
 let user = {};
+const configLoad = {}; // what reading config.json came to, for the health view: broken | missing | future | error | migrated (+ from)
 try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')); } catch (e) {
+  if (e.code === 'ENOENT') configLoad.missing = true; else configLoad.broken = true;
   // Keep a config that doesn't parse, so the next save (which writes only what changed) can't lose it.
   if (e.code !== 'ENOENT') try { fs.copyFileSync(CONFIG_PATH, CONFIG_PATH.replace(/\.json$/, '.broken.json')); } catch {}
 } // a BOM from Notepad or PowerShell would fail the parse
@@ -314,6 +319,7 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
 // config.v<from>.json first and the save is atomic, so a crash leaves the old file (migrated again next start) or the new one.
 {
   const m = configMigrate.migrate(user);
+  if (!configLoad.broken && !configLoad.missing) Object.assign(configLoad, m.future ? { future: true, from: m.from } : m.error ? { error: String(m.error.message || m.error) } : m.changed ? { migrated: true, from: m.from } : {});
   if (m.future) console.log(`config.json is version ${m.from}, newer than this Operant (${configMigrate.CURRENT}): used as is`);
   else if (m.error) console.error('config migration failed, config left as is', m.error);
   else if (m.changed) {
@@ -362,6 +368,9 @@ function saveUser() {
 
 // patch: { key: value }; null resets a key to its default.
 ipcMain.handle('config:set', (e, patch) => {
+  // All or nothing: one invalid key rejects the call, the saved config stays as it was and comes back with the errors.
+  const errors = configMigrate.validatePatch(patch, DEFAULT_CONFIG, { current: config });
+  if (errors.length) return { ok: false, errors, config };
   if ('backups' in patch && patch.backups !== null) {
     // Numbers clamped, and a location that can't be written to keeps the old one.
     const r = stateBackup.normalizeSettings(patch.backups, config.backups);
@@ -385,6 +394,14 @@ ipcMain.handle('config:set', (e, patch) => {
   return config;
 });
 ipcMain.handle('config:defaults', () => DEFAULT_CONFIG);
+// Settings' "Restart now" for the few settings read only at startup.
+ipcMain.handle('app:relaunch', async e => {
+  const r = await dialog.showMessageBox(winOf(e), { type: 'question', title: 'Operant', message: 'Restart Operant now?',
+    detail: 'Running terminals end. Your settings are already saved.', buttons: ['Restart', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true });
+  if (r.response !== 0) return false;
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 200);
+  return true;
+});
 // Every Operant window lives in this one process. Each owns its terminals; subagents go to the
 // window whose Claude tile started them, and anything else to the window you used last.
 const windows = new Set();
@@ -1372,7 +1389,14 @@ function startHealthCheck() {
     else if (st === 'offer-rollback') rollbackOffer = hist[hist.length - 1];
   } catch (e) { logLine(`update health check failed: ${e.message || e}`); }
 }
+let launchInfo = null, postRestoreId = '';
+const installStateNow = () => launchInfo;
+ipcMain.handle('app:install-state', installStateNow);
 ipcMain.on('app:ready', () => {
+  if (postRestoreId) {
+    try { stateBackup.recordPostRestore({ userDataDir: app.getPath('userData'), location: bkCfg().location, id: postRestoreId, ok: true }); } catch (e) { logLine(`post-restore status not saved: ${e.message || e}`); }
+    postRestoreId = '';
+  }
   if (!healthPending) return;
   healthPending = false;
   try { updater.history.updateLast(e => { if (e.result === 'installing') e.result = 'healthy'; }); } catch (e) { logLine(`update history not saved: ${e.message || e}`); }
@@ -1595,6 +1619,49 @@ ipcMain.handle('outcome:stats', async () => {
     return outcomes.summarize(kept);
   } catch { return {}; }
 });
+// Health view (health.js): each part of the app with a state, checked from what Operant already knows (no new probes
+// per refresh; CodeGraph's version is remembered for 5 minutes). Cached, re-checked every 5 minutes, and the
+// renderer hears 'health' when a row changes state.
+const fileInfo = f => { try { return { bytes: fs.statSync(f).size }; } catch (e) { return e.code === 'ENOENT' ? { missing: true } : { error: e.code || String(e.message || e) }; } };
+const dirFacts = dir => {
+  try { fs.readdirSync(dir); return { dir, count: memory.listFacts(dir).length }; } catch (e) { return e.code === 'ENOENT' ? { dir, missing: true } : { dir, error: e.code || String(e.message || e) }; }
+};
+const healthCheck = health.createHealth({
+  onChange: h => broadcast('health', h),
+  probes: {
+    app: () => ({ version: app.getVersion(), installState: typeof installStateNow === 'function' ? installStateNow() : undefined }),
+    updates: () => ({ status: updater.status, history: updater.history.read() }),
+    backups: () => {
+      const bk = bkCfg(), s = stateBackup.statusSummary(app.getPath('userData'), bk.location);
+      return { enabled: !!bk.enabled, everyHours: bk.everyHours, last: s.last, validated: s.validated };
+    },
+    config: () => ({ ...configLoad }),
+    agents: () => ({ agents: config.agents, installed: Object.keys(cliInstalled).length ? cliInstalled : null }),
+    models: () => {
+      const base = config.team?.tiers || {}, active = config.teamTiers || {};
+      const names = [...new Set([...Object.keys(active), ...Object.keys(base)])];
+      return { modelsRead: !!ocModels, tiers: names.map(name => {
+        const t = active[name] || base[name], a = config.agents.find(x => x.id === t?.agent);
+        return { name, agent: t?.agent, model: t?.model, active: active[name] || null, installed: cliInstalled[t?.agent], oc: !!a && isOpenCode(a) };
+      }) };
+    },
+    memory: ({ cwd }) => {
+      const root = cwd && memory.memoryProjectDir(cwd);
+      const personal = memory.globalMemoryDir(app.getPath('userData'));
+      return { cwd, project: root ? dirFacts(memory.projectMemoryDir(root)) : null, personal: dirFacts(personal) };
+    },
+    codegraph: async ({ cwd }) => ({ cwd, cli: await codegraphVersion(), indexed: !!cwd && isDir(path.join(cwd, '.codegraph')) }),
+    mcp: ({ cwd }) => ({ servers: Object.keys(agentSetup.getClaudeMcpServers(cwd || '') || {}) }),
+    analytics: () => ({ usage: fileInfo(PROJECTS_DIR), outcomes: fileInfo(OUTCOMES_PATH) }),
+  },
+});
+let healthCwd = '';
+ipcMain.handle('health:get', (_e, opts) => {
+  if (typeof opts?.cwd === 'string') healthCwd = opts.cwd;
+  return healthCheck.get({ force: !!opts?.force, cwd: healthCwd });
+});
+setInterval(() => { healthCheck.get({ force: true, cwd: healthCwd }).catch(() => {}); }, 5 * 60 * 1000).unref();
+
 // Claude transcripts plus OpenCode's database, tagged; days/sinceMs pick the window.
 async function usageBreakdown(opts = {}) {
   const days = opts.days === 7 ? 7 : 1;
@@ -2152,6 +2219,13 @@ if (!app.requestSingleInstanceLock()) {
     if (!process.env.OPERANT_USER_DATA) {
       const gone = agentSetup.removeLegacySkillCopies({ homeDir: os.homedir() });
       if (gone.length) logLine(`removed the skill copies older versions installed: ${gone.join(', ')}`);
+    }
+    // Before anything else writes state: what kind of launch this is (first install, upgrade, recovery...).
+    launchInfo = installState.recordLaunch({ userDataDir: app.getPath('userData'), version: app.getVersion() });
+    logLine(`launch: ${launchInfo.state}${launchInfo.lastVersion ? ` (from ${launchInfo.lastVersion})` : ''}`);
+    if (launchInfo.state === 'recovery' && launchInfo.postRestore) {
+      postRestoreId = launchInfo.postRestore.id;
+      try { stateBackup.recordPostRestore({ userDataDir: app.getPath('userData'), location: bkCfg().location, id: postRestoreId, ok: null }); } catch (e) { logLine(`post-restore status not saved: ${e.message || e}`); }
     }
     scheduleStateBackups();
     startHealthCheck();

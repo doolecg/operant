@@ -771,6 +771,7 @@ body.anim-off .overlay.anchor, body.anim-off .overlay.anchor .card { transition:
 .uc-status.current { color: var(--done); }
 .uc-status.ready, .uc-status.downloading, .uc-status.checking { color: var(--agent); }
 .uc-status.error { color: #f08a78; }
+.set-row .btn.rst { padding: 1px 8px; font-size: 11.5px; color: var(--dim); }
 .btn:disabled { opacity: .5; cursor: default; }
 .uc-notes { margin: 0 0 12px; border-radius: 10px; background: rgba(var(--ink-rgb), .03); padding: 8px 14px; }
 .uc-notes summary { cursor: pointer; color: var(--text); }
@@ -919,3 +920,21 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 .tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(var(--ink-rgb), .18); cursor: pointer; }
 .tour-dots i.on { background: var(--accent); }
 .btn:disabled { opacity: .4; pointer-events: none; }
+
+/* Health: the bar's dot takes the colour of the worst state; the panel lists each part. */
+.pill.health { display: inline-flex; align-items: center; padding: 3px 8px; cursor: pointer; }
+.pill.health:hover { background: rgba(var(--ink-rgb), .12); }
+.hdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+.hdot.healthy, .hdot.available { background: var(--done); }
+.hdot.degraded { background: var(--agent); }
+.hdot.unavailable { background: #f08a78; }
+.hdot.unknown, .hdot.not-configured { background: var(--dim); }
+.card.health-card { width: 420px; }
+#health-body { padding: 4px 8px 10px; }
+.health-row { display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px; margin: 1px 0; border-radius: 10px; }
+.health-row:hover { background: rgba(var(--ink-rgb), .06); }
+.health-row .hdot { flex: none; margin-top: 4px; }
+.health-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.health-name { font-size: 12.5px; color: var(--text); }
+.health-detail { font-size: 11.5px; color: var(--dim); overflow-wrap: anywhere; }
+.health-row .link { flex: none; font-size: 11.5px; margin-top: 1px; }

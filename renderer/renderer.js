@@ -2461,7 +2461,7 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub', 'tour', 'startpick', 'about'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub', 'health', 'tour', 'startpick', 'about'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
     if (name === 'picker') return openPicker(pick.mode || 'commands');
@@ -2475,6 +2475,7 @@
     else if (name === 'notifications') { renderNotifications(); markAllNotifsRead(); }
     else if (name === 'board') { $('#board').classList.remove('hidden'); renderBoard(); }
     else if (name === 'hub') scanHub();
+    else if (name === 'health') healthRefresh(true);
     else if (name === 'tour') { tourStep = 0; renderTour(); }
     else if (name === 'startpick') renderStartPick();
     else if (name === 'about') renderAbout();
@@ -2702,13 +2703,36 @@
   function save(patch) {
     Object.assign(pending, patch);
     clearTimeout(saveT);
-    saveT = setTimeout(() => { operant.setConfig(pending).then(c => onTeamTiers(c?.teamTiers)); pending = {}; }, 300);
+    saveT = setTimeout(() => flush(pending), 300);
+  }
+  // Settings that failed validation, by key: the message shown beside the control until it saves fine.
+  const settingErrors = {};
+  function flush(sent) {
+    pending = {};
+    operant.setConfig(sent).then(c => {
+      if (c && c.ok === false) {
+        // Nothing in that call was saved. Put the rejected keys back to what is really in effect, keep the message,
+        // and send the keys that were fine again on their own.
+        const badKeys = new Set(c.errors.map(er => er.key));
+        for (const er of c.errors) settingErrors[er.key] = er.message + '. Nothing was changed.';
+        const retry = {};
+        for (const [k, v] of Object.entries(sent)) { if (badKeys.has(k)) cfg[k] = c.config[k]; else retry[k] = v; }
+        applyAppearance();
+        if (openPanel() === 'settings') renderSettings();
+        if (Object.keys(retry).length) save(retry);
+        return;
+      }
+      onTeamTiers(c?.teamTiers);
+      for (const k of Object.keys(sent)) if (!(k in pending) && c && k in c) cfg[k] = c[k];
+    });
   }
 
   const LIVE_LAYOUT = new Set(['defaultLayout', 'masterRatio']);
-  function setSetting(key, value) {
+  // reset: send null, so the saved value is removed and the default applies again.
+  function setSetting(key, value, reset) {
     cfg[key] = value;
-    save({ [key]: value });
+    delete settingErrors[key];
+    save({ [key]: reset ? null : value });
     if (LIVE_LAYOUT.has(key)) for (const ws of workspaces) if (!ws.tree) { ws.layout = cfg.defaultLayout; ws.mfact = cfg.masterRatio; }
     if (key === 'agents' || key === 'defaultAgent') renderHints();
     if (key === 'mediaControls' || key === 'mediaSize') renderMedia();
@@ -2718,7 +2742,6 @@
     if (key === 'gitButton') drawGitButton();
     if (key === 'sidebarHiddenFiles') dirCache.clear();
     if (key === 'gpuTerminals') for (const w of wins.values()) gpu(w);
-    if (key === 'hardwareAcceleration') toast('Hardware acceleration changes when Operant restarts');
     if (key === 'sidebarGit') { if (cfg.sidebarGit) loadGit(true); else decorateGit(); }
     if (key === 'planLimits' || key === 'planLimitAlerts') renderUsagePill();
     if (key === 'editor' || key === 'editorCommand') refreshEditorName();
@@ -2736,7 +2759,11 @@
     if (openPanel() === 'settings') renderSettings();
   });
   let updateStatus = null;
+  Panels.noteLaunch(cfg);
   const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, {
+    defaults,
+    errors: settingErrors,
+    restart: () => operant.relaunch(),
     renderKeys: el => { keysTarget = el; renderKeys(); },
     renderCodegraph,
     renderMemory,
@@ -4122,6 +4149,43 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     el.querySelector('.u-svg').onmouseleave = () => show(-1);
     if (usageHover >= 0) show(usageHover);
   }
+
+  // ------------------------------------------------------------ health
+
+  // A dot in the bar coloured by the worst state; clicking it lists each part of the app (main: health.js).
+  const healthPill = $('#health-pill');
+  let healthState = null;
+  const HEALTH_LABEL = { healthy: 'Healthy', available: 'Available', degraded: 'Degraded', unavailable: 'Unavailable', 'not-configured': 'Not set up', unknown: 'Not checked yet' };
+  const HEALTH_ACTIONS = { 'check-updates': 'Check for updates', 'backup-now': 'Back up now', 'open-config': 'Open the file', 'index-project': 'Index this project', 'settings:Agents': 'Open Settings › Agents', 'settings:Backups': 'Open Settings › Backups', 'settings:CodeGraph': 'Open Settings › CodeGraph' };
+  function renderHealth() {
+    const h = healthState, o = h ? h.overall : 'unknown';
+    healthPill.querySelector('.hdot').className = `hdot ${o}`;
+    healthPill.title = `Health: ${HEALTH_LABEL[o] || o}`;
+    if (openPanel() !== 'health') return;
+    $('#health-body').innerHTML = (h ? h.components : []).map((c, i) => `<div class="health-row"><i class="hdot ${c.state}"></i>`
+      + `<span class="health-txt"><span class="health-name">${esc(c.name)} · ${esc(HEALTH_LABEL[c.state] || c.state)}</span><span class="health-detail">${esc(c.detail)}</span></span>`
+      + (c.action && HEALTH_ACTIONS[c.action] ? `<button class="link" data-i="${i}">${esc(c.actionLabel || HEALTH_ACTIONS[c.action])}</button>` : '') + '</div>').join('')
+      || '<div class="side-empty">Checking…</div>';
+  }
+  async function healthRefresh(force) {
+    try { healthState = await operant.healthGet({ force, cwd: lastCwd || '' }); } catch { return; }
+    renderHealth();
+  }
+  $('#health-body').addEventListener('click', e => {
+    const b = e.target.closest('[data-i]');
+    const c = b && healthState?.components[+b.dataset.i];
+    if (!c) return;
+    const again = () => setTimeout(() => healthRefresh(true), 2500);
+    if (c.action === 'check-updates') { operant.checkUpdate(); again(); }
+    else if (c.action === 'backup-now') operant.backupsCreate().then(() => healthRefresh(true), () => healthRefresh(true));
+    else if (c.action === 'open-config') operant.openConfig();
+    else if (c.action === 'index-project') { closePanels(false); runCodegraph([lastCwd]); }
+    else if (c.action.startsWith('settings:')) { togglePanel('settings'); Panels.showTab(c.action.slice(9)); renderSettings(); }
+  });
+  $('#health-refresh').onclick = () => healthRefresh(true);
+  healthPill.onclick = () => togglePanel('health');
+  operant.on('health', h => { healthState = h; renderHealth(); });
+  healthRefresh(false);
 
   // ------------------------------------------------------------ updates
 

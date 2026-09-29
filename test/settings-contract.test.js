@@ -106,3 +106,23 @@ test('every setting saves and loads back', () => {
   const b = mergeUser(defaults, JSON.parse(JSON.stringify(applyPatch({}, { backups: { keepLast: 3 } }, defaults))), {}).backups;
   assert.strictEqual(b.keepLast, 3); assert.strictEqual(b.enabled, true); assert.strictEqual(b.location, '');
 });
+
+test('every Settings control with a min/max is covered by validation, with the same limits', () => {
+  const { RANGES } = require('../config-migrate');
+  const controls = [...settingsSrc.matchAll(/\{ key: '(\w+)'[^\n]*?type: '(?:range|number)', min: ([\d.]+), max: ([\d.]+)/g)];
+  assert.ok(controls.length > 20, 'found ' + controls.length);
+  for (const [, key, min, max] of controls) {
+    assert.ok(RANGES[key], key + ' has no validation range');
+    assert.deepStrictEqual([RANGES[key].min, RANGES[key].max], [+min, +max], key);
+  }
+});
+
+test('every validation range and enum names a real setting, and its default passes', () => {
+  const { RANGES, ENUMS, validatePatch } = require('../config-migrate');
+  for (const k of [...Object.keys(RANGES), ...Object.keys(ENUMS)]) assert.ok(defKeys.includes(k), k);
+  const defaults = Object.fromEntries(defKeys.map(k => [k, new RegExp(`\n  ${k}: ('[^']*'|[\d.]+|true|false)`).exec(defText)?.[1]]).filter(([, t]) => t !== undefined).map(([k, t]) => [k, JSON.parse(t.replace(/'/g, '"'))]));
+  for (const k of [...Object.keys(RANGES), ...Object.keys(ENUMS)]) {
+    if (!(k in defaults)) continue;
+    assert.deepStrictEqual(validatePatch({ [k]: defaults[k] }, defaults), [], k + ' default must be valid');
+  }
+});

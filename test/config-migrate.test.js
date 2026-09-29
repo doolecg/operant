@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { CURRENT, MIGRATIONS, migrate } = require('../config-migrate');
+const { CURRENT, MIGRATIONS, migrate, applyPatch, validatePatch } = require('../config-migrate');
 const { writeFileAtomic } = require('../atomic-write');
 
 test('fresh config gets the current version and nothing else', () => {
@@ -75,4 +75,72 @@ test('an interrupted migration leaves a file that migrates to the same result', 
     assert.deepStrictEqual(r.user, expected);
     assert.strictEqual(fs.readFileSync(path.join(dir, 'config.v0.json'), 'utf8'), original);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ------------------------------------------------------------ validatePatch
+const DEF = {
+  fontSize: 13, updateCheckHours: 3, runawayGuard: 'warn', updateChannel: 'stable', cursorBlink: true, defaultCwd: '/home',
+  agents: [{ id: 'claude', name: 'Claude', command: 'claude', args: [] }, { id: 'opencode', name: 'OpenCode', command: 'opencode', args: [] }],
+  defaultAgent: 'claude', usageSeries: ['input'], accent: '',
+  team: { enabled: false, maxWorkers: 4, maxTier: 'small', tiers: { small: { agent: 'claude' }, high: { agent: 'claude' } }, budgets: {} },
+  projectDefaults: {},
+};
+const v = (patch, opts) => validatePatch(patch, DEF, { isDir: p => p === '/home' || p === '/work', ...opts });
+const keys = errs => errs.map(e => e.key);
+
+test('a valid patch, and null resets, pass', () => {
+  assert.deepStrictEqual(v({ fontSize: 16, runawayGuard: 'stop', cursorBlink: false, defaultCwd: '/work', notAKey: 'x' }), []);
+  assert.deepStrictEqual(v({ fontSize: null, updateCheckHours: null }), []);
+});
+
+test('the wrong type is refused with what was expected and what was kept', () => {
+  const [e] = v({ fontSize: '16' });
+  assert.strictEqual(e.key, 'fontSize');
+  assert.match(e.expected, /number/);
+  assert.match(e.message, /kept 13/);
+  assert.deepStrictEqual(keys(v({ cursorBlink: 'yes', agents: 'x', fontSize: NaN })).sort(), ['agents', 'cursorBlink', 'fontSize']);
+});
+
+test('numbers outside their range or not whole are refused', () => {
+  const [e] = v({ updateCheckHours: 99 });
+  assert.strictEqual(e.message, 'Must be a whole number 0-24 hours; kept 3');
+  assert.deepStrictEqual(keys(v({ fontSize: 8 })), ['fontSize']);
+  assert.deepStrictEqual(keys(v({ fontSize: 12.5 })), ['fontSize']);
+  assert.deepStrictEqual(v({ fontSize: 24 }), []);
+});
+
+test('an unknown enum value is refused', () => {
+  assert.match(v({ runawayGuard: 'explode' })[0].expected, /warn, stop, off/);
+  assert.deepStrictEqual(keys(v({ updateChannel: 'nightly' })), ['updateChannel']);
+});
+
+test('a default agent or tier agent that does not exist is refused', () => {
+  assert.deepStrictEqual(keys(v({ defaultAgent: 'ghost' })), ['defaultAgent']);
+  assert.deepStrictEqual(v({ defaultAgent: 'opencode' }), []);
+  assert.deepStrictEqual(keys(v({ team: { tiers: { small: { agent: 'ghost' } } } })), ['team']);
+  assert.deepStrictEqual(v({ team: { tiers: { small: { agent: 'claude' } }, maxWorkers: 8 } }), []);
+  assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agent: 'ghost' } } })), ['projectDefaults']);
+  assert.deepStrictEqual(keys(v({ team: { maxTier: 'huge' } })), ['team']);
+});
+
+test('a folder that does not exist is refused', () => {
+  const [e] = v({ defaultCwd: '/nope' });
+  assert.strictEqual(e.key, 'defaultCwd');
+  assert.match(e.message, /kept "\/home"/);
+});
+
+test('conflicting keys in one patch: removing the default agent', () => {
+  const only = [DEF.agents[1]];
+  assert.deepStrictEqual(keys(v({ agents: only })), ['defaultAgent']);
+  assert.deepStrictEqual(v({ agents: only, defaultAgent: 'opencode' }), []);
+  assert.deepStrictEqual(keys(v({ agents: [DEF.agents[0], DEF.agents[0]] })), ['agents']);
+  assert.deepStrictEqual(keys(v({ agents: [] })), ['agents']);
+});
+
+test('all or nothing: one bad key means the patch reports it and applyPatch is not reached', () => {
+  const errs = v({ fontSize: 16, updateCheckHours: 99, runawayGuard: 'off' });
+  assert.deepStrictEqual(keys(errs), ['updateCheckHours']);
+  const user = { fontSize: 14 };
+  if (!errs.length) applyPatch(user, { fontSize: 16 }, DEF);
+  assert.deepStrictEqual(user, { fontSize: 14 });
 });

@@ -17,6 +17,14 @@ const Panels = (() => {
   const pretty = combo => combo.replace(/[A-Za-z]+$/, k => KEY_NAMES[k] || k);
 
   const RESTART = 'Applies after a restart';
+  // Settings read only at startup: a change waits for a restart, and Settings offers "Restart now".
+  const RESTART_KEYS = ['hardwareAcceleration', 'autoUpdate', 'agentLookbackSeconds'];
+  const launchVals = {};
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  // Called once the config is loaded, before anything can change it: what the running app started with.
+  const noteLaunch = cfg => { for (const k of RESTART_KEYS) launchVals[k] = cfg[k]; };
+  const restartPending = cfg => RESTART_KEYS.filter(k => k in launchVals && !same(cfg[k], launchVals[k]));
+  let confirmingReset = false;
   // Token counts as typed and shown in Settings: 2M, 1.5m, 500k, 1200000.
   const fmtTokens = n => n >= 1e6 ? +(n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(n);
   const parseTokens = t => {
@@ -432,7 +440,29 @@ const Panels = (() => {
     if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';
     if (it.type === 'memory') return '<div class="mem-card"></div>';
     if (it.type === 'updates') return updatesCard(ext.update());
-    return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}</div><div class="ctl">${control(it, cfg[it.key], cfg)}</div></div>`;
+    const err = ext.errors && ext.errors[it.key];
+    const rst = ext.defaults && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])
+      ? `<button class="btn rst" data-reset="${it.key}" title="Reset to the default">Reset</button>` : '';
+    return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}${err ? `<span class="hint uc-status error" data-err="${it.key}">${esc(err)}</span>` : ''}</div><div class="ctl">${rst}${control(it, cfg[it.key], cfg)}</div></div>`;
+  }
+
+  const labelOf = key => SECTIONS.flatMap(s => s[1]).find(i => i.key === key && i.label)?.label || key;
+  // Above every pane: settings that only apply after a restart, and saves that were refused for a key with no row of its own.
+  function notices(cfg, ext) {
+    const shownKeys = new Set(SECTIONS.flatMap(s => s[1]).filter(i => i.key && i.label && !['agents', 'team'].includes(i.key)).map(i => i.key));
+    const stray = Object.entries(ext.errors || {}).filter(([k]) => !shownKeys.has(k));
+    const pend = restartPending(cfg);
+    return (stray.length ? `<div class="set-row"><div class="lbl"><span class="uc-status error">Not saved</span>${stray.map(([k, m]) => `<span class="hint uc-status error">${esc(labelOf(k))}: ${esc(m)}</span>`).join('')}</div></div>` : '')
+      + (pend.length ? `<div class="set-row"><div class="lbl"><span>Restart needed</span><span class="hint">Saved, but applies after a restart: ${esc(pend.map(labelOf).join(', '))}</span></div><div class="ctl"><button class="btn primary" data-restart>Restart now</button></div></div>` : '');
+  }
+  // Foot of a tab: put every setting in it back to its default, after a confirm.
+  function sectionReset(items, cfg, ext) {
+    const n = items.filter(it => it.key && ext.defaults && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])).length;
+    if (!n) return '';
+    const what = `${n} changed setting${n === 1 ? '' : 's'}`;
+    return confirmingReset
+      ? `<div class="set-row"><div class="lbl"><span>Reset ${what} in this section to the defaults?</span><span class="hint">Other sections are not touched</span></div><div class="ctl"><button class="btn primary" data-reset-section="yes">Reset</button><button class="btn" data-reset-section="no">Cancel</button></div></div>`
+      : `<div class="set-row"><div class="lbl"><span class="hint">${what} in this section</span></div><div class="ctl"><button class="btn" data-reset-section="ask">Reset this section</button></div></div>`;
   }
 
   // Tabs down the left, one section at a time; typing in the search box shows matches from all of them.
@@ -454,12 +484,12 @@ const Panels = (() => {
       let html;
       if (!q) {
         const items = SECTIONS.find(s => s[0] === tab)[1];
-        html = `<div class="pane-title">${esc(tab)}</div>` + items.map(it => rowHtml(it, cfg, ext)).join('');
+        html = `<div class="pane-title">${esc(tab)}</div>` + notices(cfg, ext) + items.map(it => rowHtml(it, cfg, ext)).join('') + sectionReset(items, cfg, ext);
       } else {
         const hits = SECTIONS.map(([t, items]) => [t, items.filter(it => `${t} ${it.label || it.key || ''} ${it.hint || ''} ${it.type === 'theme' ? 'theme colors' : ''} ${it.type === 'agents' ? 'agents commands' : ''}`.toLowerCase().includes(q))])
           .filter(([, items]) => items.length);
-        html = hits.length ? hits.map(([t, items]) => `<div class="set-section"><h3>${esc(t)}</h3>${items.map(it => rowHtml(it, cfg, ext)).join('')}</div>`).join('')
-          : `<div class="set-none">Nothing matches “${esc(query)}”.</div>`;
+        html = notices(cfg, ext) + (hits.length ? hits.map(([t, items]) => `<div class="set-section"><h3>${esc(t)}</h3>${items.map(it => rowHtml(it, cfg, ext)).join('')}</div>`).join('')
+          : `<div class="set-none">Nothing matches “${esc(query)}”.</div>`);
       }
       pane.innerHTML = html;
       pane.scrollTop = top;
@@ -476,6 +506,15 @@ const Panels = (() => {
       if (tbEl) ext.renderTokenBreakdown(tbEl);
       const memEl = pane.querySelector('.mem-card');
       if (memEl) ext.renderMemory(memEl);
+      pane.querySelectorAll('[data-restart]').forEach(b => b.onclick = () => ext.restart());
+      const clone = v => JSON.parse(JSON.stringify(v));
+      pane.querySelectorAll('[data-reset]').forEach(b => b.onclick = () => { set(b.dataset.reset, clone(ext.defaults[b.dataset.reset]), true); draw(); });
+      pane.querySelectorAll('[data-reset-section]').forEach(b => b.onclick = () => {
+        const a = b.dataset.resetSection;
+        if (a === 'yes') for (const it of SECTIONS.find(s => s[0] === tab)[1]) if (it.key && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])) set(it.key, clone(ext.defaults[it.key]), true);
+        confirmingReset = a === 'ask';
+        draw();
+      });
       pane.querySelectorAll('[data-update]').forEach(b => b.onclick = () => {
         const a = b.dataset.update;
         if (a === 'check') { ext.checkUpdate(); b.disabled = true; b.textContent = 'Checking…'; }
@@ -591,9 +630,9 @@ const Panels = (() => {
       };
       pane.querySelectorAll('[data-key]').forEach(el => {
         const it = item(el.dataset.key) || { type: 'text' };
-        if (it.type === 'toggle') return el.onclick = () => { set(it.key, !cfg[it.key]); el.classList.toggle('on', cfg[it.key]); };
+        if (it.type === 'toggle') return el.onclick = () => { set(it.key, !cfg[it.key]); el.classList.toggle('on', cfg[it.key]); draw(); };
         if (el.type === 'color') return el.oninput = () => { set('accent', el.value); pane.querySelectorAll('.accent-dot').forEach(d => d.classList.remove('on')); };
-        if (it.type === 'range') return el.oninput = () => { set(it.key, +el.value); el.nextElementSibling.textContent = it.fmt(+el.value); };
+        if (it.type === 'range') { el.onchange = draw; return el.oninput = () => { set(it.key, +el.value); el.nextElementSibling.textContent = it.fmt(+el.value); }; }
         el.onchange = () => {
           if (it.type === 'number') {
             const n = Math.min(it.max, Math.max(it.min, Math.round(+el.value || 0)));
@@ -604,12 +643,13 @@ const Panels = (() => {
             el.value = cfg[it.key] ? fmtTokens(cfg[it.key]) : '0';
           } else if (it.type === 'list') set(it.key, el.value.split(/\s+/).filter(Boolean));
           else set(it.key, el.type === 'text' ? el.value.trim() : el.value);
+          draw();
         };
       });
     }
 
     body.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => {
-      tab = b.dataset.tab; query = ''; search.value = '';
+      tab = b.dataset.tab; query = ''; search.value = ''; confirmingReset = false;
       try { localStorage.setItem('operant.settings.tab', tab); } catch {}
       markTabs(); pane.scrollTop = 0; draw();
     });
@@ -655,5 +695,5 @@ const Panels = (() => {
   const showSetting = label => { query = label; };
   const showTab = t => { tab = t; query = ''; };
 
-  return { renderSettings, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
+  return { renderSettings, noteLaunch, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
 })();

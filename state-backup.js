@@ -8,10 +8,30 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { writeFileAtomic } = require('./atomic-write');
+const { redactWalk, redactText } = require('./redact');
+const installState = require('./install-state');
+const configMigrate = require('./config-migrate');
 
 const BACKUPS_DIR = 'backups';
 const STATE_FILES = ['config.json', 'session.json', 'usage-tags.json', 'outcomes.jsonl', 'memory-stats.json', 'memory-recalls.jsonl'];
 const MEMORY_DIR = 'memory';
+const FORMAT_VERSION = 1;
+// 84J: without these a restore is pointless (required), the rest is history that can be lost (optional).
+const kindOf = f => f === 'config.json' || f === 'session.json' || f.startsWith(`${MEMORY_DIR}/`) ? 'required' : 'optional';
+const parseJson = buf => JSON.parse(Buffer.from(buf).toString('utf8').replace(/^﻿/, ''));
+
+// What goes into a backup for a file: JSON loses keys named like secrets (the redacted list says which, so a restore
+// carries the live values back), any other text loses strings that look like keys or tokens.
+function redactFile(rel, data) {
+  if (rel.endsWith('.json')) {
+    try {
+      const { value, paths } = redactWalk(parseJson(data), { remove: true });
+      return paths.length ? { data: Buffer.from(JSON.stringify(value, null, 2)), paths } : { data, paths: [] };
+    } catch { /* not JSON: treat as text */ }
+  }
+  const text = data.toString('utf8'), r = redactText(text);
+  return r === text ? { data, paths: [] } : { data: Buffer.from(r), paths: [''] };
+}
 
 const STATUS_FILE = 'status.json';
 const DEFAULT_SETTINGS = { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true };
@@ -57,17 +77,23 @@ function createBackup({ userDataDir, location = '', reason, version = '', now = 
   const folder = path.join(root, id);
   fs.mkdirSync(folder, { recursive: true });
   try {
-    const files = [];
+    const files = [], redacted = [];
     for (const rel of collect(userDataDir)) {
-      const data = fs.readFileSync(inside(userDataDir, rel));
+      const r = redactFile(rel, fs.readFileSync(inside(userDataDir, rel)));
+      const data = r.data;
       writeFileAtomic(inside(folder, rel), data);
-      files.push({ path: rel, size: data.length, sha256: sha256(data) });
+      files.push({ path: rel, kind: kindOf(rel), size: data.length, sha256: sha256(data) });
+      for (const p of r.paths) redacted.push(p ? `${rel}:${p}` : rel);
     }
     for (const f of files) {
       const back = fs.readFileSync(inside(folder, f.path));
       if (back.length !== f.size || sha256(back) !== f.sha256) throw new Error(`Backup check failed for ${f.path}`);
     }
-    const manifest = { version, reason: String(reason || 'manual'), at: now.toISOString(), files };
+    const manifest = {
+      formatVersion: FORMAT_VERSION, version, configVersion: configMigrate.CURRENT, installationId: installState.installationId(userDataDir),
+      reason: String(reason || 'manual'), at: now.toISOString(), files,
+      redacted, ...(redacted.length ? { redactedNote: 'Keys, tokens and passwords are left out of backups; a restore keeps the ones already in Operant.' } : {}),
+    };
     writeFileAtomic(path.join(folder, 'manifest.json'), JSON.stringify(manifest, null, 2));
     return { ...manifest, id, folder };
   } catch (e) {
@@ -146,7 +172,7 @@ function verifyBackup(folder) {
 function readStatus(root) {
   try {
     const s = JSON.parse(fs.readFileSync(path.join(root, STATUS_FILE), 'utf8'));
-    if (s && typeof s === 'object' && s.validations && typeof s.validations === 'object') return { validations: s.validations, lastValidated: s.lastValidated || null };
+    if (s && typeof s === 'object' && s.validations && typeof s.validations === 'object') return { validations: s.validations, lastValidated: s.lastValidated || null, ...(s.postRestore ? { postRestore: s.postRestore } : {}) };
   } catch { /* none yet */ }
   return { validations: {}, lastValidated: null };
 }
@@ -198,35 +224,87 @@ function testRestore({ userDataDir, location = '', id = '', now = new Date() }) 
   return result;
 }
 
-// The caller relaunches afterwards: config and session are read at startup. If a write fails part way, the files
-// already replaced are put back from the safety backup (and ones the restore created are removed), so the live
-// state stays as it was; the error says so. write is injectable for tests.
+// The version a backup's config needs: newer than this Operant means it can't be read here.
+function checkCompatible(folder, m) {
+  let cv = Number.isInteger(m.configVersion) ? m.configVersion : 0;
+  if (!cv && m.files.some(f => f.path === 'config.json')) { try { cv = +parseJson(fs.readFileSync(inside(folder, 'config.json'))).configVersion || 0; } catch { /* checkConfigParses names it */ } }
+  if ((Number.isInteger(m.formatVersion) && m.formatVersion > FORMAT_VERSION) || cv > configMigrate.CURRENT) {
+    throw new Error(`This backup is from a newer Operant (${m.version || 'unknown version'}); update Operant first.`);
+  }
+}
+
+// After the files are back: config.json parses and migrates (an older backup moves forward, written back), session.json
+// parses, memory files read. Throws naming what failed. carry: the live config, for the keys a backup leaves out.
+function validateRestored(userDataDir, m, carry) {
+  const has = f => m.files.some(x => x.path === f);
+  if (has('config.json')) {
+    const file = inside(userDataDir, 'config.json');
+    let cfg;
+    try { cfg = parseJson(fs.readFileSync(file)); } catch { throw new Error('config.json does not parse after the restore'); }
+    for (const p of (m.redacted || []).filter(r => r.startsWith('config.json:')).map(r => r.slice(12))) {
+      const keys = p.split('.');
+      if (keys.some(k => /\[/.test(k))) continue;
+      let live = carry, dst = cfg;
+      for (const k of keys.slice(0, -1)) { live = live && live[k]; if (!dst[k] || typeof dst[k] !== 'object') dst[k] = {}; dst = dst[k]; }
+      const last = keys[keys.length - 1];
+      if (live && typeof live[last] === 'string' && !(last in dst)) dst[last] = live[last];
+    }
+    const mig = configMigrate.migrate(cfg);
+    if (mig.future) throw new Error(`config.json is version ${mig.from}, newer than this Operant (${configMigrate.CURRENT}); update Operant first`);
+    if (mig.error) throw new Error(`config.json could not be migrated to version ${configMigrate.CURRENT} (${mig.error.message || mig.error})`);
+    writeFileAtomic(file, JSON.stringify(mig.user, null, 2));
+  }
+  if (has('session.json')) { try { parseJson(fs.readFileSync(inside(userDataDir, 'session.json'))); } catch { throw new Error('session.json does not parse after the restore'); } }
+  for (const f of m.files.filter(x => x.path.startsWith(`${MEMORY_DIR}/`))) {
+    try { fs.readFileSync(inside(userDataDir, f.path), 'utf8'); } catch { throw new Error(`${f.path} can't be read after the restore`); }
+  }
+}
+
+// The caller relaunches afterwards: config and session are read at startup. A backup from a newer Operant is refused
+// before anything is touched. Files are then written over the current ones and the result validated (validateRestored);
+// if a write or the validation fails, the files already replaced are put back exactly as they were (and ones the restore
+// created are removed), so the live state stays as it was; the error says what failed. write is injectable for tests.
 function restoreBackup({ userDataDir, location = '', id, version = '', write = writeFileAtomic }) {
   if (!id || /[\\/]/.test(id) || id === '.' || id === '..') throw new Error('Unknown backup');
   const folder = path.join(backupsRoot(userDataDir, location), id);
   const m = verifyBackup(folder);
   checkConfigParses(folder, m);
+  checkCompatible(folder, m);
   const safety = createBackup({ userDataDir, location, reason: 'before-restore', version });
   // Files in the manifest are written over the current ones. Anything else already in the memory folder (facts
   // saved after the backup) is left alone, not deleted.
-  const had = new Set(safety.files.map(f => f.path));
+  const before = new Map();
+  for (const f of m.files) { try { before.set(f.path, fs.readFileSync(inside(userDataDir, f.path))); } catch { /* not there now */ } }
+  let carry = {};
+  try { carry = before.has('config.json') ? parseJson(before.get('config.json')) : {}; } catch { /* live config was broken */ }
   const restored = [];
   try {
     for (const f of m.files) {
       restored.push(f.path);
       write(inside(userDataDir, f.path), fs.readFileSync(inside(folder, f.path)));
     }
+    validateRestored(userDataDir, m, carry);
   } catch (e) {
     let undone = true;
     for (const rel of restored) {
       try {
-        if (had.has(rel)) writeFileAtomic(inside(userDataDir, rel), fs.readFileSync(inside(safety.folder, rel)));
+        if (before.has(rel)) writeFileAtomic(inside(userDataDir, rel), before.get(rel));
         else fs.rmSync(inside(userDataDir, rel), { force: true });
       } catch { undone = false; }
     }
     throw new Error(`Restore failed (${e.message || e}). ${undone ? 'Your current files were left as they were.' : `Some files could not be put back; the copy taken just before is ${safety.id}.`}`);
   }
+  try { installState.markRestore(userDataDir, id); } catch { /* the next launch just reads as a normal one */ }
   return { id, restored, safety: safety.id };
+}
+
+// The post-restore health check: the 'recovery' launch records ok: null, the window loading (app:ready) records ok: true.
+function recordPostRestore({ userDataDir, location = '', id, ok = null, at = new Date() }) {
+  const root = backupsRoot(userDataDir, location);
+  const st = readStatus(root);
+  st.postRestore = { id, ok, at: at.toISOString() };
+  writeStatus(root, st);
+  return st.postRestore;
 }
 
 // A backup location: '' (the default) is fine, anything else must be an absolute folder that can be written to.
@@ -268,4 +346,4 @@ function normalizeSettings(input, prev = DEFAULT_SETTINGS) {
   return { settings: s, error };
 }
 
-module.exports = { createBackup, listBackups, pruneBackups, restoreBackup, verifyBackup, testRestore, statusSummary, checkLocation, normalizeSettings, backupsRoot, STATE_FILES, DEFAULT_SETTINGS };
+module.exports = { createBackup, listBackups, pruneBackups, restoreBackup, verifyBackup, testRestore, statusSummary, recordPostRestore, FORMAT_VERSION, checkLocation, normalizeSettings, backupsRoot, STATE_FILES, DEFAULT_SETTINGS };

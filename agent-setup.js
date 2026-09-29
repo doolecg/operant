@@ -129,7 +129,7 @@ function writeClaudeMcpConfigFile(userDataDir, openCodeServers) {
   try {
     fs.mkdirSync(userDataDir, { recursive: true });
     const file = path.join(userDataDir, 'claude-mcp.json');
-    fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }, null, 2));
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }, null, 2), { mode: 0o600 }); // server env can hold API keys
     return file;
   } catch { return null; }
 }

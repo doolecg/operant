@@ -37,6 +37,7 @@
     </div>
     <div class="bar-right">
       <button class="pill update hidden" id="update-pill"></button>
+      <button class="pill health" id="health-pill" title="Health"><i class="hdot"></i></button>
       <button class="pill tokens hidden" id="usage-pill"></button>
       <span class="pill" id="stat-agents" title="Agents working / idle, subagents finished"></span>
       <button class="icon-btn" id="btn-new" title="New agent (Alt+N)">＋</button>
@@ -107,6 +108,13 @@
     <div class="card qm-card notif-card">
       <div class="card-head notif-head"><h2>Notifications</h2><button class="link" id="notif-clear">Clear all</button></div>
       <div class="card-body" id="notif-body"></div>
+    </div>
+  </div>
+
+  <div id="health" class="overlay anchor hidden">
+    <div class="card qm-card notif-card health-card">
+      <div class="card-head notif-head"><h2>Health</h2><button class="link" id="health-refresh">Check again</button></div>
+      <div class="card-body" id="health-body"></div>
     </div>
   </div>
 
