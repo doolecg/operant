@@ -485,6 +485,9 @@ function startControlServer() {
       if (!cmd) return reply(400, { ok: false, error: 'missing cmd' });
       try {
         if (cmd === 'version') return reply(200, { ok: true, result: { version: app.getVersion() } });
+        // The CLI reporting a command or flag an agent tried that doesn't exist (bin/operant-cli.js). Answered
+        // here, not forwarded, so it can't take the caller's pending watch warning.
+        if (cmd === '_desire') { agentSetup.appendDesirePath(path.join(app.getPath('userData'), 'desire-paths.jsonl'), args); return reply(200, { ok: true, result: {} }); }
         if (cmd === 'ask') { const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'open') { const r = await controlOpen(args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'usage') {

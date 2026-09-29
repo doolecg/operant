@@ -175,9 +175,9 @@ team mode (33). In order of how much each should save:
 Clean restart; code comes from the local `salvage/skill-redesign` branch where it fits, reviewed first. One item per
 commit, each tested and checked before the next. Full plan with research: ~/.claude/plans/federated-painting-summit.md.
 
-- [ ] **46. Correctness fixes:** the skill's frontmatter is valid YAML (Claude only ever saw "Operant control"),
+- [x] **46. Correctness fixes:** the skill's frontmatter is valid YAML (Claude only ever saw "Operant control"),
       the long-command reroute never auto-approves and is on by default, `operant test/build` wait past 20 s.
-- [ ] **47. CLI reliability:** no 5-minute limit on plan/ask/wait (node:http, not fetch), `--cwd` defaults to the
+- [x] **47. CLI reliability:** no 5-minute limit on plan/ask/wait (node:http, not fetch), `--cwd` defaults to the
       shell's folder, `--options` takes commas (PowerShell), `run` names the next step, aliases and closest-match
       errors, `operant help <topic>`.
 - [ ] **48. Skill per session:** an `agent-plugin/` loaded with `--plugin-dir` (Claude) and `skills.paths`

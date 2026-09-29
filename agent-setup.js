@@ -264,10 +264,35 @@ function buildOpencodeConfigContent({ base, cwd, userDataDir, config }) {
   return JSON.stringify(obj);
 }
 
+// -------------------------------------------------------------------- desire paths
+// `operant _desire`: the CLI reports what an agent tried that isn't there (a command, a flag) and what it
+// was pointed to instead, so the commands agents keep reaching for can be seen. One JSON line each, in the
+// app's own folder, and only these four short strings, nothing else the agent sent.
+const DESIRE_FIELDS = ['kind', 'name', 'cmd', 'suggestion'];
+function desirePathLine(args, now = new Date()) {
+  const line = { t: now.toISOString() };
+  for (const k of DESIRE_FIELDS) line[k] = typeof args?.[k] === 'string' ? args[k].slice(0, 80) : '';
+  return JSON.stringify(line) + '\n';
+}
+// Past `maxBytes` the file keeps only its last `keepBytes`, starting at a whole line. Never throws.
+function appendDesirePath(file, args, { now, maxBytes = 200 * 1024, keepBytes = 100 * 1024 } = {}) {
+  try {
+    let size = 0;
+    try { size = fs.statSync(file).size; } catch {}
+    if (size > maxBytes) {
+      const tail = fs.readFileSync(file).subarray(-keepBytes);
+      const start = tail.indexOf(10) + 1; // the first partial line goes
+      fs.writeFileSync(file, tail.subarray(start));
+    }
+    fs.appendFileSync(file, desirePathLine(args, now));
+  } catch {}
+}
+
 module.exports = {
   getClaudeMcpServers, getOpenCodeOwnMcpServers, mcpForOpenCodeTiles,
   claudeExtraArgs, writeClaudeMcpConfigFile,
   findPluginSkillDirs, syncPluginSkillsMirror,
   findCodegraphPromptHookCommand, codegraphPluginEntry,
   buildOpencodeConfigContent,
+  desirePathLine, appendDesirePath,
 };
