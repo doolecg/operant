@@ -193,8 +193,8 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
 - [x] **53. Messaging (opt-in):** `operant msg <tile> "<text>"` between any agents, Claude and OpenCode included.
 - [x] **54. Token and cost tracking:** OpenCode history from opencode.db, usage by model/tier/task/project, prices
       with source (unknown stays unknown), cache hit rate.
-- [ ] **55. Evals, docs, release notes:** back-to-back before/after evals when usage allows. (Harness in evals/, README and
-      RELEASE_NOTES done; the eval runs wait for the user's go.)
+- [x] **55. Evals, docs, release notes:** before/after on Sonnet, 13 cases x 3: pass 74% -> 95%, worker reports
+      0% -> 100%, plan approval 0% -> 100%, raw long commands 0.2 -> 0 per run, cost flat; notify-when-done 33%.
 
 Later: 2.0 core (providers, memory confidence/staleness, adaptive routing, benchmarks, optional local model) and
 operations (update rollback, validated backups/restore, config migrations).

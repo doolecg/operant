@@ -33,8 +33,8 @@ full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old a
   after a reject; workers stop on permission prompts for commands like git status.
 
 ## Next
-- 55: harness in evals/ (selftest passes), README "What your agents get" and RELEASE_NOTES 1.19.0 done. Left: eval
-  runs (Sonnet x3 before/after, wait for the user's go), plugin.json + package.json version bump at release.
+- 55 evals (Sonnet, 13x3 per arm): pass 74% -> 95%; worker-report, plan-approval 0 -> 100%; notify-when-done only 33%
+  (next: make agents reach for `operant notify`). Worker permission allowlist added (b79b63d).
 
 ## Working rules (user)
 - Structured ~100-word handbacks; targeted edits; one item per commit; smallest model that fits
