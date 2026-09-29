@@ -765,7 +765,8 @@
       e.preventDefault();
       const href = a.dataset.href;
       if (/^https?:\/\//i.test(href)) return operant.openLink(href, e.shiftKey);
-      if (href.startsWith('#')) return w.page.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ behavior: 'smooth' });
+      // Instant: a smooth scroll over content-visibility blocks overshoots as their real heights replace the estimates.
+      if (href.startsWith('#')) return w.page.querySelector(`[data-anchor="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ behavior: 'instant' });
       const target = resolvePath(dirOf(w.file), decodeURIComponent(href.split('#')[0]));
       showFile(w, target);
     });
@@ -1934,7 +1935,7 @@
     }
     const rule = claudeRuleFor(label, detail);
     if (!rule) return null;
-    const filePath = resolvePath(w.cwd || lastCwd, '.claude', 'settings.local.json');
+    const filePath = resolvePath(w.cwd || lastCwd, '.claude/settings.local.json');
     return { label: 'Always allow…', filePath,
       rule: `"permissions": { "allow": ["${rule}"] }`,
       note: `Claude has asked to ${label.toLowerCase()} ${count}+ times. Merge this into .claude/settings.local.json, then save.` };

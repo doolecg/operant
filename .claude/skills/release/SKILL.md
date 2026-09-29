@@ -151,9 +151,9 @@ gh api repos/doolecg/operant/releases/latest -q .tag_name
 ```
 - Exactly five assets: `Operant-$v-windows-x64.msi`, `Operant-$v-mac-arm64.dmg`, `Operant-$v-mac-x64.dmg`,
   `Operant-$v-linux-x86_64.AppImage` and `Operant-$v-linux-amd64.deb`. Roughly 120-150 MB each for the MSI
-  and the DMGs, 110-130 MB for the AppImage and the deb. The updater picks each system's file by its
-  extension and the `-mac-arm64` / `-mac-x64`, `x86_64` and `amd64` parts of the name, so a missing or
-  renamed asset leaves that system with nothing to install: fix that before anything else.
+  and the DMGs, 110-130 MB for the AppImage and about 100 MB for the deb. The updater picks each system's
+  file by its extension and the `-mac-arm64` / `-mac-x64`, `x86_64` and `amd64` parts of the name, so a
+  missing or renamed asset leaves that system with nothing to install: fix that before anything else.
 - `releases/latest` must be the new tag, because that's the only release the updater reads.
 - The body is the notes section. If it needs a fix, fix `RELEASE_NOTES.md` on `main` too, then
   `gh release edit "$v" --notes-file <that section>` (written in the scratchpad).

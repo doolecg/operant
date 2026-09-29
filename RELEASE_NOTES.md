@@ -1,3 +1,20 @@
+# Operant 1.18.1
+
+Four fixes: shortcuts that stopped working with some Markdown files open, links to headings in long files, long lines in the changes tile, and the *Always allow…* button.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-1.18.1-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-1.18.1-mac-arm64.dmg` (Apple Silicon) or `Operant-1.18.1-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-1.18.1-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-1.18.1-linux-amd64.deb` (`sudo apt install ./Operant-1.18.1-linux-amd64.deb`).
+
+## Fixed
+- **Shortcuts stopped with some Markdown files open:** a file in a viewer tile with a heading named like one of Operant's panels, such as "Notifications" or "Settings", made Operant think that panel was open, so most shortcuts did nothing until the file was closed. Headings no longer get in the way, and links to them within the file still jump there.
+- **Links to a heading in a long Markdown file overshot it:** the first click could scroll past the heading. It now jumps straight to it.
+- **Long lines in the changes tile were cut off** at the tile's edge. They scroll sideways now.
+- **Always allow… opened a folder:** after Claude Code asks for the same permission three times, *Always allow…* › *Open settings file* opened the project's `.claude` folder. It now opens `.claude/settings.local.json` in an editor tile.
+
+---
+
 # Operant 1.18.0
 
 Operant now runs on macOS and Linux as well as Windows, with an installer for each in every release. Every tile also gets the info bar, and tile titles no longer overlap their buttons.

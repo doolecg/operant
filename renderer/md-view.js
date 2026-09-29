@@ -48,7 +48,8 @@ const MdView = (() => {
       else if ((m = line.match(/^(#{1,6})\s+(.*?)\s*#*$/))) {
         flushPara(); closeLists();
         const id = m[2].toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
-        html += `<h${m[1].length} id="${esc(id)}">${inline(m[2])}</h${m[1].length}>`;
+        // data-anchor, not id: a heading such as "Settings" would shadow the app's own #settings panel.
+        html += `<h${m[1].length} data-anchor="${esc(id)}">${inline(m[2])}</h${m[1].length}>`;
       } else if (/^\s*>/.test(line)) {
         flushPara(); closeLists();
         const quote = [];
