@@ -91,6 +91,12 @@ const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
 // the brief file, so turning the setting on doesn't need a restart.
 const HOOK_CMD_PATH = path.join(__dirname, 'hooks', process.platform === 'win32' ? 'long-commands.cmd' : 'long-commands.sh')
   .replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+// The agent plugin: the `operant` skill (and, later, hooks). It goes to each tile's session from here
+// (--plugin-dir, CLAUDE_CODE_PLUGIN_DIRS, OpenCode's skills.paths) and is never copied into ~/.claude or
+// ~/.config/opencode. Settings > Agents > installSkill.
+const PLUGIN_DIR = path.join(__dirname, 'agent-plugin').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+// A fresh dev checkout or a broken build may lack it; a flag pointing at a missing folder would upset the agent.
+const pluginReady = () => fs.existsSync(path.join(PLUGIN_DIR, '.claude-plugin', 'plugin.json'));
 const HOOK_SETTINGS_PATH = path.join(app.getPath('userData'), 'hook-settings.json');
 // Same setting, for OpenCode: a plugin (tool.execute.before) rather than a --settings hook, wired up
 // below next to OPENCODE_CONFIG_CONTENT.
@@ -165,7 +171,7 @@ const DEFAULT_CONFIG = {
   shell: process.platform === 'win32' ? 'powershell.exe' : unix.defaultShell(),
   showExternalAgents: true,       // subagents from Claude sessions not started inside Operant
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
-  installSkill: true,             // teach Claude Code & OpenCode the `operant` command via a skill file (Settings > Agents)
+  installSkill: true,             // Claude Code & OpenCode tiles get the `operant` skill per session, from the app's own agent-plugin folder (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
   longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
@@ -328,7 +334,6 @@ ipcMain.handle('config:set', (e, patch) => {
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
   if ('tokenUsage' in patch) { if (config.tokenUsage) usage.start(); else usage.stop(); }
   if ('planLimits' in patch || 'planLimitAlerts' in patch || 'tokenUsage' in patch) pollLimits();
-  if ('installSkill' in patch) syncSkill();
   if ('theme' in patch || 'accent' in patch) opencodeTheme.writeTheme(config);
   if ('agents' in patch || 'defaultAgent' in patch) scanOpencodeModels();
   // Other Operant windows pick the change up live.
@@ -364,47 +369,6 @@ function bringUp(w) {
   if (w.isMinimized()) w.restore();
   w.show();
   w.setAlwaysOnTop(true); w.focus(); w.setAlwaysOnTop(false);
-}
-
-// ------------------------------------------------------------- skill install
-// Teaches Claude Code / OpenCode the `operant` CLI command (bin/operant.cmd) via a skill file,
-// so an agent running inside a tile knows it can drive Operant. Copied in, or removed, to match
-// Settings > Agents > installSkill. Never throws: a failure here shouldn't break startup.
-
-const SKILL_SRC = path.join(__dirname, 'skill', 'operant', 'SKILL.md').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-const SKILL_TARGETS = [
-  path.join(os.homedir(), '.claude', 'skills', 'operant', 'SKILL.md'),
-  path.join(os.homedir(), '.config', 'opencode', 'skills', 'operant', 'SKILL.md'),
-];
-function isOperantSkillFile(content) {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content || '');
-  return !!m && /^name:\s*operant\s*$/m.test(m[1]);
-}
-function syncSkill() {
-  try {
-    if (!fs.existsSync(SKILL_SRC)) return; // not built yet (e.g. a fresh dev checkout)
-    // The targets are in the user's home, shared with their installed Operant: a dev/test profile
-    // must neither install its work-in-progress skill there nor remove the installed one.
-    if (process.env.OPERANT_USER_DATA) return;
-    const content = fs.readFileSync(SKILL_SRC, 'utf8');
-    for (const t of SKILL_TARGETS) {
-      try {
-        if (config.installSkill) {
-          let cur = null;
-          try { cur = fs.readFileSync(t, 'utf8'); } catch {}
-          if (cur !== content) { fs.mkdirSync(path.dirname(t), { recursive: true }); fs.writeFileSync(t, content); }
-        } else {
-          let cur = null;
-          try { cur = fs.readFileSync(t, 'utf8'); } catch {}
-          if (cur != null && isOperantSkillFile(cur)) {
-            fs.unlinkSync(t);
-            const dir = path.dirname(t);
-            try { if (!fs.readdirSync(dir).length) fs.rmdirSync(dir); } catch {}
-          }
-        }
-      } catch (e) { console.error('skill sync failed', t, e); }
-    }
-  } catch (e) { console.error('skill sync failed', e); }
 }
 
 // -------------------------------------------------------------- control API
@@ -700,6 +664,29 @@ const findAgent = id => config.agents.find(a => a.id === id) || config.agents.fi
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
 const isClaude = agent => /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim());
 
+// Whether an agent's installed CLI takes what the agent plugin needs (`pluginDir`: Claude Code's
+// --plugin-dir, `skillPaths`: OpenCode's skills.paths; agent-setup.js runs the probes). Asked once per launch
+// command, in the background at start, so a tile's launch finds the answer already in. A "no" is asked
+// again after two minutes, so a slow first run or a CLI updated meanwhile doesn't stay off until a restart.
+const agentProbes = new Map(); // `${what}:${command}` -> { at, ok, value: Promise<boolean> }
+function agentCan(agent, what) {
+  const key = `${what}:${String(agent.command).trim()}`;
+  const hit = agentProbes.get(key);
+  if (hit && !(hit.ok === false && Date.now() - hit.at > 120000)) return hit.value;
+  const entry = { at: Date.now(), ok: null };
+  const probe = what === 'pluginDir' ? agentSetup.probeClaudePluginDir : agentSetup.probeOpencodeSkillPaths;
+  entry.value = freshEnv().then(env => probe(agent.command, { env })).catch(() => false).then(ok => (entry.ok = ok));
+  agentProbes.set(key, entry);
+  return entry.value;
+}
+function probeAgents() {
+  if (!config.installSkill) return;
+  for (const a of config.agents) {
+    if (isClaude(a)) agentCan(a, 'pluginDir');
+    else if (isOpenCode(a)) agentCan(a, 'skillPaths');
+  }
+}
+
 // A restored Claude tile continues its conversation, if it had one (a tile you never typed in
 // leaves no transcript, and --resume would fail on it).
 const hasTranscript = id => {
@@ -851,12 +838,14 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
     const hookArgs = config.longCommandHook && isClaude(agent) ? ['--settings', HOOK_SETTINGS_PATH] : [];
+    // The operant skill, for this session only.
+    const pluginArgs = isClaude(agent) && config.installSkill && pluginReady() && await agentCan(agent, 'pluginDir') ? ['--plugin-dir', PLUGIN_DIR] : [];
     // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
     const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
     // Item 33: team mode picks the agent and passes its model straight through — OpenCode takes it as
     // -m, Claude Code as --model. Other agents don't get a model flag (none of the built-in ones need it).
     const modelArgs = model ? (isOpenCode(agent) ? ['-m', String(model)] : isClaude(agent) ? ['--model', String(model), ...(effort ? ['--effort', String(effort)] : [])] : []) : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...setupArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(sh ? unix.sq : q).join(' ');
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...pluginArgs, ...setupArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(sh ? unix.sq : q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -887,17 +876,26 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Item 33: a tile opened as a team worker can't itself start workers (operant-cli.js checks this).
     ...(worker ? { OPERANT_WORKER: '1' } : {}),
   });
+  // A `claude` started by hand in a shell tile, or by another agent, gets the operant skill from the
+  // environment. A Claude Code tile gets --plugin-dir instead, and both would load the plugin twice, so
+  // its inherited copy of ours (Operant may itself run in a tile) goes; with the setting off it goes everywhere.
+  const pluginDirs = agentSetup.pluginDirsEnv(envBase.CLAUDE_CODE_PLUGIN_DIRS, PLUGIN_DIR, config.installSkill && pluginReady() && !(agent && isClaude(agent)));
+  if (pluginDirs == null) delete envBase.CLAUDE_CODE_PLUGIN_DIRS; else envBase.CLAUDE_CODE_PLUGIN_DIRS = pluginDirs;
   // Selects the operant.json theme (renderer/themes.js) for just this OpenCode process, without
   // touching the user's own ~/.config/opencode/tui.json.
   if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
   // Item 43: the brief as an `instructions` file, through OpenCode's own per-process config env var
   // (merged with the user's real opencode.json/opencode.jsonc, never replacing it). Item 37: the same
   // env var also carries the long-command reroute plugin when that setting is on, merged into the
-  // same object rather than a second env var.
-  if (isOc && (config.briefAgents || config.longCommandHook || config.shareSetup)) {
+  // same object rather than a second env var. The operant skill goes in as a skills.paths entry, after the
+  // user's own (OpenCode replaces that array).
+  if (isOc && (config.briefAgents || config.longCommandHook || config.shareSetup || config.installSkill)) {
+    const skillPaths = config.installSkill && pluginReady() && await agentCan(agent, 'skillPaths')
+      ? agentSetup.opencodeSkillPaths(dir, path.join(PLUGIN_DIR, 'skills')) : [];
     envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(config.briefAgents ? BRIEF_PATH : null, {
       mainAgent: config.shareSetup ? config.defaultAgent : null,
       pluginPath: config.longCommandHook ? OC_HOOK_PATH : null,
+      skillPaths,
     });
   }
   // Folds the main agent's MCP servers, plugin skills and CodeGraph hook into whatever
@@ -1864,7 +1862,14 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (mac) mac.setAppMenu(); else Menu.setApplicationMenu(null);
     startControlServer();
-    syncSkill();
+    // Older versions copied the operant skill into the agents' own folders; it now goes to each session
+    // from PLUGIN_DIR, so those copies are removed. The home folder is shared with the installed Operant:
+    // a dev/test profile must not remove what that one still uses.
+    if (!process.env.OPERANT_USER_DATA) {
+      const gone = agentSetup.removeLegacySkillCopies({ homeDir: os.homedir() });
+      if (gone.length) logLine(`removed the skill copies older versions installed: ${gone.join(', ')}`);
+    }
+    probeAgents(); // in the background: what the installed CLIs take, before the first tile needs to know
     opencodeTheme.writeTheme(config);
     editorCommand(); // warms the PATH and editor lookups before the first tile needs them
     createWindow(openAtStart || folderArg(process.argv), toRestore[0]);

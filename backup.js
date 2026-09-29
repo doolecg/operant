@@ -7,7 +7,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const hub = require('./hub');
 
-const SKIP_SKILLS = new Set(['synced', hub.LINK_NAME]);
+const SKIP_SKILLS = new Set(['synced', hub.LINK_NAME, 'operant']); // 'operant' is the app's own, handed to each session
 const SKIP_DIRS = new Set(['__pycache__', '.git', 'node_modules', '.venv', '.mypy_cache', '.pytest_cache']);
 const isSecret = n => /^\.env(\..*)?$/i.test(n) || /\.(key|pem)$/i.test(n) || /^credentials/i.test(n);
 const isJunk = n => n === '.DS_Store' || n === 'Thumbs.db' || /\.pyc$/i.test(n);

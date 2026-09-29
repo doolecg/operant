@@ -1,0 +1,19 @@
+{
+  "description": "Operant's live context for agents in its tiles; does nothing outside Operant.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "operant hook session-start", "timeout": 8 }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "operant hook subagent-start", "timeout": 8 }
+        ]
+      }
+    ]
+  }
+}

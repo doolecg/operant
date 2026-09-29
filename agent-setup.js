@@ -9,13 +9,15 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { exec } = require('child_process');
 
 const isClaudeCmd = cmd => /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(cmd || '').trim().split(/\s+/)[0]);
 const isOpenCodeCmd = cmd => /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(String(cmd || '').trim().split(/\s+/)[0]);
 
 // -------------------------------------------------------------------- json / jsonc helpers
 function stripJsonComments(text) {
-  // Good enough for opencode.jsonc: strips // and /* */ outside of strings.
+  // Good enough for opencode.jsonc: strips // and /* */ outside of strings, and the trailing commas
+  // OpenCode's own parser allows.
   let out = '', inStr = false, strCh = '', i = 0;
   while (i < text.length) {
     const c = text[i];
@@ -28,6 +30,11 @@ function stripJsonComments(text) {
     if (c === '"' || c === "'") { inStr = true; strCh = c; out += c; i++; continue; }
     if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++; continue; }
     if (c === '/' && text[i + 1] === '*') { i += 2; while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++; i += 2; continue; }
+    if (c === '}' || c === ']') {
+      let j = out.length - 1;
+      while (j >= 0 && /\s/.test(out[j])) j--;
+      if (out[j] === ',') out = out.slice(0, j) + out.slice(j + 1);
+    }
     out += c; i++;
   }
   return out;
@@ -264,6 +271,99 @@ function buildOpencodeConfigContent({ base, cwd, userDataDir, config }) {
   return JSON.stringify(obj);
 }
 
+// -------------------------------------------------------------------- the operant skill, per session
+// Versions before 1.19 copied the skill into ~/.claude/skills/operant and ~/.config/opencode/skills/operant,
+// where every Claude Code session paid for its listing (OpenCode reads both folders, so it listed it twice)
+// and a copy could lag the app. Now the app's own agent-plugin/ folder goes to each tile's session:
+// `--plugin-dir` plus CLAUDE_CODE_PLUGIN_DIRS for Claude Code, `skills.paths` in the per-process config
+// for OpenCode. Nothing is written into the agents' own folders.
+function isOperantSkillFile(content) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content || '');
+  return !!m && /^name:\s*operant\s*$/m.test(m[1]);
+}
+
+// Removes what those versions left, and only Operant's own SKILL.md: a skill someone else called
+// "operant" stays. A link (the hub's junction, say) is unlinked without following it, so what it points
+// at is never touched. Returns the folders it cleaned; never throws.
+function removeLegacySkillCopies({ homeDir = os.homedir() } = {}) {
+  const removed = [];
+  for (const dir of [path.join(homeDir, '.claude', 'skills', 'operant'), path.join(homeDir, '.config', 'opencode', 'skills', 'operant')]) {
+    try {
+      let st = null;
+      try { st = fs.lstatSync(dir); } catch { continue; }
+      const file = path.join(dir, 'SKILL.md');
+      let content = null;
+      try { content = fs.readFileSync(file, 'utf8'); } catch {}
+      if (!isOperantSkillFile(content)) continue;
+      if (st.isSymbolicLink()) fs.unlinkSync(dir);
+      else {
+        fs.unlinkSync(file);
+        if (!fs.readdirSync(dir).length) fs.rmdirSync(dir);
+      }
+      removed.push(dir);
+    } catch {}
+  }
+  return removed;
+}
+
+// A tile's CLAUDE_CODE_PLUGIN_DIRS: `current` (what Operant inherited, which may already carry ours when it
+// runs inside another Operant tile) with our folder added, or taken out. Shell tiles and other agents get it
+// so a `claude` typed in them has the skill too; a Claude Code tile already gets `--plugin-dir`, and both
+// could load it twice. Returns the new value, or null when nothing is left (the var is then deleted).
+function pluginDirsEnv(current, dir, add) {
+  const key = p => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+  const parts = String(current || '').split(path.delimiter).filter(p => p && key(p) !== key(dir));
+  if (add) parts.push(dir);
+  return parts.length ? parts.join(path.delimiter) : null;
+}
+
+// The `skills.paths` an OpenCode tile gets: `ours` (a folder of skill folders) after the user's own. OpenCode
+// replaces that array from one config source to the next instead of merging, so ours alone would switch
+// their own skill folders off. Read the way OpenCode finds its config: the global file, then each
+// opencode.json(c) and .opencode/ from the project's git root down to `dir`. Their paths stay as written
+// (OpenCode resolves relative ones from the tile's folder, the same with or without ours).
+function opencodeSkillPaths(dir, ours, { homeDir = os.homedir() } = {}) {
+  const files = [];
+  const globalDir = path.join(homeDir, '.config', 'opencode');
+  files.push(path.join(globalDir, 'opencode.json'), path.join(globalDir, 'opencode.jsonc'));
+  const chain = [];
+  for (let d = path.resolve(dir || '.'), i = 0; i < 12; i++) {
+    chain.unshift(d);
+    if (fs.existsSync(path.join(d, '.git')) || path.dirname(d) === d) break;
+    d = path.dirname(d);
+  }
+  for (const d of chain) {
+    for (const base of [d, path.join(d, '.opencode')]) files.push(path.join(base, 'opencode.json'), path.join(base, 'opencode.jsonc'));
+  }
+  const same = p => { const s = p.replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? s.toLowerCase() : s; };
+  const out = [];
+  for (const f of files) {
+    const list = readJson(f)?.skills?.paths;
+    for (const p of Array.isArray(list) ? list : []) if (typeof p === 'string' && p.trim() && !out.some(o => same(o) === same(p))) out.push(p);
+  }
+  return [...out.filter(p => same(p) !== same(ours)), ours];
+}
+
+// What an agent's installed CLI can do, asked by running it: a flag or config key an older version doesn't
+// know would stop its tile from starting, so it is only passed once the CLI has said it's there. main.js
+// runs each probe once per launch command, in the background, and keeps the answer. Through the shell,
+// as a tile starts the command, so a .cmd shim or a command with flags of its own works too.
+function runProbe(command, args, { env, timeout }) {
+  return new Promise(resolve => {
+    try {
+      const child = exec(`${String(command || '').trim()} ${args.join(' ')}`, { windowsHide: true, timeout, env: env || process.env, maxBuffer: 8 << 20 },
+        (err, stdout, stderr) => resolve({ ok: !err, output: `${stdout}\n${stderr}` }));
+      child.stdin?.end(); // some CLIs wait on an open, untouched stdin
+    } catch { resolve({ ok: false, output: '' }); }
+  });
+}
+// Claude Code: `--plugin-dir` is in its help.
+const probeClaudePluginDir = (command, { env } = {}) =>
+  runProbe(command, ['--help'], { env, timeout: 10000 }).then(r => r.ok && /--plugin-dir\b/.test(r.output));
+// OpenCode: a config with `skills.paths` is accepted (an older version rejects a key it doesn't know).
+const probeOpencodeSkillPaths = (command, { env } = {}) =>
+  runProbe(command, ['debug', 'config'], { env: { ...(env || process.env), OPENCODE_CONFIG_CONTENT: '{"skills":{"paths":[]}}' }, timeout: 15000 }).then(r => r.ok);
+
 // -------------------------------------------------------------------- desire paths
 // `operant _desire`: the CLI reports what an agent tried that isn't there (a command, a flag) and what it
 // was pointed to instead, so the commands agents keep reaching for can be seen. One JSON line each, in the
@@ -294,5 +394,7 @@ module.exports = {
   findPluginSkillDirs, syncPluginSkillsMirror,
   findCodegraphPromptHookCommand, codegraphPluginEntry,
   buildOpencodeConfigContent,
+  isOperantSkillFile, removeLegacySkillCopies, pluginDirsEnv, opencodeSkillPaths,
+  probeClaudePluginDir, probeOpencodeSkillPaths,
   desirePathLine, appendDesirePath,
 };

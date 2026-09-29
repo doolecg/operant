@@ -13,7 +13,7 @@ const MAX_SKILL_BYTES = 20 * 1024;
 const MAX_RULES_BYTES = 8 * 1024;
 const LINK_NAME = 'operant-hub'; // ~/.claude/operant-hub -> <hub>: the space-free path CLAUDE.md imports through
 const SKIP_SKILLS = new Set(['synced']); // managed by Claude Code
-const MANAGED_SKILLS = new Set(['operant']); // rewritten by Operant on every start, so never tidied
+const MANAGED_SKILLS = new Set(['operant']); // Operant hands it to each session itself (agent-plugin/), so never tidied or adopted
 const TIDY_MIN_BYTES = 32;             // below this, stray whitespace isn't worth a finding
 const OPTIMISE_RULES_BYTES = 4 * 1024; // rules/skills past these sizes get an "optimise with an agent" offer
 const OPTIMISE_SKILL_BYTES = 12 * 1024;
@@ -248,7 +248,7 @@ function audit({ claudeDir, hubDir, memoryDirs = [] }) {
   const local = new Map(); // name -> claude/skills entry path
 
   for (const e of entries) {
-    if (SKIP_SKILLS.has(e.name)) continue;
+    if (SKIP_SKILLS.has(e.name) || MANAGED_SKILLS.has(e.name)) continue;
     const p = path.join(skillsDir, e.name);
     const inHub = fs.existsSync(path.join(hubSkills(hubDir), e.name, 'SKILL.md'));
     if (isLink(p)) {
@@ -277,7 +277,7 @@ function audit({ claudeDir, hubDir, memoryDirs = [] }) {
   let hubEntries = [];
   try { hubEntries = fs.readdirSync(hubSkills(hubDir), { withFileTypes: true }); } catch {}
   for (const e of hubEntries) {
-    if (e.isDirectory() && !lstat(path.join(skillsDir, e.name))) {
+    if (e.isDirectory() && !MANAGED_SKILLS.has(e.name) && !lstat(path.join(skillsDir, e.name))) {
       add({ id: `relink-skill:${e.name}`, kind: 'broken-link', message: `Hub skill "${e.name}" has no link in ~/.claude/skills`, fix: { type: 'relink-skill', name: e.name } });
     }
   }

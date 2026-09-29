@@ -55,12 +55,14 @@ function mainRulesText(mainAgent, launching) {
   try { return p ? fs.readFileSync(p, 'utf8') : ''; } catch { return ''; }
 }
 // `pluginPath`, when given, is the long-command reroute (hooks/opencode-long-commands.mjs), in the
-// same object so everything merges into one config.
-const opencodeConfigContent = (filePath, { mainAgent, pluginPath } = {}) => {
+// same object so everything merges into one config. `skillPaths` are folders of skill folders (the agent
+// plugin's skills/); OpenCode replaces `skills.paths` instead of merging, so the caller passes the user's own too.
+const opencodeConfigContent = (filePath, { mainAgent, pluginPath, skillPaths = [] } = {}) => {
   const content = {};
   const instructions = [filePath, mainRules(mainAgent, 'opencode')].filter(Boolean);
   if (instructions.length) content.instructions = instructions;
   if (pluginPath) content.plugin = [pluginPath];
+  if (skillPaths.length) content.skills = { paths: skillPaths };
   return JSON.stringify(content);
 };
 

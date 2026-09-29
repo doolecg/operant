@@ -7,8 +7,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
 
-// Where the skill lives: the one line to change when it moves to agent-plugin/skills/operant/.
-const SKILL_FILE = path.join(__dirname, '..', 'skill', 'operant', 'SKILL.md');
+// Where the skill lives: where the skill lives.
+const SKILL_FILE = path.join(__dirname, '..', 'agent-plugin', 'skills', 'operant', 'SKILL.md');
 // The fields the Agent Skills format defines; a reader may drop or reject any other.
 const FIELDS = ['name', 'description', 'license', 'compatibility', 'metadata'];
 

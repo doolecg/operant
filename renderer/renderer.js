@@ -3987,7 +3987,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   });
 
   // ------------------------------------------------------------- control API
-  // An agent CLI running in a tile drives Operant through `operant <cmd>` (see skill/operant).
+  // An agent CLI running in a tile drives Operant through `operant <cmd>` (see agent-plugin/skills/operant).
   // Main forwards each request here; we reply on the same channel. Nothing thrown here reaches main unanswered.
   function rawLines(w, n) {
     if (w.kind === 'view') return (w.text || '').split('\n').slice(0, n);

@@ -180,7 +180,7 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
 - [x] **47. CLI reliability:** no 5-minute limit on plan/ask/wait (node:http, not fetch), `--cwd` defaults to the
       shell's folder, `--options` takes commas (PowerShell), `run` names the next step, aliases and closest-match
       errors, `operant help <topic>`.
-- [ ] **48. Skill per session:** an `agent-plugin/` loaded with `--plugin-dir` (Claude) and `skills.paths`
+- [x] **48. Skill per session:** an `agent-plugin/` loaded with `--plugin-dir` (Claude) and `skills.paths`
       (OpenCode); nothing written to the user's home, old copies removed.
 - [ ] **49. Live context:** `operant prime` injected at session start and after every compact (SessionStart hook,
       OpenCode plugin), a short brief for subagents, a ~600-byte launch brief.
