@@ -33,8 +33,8 @@ full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old a
   after a reject; workers stop on permission prompts for commands like git status.
 
 ## Next
-- 55 evals (move salvage harness to `evals/`, back-to-back before/after when weekly usage allows), docs,
-  RELEASE_NOTES, plugin.json version bump at release.
+- 55: harness in evals/ (selftest passes), README "What your agents get" and RELEASE_NOTES 1.19.0 done. Left: eval
+  runs (Sonnet x3 before/after, wait for the user's go), plugin.json + package.json version bump at release.
 
 ## Working rules (user)
 - Structured ~100-word handbacks; targeted edits; one item per commit; smallest model that fits

@@ -1,3 +1,35 @@
+# Operant 1.19.0
+
+Agents get cheaper and better briefed: the Operant skill loads per session, a live context is injected at start and after every compact, team tiers span Claude and OpenCode, results are reviewed before they count, agents can message each other, and usage shows cost by model, tier, task and project.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-1.19.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-1.19.0-mac-arm64.dmg` (Apple Silicon) or `Operant-1.19.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-1.19.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-1.19.0-linux-amd64.deb` (`sudo apt install ./Operant-1.19.0-linux-amd64.deb`).
+
+## New
+- **The Operant skill loads per session:** Claude Code and OpenCode get it from Operant when a tile starts, so nothing is written to your home folder any more. Copies that older versions left in your agents' folders are removed.
+- **Live context:** at session start and after every compact, the agent is handed the current state with `operant prime`. Subagents get a short brief, workers are asked to report when they stop, and the launch brief is down to about 600 bytes.
+- **Lean skill and worker hand-backs:** the skill is much shorter. A worker finishes with `operant task done --status done|blocked|failed --note "<files, open issues>"`, a note of 100 words at most.
+- **Team tiers across Claude and OpenCode:** tiers use Haiku, Sonnet and Opus and OpenCode's free and paid models, whichever are available. When a CLI or model is missing, the tier falls back and Settings shows what it fell back to. OpenCode leads get tier subagents, and a tier is suggested when none is given.
+- **Review, retry and escalation:** a worker's result waits for approval on the board. A failed task is retried once, then moved up a tier. Each tier can have a token budget (Settings › Agents › Team, or `--budget`) that stops a worker and escalates it; 0 means no limit.
+- **Agent messaging (opt-in):** `operant msg <tile> "<text>"` and `operant inbox` let agents talk to each other, Claude Code and OpenCode included. Messages arrive between tool calls, at the end of a turn, when the agent is idle, or through OpenCode's server, and never land on a permission prompt. Repeats are dropped and each pair is rate limited. Turn it on in Settings › Agents › Team.
+- **Usage by model, tier, task and project:** the usage panel shows tokens and cost for each, plus the cache hit rate. Every price shows where it came from, and a model without a known price stays unknown instead of guessed. Claude cost is the API-equivalent figure, not what your plan charges.
+- **OpenCode history from its database:** OpenCode usage is read from OpenCode's own database, so past sessions count too.
+- **A more reliable `operant` command:** no 5-minute limit on `plan`, `ask` and `wait`; commands run in the folder your shell is in (`--cwd` only to override); options take commas, which suits PowerShell; each `run` names the next step; aliases work and a mistyped command suggests the closest match; `operant help <topic>` explains a topic.
+
+## Changed
+- **Reroute long commands is on by default** (Settings › Agents).
+
+## Fixed
+- **Claude Code never saw the skill's description:** its frontmatter wasn't valid, so Claude saw only "Operant control".
+- **The long-command reroute could approve a command for you.** It never does now.
+- **`operant test` and `operant build` gave up after about 20 seconds** on slower suites. They now wait for the result.
+- **OpenCode tokens were counted too often:** every update re-added the running total, inflating usage, budgets and the runaway guard. Each message is now counted once.
+- **Retries, report nudges and `operant send --enter` left the text in the prompt** without submitting it. They now submit.
+
+---
+
 # Operant 1.18.1
 
 Four fixes: shortcuts that stopped working with some Markdown files open, links to headings in long files, long lines in the changes tile, and the *Always allow…* button.

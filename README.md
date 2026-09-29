@@ -10,8 +10,8 @@ Operant is built so agents don't have to read their own noise. A few things do t
 - **Auto compact and usage:** when context hits a threshold (default 80%, configurable in Settings › Agents), Operant runs `/compact` at the next idle moment. Agents can request it themselves with `operant compact` at a clean stopping point. Check `operant usage` to see your context and plan limits.
 - **Tile info bar** under every tile: an agent's model, context size, tokens used since the tile opened and a cache-cold mark when idle; the folder and branch for every tile; an image's size and zoom; the changes tile's count.
 - **Launch brief** starts every agent with the essentials: use CodeGraph before grep/reading, read `.operant/progress.md` if it exists, run long commands through `operant run`/`wait`.
-- **The Operant skill installs itself** for Claude Code and OpenCode, so agents use `operant run`/`wait`/`read` without being told to. `operant help [cmd]` shows the full command reference.
-- **Optional "Reroute long commands" hook** (Settings › Agents, off by default) moves test, build and install commands from the agent's shell into tiles automatically, so savings don't depend on remembering the skill.
+- **The Operant skill loads itself** into every Claude Code and OpenCode session, so agents use `operant run`/`wait`/`read` without being told to. `operant help [cmd]` shows the full command reference.
+- **Optional "Reroute long commands" hook** (Settings › Agents, on by default, never auto-approves) moves test, build and install commands from the agent's shell into tiles automatically, so savings don't depend on remembering the skill.
 - **CodeGraph:** agents query a code index instead of grepping and reading whole files. Indexing runs on startup for projects that changed.
 - **Context size on every agent tile,** like `ctx 84k`, orange at 60% and red at 85%, so you can see when to `/compact` or start a fresh session before a big context starts costing you on every message.
 - **Token usage pill** with today's total, a daily budget, and a graph over time; plan limit alerts at 80% and 95%.
@@ -21,6 +21,12 @@ Operant is built so agents don't have to read their own noise. A few things do t
 operant run "npm test" --title tests
 operant wait 7 --errors
 ```
+
+## What your agents get
+- **The Operant skill and live context.** Operant loads its skill into each Claude Code and OpenCode session itself, so nothing is written to your home folder. At session start and after every compact, `operant prime` hands the agent the current state, so it doesn't have to rediscover it.
+- **Team mode and tiers.** A lead agent hands work to tiers: Haiku, Sonnet and Opus on Claude Code, and OpenCode's free and paid models. Each tier uses what's available and falls back when a CLI or model is missing. Workers finish with `operant task done --status done|blocked|failed --note "<files, open issues>"`.
+- **Review, escalation and budgets.** A worker's result waits for approval. A failed task is retried once, then moved up a tier. Per-tier token budgets (Settings › Agents › Team, or `--budget`) stop a worker and escalate it.
+- **Messaging, opt-in.** With it on (Settings › Agents › Team), agents can send each other short messages with `operant msg <tile> "<text>"` and read them with `operant inbox`, Claude Code and OpenCode included. Repeats are dropped and each pair is rate limited.
 
 ## Install
 Download the file for your system from the [latest release](https://github.com/doolecg/operant/releases/latest):
@@ -103,7 +109,9 @@ Windows only for now. The top bar shows whatever Windows is playing, whether tha
 ## Token usage
 The top bar shows how many tokens Claude Code has used today, across every session (Operant's tiles, other terminals, your IDE and subagents). Hover it for the breakdown and the last hour. Click it, or press `Alt+U`, for a graph over the last 5 hours, 24 hours, 7 days or 30 days, with totals by type and by project. Hover a bar for its numbers.
 
-The numbers come from Claude Code's own transcripts in `~/.claude/projects`, so they cover what those still hold (Claude Code clears out old ones after 30 days by default). By default the bar counts input, output and cache-write tokens. Cache reads are usually far bigger than the rest, so they're left out. Click a type on the graph, or use Settings › Usage, to count it or leave it out. Turn the pill off in Settings › Usage.
+The Claude numbers come from Claude Code's own transcripts in `~/.claude/projects`, so they cover what those still hold (Claude Code clears out old ones after 30 days by default). By default the bar counts input, output and cache-write tokens. Cache reads are usually far bigger than the rest, so they're left out. Click a type on the graph, or use Settings › Usage, to count it or leave it out. Turn the pill off in Settings › Usage.
+
+The usage panel also breaks tokens and cost down by model, tier, task and project, with the cache hit rate. Each price shows its source, and a model with no known price stays unknown instead of guessed. Claude's cost is the API-equivalent figure, not what your plan charges. OpenCode usage is read from OpenCode's own database.
 
 Plan limits use Claude Code's login. On macOS that login is in the Keychain, so macOS asks once whether Operant may read it: choose *Always Allow* and it stops asking.
 
