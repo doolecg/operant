@@ -16,6 +16,7 @@ const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
 const { writeFileAtomic } = require('./atomic-write');
+const configMigrate = require('./config-migrate');
 const { createStuckTracker } = require('./stuck');
 const outcomes = require('./outcomes');
 const { priceOf } = require('./pricing');
@@ -304,6 +305,22 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
   // Keep a config that doesn't parse, so the next save (which writes only what changed) can't lose it.
   if (e.code !== 'ENOENT') try { fs.copyFileSync(CONFIG_PATH, CONFIG_PATH.replace(/\.json$/, '.broken.json')); } catch {}
 } // a BOM from Notepad or PowerShell would fail the parse
+// Old configs are brought up to the current version (config-migrate.js). The pre-migration file is copied to
+// config.v<from>.json first and the save is atomic, so a crash leaves the old file (migrated again next start) or the new one.
+{
+  const m = configMigrate.migrate(user);
+  if (m.future) console.log(`config.json is version ${m.from}, newer than this Operant (${configMigrate.CURRENT}): used as is`);
+  else if (m.error) console.error('config migration failed, config left as is', m.error);
+  else if (m.changed) {
+    if (fs.existsSync(CONFIG_PATH)) {
+      try {
+        fs.copyFileSync(CONFIG_PATH, CONFIG_PATH.replace(/\.json$/, `.v${m.from}.json`));
+        writeFileAtomic(CONFIG_PATH, JSON.stringify(m.user, null, 2));
+        user = m.user;
+      } catch (e) { console.error('config migration not saved', e); }
+    } else user = m.user;
+  }
+}
 // team is nested (tiers keyed by name), so a user override of just `team.enabled` shouldn't drop
 // the default tiers - same idea as keybinds below.
 // teamTiers is derived, never saved: the tiers for the default agent (team-tiers.js), which for

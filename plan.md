@@ -265,7 +265,7 @@ check in an isolated profile before release.
       history (from, to, when, result) in userData shown in the About/update panel. The new version marks itself
       healthy once its window has loaded; if it fails to get there twice, Operant offers to reinstall the previous
       release and restore the pre-update backup (never automatically).
-- [ ] **70. Config versions and migrations:** `configVersion` in config.json and an ordered list of migrations run
+- [x] **70. Config versions and migrations:** `configVersion` in config.json and an ordered list of migrations run
       at load (after a backup), each tested from a fresh install, an old config and an interrupted migration; an
       unknown future version is left untouched and read as far as possible.
 - [ ] **71. Every setting works:** a test walks every Settings control and every DEFAULT_CONFIG key: each one saves,
