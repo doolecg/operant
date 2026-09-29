@@ -13,6 +13,7 @@ const pty = require('@lydell/node-pty');
 const { createUpdater } = require('./updater');
 const hub = require('./hub');
 const skillsBackup = require('./backup');
+const stateBackup = require('./state-backup');
 const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
 const { writeFileAtomic } = require('./atomic-write');
@@ -1406,6 +1407,42 @@ ipcMain.handle('backup:run', () => backupRun(false));
 ipcMain.handle('backup:state', () => ({ last: backupLast, running: !!backupBusy }));
 ipcMain.handle('backup:check-repo', async (_e, dir) => (await skillsBackup.checkRepo(dir)).error || '');
 
+// Operant's own state (state-backup.js): config, session, memory and the like, copied into userData/backups.
+// A daily one at startup when the newest is over 24 hours old; the updater calls createStateBackup('before-update').
+function createStateBackup(reason) {
+  return stateBackup.createBackup({ userDataDir: app.getPath('userData'), reason, version: app.getVersion() });
+}
+function dailyStateBackup() {
+  try {
+    const dir = app.getPath('userData');
+    const newest = stateBackup.listBackups(dir).find(b => b.ok);
+    if (newest && Date.now() - Date.parse(newest.at) < 24 * 60 * 60 * 1000) return;
+    createStateBackup('daily');
+    stateBackup.pruneBackups(dir);
+  } catch (e) { logLine(`state backup failed: ${e.message || e}`); }
+}
+ipcMain.handle('backups:list', () => stateBackup.listBackups(app.getPath('userData')));
+ipcMain.handle('backups:create', () => {
+  try {
+    const b = createStateBackup('manual');
+    stateBackup.pruneBackups(app.getPath('userData'));
+    return { ok: true, id: b.id };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+ipcMain.handle('backups:restore', async (e, id) => {
+  const row = stateBackup.listBackups(app.getPath('userData')).find(b => b.id === id);
+  if (!row) return { ok: false, error: 'Backup not found' };
+  const when = row.at ? new Date(row.at).toLocaleString() : row.id;
+  const r = await dialog.showMessageBox(winOf(e), { type: 'question', title: 'Operant', message: `Restore the backup from ${when}?`,
+    detail: 'Config, session, usage and memory files in it replace the current ones (a backup of the current state is taken first). Operant restarts.',
+    buttons: ['Restore and restart', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true });
+  if (r.response !== 0) return { ok: false, cancelled: true };
+  try { stateBackup.restoreBackup({ userDataDir: app.getPath('userData'), id, version: app.getVersion() }); } catch (err) { return { ok: false, error: String(err.message || err) }; }
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 200);
+  return { ok: true };
+});
+ipcMain.on('backups:open-folder', () => { const d = stateBackup.backupsRoot(app.getPath('userData')); fs.mkdirSync(d, { recursive: true }); shell.openPath(d); });
+
 // -------------------------------------------------------------------- media
 
 const media = createMedia({ send: broadcast });
@@ -2037,6 +2074,7 @@ if (!app.requestSingleInstanceLock()) {
       const gone = agentSetup.removeLegacySkillCopies({ homeDir: os.homedir() });
       if (gone.length) logLine(`removed the skill copies older versions installed: ${gone.join(', ')}`);
     }
+    dailyStateBackup();
     probeAgents(); // in the background: what the installed CLIs take, before the first tile needs to know
     opencodeTheme.writeTheme(config);
     editorCommand(); // warms the PATH and editor lookups before the first tile needs them

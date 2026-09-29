@@ -182,6 +182,9 @@ const Panels = (() => {
     ['Skills backup', [
       { type: 'skillsBackup', label: 'Skills backup private git repos rules push commit' },
     ]],
+    ['Backups', [
+      { type: 'stateBackups', label: 'Backups restore config session memory copy folder' },
+    ]],
     ['Updates', [
       { type: 'updates', label: 'Check for updates version release' },
       { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and every 3 hours, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
@@ -189,7 +192,7 @@ const Panels = (() => {
   // Rows flagged `win` exist only on Windows; a tab left with none goes too.
   ].map(([t, items]) => [t, items.filter(it => IS_WIN || !it.win)]).filter(([, items]) => items.length);
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', 'Skills backup': '⤒', Updates: '↻' };
+    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', 'Skills backup': '⤒', Backups: '⛁', Updates: '↻' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -372,7 +375,20 @@ const Panels = (() => {
         <div class="ctl"><button class="btn primary" data-backup-run${running || !b.repos.length ? ' disabled' : ''}>Back up now</button></div></div>`;
   }
 
+  // Settings › Backups: Operant's own state (config, session, memory) copied into its data folder; Restore asks first.
+  let stateBackups = null, stateBackupMsg = '';
+  const fmtSize = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+  function stateBackupsEditor() {
+    const rows = stateBackups === null ? '<div class="set-row"><div class="lbl">Loading…</div></div>'
+      : stateBackups.length ? stateBackups.map(b => `<div class="set-row"><div class="lbl"><span>${esc(b.at ? new Date(b.at).toLocaleString() : b.id)} · ${esc(b.reason || 'unknown')}</span><span class="hint">${b.ok ? `Operant ${esc(b.version || '?')} · ${b.files} files · ${fmtSize(b.bytes)}` : 'Unreadable (no manifest)'}</span></div><div class="ctl"><button class="btn" data-sbk-restore="${esc(b.id)}"${b.ok ? '' : ' disabled'}>Restore</button></div></div>`).join('')
+      : '<div class="set-row"><div class="lbl">No backups yet</div></div>';
+    return `
+      <div class="set-row"><div class="lbl">Back up now<span class="hint uc-status" data-sbk-status>${esc(stateBackupMsg || 'Config, session, usage and memory · one is taken daily, the newest 10 and one a day for a week are kept')}</span></div>
+        <div class="ctl"><button class="btn primary" data-sbk-create>Back up now</button><button class="btn" data-sbk-open>Open folder</button></div></div>${rows}`;
+  }
+
   function rowHtml(it, cfg, ext) {
+    if (it.type === 'stateBackups') return stateBackupsEditor();
     if (it.type === 'skillsBackup') return backupEditor(cfg, ext);
     if (it.type === 'projects') return projectsEditor(cfg);
     if (it.type === 'theme') return themeCards(cfg.theme);
@@ -479,6 +495,18 @@ const Panels = (() => {
         const repos = cfg.skillsBackup?.repos || [];
         if (!repos.some(r => r.path.toLowerCase() === p.toLowerCase())) setBackup({ repos: [...repos, { path: p }] });
         draw();
+      });
+      if (stateBackups === null && pane.querySelector('[data-sbk-create]')) ext.listStateBackups().then(l => { stateBackups = l; draw(); });
+      pane.querySelectorAll('[data-sbk-create]').forEach(b => b.onclick = async () => {
+        b.disabled = true;
+        const r = await ext.createStateBackup();
+        stateBackupMsg = r.ok ? 'Backed up' : `Backup failed: ${r.error}`;
+        stateBackups = await ext.listStateBackups(); draw();
+      });
+      pane.querySelectorAll('[data-sbk-open]').forEach(b => b.onclick = () => ext.openBackupsFolder());
+      pane.querySelectorAll('[data-sbk-restore]').forEach(b => b.onclick = async () => {
+        const r = await ext.restoreStateBackup(b.dataset.sbkRestore);
+        if (!r.ok && !r.cancelled) { stateBackupMsg = `Restore failed: ${r.error}`; draw(); }
       });
       pane.querySelectorAll('[data-backup-run]').forEach(b => b.onclick = () => { b.disabled = true; ext.backupRun(); });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });

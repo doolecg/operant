@@ -256,7 +256,7 @@ check in an isolated profile before release.
 - [x] **67. Atomic state writes:** config.json, the board, outcomes, usage tags and memory stats are written to a
       temp file and renamed, so a crash or power cut mid-write never leaves a half file; a file that doesn't parse
       is kept as `.broken` (as config already is) and the last good backup is offered.
-- [ ] **68. Operant's own backups:** a snapshot of Operant's state (config, personal memory, board, usage tags,
+- [x] **68. Operant's own backups:** a snapshot of Operant's state (config, personal memory, board, usage tags,
       outcomes, memory stats) into userData/backups/<time>/ with a manifest of sha256 per file, read back and
       checked after writing. Daily and before every update; keeps the last 10 plus one a day for a week. Settings ›
       Backups lists them with *Back up now* and *Restore*; a restore takes a safety backup first.
