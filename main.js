@@ -994,7 +994,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   }
   // OpenCode's TUI has no effort flag: a tier's effort becomes the build agent's model variant,
   // which OpenCode applies only while that agent runs its configured model (the same -m model).
-  // With team mode on, each OpenCode tier is also a `tier-<name>` subagent the lead can hand work to.
+  // With team mode on (and in every worker), each OpenCode tier is also a `tier-<name>` subagent the lead or a master worker can hand work to.
   // A team worker's harmless read-only commands and its `operant task/board/...` reports never stop on a prompt.
   // Merged per key into the user's own `permission`; a command one of their own deny/ask patterns covers is left out.
   if (isOc && worker) {
@@ -1004,7 +1004,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     oc.permission = { ...own, bash: { ...(own.bash && typeof own.bash === 'object' ? own.bash : {}), ...wp.bash } };
     envBase.OPENCODE_CONFIG_CONTENT = JSON.stringify(oc);
   }
-  const tierAgents = isOc && config.team?.enabled
+  const tierAgents = isOc && (config.team?.enabled || worker)
     ? teamTiers.opencodeSubagents(config.teamTiers || {}, id => { const a = config.agents.find(x => x.id === id); return !!a && isOpenCode(a); }) : {};
   if (isOc && ((model && effort) || Object.keys(tierAgents).length)) {
     let oc = {}; try { oc = JSON.parse(envBase.OPENCODE_CONFIG_CONTENT || '{}'); } catch {}

@@ -14,7 +14,7 @@ function briefFor(agent) {
     'Live context is in <operant-context>, else run `operant prime`.',
     'Run tests, builds, installs, dev servers via `operant test`, `operant build`, `operant run "<cmd>"` then `operant wait <id> --errors`.',
     'To ping the user, end with `operant notify "<text>"`.',
-    'Team mode, several parts? First send each independent, self-contained one to a worker: `operant agent --tier xsmall "<brief>"`; do the rest yourself.',
+    'Team mode, several parts? Parallel subagents; the other CLI\'s parts go to one master worker: `operant agent --tier <t> "<numbered parts>"`.',
     'Review a worker with `operant read <tile>`, `operant board`, `operant test`, then `operant task approve <id>` or `reject <id> --note "<why>"`.',
     `More: the \`${SKILL_NAME[agent] || 'operant'}\` skill.`,
   ].join('\n');

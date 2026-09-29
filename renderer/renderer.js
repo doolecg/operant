@@ -442,6 +442,8 @@
     if (Object.keys(v).length) all[dir] = v; else delete all[dir];
     setSetting('projectDefaults', all);
   }
+  // Subagents one tile may run at once: just under the runaway flag (Settings › Tiles & subagents), 10 when that's off.
+  const subagentLimit = () => (cfg.runawaySubagents > 1 ? cfg.runawaySubagents - 1 : 10);
   const agentKind = id => { const c = String(cfg.agents.find(a => a.id === id)?.command || '').trim().split(/\s+/)[0]; return /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(c) ? 'opencode' : /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(c) ? 'claude' : 'other'; };
   // Settings › Projects: what tiles opened in a project start with (the innermost project, if they nest).
   function projectDefaults(dir) {
@@ -1164,6 +1166,7 @@
       autoSend: () => !!cfg.terminal?.autoSend?.[key],
       setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
       allowedTiers: () => allowedTierNames(dir),
+      agentKind, subagentLimit,
       agentMode: () => { const m = agentMode(dir); return { mode: m, label: m === 'both' ? '' : TeamTiers.MODE_LABEL[m], empty: m !== 'both' && !Object.keys(tiersIn(dir)).length }; },
       openProjectSettings: () => { togglePanel('settings'); Panels.showTab('Operant Terminal'); renderSettings(); },
       freeWorkers: () => Math.max(0, (cfg.team?.maxWorkers || 4) - [...wins.values()].filter(x => x.alive && x.tier).length),
@@ -4601,7 +4604,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
     const all = tiersIn(dir), tiers = Object.fromEntries(allowedTierNames(dir).map(n => [n, all[n]]));
     const mode = agentMode(dir);
-    return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers, ...(mode !== 'both' ? { agents: TeamTiers.MODE_LABEL[mode] } : {}) };
+    return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers, subagents: subagentLimit(), ...(mode !== 'both' ? { agents: TeamTiers.MODE_LABEL[mode] } : {}) };
   }
 
   const MESSAGING_OFF = 'messaging is off - turn it on in Settings › Agents › Team (Let agents message each other)';
@@ -4751,7 +4754,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           v: version,
           tile: { id: self.id, kind: self.kind, title: self.title, cwd: self.cwd, project, branch: gitState.get(project)?.status?.branch, agent: self.agentId || null },
           role: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell',
-          task: task ? { id: task.id, text: task.text, tier: self.tier } : null,
+          task: task ? { id: task.id, text: task.text, tier: self.tier, subagents: subagentLimit() } : null,
           team: self.tier ? null : teamInfo(self.cwd || lastCwd),
           review: self.tier ? [] : board.tasks.filter(t => t.status === 'review').map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
           tiles: [...wins.values()].filter(w => w.alive && w.id !== self.id).map(w => ({

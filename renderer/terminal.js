@@ -113,6 +113,38 @@ const OperantTerminal = (() => {
     });
     return plan;
   }
+  // One master worker per CLI: several tasks for the same CLI (Claude Code or OpenCode) go to one worker, which runs each as
+  // its own subagent at the same time, on that task's model, up to `limit` at once. It takes the highest tier among its tasks.
+  // kindOf(agentId) -> 'claude' | 'opencode' | 'other'; allowed = tier names, cheapest first. Other agents keep one worker per task.
+  const KIND_NAME = { claude: 'Claude', opencode: 'OpenCode' };
+  function subagentHow(kind, t) {
+    if (kind === 'opencode') return t.tier ? `the \`tier-${t.tier}\` subagent` : 'a subagent';
+    const m = /\b(haiku|sonnet|opus|fable)\b/i.exec(String(t.model || ''));
+    return m ? `the Agent tool with model "${m[1].toLowerCase()}"` : 'the Agent tool';
+  }
+  function masterPrompt(items, kind, limit) {
+    return [
+      `You're the master ${KIND_NAME[kind]} worker for these ${items.length} independent tasks. Run them at the same time as your own subagents, one subagent per task (up to ${limit} at once; start the rest as others finish), each the way its task says. Hand each subagent its task as written, tell it to touch only that task's files and not to commit. Do a task yourself only when it is a one-line change.`,
+      '',
+      ...items.flatMap((t, i) => [`${i + 1}. ${t.title} (${t.tier ? t.tier + ' tier, ' : ''}run with ${subagentHow(kind, t)})`, t.prompt,
+        ...(t.files?.length ? [`Files: ${t.files.join(', ')}`] : []), '']),
+      'When all are back, check them together (operant test, operant build) and fix any clash between them. Then report once: your --note starts with "TL;DR: <one sentence: what was done>", then one line per task: its number, done or failed, the files changed.',
+    ].join('\n');
+  }
+  function bundleTasks(tasks, { kindOf, allowed = [], limit = 9 } = {}) {
+    if (!Array.isArray(tasks) || tasks.length < 2) return tasks;
+    const groups = new Map();
+    for (const t of tasks) { const k = kindOf(t.agent); (groups.get(k) || groups.set(k, []).get(k)).push(t); }
+    const rank = t => allowed.indexOf(t.tier);
+    return [...groups].flatMap(([kind, items]) => {
+      if (items.length < 2 || !KIND_NAME[kind]) return items;
+      const top = items.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+      return [{ title: clip(`${items.length} tasks: ${items.map(t => t.title).join('; ')}`, 60), prompt: masterPrompt(items, kind, limit),
+        type: top.type, agent: top.agent, model: top.model, effort: top.effort, tier: top.tier,
+        files: [...new Set(items.flatMap(t => t.files || []))],
+        why: `One master ${KIND_NAME[kind]} worker runs these as parallel subagents: ${items.map((t, i) => `${i + 1}. ${t.title}`).join('; ')}` }];
+    });
+  }
   // Follow-up for a worker: the task, what it was asked, its last note and the new ask; never the history.
   function handoffText({ title, asked, note, ask }) {
     return [`Follow-up on your task "${clip(title, 80)}".`, `You were asked: ${clip(asked, 400) || 'unknown'}`,
@@ -395,7 +427,8 @@ const OperantTerminal = (() => {
       paint();
     }
     async function send(res, which) {
-      const tasks = which === 'original' ? [{ title: clip(res.original, 60), prompt: res.original }] : res.tasks;
+      const tasks = which === 'original' ? [{ title: clip(res.original, 60), prompt: res.original }]
+        : bundleTasks(res.tasks, { kindOf: host.agentKind || (() => 'other'), allowed: host.allowedTiers(), limit: host.subagentLimit?.() || 9 });
       await launch(res.requestId, tasks, 0);
     }
     // ---- follow-ups (item 78): a short structured handoff, never the history
@@ -575,7 +608,7 @@ const OperantTerminal = (() => {
     return { refresh: refreshCards, focus: () => box.focus({ preventScroll: true }), drawAuto };
   }
 
-  const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
+  const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, bundleTasks, masterPrompt, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
   return api;
 })();
 

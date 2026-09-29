@@ -31,6 +31,7 @@ test('a lead with team mode on gets the tiers and the routing rule', () => {
   assert.match(text, /xsmall\s+opencode opencode\/big-pickle - very easy tasks/);
   assert.match(text, /never above small/);
   assert.match(text, /the Agent tool with `model`/);
+  assert.match(text, /one master worker for that CLI, never one tile per task/);
   assert.match(text, /8 ai "worker" · xsmall worker, task 12/);
   assert.doesNotMatch(text, /7 ai "Claude Code"/, 'its own tile is not listed');
   assert.match(text, /Dev servers: http:\/\/localhost:5173 \(tile 5\)/);
@@ -58,6 +59,8 @@ test('a worker gets its task and how to report, not the team or the progress not
   assert.match(text, /a worker in tile 8 \(xsmall tier\)/);
   assert.match(text, /Your task \(board task 12\): Rename foo to bar in src\//);
   assert.match(text, /operant task done 12 --status done|blocked|failed --note/);
+  assert.match(text, /You're its master: .*own subagent at the same time/);
+  assert.match(text, /--note "TL;DR:/);
   assert.doesNotMatch(text, /Team mode|Progress note|Project memory/);
   assert.match(text, /CodeGraph index found/);
 });

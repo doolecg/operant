@@ -61,9 +61,9 @@ function header(d) {
 
 function workerBlock(d) {
   const k = d.task;
-  if (!k) return 'You were started as a worker: do your task yourself (workers can\'t start workers; your own subagents are fine).';
+  if (!k) return 'You were started as a worker: do your task yourself or with your own subagents (workers can\'t start workers).';
   return [`Your task (board task ${k.id}): ${clean(clip(k.text, 400))}`,
-    `Do it yourself (workers can't start workers; your own subagents are fine): targeted edits, narrow reads, at most one retry of a failing step. Then report in at most 100 words, and stop: \`operant task done ${k.id} --status done|blocked|failed --note "<files changed, one line each; open issues>"\`.`].join('\n');
+    `You're its master: when it has several parts, run each as its own subagent at the same time (up to ${k.subagents || 9} at once); do a part yourself only when it is tiny. Workers can't start workers. Targeted edits, narrow reads, at most one retry of a failing step. Then report in at most 100 words, and stop: \`operant task done ${k.id} --status done|blocked|failed --note "TL;DR: <one sentence>; <files changed, one line each; open issues>"\`.`].join('\n');
 }
 
 function teamBlock(d) {
@@ -80,7 +80,7 @@ function teamBlock(d) {
   const own = d.tile?.agent === 'claude' ? ' (Claude Code: the Agent tool with `model` set to the tier model\'s alias, e.g. sonnet or opus)' : '';
   return [`Team mode is on (${team.workers || 0}/${team.maxWorkers || 4} workers running). Tiers you may use, cheapest first:`,
     ...rows,
-    `Hand each task that fits a tier's use to the cheapest tier that fits, never above ${names[names.length - 1]}; do only what fits no tier yourself. A tier on your own CLI means your own subagents with that model${own}, not a tile. Operant tiles are only for work on the other CLI: \`operant agent "<self-contained task>" --tier <name> --title "<3-5 words>"\`, one call per tier with its tasks as one numbered prompt. Check each worker's result, then \`operant close <id>\`.`,
+    `Hand each task that fits a tier's use to the cheapest tier that fits, never above ${names[names.length - 1]}; do only what fits no tier yourself. A tier on your own CLI means your own subagents with that model${own}, run in parallel (up to ${team.subagents || 9} at once), not a tile. Work for the other CLI goes to one master worker for that CLI, never one tile per task: a single \`operant agent "<numbered tasks, each with its tier>" --tier <highest tier they need> --title "<3-5 words>"\`, told to run each task as its own subagent in parallel on that tier's model (up to ${team.subagents || 9} at once) and to start its note with a one-line TL;DR. Check its result, then \`operant close <id>\`.`,
   ].join('\n');
 }
 

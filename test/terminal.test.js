@@ -87,6 +87,34 @@ test('tasks past the free worker slots queue, in order; a task above the top tie
   assert.doesNotThrow(() => T.assertTierAllowed(undefined, ['cheap']));
 });
 
+test('several tasks for one CLI go to one master worker that runs them as parallel subagents', () => {
+  const kindOf = a => (a === 'oc' ? 'opencode' : a === 'cc' ? 'claude' : 'other');
+  const tasks = [
+    { title: 'Docs', prompt: 'write docs', agent: 'oc', model: 'opencode/big-pickle', tier: 'xsmall', files: ['README.md'] },
+    { title: 'Fix login', prompt: 'fix it', agent: 'cc', model: 'claude-sonnet-5-5', tier: 'small', files: ['a.js'] },
+    { title: 'Rename', prompt: 'rename x', agent: 'oc', model: 'opencode/big-pickle', tier: 'xsmall' },
+    { title: 'Tests', prompt: 'add tests', agent: 'cc', model: 'claude-haiku-4-5', tier: 'xsmall', files: ['a.js', 'b.js'] },
+    { title: 'Odd', prompt: 'p', agent: 'x', tier: 'xsmall' },
+  ];
+  const out = T.bundleTasks(tasks, { kindOf, allowed: ['xsmall', 'small'], limit: 9 });
+  assert.equal(out.length, 3);
+  const [oc, cc, other] = out;
+  assert.equal(oc.agent, 'oc');
+  assert.match(oc.title, /^2 tasks: Docs; Rename/);
+  assert.match(oc.prompt, /master OpenCode worker for these 2 independent tasks/);
+  assert.match(oc.prompt, /up to 9 at once/);
+  assert.match(oc.prompt, /the `tier-xsmall` subagent/);
+  assert.match(oc.prompt, /TL;DR/);
+  assert.equal(cc.tier, 'small', 'the master takes the highest tier among its tasks');
+  assert.equal(cc.model, 'claude-sonnet-5-5');
+  assert.deepEqual(cc.files, ['a.js', 'b.js']);
+  assert.match(cc.prompt, /Agent tool with model "sonnet"/);
+  assert.match(cc.prompt, /Agent tool with model "haiku"/);
+  assert.equal(other, tasks[4], 'an agent that is neither CLI keeps its own worker');
+  assert.equal(T.bundleTasks([tasks[0]], { kindOf }).length, 1);
+  assert.deepEqual(T.bundleTasks([tasks[0], tasks[1]], { kindOf }), [tasks[0], tasks[1]], 'one task per CLI stays as it is');
+});
+
 test('a follow-up handoff is short and structured, and never the history', () => {
   const h = T.handoffText({ title: 'Fix login', asked: 'Fix the login bug in auth.js', note: 'Fixed in auth.js; tests pass', ask: 'Also cover the reset flow' });
   assert.equal(h, 'Follow-up on your task "Fix login".\nYou were asked: Fix the login bug in auth.js\nYour last note: Fixed in auth.js; tests pass\nNew ask: Also cover the reset flow');
