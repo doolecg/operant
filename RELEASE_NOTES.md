@@ -1,3 +1,17 @@
+# Operant 2.3.5
+
+New installs start with Sonnet 5.5 at medium effort for the small and medium worker tiers.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.3.5-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.3.5-mac-arm64.dmg` (Apple Silicon) or `Operant-2.3.5-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.3.5-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.3.5-linux-amd64.deb` (`sudo apt install ./Operant-2.3.5-linux-amd64.deb`).
+
+## Changed
+- **Sonnet 5.5, medium effort, is the default for the small and medium tiers:** the small tier used to be Haiku 4.5 and the medium tier ran at low effort. Tiers you already saved keep their settings; change them in Settings › Agents › Team.
+
+---
+
 # Operant 2.3.4
 
 OpenCode tiles open again, and the local fallback model is now Gemma 4, which can actually run as an agent.

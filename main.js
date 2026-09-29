@@ -206,8 +206,8 @@ const DEFAULT_CONFIG = {
     enabled: false,
     tiers: {
       xsmall: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up in the code, read and summarise files, renames, run tests, docs tweaks (no web research)' },
-      small: { agent: 'claude', model: 'claude-haiku-4-5', use: 'simple tasks: simple edits, small bug fixes, tests' },
-      medium: { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low', use: 'medium tasks: a feature across a few files, a normal bug fix, research' },
+      small: { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', use: 'smaller tasks: a feature across a few files, a normal bug fix, simple edits' },
+      medium: { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', use: 'medium tasks: a feature across a few files, a normal bug fix, research' },
       high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'hard tasks: tricky debugging, a multi-file refactor' },
       max: { agent: 'claude', model: 'claude-opus-5-5', effort: 'max', use: 'the hardest problems: architecture, where getting it right matters more than cost' },
     },
