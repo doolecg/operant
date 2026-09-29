@@ -271,3 +271,104 @@ check in an isolated profile before release.
 - [ ] **71. Every setting works:** a test walks every Settings control and every DEFAULT_CONFIG key: each one saves,
       loads back, and is read somewhere outside settings/defaults (a dead setting fails the test); fix what it finds.
 - [ ] **72. 2.1 docs, release.**
+
+## Operant 2.0 master spec: everything, and where it stands (mapped 29 Sept)
+The full spec is `docs/operant-2.0-spec.md` (pasted 28 Sept; 2.0.0 was built from a short outline of it, so most
+of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers are the spec's sections.
+
+**Model orchestration**
+- [~] 12-15 Dynamic routing, escalation, downgrade: tiers by task type from outcomes, escalation on reject/budget/
+      stuck, 1-in-10 cheaper try. Missing: routing on complexity, context size, remaining budget, latency, risk.
+- [~] 16 Claude <-> OpenCode collaboration: `operant msg` shipped. Missing: measuring whether collaborating helped.
+- [ ] 17 Local model as a utility (classify, summarise, compress, filter): parked (item 64).
+- [~] 39 Task classification: type only. Missing: complexity, risk, repo size, language, verification need.
+- [~] 43 Parallel agents: allowed by team mode. Missing: measuring speedup, extra tokens, duplicate work.
+- [~] 42/44 Orchestration and token budgets: per-tier token budget only. Missing: max model calls, retries,
+      provider calls, elapsed time; per-phase budget split (plan/context/implement/verify).
+- [~] 91/92 Stop conditions, user intervention: `operant plan`/`ask`, budgets, stuck guard. Missing: stop on
+      "negative expected value", a budget-likely-exceeded warning.
+
+**Context and compression**
+- [ ] 20 Context engine: intent -> which files, symbols, history, memories, tool output matter -> ranked, budgeted.
+- [ ] 21-24 Context provider selection (CodeGraph vs grep vs memory vs git), provider benchmarks, provider
+      usefulness rates feeding routing ("should I call CodeGraph / memory / verify?").
+- [ ] 31/32 Tool-output compression (keep errors, paths, stack traces, exit codes) with a compression-worth check.
+      Today: `operant wait --errors` and digests only.
+- [ ] 30 Memory compression (benchmark Memor-AI / agentmemory first).
+- [ ] 58/59 Code-intelligence interface (CodeGraph, Tessera, code-context-graph, grep fallback).
+- [ ] 60 Project knowledge (languages, build/test system, commands, known failures) feeding routing.
+- [~] 61/62 Git awareness, change-aware context: memory links files by hash. Missing: commits/branches, recent
+      changes ranked higher.
+
+**Memory**
+- [x] 25-29 Structured memory, confidence, dates, usefulness (used/wrong), staleness from file hashes, supersedes.
+- [~] 26/28 Missing: contradiction flag, related commits/symbols, "ignored / caused a correction" signals,
+      automatic memory capture.
+
+**Analytics, learning, honesty**
+- [ ] 33 Local analytics database (SQLite): sessions, tasks, models, providers, tool calls, tokens, cost, latency,
+      failures, retries, escalations, compressions, memory/context retrieval, verification, cache.
+- [~] 34 Analytics questions: tokens/cost by model/tier/task/project. Missing: which model wastes tokens, which
+      provider fails, retry hot spots, justified escalations, unused integrations, orchestration overhead.
+- [ ] 18/19/45 Token economy: tool-output, retrieval, routing, verification, retry, escalation tokens; gross vs
+      NET savings; the cost of Operant itself.
+- [x] 36/85 Exploration and INSUFFICIENT DATA.  [x] 78 unknown prices stay unknown.  [~] 77 exact / estimated /
+      provider-reported marks on every figure.
+- [~] 79/80 Learning data, explainable routing: one-line reason. Missing: a stored structured reason per decision.
+- [ ] 37/38 Provider and model health: availability, latency, error/timeout/rate-limit rates, auth status;
+      per-task-type model success, retry and escalation rates.
+- [ ] 84 Local dashboard: overview, models, providers, tokens, cost, latency, failures, memory, compression,
+      context, benchmarks, routing, integrations; net tokens saved, cost avoided, success/retry/escalation rates.
+- [ ] 84M System health strip: version, update, backup, database, provider/model/local-model health, memory,
+      CodeGraph, MCP, analytics status.
+
+**Providers and ecosystem**
+- [ ] 10 Component registry (installed/available/healthy/capabilities/last checked), informational, no installs.
+- [ ] 11/12/55/56 Provider interfaces, model profiles by capability, provider discovery, capability routing:
+      parked (item 63).
+- [~] 54 Graceful degradation: tier fallbacks when a CLI/model is missing. Missing: CodeGraph -> grep, memory
+      down -> continue, provider outage -> fallback model.
+- [ ] 57 MCP as a provider boundary (discover tools, rate them on cost/latency/relevance/health).
+- [~] 48/49 Open-source evaluation records: done once in research (memor-ai, agentmemory, AgentMeter, opencode-x,
+      Tessera, code-context-graph). Missing: a kept, updatable record and security checks per component.
+- [~] 50/53 User control and config: team, tiers, budgets, messaging, verification settings. Missing: max cost,
+      max parallel agents, auto-escalation/downgrade toggles, compression/analytics toggles, provider switches.
+- [x] 51/52 Offline-first, privacy: all local, nothing uploaded.
+
+**Verification and reliability**
+- [~] 40 Verification: tests/build before review, diff size. Missing: type check, lint, second-model review, by risk.
+- [~] 41 Failure detection: same command/error, no edits, tool loops. Missing: unchanged patches, contradictory
+      instructions, context overflow, provider failures.
+- [~] 46/47 Baseline and A/B: eval baseline (no Operant), two-arm compare. Missing: a replayable task set per
+      category, routing-strategy comparisons, results stored in the app.
+- [~] 75/76 Tests: unit tests throughout. Missing: failure tests (timeout, bad credentials, rate limit, malformed
+      response, corrupt memory, database failure, MCP failure, network failure).
+
+**UI and operations (84A-84S)**
+- [x] 84A/84R Keep the existing UI.  [~] 84B/84C Every control works (item 71 running).
+- [~] 84E/84F Updates: auto-check, Check button, notes (shipped); backup before update, digest check, history,
+      health check and rollback offer (item 69 running). Missing: update channel (stable/beta), check-frequency
+      setting, disk-space check.
+- [~] 84G-84J Backups: daily, validated, restore with a safety backup (item 68). Missing: backup location,
+      frequency and count settings, backup before migration, periodic restore validation, last-backup status.
+- [x] 84K Config migrations (item 70).  [ ] Schema migrations for future databases (with 2.2).
+- [~] 84L Fresh vs existing install: config merge preserves data. Missing: explicit first-run detection.
+- [~] 84N Actionable errors. Missing: a pass over error messages (what happened, is data safe, next step).
+- [~] 84O/84P Settings and update/backup test matrices: round trip + used (item 71). Missing: invalid, boundary and
+      reset tests; failed-download, corrupt-backup and failed-restore tests.
+- [ ] 84C Reset-to-default per setting.
+- [ ] 93 Docs: architecture, providers, routing, memory, analytics, configuration, security, privacy,
+      troubleshooting.
+
+**Order**
+- 2.1 (in progress) also takes the ops gaps: update channel and check frequency, disk-space check, backup
+  location/frequency/count, backup before migration, restore validation, reset-to-default, failure tests.
+- 2.2 Measure everything: SQLite analytics (33), token economy with net savings and orchestration cost (18/19/45),
+  provider and model health (37/38), stored routing reasons (79), the dashboard (84), the system-health strip (84M).
+- 2.3 Context and compression: context engine (20-24), tool-output compression with a worth check (31/32), project
+  knowledge (60), change-aware git context (61/62), budgets per phase (42/44).
+- 2.4 Providers: interfaces and capability routing (11/12/55/56, item 63), component registry (10), MCP (57),
+  graceful degradation (54), Tessera / code-context-graph benchmarks (58), the settings for them (50/53).
+- 2.5 Smarter decisions: classification by complexity/risk (39), verification by risk incl. type check, lint and a
+  second model (40), collaboration and parallel measurement (16/43), replay benchmarks (47), stop conditions (91),
+  optional local model (17, item 64, ask first), docs (93).
