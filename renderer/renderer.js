@@ -1115,6 +1115,9 @@
     const i = Object.keys(activeTiers()).indexOf(tier);
     return i < 0 ? '' : `<i class="tier-dot t${Math.min(i, 2)}" title="Tier: ${esc(tier)}"></i>`;
   };
+  // One line for a task: its --title, else the first sentence of its first line (headings, bullets
+  // and a leading "Task:" dropped). The full text stays on hover and in `operant board --full`.
+  const taskTldr = t => t.title || clip((String(t.text).split('\n').map(l => l.replace(/^[\s#>*-]+/, '').replace(/^task:\s*/i, '').trim()).find(Boolean) || '').split(/(?<=[^\d\s]{2}[.!?])\s/)[0], 70);
   function renderBoard() {
     const open = board.tasks.filter(t => t.status !== 'done').length;
     $('#board-badge').textContent = open > 99 ? '99+' : open || '';
@@ -1123,7 +1126,7 @@
     const groups = [['todo', 'To do'], ['doing', 'Doing'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
-      return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text">${esc(t.text)}</span>`
+      return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text" title="${esc(t.text)}">${esc(taskTldr(t))}</span>`
         + (owner ? `<button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : '<span class="board-owner unassigned">unassigned</span>')
         + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '') + '</div>';
     };
@@ -1560,7 +1563,7 @@
       if (worked >= 2500) { w.unchecked = true; gitChanged(); }
       const open = worked >= 2500 && w.tier && w.ptyId ? board.tasks.find(t => t.owner === w.id && t.status !== 'done') : null;
       if (open && !w.nudged) { w.nudged = true; operant.writePty(w.ptyId, `Report back now: run operant task done ${open.id} --note '<the result>'\r`); }
-      else if (open) { open.note = 'Worker went idle without reporting a result'; notify(w, `Task ${open.id} ended without a result`, open.text, null, true); boardChanged(); }
+      else if (open) { open.note = 'Worker went idle without reporting a result'; notify(w, `Task ${open.id} ended without a result: ${taskTldr(open)}`, open.text, null, true); boardChanged(); }
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) {
         const what = w.title !== w.agentName ? w.title : shortPath(w.cwd || '').split(/[\\/]/).filter(Boolean).pop();
         notify(w, `${w.agentName} is waiting${what ? ': ' + clip(what, 50) : ''}`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
@@ -4254,7 +4257,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let taskId = null, prompt = args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
-          board.tasks.push({ id: taskId, text: String(args.prompt), status: 'todo', owner: null, note: null, tier });
+          board.tasks.push({ id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier });
           boardChanged();
           // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
           // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
@@ -4384,7 +4387,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           t.status = 'done'; if (args.note != null) t.note = String(args.note);
           const n = wins.get(t.owner);
           const from = n?.alive ? n : self;
-          if (from) notify(from, `Task ${t.id} done`, t.note || '', null, true);
+          if (from) notify(from, `Task ${t.id} done: ${taskTldr(t)}`, t.note || '', null, true);
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else throw new Error(`unknown task command "${args.sub}"`);
@@ -4392,7 +4395,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return { id: t.id, status: t.status, note: t.note, sub: args.sub };
       }
       case 'board': {
-        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: t.text, note: t.note, owner: fmtOwner(t.owner) })) };
+        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: args.full ? t.text : taskTldr(t), note: t.note, owner: fmtOwner(t.owner) })) };
       }
       case 'remember': {
         if (!args.text) throw new Error('text required');
