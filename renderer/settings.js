@@ -36,7 +36,7 @@ const Panels = (() => {
   const DEFAULT_BROWSER = IS_WIN ? "Windows' default browser" : 'Default browser';
   const BROWSER_PATH = IS_WIN ? 'path to the browser\'s exe' : IS_MAC ? 'the browser app, e.g. /Applications/Firefox.app' : 'path to the browser, e.g. /usr/bin/firefox';
 
-  const SECTIONS = [
+  const GROUPS_ALL = [
     ['Appearance', [
       { key: 'theme', type: 'theme' },
       { key: 'accent', label: 'Accent color', type: 'accent' },
@@ -203,10 +203,42 @@ const Panels = (() => {
         options: [['stable', 'Stable'], ['beta', 'Beta']] },
       { key: 'updateCheckHours', label: 'Check for updates every', hint: 'Hours, 1-24 · 0 = only at startup and when you click Check for updates', type: 'number', min: 0, max: 24 },
     ]],
-  // Rows flagged `win` exist only on Windows; a tab left with none goes too.
+  // Rows flagged `win` exist only on Windows; a group left with none goes too.
   ].map(([t, items]) => [t, items.filter(it => IS_WIN || !it.win)]).filter(([, items]) => items.length);
-  const TAB_ICONS = { Appearance: '◐', Terminal: '❯', 'Operant Terminal': '◆', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
-    Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', 'Skills backup': '⤒', Backups: '⛁', Updates: '↻' };
+
+  // Item 88: the groups above as 8 tabs. Every row keeps its group as a heading (`sub`); the rarely changed ones (`adv`)
+  // sit under a collapsed Advanced at the foot of the tab. Search still finds every row.
+  const TABS = [
+    ['General', ['Startup', 'Notifications', 'Updates']],
+    ['Look', ['Appearance', 'Terminal', 'Top bar', 'Media']],
+    ['Agents', ['Agents', 'Operant Terminal']],
+    ['Tiles', ['Layout', 'Tiles & subagents']],
+    ['Projects', ['Projects', 'Sidebar', 'Files', 'CodeGraph']],
+    ['Usage', ['Usage', 'Context and cache']],
+    ['Data', ['Memory', 'Backups', 'Skills backup']],
+    ['Keybinds', ['Keybinds']],
+  ];
+  // Rows that move to another group than the one they were written in.
+  const MOVED = { autoCompact: 'Context and cache', cacheTtlMinutes: 'Context and cache', compactBeforeCold: 'Context and cache' };
+  const ADVANCED = new Set(['borderAnimationSeconds', 'animations', 'blur', 'rounding', 'borderSize', 'gapsIn', 'gapsOut',
+    'lineHeight', 'cursorStyle', 'cursorBlink', 'scrollback', 'gpuTerminals', 'hardwareAcceleration', 'clockSeconds', 'clockDate', 'barTitle', 'mediaSize',
+    'shell', 'explorerOpensIn', 'linkBrowserCommand', 'secondBrowser', 'secondBrowserCommand', 'notifySubagents', 'notifyOnlyUnfocused',
+    'updateChannel', 'updateCheckHours', 'opencodeTheme', 'installSkill', 'briefAgents', 'longCommandHook', 'shareSetup',
+    'masterRatio', 'maxTilesPerWorkspace', 'moveFollowsTile', 'updateWhenIdle', 'saveQuitWaits', 'showExternalAgents', 'autoCloseDoneAgentsSeconds',
+    'idleCloseTerminalMinutes', 'agentLookbackSeconds', 'stuckTurns', 'runawayLoopRepeats', 'runawayTokens', 'runawayMinutes', 'runawaySubagents',
+    'sidebarWidth', 'sidebarHiddenFiles', 'ideCommand', 'configOpensIn', 'editorCommand', 'codegraphChangedFiles', 'codegraphButtons',
+    'usageSeries', 'planLimitAlerts', 'contextBadge', 'tileTokens', 'cacheTtlMinutes', 'compactBeforeCold']);
+  const rowsOf = g => GROUPS_ALL.flatMap(([name, items]) => items.map(it => ({ ...it, sub: MOVED[it.key] || name })))
+    .filter(it => it.sub === g).map(it => ({ ...it, adv: ADVANCED.has(it.key) }));
+  const SECTIONS = TABS.map(([t, groups]) => [t, groups.flatMap(rowsOf)]).filter(([, items]) => items.length);
+  // An old tab name (links, health actions, hints) -> [tab, group to scroll to].
+  const tabFor = name => {
+    if (SECTIONS.some(s => s[0] === name)) return [name, null];
+    const hit = TABS.find(([, groups]) => groups.includes(name));
+    return hit ? [hit[0], name] : [SECTIONS[0][0], null];
+  };
+  let advOpen = false, scrollTo = null;
+  const TAB_ICONS = { General: '⏻', Look: '◐', Agents: '✻', Tiles: '▦', Projects: '◈', Usage: '▥', Data: '⛁', Keybinds: '⌨' };
 
   function control(it, v, cfg) {
     switch (it.type) {
@@ -253,7 +285,7 @@ const Panels = (() => {
         <div class="ctl"><button class="btn" data-agent-add>+ Add agent</button></div></div>`;
   }
 
-  // Settings › Operant Terminal: the prompt refiner (refiner.js), how many tasks a request splits into, and the projects that skip the review.
+  // Settings › Agents › Operant Terminal: the prompt refiner (refiner.js), how many tasks a request splits into, and the projects that skip the review.
   function operantTerminalEditor(cfg, ext) {
     const t = { refiner: 'opencode', refinerModel: '', localUrl: '', localModel: '', autoSend: {}, maxTasks: 4, ...(cfg.terminal || {}) };
     const err = ext.errors && ext.errors.terminal;
@@ -343,7 +375,7 @@ const Panels = (() => {
   }
 
   // The last tab you had open comes back next time.
-  let tab = 'Appearance', query = '';
+  let tab = 'General', query = '';
   try { tab = localStorage.getItem('operant.settings.tab') || tab; } catch {}
   const settingsTab = () => (query ? '' : tab);
 
@@ -399,7 +431,7 @@ const Panels = (() => {
       <div class="set-row"><div class="lbl">Top tier allowed<span class="hint">Workers can't be started on a tier above this</span></div><div class="ctl"><select data-team-top>${Object.keys(tiers).map(n => `<option value="${esc(n)}"${n === (team.maxTier || Object.keys(tiers).pop()) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div></div>`;
   }
 
-  // Settings › Skills backup: the repos skills and rules are pushed to, the two switches, Back up now and the last result.
+  // Settings › Data › Skills backup: the repos skills and rules are pushed to, the two switches, Back up now and the last result.
   const BACKUP_LABEL = { pushed: 'pushed', nothing: 'nothing to back up', error: 'error' };
   function backupEditor(cfg, ext) {
     const b = { enabled: false, repos: [], auto: false, ...(cfg.skillsBackup || {}) };
@@ -423,7 +455,7 @@ const Panels = (() => {
         <div class="ctl"><button class="btn primary" data-backup-run${running || !b.repos.length ? ' disabled' : ''}>Back up now</button></div></div>`;
   }
 
-  // Settings › Backups: Operant's own state (config, session, memory) copied into a backups folder on a schedule;
+  // Settings › Data › Backups: Operant's own state (config, session, memory) copied into a backups folder on a schedule;
   // the switches and numbers, the folder, what the last backup and the last restore test found, and the list. Restore asks first.
   const BK_DEFAULTS = { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true };
   let stateBackups = null, stateBackupsAt = 0, stateBackupMsg = '', stateBackupErr = '', stateBackupInfo = null;
@@ -496,7 +528,7 @@ const Panels = (() => {
   // set(key, value) applies and saves one setting. ext: { renderKeys(el), renderCodegraph(el), update(), checkUpdate(), installUpdate(), openReleases() }
   function renderSettings(body, cfg, set, pickFolder, ext) {
     currentTheme = cfg.theme;
-    if (!SECTIONS.some(s => s[0] === tab)) tab = SECTIONS[0][0];
+    if (!SECTIONS.some(s => s[0] === tab)) [tab, scrollTo] = tabFor(tab);
     body.innerHTML = `<div class="set-layout"><nav class="set-nav">
         <input class="set-search" type="search" placeholder="Search settings" value="${esc(query)}" spellcheck="false">
         ${SECTIONS.map(([t]) => `<button class="set-tab" data-tab="${esc(t)}"><span class="ti">${TAB_ICONS[t] || '•'}</span>${esc(t)}</button>`).join('')}
@@ -511,15 +543,25 @@ const Panels = (() => {
       let html;
       if (!q) {
         const items = SECTIONS.find(s => s[0] === tab)[1];
-        html = `<div class="pane-title">${esc(tab)}</div>` + notices(cfg, ext) + items.map(it => rowHtml(it, cfg, ext)).join('') + sectionReset(items, cfg, ext);
+        const groups = [...new Set(items.map(it => it.sub))];
+        const block = rows => groups.map(g => { const its = rows.filter(it => it.sub === g); return its.length
+          ? `<div class="set-section" data-grp="${esc(g)}">${groups.length > 1 ? `<h3>${esc(g)}</h3>` : ''}${its.map(it => rowHtml(it, cfg, ext)).join('')}</div>` : ''; }).join('');
+        const adv = items.filter(it => it.adv);
+        const changed = adv.filter(it => ext.defaults && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])).length;
+        html = `<div class="pane-title">${esc(tab)}</div>` + notices(cfg, ext) + block(items.filter(it => !it.adv))
+          + (adv.length ? `<details class="set-adv"${advOpen ? ' open' : ''}><summary>Advanced <span class="hint">${adv.length} setting${adv.length === 1 ? '' : 's'}${changed ? ` · ${changed} changed` : ''}</span></summary>${block(adv)}</details>` : '')
+          + sectionReset(items, cfg, ext);
       } else {
-        const hits = SECTIONS.map(([t, items]) => [t, items.filter(it => `${t} ${it.label || it.key || ''} ${it.hint || ''} ${it.type === 'theme' ? 'theme colors' : ''} ${it.type === 'agents' ? 'agents commands' : ''}`.toLowerCase().includes(q))])
+        const hits = SECTIONS.map(([t, items]) => [t, items.filter(it => `${t} ${it.sub} ${it.label || it.key || ''} ${it.hint || ''} ${it.type === 'theme' ? 'theme colors' : ''} ${it.type === 'agents' ? 'agents commands' : ''}`.toLowerCase().includes(q))])
           .filter(([, items]) => items.length);
         html = notices(cfg, ext) + (hits.length ? hits.map(([t, items]) => `<div class="set-section"><h3>${esc(t)}</h3>${items.map(it => rowHtml(it, cfg, ext)).join('')}</div>`).join('')
           : `<div class="set-none">Nothing matches “${esc(query)}”.</div>`);
       }
       pane.innerHTML = html;
       pane.scrollTop = top;
+      const advEl = pane.querySelector('.set-adv');
+      if (advEl) advEl.addEventListener('toggle', () => { advOpen = advEl.open; });
+      if (scrollTo && !q) { pane.querySelector(`[data-grp="${CSS.escape(scrollTo)}"]`)?.scrollIntoView({ block: 'start' }); scrollTo = null; }
       bind();
     }
 
@@ -734,7 +776,8 @@ const Panels = (() => {
   // For the command palette: every setting with a label, and ways to open Settings on one.
   const settingsIndex = () => SECTIONS.flatMap(([t, items]) => items.filter(it => it.key && it.label).map(it => ({ tab: t, key: it.key, label: it.label, type: it.type })));
   const showSetting = label => { query = label; };
-  const showTab = t => { tab = t; query = ''; };
+  // An old tab name (now a group) opens its new tab, scrolled to that group.
+  const showTab = t => { [tab, scrollTo] = tabFor(t); query = ''; };
 
   return { renderSettings, noteLaunch, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
 })();

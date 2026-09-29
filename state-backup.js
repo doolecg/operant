@@ -1,7 +1,7 @@
 // Operant's own state backups: config, session, usage tags, outcomes, memory telemetry and the personal memory
 // folder are copied into userData/backups/<YYYYMMDD-HHMMSS>-<reason>/ with a manifest of sizes and sha256 hashes.
 // Every copy is read back and checked, and a restore checks the hashes again first. Paths are injected so it can
-// be tested against temp dirs. A custom location (Settings > Backups) replaces userData/backups; status.json in
+// be tested against temp dirs. A custom location (Settings > Data > Backups) replaces userData/backups; status.json in
 // the backups folder keeps the result of the last restore test of each backup.
 const fs = require('fs');
 const path = require('path');
@@ -180,7 +180,7 @@ function readStatus(root) {
 }
 function writeStatus(root, st) { fs.mkdirSync(root, { recursive: true }); writeFileAtomic(path.join(root, STATUS_FILE), JSON.stringify(st, null, 2)); }
 
-// The newest backup and the last restore test: what Settings > Backups shows above the list.
+// The newest backup and the last restore test: what Settings > Data > Backups shows above the list.
 function statusSummary(userDataDir, location = '') {
   const root = backupsRoot(userDataDir, location);
   const rows = listBackups(userDataDir, location).filter(b => b.ok);

@@ -197,8 +197,8 @@ const DEFAULT_CONFIG = {
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   cacheTtlMinutes: 5,              // Claude's prompt cache lifetime; 60 if your setup uses the 1-hour cache (Settings > Agents)
-  skillsBackup: { enabled: false, repos: [], auto: false }, // back up skills and rules to private git repos (Settings > Skills backup)
-  // Operant's own state backups (Settings > Backups; state-backup.js). location '' is userData/backups; keepDays keeps the newest of each of that many days.
+  skillsBackup: { enabled: false, repos: [], auto: false }, // back up skills and rules to private git repos (Settings > Data > Skills backup)
+  // Operant's own state backups (Settings > Data > Backups; state-backup.js). location '' is userData/backups; keepDays keeps the newest of each of that many days.
   backups: { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true },
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
   messaging: false,               // agents can message each other with operant msg / inbox (Settings > Agents > Team)
@@ -329,7 +329,7 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
   else if (m.changed) {
     if (fs.existsSync(CONFIG_PATH)) {
       try {
-        // A full backup first (config, session, memory...), when Settings > Backups has it on; failing to take it never blocks the migration.
+        // A full backup first (config, session, memory...), when Settings > Data > Backups has it on; failing to take it never blocks the migration.
         try {
           const bk = stateBackup.normalizeSettings(user.backups).settings;
           if (bk.beforeMigration) stateBackup.createBackup({ userDataDir: app.getPath('userData'), location: bk.location, reason: 'before-migration', version: app.getVersion() });
@@ -845,7 +845,7 @@ async function controlSummarize(cmd, args, tile) {
   }
 }
 
-// The editor tile's program: Settings › Files › Editor, or the first one found. Git for Windows brings
+// The editor tile's program: Settings › Projects › Files › Editor, or the first one found. Git for Windows brings
 // vim and nano without putting them on PATH, so its usr\bin is looked in too.
 const GIT_BIN = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin');
 let editorFound = null; // { at, key, value: Promise<string|null> }
@@ -899,7 +899,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     const noSwap = ed && /(^|[\\/])n?vim(\.exe)?$/i.test(ed) ? " -n -c 'set number title titlestring=%t%m'" : '';
     if (sh) ({ command, args } = unix.tileLaunch(config.shell, { script: unix.editScript(ed && (config.editor === 'custom' ? ed : unix.sq(ed)), noSwap, edit) }));
     else args = ['-NoLogo', '-Command', ed ? `& ${config.editor === 'custom' ? ed : q(ed)}${noSwap} ${q(edit)}`
-      : `Write-Host 'No editor found. Install vim, neovim, micro or nano, or set one in Settings > Files.' -ForegroundColor Yellow; Read-Host 'Press Enter to close'`];
+      : `Write-Host 'No editor found. Install vim, neovim, micro or nano, or set one in Settings > Projects > Files.' -ForegroundColor Yellow; Read-Host 'Press Enter to close'`];
   }
   let ocPort = null;
   const isOc = agent && isOpenCode(agent);
@@ -1334,7 +1334,7 @@ ipcMain.handle('codegraph:startup', async () => {
 });
 // Runs the IDE through cmd so .cmd launchers like code and cursor work. Resolves to an error message, or null.
 ipcMain.handle('ide:open', async (_e, dir) => { const cmd = await ideCommand(); return new Promise(resolve => {
-  if (!cmd) return resolve('Set a custom IDE command in Settings › Sidebar');
+  if (!cmd) return resolve('Set a custom IDE command in Settings › Projects › Sidebar');
   let child;
   const arg = process.platform === 'win32' ? `"${dir}"` : unix.sq(dir);
   try { child = spawn(`${cmd} ${arg}`, { shell: true, cwd: dir, detached: true, stdio: 'ignore', windowsHide: true }); }
@@ -1515,7 +1515,7 @@ ipcMain.handle('backup:state', () => ({ last: backupLast, running: !!backupBusy 
 ipcMain.handle('backup:check-repo', async (_e, dir) => (await skillsBackup.checkRepo(dir)).error || '');
 
 // Operant's own state (state-backup.js): config, session, memory and the like, copied into the backups folder
-// (userData/backups, or Settings > Backups > Location). An automatic one when the newest is older than everyHours
+// (userData/backups, or Settings > Data > Backups > Location). An automatic one when the newest is older than everyHours
 // (checked hourly and at startup, re-set when the settings change), a restore test of the newest one weekly, and
 // createStateBackup('before-update') from the updater and 'before-migration' from the config migration.
 const bkCfg = () => ({ ...stateBackup.DEFAULT_SETTINGS, ...(config.backups || {}) });
@@ -2237,7 +2237,7 @@ function createWindow(startDir = null, restore = null) {
 }
 
 // Closing a window ends its terminals, so it asks first while any are still running.
-// "Don't ask again" turns off confirmClose, which Settings › Tiles & subagents turns back on.
+// "Don't ask again" turns off confirmClose, which Settings › Tiles turns back on.
 const running = w => [...ptys.values()].filter(p => p.owner === w);
 let asking = null;
 function confirmClose(wins, { update = false } = {}) {

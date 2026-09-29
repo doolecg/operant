@@ -402,7 +402,7 @@
   }
 
   // Agents retitle their tiles many times a second while working, so only the title itself is redrawn.
-  // Settings › Terminal › GPU-accelerated terminals: WebGL drawing. A tile whose context is lost (the GPU
+  // Settings › Look › GPU-accelerated terminals: WebGL drawing. A tile whose context is lost (the GPU
   // reset, or too many tiles for the browser's limit) goes back to the normal renderer.
   const liveGlCount = () => { let n = 0; for (const x of wins.values()) if (x.gl) n++; return n; };
   function gpu(w) {
@@ -445,7 +445,7 @@
     if (Object.keys(v).length) all[dir] = v; else delete all[dir];
     setSetting('projectDefaults', all);
   }
-  // Subagents one tile may run at once: just under the runaway flag (Settings › Tiles & subagents), 10 when that's off.
+  // Subagents one tile may run at once: just under the runaway flag (Settings › Tiles), 10 when that's off.
   const subagentLimit = () => (cfg.runawaySubagents > 1 ? cfg.runawaySubagents - 1 : 10);
   const agentKind = id => { const c = String(cfg.agents.find(a => a.id === id)?.command || '').trim().split(/\s+/)[0]; return /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(c) ? 'opencode' : /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(c) ? 'claude' : 'other'; };
   // Settings › Projects: what tiles opened in a project start with (the innermost project, if they nest).
@@ -515,7 +515,7 @@
   }
 
   // ------------------------------------------------------------- files
-  // A file in the editor tile (vim or whatever Settings › Files picks; the tile closes when you quit
+  // A file in the editor tile (vim or whatever Settings › Projects › Files picks; the tile closes when you quit
   // it), or in the viewer tile: Markdown rendered, other text with line numbers, reloaded when it changes.
 
   let editorName = null;
@@ -2928,7 +2928,7 @@
     draw();
     if (!tbData) load();
   }
-  // Settings › CodeGraph: the installed version, install/update, index everything.
+  // Settings › Projects › CodeGraph: the installed version, install/update, index everything.
   let cgVersion; // undefined until asked, null when not installed
   async function renderCodegraph(el) {
     const draw = () => {
@@ -2949,7 +2949,7 @@
     cgVersion = await operant.codegraphVersion();
     if (el.isConnected) draw();
   }
-  // Settings › Memory: every remembered fact (this project's, then global), edit opens it in the
+  // Settings › Data › Memory: every remembered fact (this project's, then global), edit opens it in the
   // editor tile, ✕ deletes it.
   async function renderMemory(el) {
     const cwd = barProject();
@@ -2969,7 +2969,7 @@
       };
     });
   }
-  // config.json opens with Windows, or in the editor tile (Settings › Files).
+  // config.json opens with Windows, or in the editor tile (Settings › Projects › Files).
   async function openConfig() {
     if (cfg.configOpensIn !== 'editor') return operant.openConfig();
     closePanels(false);
@@ -3289,7 +3289,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
   // ------------------------------------------------------------ clock
-  // Time and date in the middle of the bar, formatted as Settings › Top bar says. Hover it for
+  // Time and date in the middle of the bar, formatted as Settings › Look › Top bar says. Hover it for
   // this month's calendar, click it to copy the time and date.
 
   const clockEl = $('#clock'), calEl = $('#cal');
@@ -3702,13 +3702,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
       const steps = dirs.map(d => `printf '\\n\\033[36m== %s\\033[0m\\n' ${q(d)}; `
         + `if [ -d ${q(d + '/.codegraph')} ]; then codegraph sync ${q(d)}; else codegraph init -y ${q(d)}; fi`);
-      run = `if ! command -v codegraph >/dev/null 2>&1; then printf '\\033[33mCodeGraph is not installed. Install it from Settings > CodeGraph.\\033[0m\\n'; else `
+      run = `if ! command -v codegraph >/dev/null 2>&1; then printf '\\033[33mCodeGraph is not installed. Install it from Settings > Projects > CodeGraph.\\033[0m\\n'; else `
         + steps.join('; ') + `; printf '\\n\\033[32mCodeGraph done for ${dirs.length} project(s)\\033[0m\\n'; fi`;
     } else {
       const q = s => `'${String(s).replace(/'/g, "''")}'`;
       const steps = dirs.map(d => `Write-Host ''; Write-Host ${q('== ' + d)} -ForegroundColor Cyan; `
         + `if (Test-Path -LiteralPath (Join-Path ${q(d)} '.codegraph')) { codegraph sync ${q(d)} } else { codegraph init -y ${q(d)} }`);
-      run = `if (-not (Get-Command codegraph -ErrorAction SilentlyContinue)) { Write-Host 'CodeGraph is not installed. Install it from Settings > CodeGraph.' -ForegroundColor Yellow } else { `
+      run = `if (-not (Get-Command codegraph -ErrorAction SilentlyContinue)) { Write-Host 'CodeGraph is not installed. Install it from Settings > Projects > CodeGraph.' -ForegroundColor Yellow } else { `
         + steps.join('; ') + `; Write-Host ''; Write-Host 'CodeGraph done for ${dirs.length} project(s)' -ForegroundColor Green }`;
     }
     newTerminal('shell', dirs[0], { run, title: `CodeGraph · ${label || baseName(dirs[0])}`, focus });
@@ -4262,7 +4262,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   const healthPill = $('#health-pill');
   let healthState = null;
   const HEALTH_LABEL = { healthy: 'Healthy', available: 'Available', degraded: 'Degraded', unavailable: 'Unavailable', 'not-configured': 'Not set up', unknown: 'Not checked yet' };
-  const HEALTH_ACTIONS = { 'check-updates': 'Check for updates', 'backup-now': 'Back up now', 'open-config': 'Open the file', 'index-project': 'Index this project', 'settings:Agents': 'Open Settings › Agents', 'settings:Backups': 'Open Settings › Backups', 'settings:CodeGraph': 'Open Settings › CodeGraph' };
+  const HEALTH_ACTIONS = { 'check-updates': 'Check for updates', 'backup-now': 'Back up now', 'open-config': 'Open the file', 'index-project': 'Index this project', 'settings:Agents': 'Open Settings › Agents', 'settings:Backups': 'Open Settings › Data › Backups', 'settings:CodeGraph': 'Open Settings › Projects › CodeGraph' };
   function renderHealth() {
     const h = healthState, o = h ? h.overall : 'unknown';
     healthPill.querySelector('.hdot').className = `hdot ${o}`;
@@ -4301,13 +4301,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   operant.on('update:status', s => {
     const wasReady = updateStatus?.state === 'ready';
     updateStatus = s;
-    if (openPanel() === 'settings' && Panels.settingsTab() === 'Updates') renderSettings();
+    if (openPanel() === 'settings' && Panels.settingsTab() === 'General') renderSettings();
     pill.classList.toggle('hidden', s.state !== 'downloading' && s.state !== 'ready');
     pill.classList.toggle('ready', s.state === 'ready');
     if (s.state === 'downloading') { pill.textContent = `↓ Downloading v${s.version}…`; pill.title = ''; }
     if (s.state === 'ready') {
       pill.textContent = `↑ Update to v${s.version}`;
-      pill.title = `v${version} → v${s.version}. Click to install and restart (or it installs when you quit).\nWhat's new: Settings › Updates`;
+      pill.title = `v${version} → v${s.version}. Click to install and restart (or it installs when you quit).\nWhat's new: Settings › General › Updates`;
       if (!wasReady) toast(`<b>Update ready</b> v${esc(s.version)}. Click the pill in the bar to restart.`);
       if (updateWaiting) showWaiting();
     }
@@ -4363,7 +4363,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   else startFresh();
   operant.appReady();
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
-  // Settings › CodeGraph: pinned projects with lots of new code (or all of them) are indexed in one tile at startup.
+  // Settings › Projects › CodeGraph: pinned projects with lots of new code (or all of them) are indexed in one tile at startup.
   operant.codegraphStartup().then(dirs => {
     if (!dirs.length) return;
     runCodegraph(dirs, `${dirs.length} project${dirs.length === 1 ? '' : 's'} on startup`, { focus: false });
@@ -4716,7 +4716,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             || (args.model && TeamTiers.modeConflict(mode, `model "${args.model}"`, /^claude/i.test(args.model) ? 'claude' : /\//.test(args.model) ? 'opencode' : 'other'))
             || (args.tier && !mtiers[args.tier] && activeTiers()[args.tier] && TeamTiers.modeConflict(mode, `tier "${args.tier}"`, agentKind(activeTiers()[args.tier].agent)));
           if (conflict) throw new Error(conflict);
-          if (!Object.keys(mtiers).length) throw new Error(`this project is set to ${TeamTiers.MODE_LABEL[mode]}, but no tier for it can run right now - change it in the project's sidebar menu (Agents) or Settings › Operant Terminal`);
+          if (!Object.keys(mtiers).length) throw new Error(`this project is set to ${TeamTiers.MODE_LABEL[mode]}, but no tier for it can run right now - change it in the project's sidebar menu (Agents) or Settings › Agents › Operant Terminal`);
         }
         // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt. A project limited to one CLI always routes within its tiers.
         if (!args.tier && !args.agent && !args.model && (cfg.team?.enabled || mode !== 'both')) {

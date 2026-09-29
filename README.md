@@ -60,7 +60,7 @@ You need the agent CLIs themselves installed and on your `PATH`, for example:
 - **Linux:** an AppImage replaces itself, in a folder you can write to. A `.deb` install downloads the new `.deb` and installs it through a password prompt when you click *Update*, never on quit.
 
 ## Backups and updates
-Operant backs up its own state (config, personal memory, board, usage tags, outcomes) daily, checks each backup by reading it back, and tests a restore weekly. It also backs up before every update and config upgrade. Secrets are left out. Manage them in Settings › Backups. Restoring upgrades and health-checks the backup, and refuses one from a newer Operant.
+Operant backs up its own state (config, personal memory, board, usage tags, outcomes) daily, checks each backup by reading it back, and tests a restore weekly. It also backs up before every update and config upgrade. Secrets are left out. Manage them in Settings › Data › Backups. Restoring upgrades and health-checks the backup, and refuses one from a newer Operant.
 
 Updates are checked against GitHub's sha256 and kept in an update history. If a new version fails to start twice, Operant offers to reinstall the previous one. The health panel in the top bar shows what's working.
 
@@ -76,7 +76,7 @@ Each project has one Operant Terminal: the ◆ in the projects sidebar, `Alt+Shi
 
 A review shows your original next to the cleaned prompt, the tasks and token estimates. `Enter` sends, `E` edits, `O` sends your original, `Esc` discards. Auto-send can be turned on per project. It may ask one question instead of guessing.
 
-Tasks run as workers and report back as cards with status, a note, check results, diff size, paid and free tokens and cost, and *Approve*, *Reject*, *Open* and *Message* buttons. Follow-ups go to the same worker or start a new task. The conversation is saved per project and comes back after a restart. Settings › Operant Terminal has the options.
+Tasks run as workers and report back as cards with status, a note, check results, diff size, paid and free tokens and cost, and *Approve*, *Reject*, *Open* and *Message* buttons. Follow-ups go to the same worker or start a new task. The conversation is saved per project and comes back after a restart. Settings › Agents › Operant Terminal has the options.
 
 In the project's sidebar menu you can choose **Claude only**, **OpenCode only** or **both**. That applies to the picks, routing, escalation, workers and new agent tiles.
 
@@ -86,7 +86,7 @@ Operant sends a Windows notification when:
 - an agent rings the terminal bell,
 - a Claude subagent finishes.
 
-Click the notification, or click it later in the Action Center, and Operant comes to the front on that tile. It switches to the right window and workspace if it needs to. By default you don't get one for the tile you're looking at. **Settings › Notifications** has the switches and the quiet time.
+Click the notification, or click it later in the Action Center, and Operant comes to the front on that tile. It switches to the right window and workspace if it needs to. By default you don't get one for the tile you're looking at. **Settings › General › Notifications** has the switches and the quiet time.
 
 ## Claude Code subagents
 Claude Code writes each subagent's transcript to
@@ -109,7 +109,7 @@ Nothing closes while it's still working: a subagent stays open until it says it'
 Set any of them to `0` to disable it.
 
 ## More than one window
-Start Operant again (Start menu, desktop shortcut, or *New window* when you right-click its taskbar icon; on macOS, *New Window* in the Dock icon's menu) and you get another Operant window, with its own workspaces and tiles. You can also press `Alt+Shift+N` or use *New Operant window* in the agent picker. A Claude subagent opens in the window whose tile started it. Settings changed in one window apply to all of them. Explorer's *Open in Operant* (on macOS, a folder dropped on the Dock icon or opened from Finder) adds a tile to the window you used last, or opens a new window: pick which in Settings › Startup. A click or touch anywhere in an Operant window brings it to the front.
+Start Operant again (Start menu, desktop shortcut, or *New window* when you right-click its taskbar icon; on macOS, *New Window* in the Dock icon's menu) and you get another Operant window, with its own workspaces and tiles. You can also press `Alt+Shift+N` or use *New Operant window* in the agent picker. A Claude subagent opens in the window whose tile started it. Settings changed in one window apply to all of them. Explorer's *Open in Operant* (on macOS, a folder dropped on the Dock icon or opened from Finder) adds a tile to the window you used last, or opens a new window: pick which in Settings › General. A click or touch anywhere in an Operant window brings it to the front.
 
 ## Projects sidebar
 The left side shows your **projects**, each with a folder tree you can expand, plus the folders your open tiles are running in. `Alt+B` or the sidebar button at the far left of the top bar hides and shows it. Drag its right edge to resize it.
@@ -118,10 +118,10 @@ The left side shows your **projects**, each with a folder tree you can expand, p
 - **Click a folder** to expand it. It also becomes the folder new tiles open in. Double-click a file to open it in its default app.
 - **Hover a folder** for quick buttons that start your default agent or a shell there. **Right-click** for more: pick an agent here, open in your file manager (Explorer, Finder), copy the path, pin or unpin.
 - A project shows how many tiles are open in it, and the one your focused tile is in is highlighted.
-- Settings › Sidebar has the on/off toggle, the width and *Show hidden files*.
+- Settings › Projects › Sidebar has the on/off toggle, the width and *Show hidden files*.
 
 ## Media controls
-Windows only for now. The top bar shows whatever Windows is playing, whether that's Spotify, a browser tab or any other player that shows up in Windows' volume flyout. You get the cover, the track and artist, and **shuffle**, **previous**, **play/pause** and **next** buttons. There's also a **volume** slider: drag it or scroll over it, and click the speaker to mute. The slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Turn it off in Settings › Media. Play/pause, next, previous and shuffle can each get a key in the keybinds popup.
+Windows only for now. The top bar shows whatever Windows is playing, whether that's Spotify, a browser tab or any other player that shows up in Windows' volume flyout. You get the cover, the track and artist, and **shuffle**, **previous**, **play/pause** and **next** buttons. There's also a **volume** slider: drag it or scroll over it, and click the speaker to mute. The slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Turn it off in Settings › Look › Media. Play/pause, next, previous and shuffle can each get a key in the keybinds popup.
 
 ## Token usage
 The top bar shows how many tokens Claude Code has used today, across every session (Operant's tiles, other terminals, your IDE and subagents). Hover it for the breakdown and the last hour. Click it, or press `Alt+U`, for a graph over the last 5 hours, 24 hours, 7 days or 30 days, with totals by type and by project. Hover a bar for its numbers.

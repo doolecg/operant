@@ -81,7 +81,7 @@ const OperantTerminal = (() => {
   const MODE_NAMES = { claude: 'Claude only', opencode: 'OpenCode only' };
   function modeNote(mode, refinerProvider) {
     if (!MODE_NAMES[mode]) return { label: '', note: '' };
-    return { label: MODE_NAMES[mode], note: mode === 'claude' && refinerProvider === 'opencode' ? 'The refiner itself runs on OpenCode (its own setting in Settings › Operant Terminal); only the tasks stay on Claude.' : '' };
+    return { label: MODE_NAMES[mode], note: mode === 'claude' && refinerProvider === 'opencode' ? 'The refiner itself runs on OpenCode (its own setting in Settings › Agents › Operant Terminal); only the tasks stay on Claude.' : '' };
   }
   // Board status -> [label, look].
   const STATUS = { todo: ['Queued', 'wait'], doing: ['Working', 'run'], verifying: ['Running checks', 'run'], review: ['Ready for review', 'ok'],
@@ -673,7 +673,7 @@ const OperantTerminal = (() => {
     function noTiers(prompt, label) {
       box.value = prompt; autosize();
       log.querySelector('.ot-hello')?.remove();
-      append(`<div class="ot-msg operant"><span class="ot-who">Operant</span><div class="ot-body">This project is set to ${esc(label)}, but nothing for it can run right now (is that CLI installed?). Nothing was sent. Change it in <a href="#" data-ot-settings>Settings › Operant Terminal</a>.</div></div>`);
+      append(`<div class="ot-msg operant"><span class="ot-who">Operant</span><div class="ot-body">This project is set to ${esc(label)}, but nothing for it can run right now (is that CLI installed?). Nothing was sent. Change it in <a href="#" data-ot-settings>Settings › Agents › Operant Terminal</a>.</div></div>`);
     }
     async function refine(prompt) {
       const am = host.agentMode?.();

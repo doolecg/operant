@@ -365,11 +365,11 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       calls and its subagents', named), from the same tool events the runaway guard uses. Not yet: the worker's
       last message text.
 
-- [ ] **87. Operant as the default agent:** Settings › Agents › Default agent offers Claude Code, OpenCode and Operant
+- [x] **87. Operant as the default agent:** Settings › Agents › Default agent offers Claude Code, OpenCode and Operant
       (the Operant Terminal). With Operant, Alt+Enter, the master tile, the sidebar's "New … here" and Explorer's
       "Open in Operant" open that folder's Operant Terminal; the first-run launcher offers it too. Agents that must be a
       CLI (workers, `operant agent`, "share your main agent's setup") use the first Claude Code agent then.
-- [ ] **88. Simpler settings:** 21 tabs become 8 (General, Look, Agents, Tiles, Projects, Usage, Data, Keybinds), each
+- [x] **88. Simpler settings:** 21 tabs become 8 (General, Look, Agents, Tiles, Projects, Usage, Data, Keybinds), each
       in headed groups with the everyday settings first and the rest under a collapsed "Advanced (n)". Nothing is
       removed; search finds everything; old tab names (links, health actions, hints) still open the right place.
 

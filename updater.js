@@ -187,7 +187,7 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
   let ready = null;      // { version, file, notes, url, kind }
   let busy = false;
   let installing = false;
-  let status = null;     // the last thing reported, for the Settings › Updates tab
+  let status = null;     // the last thing reported, for the Settings › General › Updates tab
   let info = {};         // { checkedAt, latest, channel } of the last check, carried on every status
   let timer = null, started = false;
   const report = s => { status = { ...info, ...s, at: Date.now() }; send('update:status', status); };

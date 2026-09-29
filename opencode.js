@@ -2,7 +2,7 @@
 // its terminal UI mostly hides. Each OpenCode tile runs with its own --port, and this listens to that
 // server's event stream: a new child session becomes a subagent tile beside the tile, its text and
 // tool calls stream into it, and it's done when the session goes idle. OpenCode windows started
-// outside Operant are read from its database instead (Settings › Tiles & subagents › other sessions).
+// outside Operant are read from its database instead (Settings › Tiles › other sessions).
 
 const path = require('path');
 const os = require('os');

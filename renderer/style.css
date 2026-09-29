@@ -612,6 +612,9 @@ body.anim-off .overlay.anchor, body.anim-off .overlay.anchor .card { transition:
 
 /* settings */
 .set-section { margin: 6px 0 18px; }
+.set-adv { margin: 4px 0 18px; border-top: 1px solid rgba(var(--ink-rgb), .08); padding-top: 8px; }
+.set-adv > summary { cursor: pointer; padding: 6px 0; font-weight: 500; }
+.set-adv > summary .hint { display: inline; margin-left: 8px; color: var(--dim); font-size: 11.5px; font-weight: 400; }
 .set-row { display: flex; align-items: center; gap: 16px; min-height: 36px; padding: 3px 0; border-bottom: 1px solid rgba(var(--ink-rgb), .04); }
 .set-row:last-child { border-bottom: 0; }
 .set-row .lbl { flex: 1; min-width: 0; }

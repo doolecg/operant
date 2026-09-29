@@ -108,7 +108,7 @@ function tiersForMode(tiers, mode, { isClaude, isOpenCode, derived } = {}) {
 // kind: 'claude' | 'opencode' | 'other' for what was named.
 function modeConflict(mode, what, kind) {
   if ((mode !== 'claude' && mode !== 'opencode') || kind === mode || (kind !== 'claude' && kind !== 'opencode')) return null;
-  return `this project is set to ${MODE_LABEL[mode]}, and ${what} runs on ${kind === 'claude' ? 'Claude' : 'OpenCode'} - change it in the project's sidebar menu (Agents) or Settings › Operant Terminal`;
+  return `this project is set to ${MODE_LABEL[mode]}, and ${what} runs on ${kind === 'claude' ? 'Claude' : 'OpenCode'} - change it in the project's sidebar menu (Agents) or Settings › Agents › Operant Terminal`;
 }
 
 // The tiers for each single-CLI mode, from the configured tiers (not the default agent's set), for main to keep in config.
