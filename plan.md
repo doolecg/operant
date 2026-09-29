@@ -277,7 +277,8 @@ The user's words: "a Single Operant Terminal, look and act like Claude but coole
 edits it, cleans it, makes it efficient using either free OpenCode or local Gemma. This then gets processed, sent to
 the relevant agents, then receives the answers back of what the agents did. This is for each project."
 It is the front door for the spec's core flow (first spec 90; master prompt 7/8/27/53/81): request -> refine ->
-classify -> route -> run -> verify -> report. Built into the existing tiled UI (84A), not a separate app.
+classify -> route -> run -> verify -> report. Built into the existing tiled UI (84A), not a separate app. User decisions (29 Sept): build it as the headline of 2.2,
+after 2.1 ships; the cleaned prompt is shown for review and Enter sends it (auto-send is a per-project setting).
 
 - [ ] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
       `operant terminal`). Looks and behaves like Claude Code: transcript above, a multi-line prompt box below,
