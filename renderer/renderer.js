@@ -291,12 +291,15 @@
     for (const p of pathsFromDrop(e)) if (!(await operant.isDir(p))) openFile(p, 'view');
   });
 
+  // The info bar under every tile's title bar; renderIbar fills in the pieces each kind of tile uses.
+  const IBAR = '<div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-meta"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div>';
+
   function makeWin(kind, title, icon) {
     const id = nextId++;
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="tier"></span><span class="waiting"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div><div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div><div class="term"></div></div>`;
+      <span class="title"></span><span class="tier"></span><span class="waiting"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div>${IBAR}<div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -370,6 +373,9 @@
     for (const w of wins.values()) if (w.term) Object.assign(w.term.options, termOptions(w.kind));
     workspaces.forEach((_, i) => layout(i, i !== current));
   }
+  // macOS hides the traffic lights in native fullscreen, so the top bar gets their room back. The class goes on
+  // <html>: applyAppearance rewrites body's classes.
+  operant.on('win:fullscreen', on => document.documentElement.classList.toggle('native-fs', !!on));
 
   function mount(w, wsIndex, target, { focus = true } = {}) {
     insert(w, wsIndex, target);
@@ -730,7 +736,7 @@
     el.className = 'win view opening';
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">▤</span><span class="title"></span><span class="badge"></span>
       <span class="view-acts"><button data-v="source" title="Show the Markdown source">Source</button><button data-v="edit" title="Edit">✎</button>
-      <button data-v="open" title="${OPEN_DEFAULT}">↗</button></span><button class="x" title="Close">✕</button></div>
+      <button data-v="open" title="${OPEN_DEFAULT}">↗</button></span><button class="x" title="Close">✕</button></div>${IBAR}
       <div class="plan-bar hidden"><span class="plan-msg">Review this plan</span><span class="plan-actions">
         <button class="btn primary" data-p="approve">Approve</button><button class="btn" data-p="change">Change</button></span>
         <div class="plan-change hidden"><input class="plan-note" type="text" placeholder="What should change?">
@@ -864,7 +870,10 @@
     const pct = imgPct(w, img);
     img.style.width = (img.naturalWidth * pct / 100) + 'px';
     wrap.classList.toggle('pannable', img.naturalWidth * pct / 100 > w.page.clientWidth + .5 || img.naturalHeight * pct / 100 > w.page.clientHeight + .5);
-    if (cap) cap.textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${fmtBytes(w.size || 0)} · ${Math.round(pct)}%`;
+    // Shown in the info bar under the title (the caption is hidden while that's on).
+    w.imgInfo = `${img.naturalWidth}×${img.naturalHeight} · ${fmtBytes(w.size || 0)} · ${Math.round(pct)}%`;
+    if (cap) cap.textContent = w.imgInfo;
+    renderIbar(w);
   }
   function setImgZoom(w, pct, clientX, clientY) {
     const img = w.el.querySelector('.view-img img');
@@ -889,6 +898,7 @@
     btn.hidden = !isMarkdown(w.file);
     btn.textContent = w.source ? 'Rendered' : 'Source';
     btn.title = w.source ? 'Show it rendered' : 'Show the Markdown source';
+    if (!w.image) w.imgInfo = null;
     w.el.querySelector('[data-v="edit"]').hidden = !!w.image;
     w.el.classList.toggle('md', md);
     if (w.error) body.innerHTML = `<div class="view-msg">${esc(w.error)}<br><button class="btn" data-v2="open">${OPEN_DEFAULT}</button></div>`;
@@ -932,6 +942,7 @@
     body.querySelector('[data-v2="open"]')?.addEventListener('click', () => operant.openPath(w.file));
     w.page.scrollTop = top; w.page.scrollLeft = left;
     if (w.find?.q) runFind(w, true);
+    renderIbar(w);
   }
 
   // Viewers follow their file as it changes (an agent writing it, or the editor tile saving it): main
@@ -1046,8 +1057,8 @@
     const el = document.createElement('div');
     el.className = 'win diff opening';
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">±</span><span class="title"></span><span class="badge"></span>
-      <span class="view-acts"><button data-v="branch" class="git-branch" title="Switch branch"></button><button data-v="pull" title="Pull from the remote">↓ Pull</button>
-      <button data-v="push" title="Push commits to the remote">↑ Push</button><button data-v="refresh" title="Refresh">⟳</button></span><button class="x" title="Close">✕</button></div>
+      <span class="view-acts"><button data-v="branch" class="git-branch" title="Switch branch"></button><button data-v="pull" title="Pull from the remote">↓<span class="lbl"> Pull</span></button>
+      <button data-v="push" title="Push commits to the remote">↑<span class="lbl"> Push</span></button><button data-v="refresh" title="Refresh">⟳</button></span><button class="x" title="Close">✕</button></div>${IBAR}
       <div class="diff-wrap"><div class="diff-side"><label class="diff-all"><input type="checkbox" checked><span></span></label><div class="diff-files"></div>
         <div class="commit-box"><textarea class="commit-msg" placeholder="Commit message" spellcheck="true"></textarea>
         <div class="commit-row"><label class="commit-amend" title="Change the last commit instead of making a new one"><input type="checkbox"> Amend</label><span class="commit-status"></span></div>
@@ -1106,6 +1117,7 @@
     findBar(w);
     wins.set(id, w);
     mount(w, ws, near, { focus });
+    updateBadge(w);
     loadDiff(w);
     saveSession();
     return w;
@@ -1240,15 +1252,15 @@
     w.status = st; w.loadedAt = Date.now();
     const list = w.el.querySelector('.diff-files'), body = w.el.querySelector('.diff-body');
     w.el.classList.toggle('no-git', !st);
-    if (!st) { w.files = []; list.innerHTML = ''; markAll(w); body.innerHTML = `<div class="view-msg">${esc(baseName(w.cwd))} isn't in a git repository</div>`; return setBadge(w, ''); }
+    if (!st) { w.files = []; list.innerHTML = ''; markAll(w); body.innerHTML = `<div class="view-msg">${esc(baseName(w.cwd))} isn't in a git repository</div>`; return updateBadge(w); }
     // Only the project's own files, when it's a folder inside a bigger repository.
     const inside = f => isUnder(joinRel(st.root, f.path), w.cwd);
     w.files = st.files.filter(inside);
     for (const p of [...w.skip]) if (!w.files.some(f => f.path === p)) w.skip.delete(p);
-    setBadge(w, `${w.files.length} changed`);
+    updateBadge(w);
     w.el.querySelector('[data-v="branch"]').textContent = `⎇ ${st.branch}`;
-    w.el.querySelector('[data-v="push"]').textContent = `↑ Push${st.ahead ? ` ${st.ahead}` : ''}`;
-    w.el.querySelector('[data-v="pull"]').textContent = `↓ Pull${st.behind ? ` ${st.behind}` : ''}`;
+    w.el.querySelector('[data-v="push"]').innerHTML = `↑<span class="lbl"> Push</span>${st.ahead ? ` ${st.ahead}` : ''}`;
+    w.el.querySelector('[data-v="pull"]').innerHTML = `↓<span class="lbl"> Pull</span>${st.behind ? ` ${st.behind}` : ''}`;
     if (!w.files.some(f => f.path === w.sel)) w.sel = w.files[0]?.path || null;
     list.innerHTML = w.files.map(f => {
       const [letter, cls] = gitKind(f.code), name = f.path.split('/').pop(), dir = f.path.slice(0, -name.length - 1);
@@ -1674,14 +1686,10 @@
 
   function updateBadge(w) {
     const closing = w.closeIn != null ? ` · closing ${w.closeIn}s` : w.unchecked ? ' · new' : '';
-    if (w.kind === 'ai' || w.kind === 'shell') {
-      // The folder moved to the info bar below; the title bar badge is just the closing/unread marker.
+    if (w.kind !== 'agent') {
+      // The folder lives in the info bar below; the title bar badge is just the closing/unread marker.
       setBadge(w, closing.replace(/^ · /, ''));
       renderIbar(w);
-      return;
-    }
-    if (w.kind !== 'agent') {
-      setBadge(w, `${w.master ? 'master · ' : ''}${w.cwd ? shortPath(w.cwd) : ''}${closing}`);
       return;
     }
     w.el.classList.toggle('running', w.status === 'running');
@@ -1691,9 +1699,11 @@
     else setBadge(w, `✓ done · ${tools}${closing}`);
   }
 
-  // The info bar under an agent tile's title (item 42): model, how full its context is, tokens
-  // used since the tile opened, and its folder and git branch. For agent CLI tiles (kind 'ai') and
-  // subagent tiles (kind 'agent', fed from their transcript), gated by Settings > "Tile info bar" (cfg.tileTokens).
+  // The info bar under every tile's title (item 42), gated by Settings > "Tile info bar" (cfg.tileTokens).
+  // Agent CLI tiles (kind 'ai') and subagent tiles (kind 'agent', fed from their transcript): model, how full
+  // its context is, tokens used since the tile opened, folder and git branch. Shell and editor tiles: folder and
+  // branch. Viewer tiles: folder and branch, and an image's size, file size and zoom. Changes tiles: folder and
+  // how many files changed (their own button has the branch).
   // A raw model id -> a short display name. Claude ids look like claude-opus-4-5-20250929;
   // OpenCode ids look like opencode/big-pickle (or just the model half once the provider is known).
   function modelName(sessionId, raw, free) {
@@ -1709,14 +1719,13 @@
     return m[3] != null ? `${fam} ${m[2]}.${m[3]}` : `${fam} ${m[2]}`;
   }
   function renderIbar(w) {
-    if (w.kind !== 'ai' && w.kind !== 'agent' && w.kind !== 'shell') return;
+    const bar = w.el.querySelector('.ibar');
+    if (!bar) return;
     const on = !!cfg.tileTokens;
     const was = w.el.classList.contains('ibar-on');
     w.el.classList.toggle('ibar-on', on);
     if (on !== was) scheduleFit(w, 0);
     if (!on) return;
-    const bar = w.el.querySelector('.ibar');
-    if (!bar) return;
     bar.querySelector('.ib-model').textContent = w.model || '';
     const ctx = cfg.contextBadge ? w.ctx : null, ctxEl = bar.querySelector('.ib-ctx');
     if (ctx && ctx.max) {
@@ -1734,22 +1743,29 @@
         + (t.free ? ' · free' : '') + ' · since this tile opened';
       tokEl.style.display = '';
     } else tokEl.style.display = 'none';
+    const meta = w.kind === 'view' ? w.imgInfo : w.kind === 'diff' && w.status ? `${w.files.length} changed` : '', metaEl = bar.querySelector('.ib-meta');
+    metaEl.textContent = meta || '';
+    metaEl.style.display = meta ? '' : 'none';
     const folder = w.cwd ? shortPath(w.cwd) : '', folderEl = bar.querySelector('.ib-folder');
     folderEl.textContent = folder;
     folderEl.style.display = folder ? '' : 'none';
-    const project = w.cwd ? projectDir(w.cwd) : null;
+    const project = w.cwd && w.kind !== 'diff' ? projectDir(w.cwd) : null;
+    if (project && !gitState.has(project)) fetchBarGit(project);
     const branch = project ? gitState.get(project)?.status?.branch : null, branchEl = bar.querySelector('.ib-branch');
     branchEl.textContent = branch || '';
     branchEl.style.display = branch ? '' : 'none';
     layoutIbar(w, bar);
   }
+  // Tiles' branches come from the git cache (the sidebar's and the top bar's), so the bars follow it.
+  const refreshIbars = () => { for (const w of wins.values()) if (w.alive) renderIbar(w); };
   // Never overlaps, on any tile kind: drop the least important pieces one at a time until the bar
-  // fits (branch, folder, cache, tokens, the context numbers, the model), and bring them back when it widens.
+  // fits (branch, folder, cache, tokens, the context numbers, the model, an image's size or the changed count),
+  // and bring them back when it widens.
   function layoutIbar(w, bar) {
     bar = bar || w.el.querySelector('.ibar');
     if (!bar || !w.el.classList.contains('ibar-on')) return;
     for (const el of bar.querySelectorAll('.ib-hide')) el.classList.remove('ib-hide');
-    for (const sel of ['.ib-branch', '.ib-folder', '.ib-cache', '.ib-tok', '.ib-ctxtxt', '.ib-model']) {
+    for (const sel of ['.ib-branch', '.ib-folder', '.ib-cache', '.ib-tok', '.ib-ctxtxt', '.ib-model', '.ib-meta']) {
       if (bar.scrollWidth <= bar.clientWidth) break;
       const el = bar.querySelector(sel);
       if (el && el.offsetParent !== null) el.classList.add('ib-hide');
@@ -2823,6 +2839,7 @@
     gitState.set(p, { at: Date.now(), status: await operant.gitStatus(p) });
     barGitPending.delete(p);
     drawGitButton();
+    refreshIbars();
   }
   function drawGitButton() {
     const btn = $('#git-pill');
@@ -3234,6 +3251,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     indexGit();
     decorateGit();
     drawGitButton();
+    refreshIbars();
   }
   // Puts the git tints and project info on the rows already drawn.
   function decorateGit() {

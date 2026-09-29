@@ -165,6 +165,8 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 /* macOS: the native traffic lights (x 14-70) sit over the bar's left edge, so there are no window buttons and the bar starts after them. */
 body.os-darwin .wc { display: none; }
 body.os-darwin #bar { padding: 0 14px 0 80px; }
+/* Native fullscreen hides the traffic lights (main sends win:fullscreen; the class is on <html> because applyAppearance rewrites body's). */
+html.native-fs body.os-darwin #bar { padding-left: 14px; }
 
 /* -------------------------------------------------------------- desktop */
 #desktop { position: fixed; top: var(--bar-h); left: 0; right: 0; bottom: 0; overflow: hidden; }
@@ -289,17 +291,23 @@ body.anim-off .win::before,
 .inner { position: relative; width: 100%; height: 100%; border-radius: calc(var(--rounding) - var(--border)); overflow: hidden;
   background: var(--glass); backdrop-filter: blur(var(--blur)); display: flex; flex-direction: column;
   contain: paint; }
-.tbar { height: 28px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; font-size: 12px;
+.tbar { height: 28px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; font-size: 12px; container: tbar / inline-size;
   color: var(--dim); background: rgba(var(--bar-rgb), .55); border-bottom: 1px solid rgba(var(--ink-rgb), .06); }
 .win.focused .tbar { color: var(--text); }
+/* Nothing in a title bar overlaps or shrinks except text: the title gives way first, then the status pills, each
+   with an ellipsis; the icon, buttons and close stay whole, and the narrow-tile rules below drop what still can't fit. */
+.tbar > * { flex: none; }
 .tbar .ico { font-size: 13px; }
 .win.ai .ico { color: var(--accent); }
 .win.shell .ico { color: var(--dim); }
 .win.master .tbar .badge { color: var(--accent); background: var(--accent-tint); }
 .win.agent .ico { color: var(--agent); }
-.tbar .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tbar .title { flex: 1 1 0; min-width: 60px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tbar .badge, .tbar .waiting, .tbar .runaway { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tbar .badge:empty { display: none; }
-.tbar .badge { font-size: 10.5px; padding: 1px 8px; border-radius: 99px; background: rgba(var(--ink-rgb), .06); white-space: nowrap; }
+/* Not the bell's .badge (an absolutely placed dot on the top bar): this one sits in the row. */
+.tbar .badge { position: static; height: auto; font: inherit; font-size: 10.5px; line-height: inherit; text-align: left; color: inherit;
+  padding: 1px 8px; border-radius: 99px; background: rgba(var(--ink-rgb), .06); }
 .win.agent.running .badge { color: var(--agent); }
 .win.agent.done .badge { color: var(--done); }
 .tbar .waiting:empty { display: none; }
@@ -311,15 +319,22 @@ body.anim-off .win::before,
 .tbar .runaway.time { color: #e3b27a; background: color-mix(in srgb, #e3b27a 16%, transparent); }
 .tbar .x { width: 20px; height: 20px; border-radius: 6px; color: var(--dim); font-size: 11px; }
 .tbar .x:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--text); }
+/* Narrow tiles (thresholds carry a margin for wider system fonts): the changes tile's Pull/Push lose their words, then the
+   status pills, a viewer's Source button and the changes tile's buttons go (the branch name shortens by itself before that);
+   then a viewer's buttons. */
+@container tbar (max-width: 375px) { .win.diff .view-acts .lbl { display: none; } }
+@container tbar (max-width: 270px) { .win.diff .view-acts, .win.view [data-v="source"], .tbar .badge, .tbar .waiting, .tbar .runaway { display: none; } }
+@container tbar (max-width: 190px) { .win.view .view-acts { display: none; } .tbar .title { min-width: 0; } }
 
-/* The info bar under an agent tile's title (item 42): model, context, tokens since it opened,
-   folder and branch. Never overlaps: pieces hide one at a time, least important first, when it's tight
-   (layoutIbar in renderer.js). Shell tiles get the same bar with just folder and branch. */
+/* The info bar under every tile's title (item 42): model, context, tokens since it opened,
+   folder and branch on agent tiles; folder and branch on shell, editor and viewer tiles (plus an image's size
+   and zoom); folder and changed count on the changes tile. Never overlaps: pieces hide one at a time, least
+   important first, when it's tight (layoutIbar in renderer.js). */
 .ibar { display: none; }
-.win.ai.ibar-on .ibar, .win.agent.ibar-on .ibar, .win.shell.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
+.win.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
   font-size: 10px; color: var(--dim); background: rgba(var(--bar-rgb), .35); border-bottom: 1px solid rgba(var(--ink-rgb), .06);
   overflow: hidden; white-space: nowrap; }
-.ibar .ib-model:empty, .ibar .ib-ctx:empty, .ibar .ib-tok:empty, .ibar .ib-cache:empty, .ibar .ib-folder:empty, .ibar .ib-branch:empty { display: none; }
+.ibar .ib-model:empty, .ibar .ib-ctx:empty, .ibar .ib-tok:empty, .ibar .ib-cache:empty, .ibar .ib-meta:empty, .ibar .ib-folder:empty, .ibar .ib-branch:empty { display: none; }
 .ibar .ib-model { flex: none; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 .ibar .ib-ctx { flex: none; display: flex; align-items: center; gap: 5px; }
 .ibar .ib-bar { display: inline-block; width: 30px; height: 4px; border-radius: 99px; background: rgba(var(--ink-rgb), .12); overflow: hidden; }
@@ -329,6 +344,7 @@ body.anim-off .win::before,
 .ibar .ib-tok { flex: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .ibar .ib-cache { flex: none; opacity: .55; }
 .ibar .ib-cache.cold { opacity: .8; }
+.ibar .ib-meta { flex: none; }
 .ibar .ib-sp { flex: 1; min-width: 0; }
 .ibar .ib-hide { display: none !important; }
 .ibar .ib-folder, .ibar .ib-branch { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
@@ -349,7 +365,8 @@ body.anim-off .win::before,
 /* The viewer tile: a file rendered (Markdown) or as text with line numbers. */
 .win.view .ico { color: var(--accent); }
 .view-acts { display: flex; gap: 2px; }
-.view-acts button { height: 20px; padding: 0 7px; border-radius: 6px; color: var(--dim); font-size: 11px; }
+.tbar .view-acts { flex: 0 1 auto; overflow: hidden; }
+.view-acts button { flex: none; height: 20px; padding: 0 7px; border-radius: 6px; color: var(--dim); font-size: 11px; white-space: nowrap; }
 .view-acts button:hover { color: var(--text); background: rgba(var(--ink-rgb), .08); }
 .view-acts button[hidden] { display: none; }
 /* Plan approval bar (operant plan): a strip above the viewer's content, shown only while a
@@ -358,10 +375,10 @@ body.anim-off .win::before,
   background: var(--accent-tint); border-bottom: 1px solid rgba(var(--ink-rgb), .06); }
 .plan-bar.hidden { display: none; }
 .plan-msg { flex: 1; min-width: 100px; font-size: 12px; color: var(--text); }
-.plan-actions { display: flex; gap: 6px; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .plan-change { display: flex; gap: 6px; width: 100%; }
 .plan-change.hidden { display: none; }
-.plan-note { flex: 1; padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(var(--ink-rgb), .1);
+.plan-note { flex: 1; min-width: 0; padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(var(--ink-rgb), .1);
   background: rgba(var(--ink-rgb), .06); color: var(--text); font: 12px 'Segoe UI', sans-serif; outline: none; }
 .plan-note:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 
@@ -438,6 +455,7 @@ mark.hit.cur { background: rgba(227, 178, 122, .55); box-shadow: 0 0 0 1.5px var
 .view-img.pannable img { cursor: grab; }
 .view-img.pannable.dragging img { cursor: grabbing; }
 .view-cap { color: var(--dim); font-size: 11.5px; white-space: nowrap; }
+.win.view.ibar-on .view-cap { display: none; }
 /* Syntax colours, shared by .view-src, .md-doc pre.md-code and diff lines. */
 .hl-k { color: #c89ab8; }
 .hl-s { color: #9cb88a; }
@@ -503,7 +521,7 @@ mark.hit.cur { background: rgba(227, 178, 122, .55); box-shadow: 0 0 0 1.5px var
 .commit-row .btn:disabled { opacity: .5; cursor: default; }
 .commit-amend { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); cursor: pointer; }
 .commit-status { flex: 1; text-align: right; font-size: 11px; color: var(--agent); }
-.view-acts .git-branch { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-acts .git-branch { flex: 0 1 auto; min-width: 26px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 .view-acts button:disabled { opacity: .45; }
 .branch-name { width: 140px; height: 20px; padding: 0 7px; border-radius: 6px; border: 1px solid var(--accent); background: rgba(var(--ink-rgb), .06); color: var(--text); font-size: 11px; outline: none; }
 .df-row { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 8px; margin: 1px 0; border-radius: 7px; text-align: left; color: var(--dim); cursor: pointer; }

@@ -145,7 +145,7 @@ const Panels = (() => {
       { key: 'planLimitAlerts', label: 'Session limit alerts', hint: 'A notification at 80% and 95% of your 5-hour session, and a ring on the pill showing how much is used', type: 'toggle' },
       { key: 'tokenBudget', label: 'Daily token budget', hint: 'Counted tokens a day, like 2M or 500k · the pill turns orange at 80% and red past it · 0 = off', type: 'tokens' },
       { key: 'contextBadge', label: 'Context size in the info bar', hint: 'How full each Claude Code and OpenCode tile’s context is · orange at 60%, red at 85% · big contexts cost more tokens per message · needs Token usage in the top bar for Claude Code', type: 'toggle' },
-      { key: 'tileTokens', label: 'Tile info bar', hint: 'A thin bar under each agent tile’s title: model, context, tokens used since it opened, folder and branch', type: 'toggle' },
+      { key: 'tileTokens', label: 'Tile info bar', hint: 'A thin bar under every tile’s title: folder and git branch, plus model, context and tokens used since it opened on agents, size and zoom on images, and how many files changed on the changes tile', type: 'toggle' },
       { type: 'tokenBreakdown', label: 'Where tokens go' },
     ]],
     ['Startup', [

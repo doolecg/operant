@@ -237,7 +237,7 @@ const DEFAULT_CONFIG = {
   mediaSize: 'compact',           // 'compact' | 'full'
   tokenUsage: true,               // Claude Code's tokens today in the top bar; click for the graph
   contextBadge: true,             // show context size in the agent tile info bar (needs tileTokens on)
-  tileTokens: true,               // the info bar under each agent tile: model, context, tokens since it opened, folder, branch
+  tileTokens: true,               // the info bar under every tile: folder, branch, and an agent's model, context and tokens since it opened
   usageSeries: ['input', 'output', 'cacheWrite'], // what the pill and graph count; cache reads would swamp the rest
   planLimits: true,               // Claude plan limits (5-hour session, week) in the token pill's tooltip
   planLimitAlerts: true,          // a notification at 80% and 95% of the 5-hour session, and its ring on the pill
@@ -1736,6 +1736,9 @@ function createWindow(startDir = null, restore = null) {
   if (restore) restoreFor.set(wcId, restore);
   if (process.env.OPERANT_BACKGROUND) w.once('ready-to-show', () => w.showInactive());
   w.on('focus', () => { lastFocused = w; });
+  // macOS hides the traffic lights in native fullscreen, so the bar can use their space.
+  w.on('enter-full-screen', () => sendTo(w, 'win:fullscreen', true));
+  w.on('leave-full-screen', () => sendTo(w, 'win:fullscreen', false));
   // A crashed renderer (not a normal reload/navigation) gets reloaded so the window comes back;
   // its ptys are orphaned (main owns them, the fresh renderer knows no ids), so they're killed and
   // the window's last snapshot is queued for session:take, which reopens its tiles (Claude conversations resume).
