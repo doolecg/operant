@@ -663,7 +663,7 @@ const Panels = (() => {
   const GROUPS = [
     ['Tiles', { newAgent: 'New default agent', pickAgent: 'Pick an agent…', newAgentIn: 'New agent in folder…', newShell: 'New shell', close: 'Close tile',
       fullscreen: 'Fullscreen tile', promoteMaster: 'Make focused tile the master', closeDoneAgents: 'Close finished subagents', stopAgent: 'Stop the focused agent', toggleSidebar: 'Show / hide the sidebar', focusSidebar: 'Keyboard to the sidebar',
-      quickOpen: 'Quick open a file', showChanges: 'Show changes (git diff)', findInView: 'Find in a viewer or diff tile' }],
+      quickOpen: 'Quick open a file', showChanges: 'Show changes (git diff)', openTerminal: 'Operant Terminal for this project', findInView: 'Find in a viewer or diff tile' }],
     ['Focus & swap', { focusLeft: 'Focus ←', focusRight: 'Focus →', focusUp: 'Focus ↑', focusDown: 'Focus ↓',
       swapLeft: 'Swap ←', swapRight: 'Swap →', swapUp: 'Swap ↑', swapDown: 'Swap ↓' }],
     ['Layout', { toggleLayout: 'Master ⇄ dwindle layout', toggleSplit: 'Flip split direction',

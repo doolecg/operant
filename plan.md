@@ -306,13 +306,14 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
 - Accounting: the refiner's tokens are recorded as an orchestration event with the requestId; the card footer shows
   "refiner used N tokens; the refined prompt is M tokens shorter" (net figure, only from real counts).
 
-- [ ] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
+- [~] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
       `operant terminal`). Looks and behaves like Claude Code: transcript above, a multi-line prompt box below,
       streaming text, collapsible tool/agent cards, slash commands, history with up/down, Esc to interrupt, paste
       images. "Cooler": the Operant themes, live agent cards with their tier dot, tokens and cost as they run, a
       one-line "what Operant decided and why" under each step. The conversation is saved per project
       (userData/terminal/<project>.jsonl, atomic, included in backups) and comes back after a restart.
-- [ ] **74. Prompt refiner:** your prompt plus a small project brief (from prime: branch, recent changes, project
+- [~] **74. Prompt refiner:** (built: `opencode run -m opencode/big-pickle --format json --pure` in an empty temp dir, ~17 s,
+      ~14k input tokens of OpenCode's own prompt per call, all free; savings must be shown as paid vs free tokens) your prompt plus a small project brief (from prime: branch, recent changes, project
       memory, known commands) goes to a refiner model that returns a cleaned, efficient prompt, split into
       independent tasks, and for each task picks the agent (Claude Code or OpenCode), the model and the effort,
       aiming for the cheapest that can do it well (free OpenCode models and Haiku first, low effort by default), plus
@@ -321,7 +322,7 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       / llama.cpp OpenAI-compatible URL) when configured; off = pass through unchanged. If the refiner is down, the
       original prompt goes through (graceful degradation). Its tokens are counted as orchestration cost, so the
       terminal can show net savings honestly (spec 19/45).
-- [ ] **75. Review before sending:** the refined prompt is shown against your original (what changed and why, the
+- [~] **75. Review before sending:** the refined prompt is shown against your original (what changed and why, the
       task split with each task's agent, model and effort, estimated tokens and cost before/after); Enter sends it, E edits it, O sends your original instead. An
       "auto-send" setting skips the review for trusted projects.
 - [ ] **76. Dispatch:** the refiner's pick (agent, model, effort) is checked against the outcome history before it

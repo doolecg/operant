@@ -37,6 +37,7 @@ const total = t => t ? (t.input || 0) + (t.output || 0) + (t.cacheWrite || 0) + 
 function summarize(entries) {
   const out = {};
   for (const e of entries) {
+    if (e.kind === 'orchestration') continue; // the refiner's own usage isn't a task result
     const cell = ((out[e.type || 'other'] ||= {})[e.tier || 'none'] ||= { n: 0, passed: 0, failed: 0, escalated: 0, usd: 0, unknown: false, tokens: 0 });
     cell.n++;
     if (e.status === 'done') cell.passed++;

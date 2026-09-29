@@ -87,6 +87,7 @@ const ENUMS = {
   updateChannel: ['stable', 'beta'],
   explorerOpensIn: ['tile', 'window'],
 };
+const TERMINAL_REFINERS = ['opencode', 'local', 'off'];
 const USAGE_SERIES = ['input', 'output', 'cacheWrite', 'cacheRead'];
 
 const kindOf = v => Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v;
@@ -126,6 +127,7 @@ function validatePatch(patch, defaults, opts = {}) {
       if (v.some(a => !isPlain(a) || typeof a.id !== 'string' || !a.id || typeof a.name !== 'string' || typeof a.command !== 'string' || (a.args !== undefined && !Array.isArray(a.args)))) { bad(key, 'agents with an id, name, command and argument list'); continue; }
       if (new Set(v.map(a => a.id)).size !== v.length) { bad(key, 'agents with different ids'); continue; }
     }
+    if (key === 'terminal') terminalErrors(v, (expected, sub) => bad('terminal', expected, sub));
     if (key === 'team') teamErrors(v, current.team || {}, agentIds, (expected, sub) => bad('team', expected, sub));
     if (key === 'projectDefaults') {
       for (const [p, d] of Object.entries(v)) {
@@ -140,6 +142,19 @@ function validatePatch(patch, defaults, opts = {}) {
     bad('defaultAgent', 'one of the agents: ' + [...agentIds].join(', '), 'the agents in this change do not include it');
   }
   return errors;
+}
+
+function terminalErrors(t, bad) {
+  if (!isPlain(t)) return bad('an object');
+  if (t.refiner !== undefined && !TERMINAL_REFINERS.includes(t.refiner)) return bad('a refiner of ' + TERMINAL_REFINERS.join(', '));
+  for (const k of ['refinerModel', 'localModel']) if (t[k] !== undefined && typeof t[k] !== 'string') return bad(`${k} as text`);
+  if (t.localUrl !== undefined) {
+    let ok = typeof t.localUrl === 'string';
+    if (ok && t.localUrl !== '') { try { ok = /^https?:$/.test(new URL(t.localUrl).protocol); } catch { ok = false; } }
+    if (!ok) return bad('the local model URL empty or like http://localhost:11434');
+  }
+  if (t.autoSend !== undefined && (!isPlain(t.autoSend) || Object.values(t.autoSend).some(x => typeof x !== 'boolean'))) return bad('auto-send as true or false per project');
+  if (t.maxTasks !== undefined && !(Number.isInteger(t.maxTasks) && t.maxTasks >= 1 && t.maxTasks <= 8)) return bad('max tasks a whole number 1-8');
 }
 
 function teamErrors(team, cur, agentIds, bad) {
@@ -162,6 +177,7 @@ function mergeUser(defaults, user, keybinds) {
     ...defaults, ...user,
     keybinds: { ...keybinds, ...(user.keybinds || {}) },
     backups: { ...defaults.backups, ...(user.backups || {}) },
+    terminal: { ...defaults.terminal, ...(user.terminal || {}) },
     team: { ...defaults.team, ...(user.team || {}), tiers: { ...defaults.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...defaults.team.budgets, ...(user.team?.budgets || {}) } },
   };
 }

@@ -1124,6 +1124,38 @@
     return w;
   }
 
+  // The Operant Terminal (renderer/terminal.js): one per project, its conversation saved by main (terminal-store.js).
+  function openOperantTerminal(dir, { ws = current, focus = true, near = null } = {}) {
+    const key = normPath(dir);
+    const open = [...wins.values()].find(x => x.kind === 'operant' && x.alive && normPath(x.cwd) === key);
+    if (open) { if (focus) { if (open.ws !== current) switchWorkspace(open.ws); focusWin(open); } return open; }
+    const id = nextId++;
+    const el = document.createElement('div');
+    el.className = 'win operant opening';
+    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">◆</span><span class="title"></span><span class="badge"></span>
+      <span class="view-acts"><button data-v="auto" title="">Auto-send</button><button data-v="clear" title="Clear this conversation">Clear</button></span><button class="x" title="Close">✕</button></div>
+      <div class="ot-wrap"><div class="ot-log" tabindex="-1"></div><div class="ot-status hidden"></div>
+      <div class="ot-box"><span class="ot-prompt">❯</span><textarea rows="1" spellcheck="true" placeholder="Ask Operant to do something…"></textarea></div>
+      <div class="ot-hint"><kbd>Enter</kbd> send <kbd>Shift+Enter</kbd> new line <kbd>↑</kbd><kbd>↓</kbd> earlier prompts <kbd>Esc</kbd> cancel</div></div></div>`;
+    const w = { id, kind: 'operant', el, term: null, title: `Operant · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
+      cwd: dir, page: el.querySelector('.ot-box textarea') };
+    el.querySelector('.title').textContent = w.title;
+    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
+    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
+    w.ui = OperantTerminal.mount(w, {
+      operant, tierDot, toast, tasks: () => board.tasks, control: (cmd, args) => runControl(cmd, args, null),
+      tileAlive: tid => !!wins.get(Number(tid))?.alive,
+      focusTile: tid => { const t = wins.get(Number(tid)); if (t?.alive) { if (t.ws !== current) switchWorkspace(t.ws); focusWin(t); } },
+      autoSend: () => !!cfg.terminal?.autoSend?.[key],
+      setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
+      refinerLabel: () => { const m = [cfg.terminal?.refiner, cfg.terminal?.refinerModel].filter(x => typeof x === 'string' && x && x !== 'off').join(' '); return m ? `Cleaning your prompt with ${m}…` : 'Cleaning your prompt…'; },
+    });
+    wins.set(id, w);
+    mount(w, ws, near, { focus });
+    saveSession();
+    return w;
+  }
+
   // Task board: one global list shown in the top-bar Tasks panel. `operant task add/claim/done/note`
   // and `operant board` all read/write board.tasks; it is saved with the session.
   const board = { tasks: [], nextTaskId: 1 };
@@ -1159,7 +1191,7 @@
       return `<div class="board-group"><h3>${label} (${items.length})</h3>${items.length ? items.map(row).join('') : '<div class="board-empty">—</div>'}</div>`;
     }).join('');
   }
-  function boardChanged() { renderBoard(); saveSession(); }
+  function boardChanged() { renderBoard(); saveSession(); for (const w of wins.values()) if (w.kind === 'operant' && w.alive) w.ui?.refresh(); }
 
   // Workers, review and escalation (board.js has the rules). A worker's `done` waits in review; a
   // failure or a second rejection closes the tile and hands the task, with a two-line failure note,
@@ -1428,6 +1460,11 @@
     openDiff(projectDir(dir));
   }
 
+  function openTerminal(dir = focused()?.cwd || lastCwd) {
+    if (!dir) return toast('Open a tile in a project first');
+    openOperantTerminal(projectDir(dir));
+  }
+
   // ------------------------------------------------------------- session
   // Main keeps each window's tiles and layout so they can be reopened after an update. Subagent
   // tiles and one-off command tiles (CodeGraph) aren't kept.
@@ -1483,6 +1520,7 @@
       const ws = Math.max(snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`)), 0);
       if (t.kind === 'view') return openViewer(t.file, { ws, focus: false });
       if (t.kind === 'diff') return openDiff(t.cwd, { ws, focus: false });
+      if (t.kind === 'operant') return openOperantTerminal(t.cwd, { ws, focus: false });
       if (t.kind === 'board' || t.kind === 'browser') return null; // old sessions kept the tasks in a board tile
       if (t.edit) return openEditor(t.edit, { ws, focus: false });
       return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws, focus: false });
@@ -1964,7 +2002,7 @@
   function idleLimit(w) {
     if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
     // Viewers, diffs and the task board are read, not run; an editor with unsaved changes would lose them.
-    if (w.kind === 'view' || w.kind === 'diff' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
+    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'operant' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
     if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
@@ -2385,6 +2423,7 @@
     commandPalette: () => openPicker('commands'),
     findInView: () => openFind(focused()),
     showChanges: () => showChanges(),
+    openTerminal: () => openTerminal(),
     saveQuit: () => saveAndQuit(),
     notifications: () => togglePanel('notifications'),
   };
@@ -3328,7 +3367,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       + `<span class="nm">${esc(entry.name)}</span>`
       + (project ? `<span class="git-info">${gitInfoHtml(p)}</span>` : '')
       + (count ? `<span class="count" title="${count} open tile${count === 1 ? '' : 's'}">${count}</span>` : '')
-      + (entry.dir ? `<span class="acts">${project && cfg.codegraphButtons ? '<button data-act="cg" title="Index with CodeGraph">◇</button>' : ''}${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
+      + (entry.dir ? `<span class="acts">${project && cfg.codegraphButtons ? '<button data-act="cg" title="Index with CodeGraph">◇</button>' : ''}${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button><button data-act="terminal" title="Operant Terminal">◆</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
       + '</div>';
     if (open) html += kidsHtml(p, depth);
     return html;
@@ -3581,6 +3620,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
 
   function openHere(dir, what) {
     if (what === 'ide') return openInIde(dir);
+    if (what === 'terminal') return openOperantTerminal(dir);
     lastCwd = dir;
     if (what === 'agent') newTerminal('ai', dir);
     else if (what === 'shell') newTerminal('shell', dir);
@@ -3791,6 +3831,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       ['▤', OPEN_FOLDER, () => operant.openPath(p)],
       ...(cfg.codegraphButtons ? [['◇', 'Index with CodeGraph', () => runCodegraph([p])]] : []),
       ['±', 'Show changes', () => showChanges(p)],
+      ['◆', 'Operant Terminal', () => openOperantTerminal(projectDir(p))],
       copy,
       '-',
       ...grouping,
@@ -4559,6 +4600,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const w = openDiff(dir, { ws: self?.ws ?? current, near: self, focus: !!args.focus });
         return { id: w.id };
       }
+      case 'terminal': {
+        const dir = projectDir(args.dir ? resolvePath(self?.cwd || lastCwd, args.dir) : (self?.cwd || lastCwd));
+        const w = openOperantTerminal(dir, { ws: self?.ws ?? current, near: self, focus: !!args.focus });
+        return { id: w.id };
+      }
       case 'browse': {
         if (!args.url) throw new Error('url required');
         const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(args.url) ? args.url : 'http://' + args.url;
@@ -4618,7 +4664,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let taskId = null, prompt = args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
-          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
+          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd, ...(args.requestId ? { requestId: String(args.requestId) } : {}) };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
           board.tasks.push(task);
           boardChanged();

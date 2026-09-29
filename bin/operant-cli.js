@@ -4,7 +4,7 @@
 // Node built-ins only, no deps, must start fast.
 
 const POSITIONAL = {
-  view: ['path'], edit: ['path'], open: ['target'], diff: ['dir'], usage: [], compact: [],
+  view: ['path'], edit: ['path'], open: ['target'], diff: ['dir'], terminal: ['dir'], usage: [], compact: [],
   run: ['command'], agent: ['prompt'], notify: ['text'], title: ['text'],
   test: ['command'], build: ['command'],
   ask: ['question'], ws: ['index'],
@@ -37,6 +37,7 @@ const COMMANDS = {
   view: { group: 'files', usage: 'operant view <path> [--focus]', desc: 'open a viewer tile (Markdown/code/images)', examples: ['operant view plan.md'], flags: ['focus'] },
   edit: { group: 'files', usage: 'operant edit <path> [--focus]', desc: 'open an editor tile', examples: ['operant edit foo.js'], flags: ['focus'] },
   diff: { group: 'files', usage: 'operant diff [dir] [--focus]', desc: 'open a changes tile', examples: ['operant diff'], flags: ['focus'] },
+  terminal: { group: 'files', usage: 'operant terminal [dir] [--focus]', desc: "open the Operant Terminal (the prompt box that plans and dispatches work) for a project", examples: ['operant terminal'], flags: ['focus'] },
   open: { group: 'files', usage: 'operant open <target>', desc: 'open a file/folder/URL', examples: ['operant open report.pdf'], flags: [] },
 
   run: { group: 'terminals', usage: 'operant run <command...> [--title t] [--cwd c] [--focus]', desc: 'run a command in a new tile, stays open', examples: ['operant run "npm run dev" --title dev'], flags: ['title', 'cwd', 'focus'] },
@@ -434,7 +435,7 @@ function formatResult(cmd, result) {
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
     case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}${result.tokens ? '  ' + result.tokens + ' tokens' : ''}`;
-    case 'view': case 'edit': case 'diff': return `tile ${result.id}`;
+    case 'view': case 'edit': case 'diff': case 'terminal': return `tile ${result.id}`;
     // A bare "tile 12" was once read as "the tests passed": say it only started, and how to get the outcome.
     case 'run': return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
     case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', ' + (result.basis || 'suggested') + ': ' + result.reason : ''}]  task ${result.taskId}` : '');

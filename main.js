@@ -23,6 +23,7 @@ const installState = require('./install-state');
 const { redactText } = require('./redact');
 const { createStuckTracker } = require('./stuck');
 const outcomes = require('./outcomes');
+const terminalStore = require('./terminal-store');
 const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
@@ -33,6 +34,7 @@ const teamTiers = require('./team-tiers');
 const agentBrief = require('./agent-brief');
 const agentSetup = require('./agent-setup');
 const memory = require('./memory');
+const refiner = require('./refiner');
 // macOS and Linux: tiles run zsh/bash (platform/unix.js), and each OS keeps its own browser and IDE
 // locations (plus the macOS menus and Keychain).
 const unix = require('./platform/unix');
@@ -169,6 +171,7 @@ const DEFAULT_KEYBINDS = {
   showChanges: ['Alt+G'], // the changes tile (git) for the focused tile's project
   saveQuit: ['Alt+Shift+Q'], // save every editor tile, snapshot the session, and quit
   notifications: ['Alt+I'], // the notification panel
+  openTerminal: ['Alt+Shift+O'], // the Operant Terminal for the focused tile's project
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
 // macOS uses Cmd for these; its Ctrl keys go on to the terminal.
@@ -199,6 +202,7 @@ const DEFAULT_CONFIG = {
   backups: { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true },
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
   messaging: false,               // agents can message each other with operant msg / inbox (Settings > Agents > Team)
+  terminal: { refiner: 'opencode', refinerModel: 'opencode/big-pickle', localUrl: '', localModel: '', autoSend: {}, maxTasks: 4 }, // the Operant Terminal's prompt refiner (refiner.js): opencode | local | off
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
     tiers: {
@@ -1600,6 +1604,11 @@ ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile }) => {
 });
 // Item 57: one line per finished or escalated board task, kept 90 days.
 const OUTCOMES_PATH = path.join(app.getPath('userData'), 'outcomes.jsonl');
+// The Operant Terminal's per-project conversation (terminal-store.js).
+const termStore = terminalStore.createStore(path.join(app.getPath('userData'), 'terminal'));
+ipcMain.handle('terminal:history', (_e, { project, limit } = {}) => { try { return termStore.history(project, { limit }); } catch { return []; } });
+ipcMain.handle('terminal:append', (_e, { project, entry } = {}) => { try { return { ok: true, entry: termStore.append(project, entry) }; } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle('terminal:clear', (_e, { project } = {}) => { termStore.clear(project); return { ok: true }; });
 const OUTCOMES_KEEP = 90 * 86400e3;
 try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch {}
 ipcMain.handle('outcome:record', async (_e, o) => {
@@ -1611,13 +1620,56 @@ ipcMain.handle('outcome:record', async (_e, o) => {
   } catch { return { ok: false }; }
 });
 // Item 59: summary of the last 30 days, at most the 20 most recent entries per type and tier.
-ipcMain.handle('outcome:stats', async () => {
+function outcomeStats() {
   try {
-    const recent = outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 }).sort((a, b) => b.t - a.t);
+    const recent = outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 }).filter(e => e.kind !== 'orchestration').sort((a, b) => b.t - a.t);
     const seen = {}, kept = [];
     for (const e of recent) { const k = (e.type || 'other') + '|' + (e.tier || 'none'); if ((seen[k] = (seen[k] || 0) + 1) <= 20) kept.push(e); }
     return outcomes.summarize(kept);
   } catch { return {}; }
+}
+ipcMain.handle('outcome:stats', async () => outcomeStats());
+// Operant Terminal (items 74-76): the prompt refiner. refiner.js does the work; these are its real inputs.
+async function refinerInputs(cwd) {
+  const g = await git(cwd, ['status', '--porcelain=v1', '-b', '-uall']);
+  let gitState = null;
+  if (g.ok) {
+    const lines = g.out.split(/\r?\n/).filter(Boolean);
+    const head = lines.find(l => l.startsWith('## ')) || '';
+    const h = head.slice(3).replace(/^No commits yet on /, '');
+    const log = await git(cwd, ['log', '-5', '--format=%s']);
+    gitState = { branch: h.startsWith('HEAD (no branch)') ? 'detached' : h.split('...')[0].split(' ')[0], files: lines.filter(l => !l.startsWith('## ')).map(l => l.slice(3).replace(/^.* -> /, '')), commits: log.ok ? log.out.split(/\r?\n/).filter(Boolean) : [] };
+  }
+  const commands = {};
+  try {
+    const scripts = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts || {};
+    if (scripts.test) commands.test = 'npm test';
+    if (scripts.build) commands.build = 'npm run build';
+  } catch {}
+  let memoryFacts = [];
+  try { memoryFacts = memory.recall({ cwd, userDataDir: app.getPath('userData') }).text.split(/\r?\n/).filter(l => l.startsWith('- ')).map(l => l.slice(2).replace(/\*\*/g, '')).slice(0, 5); } catch {}
+  return { cwd, gitState, commands, memoryFacts };
+}
+ipcMain.handle('terminal:refine', async (_e, { project, prompt } = {}) => {
+  const cwd = typeof project === 'string' ? project : project?.cwd;
+  const team = config.team || DEFAULT_CONFIG.team;
+  const exe = async () => resolveExe(String((config.agents.find(a => isOpenCode(a)) || { command: 'opencode' }).command).trim().split(/\s+/)[0]);
+  try {
+    return await refiner.refine({
+      project: cwd, prompt, settings: config.terminal,
+      deps: {
+        inputs: refinerInputs,
+        tiers: () => config.teamTiers || team.tiers,
+        maxTier: () => team.maxTier,
+        outcomesStats: outcomeStats,
+        providers: {
+          opencode: async a => refiner.runOpencode({ ...a, command: await exe(), env: await freshEnv() }),
+          local: a => refiner.runLocal(a),
+        },
+        record: entry => outcomes.appendOutcome(OUTCOMES_PATH, entry),
+      },
+    });
+  } catch (e) { logLine(`terminal:refine failed: ${e.message || e}`); return { requestId: null, original: String(prompt ?? ''), refined: null, tasks: [], brief: { tokens: 0 }, refiner: { provider: config.terminal?.refiner, model: '', tokens: { input: null, output: null }, ms: 0, usd: null }, error: String(e.message || e) }; }
 });
 // Health view (health.js): each part of the app with a state, checked from what Operant already knows (no new probes
 // per refresh; CodeGraph's version is remembered for 5 minutes). Cached, re-checked every 5 minutes, and the

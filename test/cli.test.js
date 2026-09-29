@@ -81,7 +81,7 @@ test('the flag table is what the handlers read', () => {
     read: 'lines new errors grep digest', wait: 'idle timeout new errors grep digest lines',
     agent: 'agent tier budget model cwd title focus', ask: 'options detail', notify: 'title', task: 'for note status', board: 'full',
     remember: 'type global about confidence supersedes', recall: 'about all note', usage: 'breakdown days', watch: 'errors grep off',
-    close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', send: 'enter',
+    close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', terminal: 'focus', send: 'enter',
   };
   for (const [name, c] of Object.entries(COMMANDS)) {
     assert.deepEqual([...c.flags].sort(), (expected[name] || '').split(' ').filter(Boolean).sort(), name);

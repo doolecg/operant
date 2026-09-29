@@ -15,6 +15,7 @@ const configMigrate = require('./config-migrate');
 const BACKUPS_DIR = 'backups';
 const STATE_FILES = ['config.json', 'session.json', 'usage-tags.json', 'outcomes.jsonl', 'memory-stats.json', 'memory-recalls.jsonl'];
 const MEMORY_DIR = 'memory';
+const TERMINAL_DIR = 'terminal'; // the Operant Terminal's per-project conversations (optional history)
 const FORMAT_VERSION = 1;
 // 84J: without these a restore is pointless (required), the rest is history that can be lost (optional).
 const kindOf = f => f === 'config.json' || f === 'session.json' || f.startsWith(`${MEMORY_DIR}/`) ? 'required' : 'optional';
@@ -58,6 +59,7 @@ function collect(userDataDir) {
     }
   };
   walk(MEMORY_DIR);
+  walk(TERMINAL_DIR);
   return out;
 }
 

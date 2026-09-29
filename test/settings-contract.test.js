@@ -92,8 +92,8 @@ test('allowlisted keys still exist and each has a reason', () => {
 });
 
 test('every setting saves and loads back', () => {
-  const defaults = { ...Object.fromEntries(defKeys.map(k => [k, 'default'])), team: { tiers: { a: 1 }, budgets: { a: 1 }, enabled: false, maxWorkers: 4 }, backups: { enabled: true, keepLast: 10, location: '' }, keybinds: {} };
-  for (const k of defKeys.filter(k => k !== 'team' && k !== 'keybinds' && k !== 'backups')) {
+  const defaults = { ...Object.fromEntries(defKeys.map(k => [k, 'default'])), team: { tiers: { a: 1 }, budgets: { a: 1 }, enabled: false, maxWorkers: 4 }, backups: { enabled: true, keepLast: 10, location: '' }, terminal: { refiner: 'opencode', maxTasks: 4 }, keybinds: {} };
+  for (const k of defKeys.filter(k => k !== 'team' && k !== 'keybinds' && k !== 'backups' && k !== 'terminal')) {
     const user = applyPatch({}, { [k]: 'changed' }, defaults);
     const reloaded = mergeUser(defaults, JSON.parse(JSON.stringify(user)), {});
     assert.strictEqual(reloaded[k], 'changed', k);
@@ -103,6 +103,8 @@ test('every setting saves and loads back', () => {
   assert.ok(!('notAKey' in user));
   const t = mergeUser(defaults, JSON.parse(JSON.stringify(user)), {}).team;
   assert.strictEqual(t.enabled, true); assert.strictEqual(t.maxWorkers, 4); assert.strictEqual(t.tiers.a, 2);
+  const tm = mergeUser(defaults, JSON.parse(JSON.stringify(applyPatch({}, { terminal: { refiner: 'off' } }, defaults))), {}).terminal;
+  assert.strictEqual(tm.refiner, 'off'); assert.strictEqual(tm.maxTasks, 4);
   const b = mergeUser(defaults, JSON.parse(JSON.stringify(applyPatch({}, { backups: { keepLast: 3 } }, defaults))), {}).backups;
   assert.strictEqual(b.keepLast, 3); assert.strictEqual(b.enabled, true); assert.strictEqual(b.location, '');
 });
