@@ -28,8 +28,8 @@ full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old a
   by model/tier/task/project with $ and cache hit. Not live-tested; watch 30d range speed (re-reads transcripts).
 - Live test 51-54 (29 Sept) passed: review/reject/escalate, Haiku budget stop, Claude<->OpenCode msg round trip,
   usage views (30d ~3.5 s). Fixed: startup crash (isClaude used before init), retry/nudge/send --enter typed
-  without a working Enter (now sendLine). Unconfirmed: budget stop on an OpenCode worker (tokens may only arrive
-  at step end, after a quick task already reported); big-pickle tripped the runaway guard re-running `operant board`
+  without a working Enter (now sendLine). OpenCode budget stop confirmed live (and 0 = no limit); OpenCode tokens
+  were over-counted (message.updated repeats running totals), now per-message deltas. big-pickle tripped the runaway guard re-running `operant board`
   after a reject; workers stop on permission prompts for commands like git status.
 
 ## Next

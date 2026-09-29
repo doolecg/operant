@@ -28,6 +28,16 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
   // the same shape Claude's usage entries are summed as.
   const tokenSum = tk => !tk ? 0 : (tk.input || 0) + (tk.output || 0) + (tk.cache?.read || 0) + (tk.cache?.write || 0);
   const tokenBreakdown = tk => ({ input: tk?.input || 0, output: tk?.output || 0, cacheWrite: tk?.cache?.write || 0, cacheRead: tk?.cache?.read || 0 });
+  // message.updated repeats a message's running totals several times, so only the growth since the
+  // last update of that message is counted (the runaway guard, tile tokens and usage all add these up).
+  const seenTokens = new Map(); // message id -> its last tokens
+  const tokenDelta = (id, tk) => {
+    const prev = seenTokens.get(id), d = !tk ? null : { input: tk.input || 0, output: tk.output || 0, cache: { read: tk.cache?.read || 0, write: tk.cache?.write || 0 } };
+    if (!d) return null;
+    seenTokens.set(id, d);
+    if (seenTokens.size > 5000) seenTokens.delete(seenTokens.keys().next().value);
+    return !prev ? d : { input: d.input - prev.input, output: d.output - prev.output, cache: { read: d.cache.read - prev.cache.read, write: d.cache.write - prev.cache.write } };
+  };
   // Free Zen models: the id ends in "-free", or the always-free opencode/big-pickle.
   const isFreeModel = id => !id ? false : id === 'opencode/big-pickle' || /-free$/i.test(id);
   const liveSubs = t => { let n = 0; for (const s of t.subs.values()) if (!s.done) n++; return n; };
@@ -114,7 +124,8 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
       if (p.info?.role === 'assistant') {
         const free = isFreeModel(p.info.modelID) || isFreeModel(p.info.providerID && `${p.info.providerID}/${p.info.modelID}`);
         sendContext(t, ptyId, p.info.tokens, p.info.modelID, free);
-        onTokens?.(key, t.owner, tokenSum(p.info.tokens), tokenBreakdown(p.info.tokens), free, t.directory && path.basename(t.directory));
+        const d = tokenDelta(p.info.id, p.info.tokens);
+        if (tokenSum(d)) onTokens?.(key, t.owner, tokenSum(d), tokenBreakdown(d), free, t.directory && path.basename(t.directory));
         // Auto compact's /session/{id}/summarize needs the model the tile is actually using.
         if (p.info.providerID) t.providerID = p.info.providerID;
         if (p.info.modelID) t.modelID = p.info.modelID;
@@ -131,7 +142,8 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
       sub.roles.set(p.info.id, p.info.role);
       if (p.info.role === 'assistant') {
         const free = isFreeModel(p.info.modelID) || isFreeModel(p.info.providerID && `${p.info.providerID}/${p.info.modelID}`);
-        onTokens?.(sub.key, t.owner, tokenSum(p.info.tokens), tokenBreakdown(p.info.tokens), free, t.directory && path.basename(t.directory));
+        const d = tokenDelta(p.info.id, p.info.tokens);
+        if (tokenSum(d)) onTokens?.(sub.key, t.owner, tokenSum(d), tokenBreakdown(d), free, t.directory && path.basename(t.directory));
       }
     } else if (e.type === 'message.part.updated' && p.part) {
       if (p.part.type === 'tool' && p.part.state?.status === 'running') onToolUse?.(sub.key, t.owner, p.part.tool, p.part.state.input, null);
