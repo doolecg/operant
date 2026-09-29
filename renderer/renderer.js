@@ -269,7 +269,7 @@
       if (!w.alive) return;
       if (w.term) { try { w.fit.fit(); } catch {} if (w.ptyId) operant.resizePty(w.ptyId, w.term.cols, w.term.rows); }
       else if (w.kind === 'view' && w.image && w.imgFit) drawImgSize(w);
-      if (w.kind === 'ai') layoutIbar(w);
+      layoutIbar(w);
     }, delay);
   }
 
@@ -1658,7 +1658,7 @@
 
   function updateBadge(w) {
     const closing = w.closeIn != null ? ` · closing ${w.closeIn}s` : w.unchecked ? ' · new' : '';
-    if (w.kind === 'ai') {
+    if (w.kind === 'ai' || w.kind === 'shell') {
       // The folder moved to the info bar below; the title bar badge is just the closing/unread marker.
       setBadge(w, closing.replace(/^ · /, ''));
       renderIbar(w);
@@ -1693,9 +1693,11 @@
     return m[3] != null ? `${fam} ${m[2]}.${m[3]}` : `${fam} ${m[2]}`;
   }
   function renderIbar(w) {
-    if (w.kind !== 'ai' && w.kind !== 'agent') return;
+    if (w.kind !== 'ai' && w.kind !== 'agent' && w.kind !== 'shell') return;
     const on = !!cfg.tileTokens;
+    const was = w.el.classList.contains('ibar-on');
     w.el.classList.toggle('ibar-on', on);
+    if (on !== was) scheduleFit(w, 0);
     if (!on) return;
     const bar = w.el.querySelector('.ibar');
     if (!bar) return;
@@ -1725,13 +1727,17 @@
     branchEl.style.display = branch ? '' : 'none';
     layoutIbar(w, bar);
   }
-  // Least important (rightmost) first: the branch, then the folder. Everything else always fits.
+  // Never overlaps, on any tile kind: drop the least important pieces one at a time until the bar
+  // fits (branch, folder, cache, tokens, the context numbers, the model), and bring them back when it widens.
   function layoutIbar(w, bar) {
     bar = bar || w.el.querySelector('.ibar');
     if (!bar || !w.el.classList.contains('ibar-on')) return;
-    const branch = bar.querySelector('.ib-branch'), folder = bar.querySelector('.ib-folder');
-    if (bar.scrollWidth > bar.clientWidth && branch.textContent) branch.style.display = 'none';
-    if (bar.scrollWidth > bar.clientWidth && folder.textContent) folder.style.display = 'none';
+    for (const el of bar.querySelectorAll('.ib-hide')) el.classList.remove('ib-hide');
+    for (const sel of ['.ib-branch', '.ib-folder', '.ib-cache', '.ib-tok', '.ib-ctxtxt', '.ib-model']) {
+      if (bar.scrollWidth <= bar.clientWidth) break;
+      const el = bar.querySelector(sel);
+      if (el && el.offsetParent !== null) el.classList.add('ib-hide');
+    }
   }
   operant.on('context', ({ sessionId, tokens, max, model, free }) => {
     const w = sessionWin.get(sessionId);

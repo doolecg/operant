@@ -310,10 +310,10 @@ body.anim-off .win::before,
 .tbar .x:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--text); }
 
 /* The info bar under an agent tile's title (item 42): model, context, tokens since it opened,
-   folder and branch. Never overlaps: the branch and then the folder hide first when it's tight
-   (layoutIbar in renderer.js), everything else has a fixed, always-visible width. */
+   folder and branch. Never overlaps: pieces hide one at a time, least important first, when it's tight
+   (layoutIbar in renderer.js). Shell tiles get the same bar with just folder and branch. */
 .ibar { display: none; }
-.win.ai.ibar-on .ibar, .win.agent.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
+.win.ai.ibar-on .ibar, .win.agent.ibar-on .ibar, .win.shell.ibar-on .ibar { flex: none; display: flex; align-items: center; gap: 8px; height: 20px; padding: 0 10px;
   font-size: 10px; color: var(--dim); background: rgba(var(--bar-rgb), .35); border-bottom: 1px solid rgba(var(--ink-rgb), .06);
   overflow: hidden; white-space: nowrap; }
 .ibar .ib-model:empty, .ibar .ib-ctx:empty, .ibar .ib-tok:empty, .ibar .ib-cache:empty, .ibar .ib-folder:empty, .ibar .ib-branch:empty { display: none; }
@@ -327,6 +327,7 @@ body.anim-off .win::before,
 .ibar .ib-cache { flex: none; opacity: .55; }
 .ibar .ib-cache.cold { opacity: .8; }
 .ibar .ib-sp { flex: 1; min-width: 0; }
+.ibar .ib-hide { display: none !important; }
 .ibar .ib-folder, .ibar .ib-branch { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .ibar .ib-folder { order: -2; }
 .ibar .ib-branch { order: -1; }

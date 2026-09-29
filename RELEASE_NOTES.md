@@ -1,3 +1,17 @@
+# Operant 1.17.2
+
+The info bar under each tile's title no longer overlaps, and shell tiles now have it too.
+
+**Install:** download `Operant-1.17.2.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## Changed
+- **Shell tiles have the info bar:** with "Tile info bar" on in ⚙ Settings, shell tiles show their folder and git branch under the title, like agent tiles, instead of the folder in the title badge.
+
+## Fixed
+- **Info bar overlapping on narrow tiles:** when a tile is too narrow, the bar now hides pieces one at a time (branch, folder, cache, tokens, context numbers, model) until it fits, and brings them back when the tile widens.
+
+---
+
 # Operant 1.17.1
 
 Auto compact no longer interrupts agents long before their context is full, and it no longer types into a message you're writing.
