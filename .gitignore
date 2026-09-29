@@ -5,3 +5,4 @@ config.json
 *.stackdump
 evals/results/
 docs/
+.operant/
