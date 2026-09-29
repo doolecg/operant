@@ -197,9 +197,10 @@ function claudeArgs(c, o, brief) {
   return args;
 }
 
-const opencodeArgs = (c, o) => ['run', '--format', 'json', '--model', o.model, promptFor(c, o)];
+// --dir pins opencode to the throwaway workspace; without it a trial run edited the repo's own fixture.
+const opencodeArgs = (c, o, ws) => ['run', '--format', 'json', '--dir', ws, '--model', o.model, promptFor(c, o)];
 const promptFor = (c, o) => o.noOperant && c.baselinePrompt ? c.baselinePrompt : c.prompt;
-const buildArgs = (c, o, brief) => o.agent === 'opencode' ? opencodeArgs(c, o) : claudeArgs(c, o, brief);
+const buildArgs = (c, o, brief, ws) => o.agent === 'opencode' ? opencodeArgs(c, o, ws) : claudeArgs(c, o, brief);
 
 const display = a => /^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`;
 
@@ -427,6 +428,17 @@ function outcomeCheck(c, ws) {
   return { cmd, ok: r.status === 0, code: r.status, tail: `${r.stdout || ''}${r.stderr || ''}`.trim().slice(-300) };
 }
 
+// Safety net for agents with no sandbox: the repo's own fixture must not change during a run.
+function fixtureStatus(repo) {
+  try { return execFileSync('git', ['-C', repo, 'status', '--porcelain', '--', 'evals/fixtures'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
+}
+function guardFixture(repo, before) {
+  const after = fixtureStatus(repo);
+  if (after === null || after === before) return false;
+  try { execFileSync('git', ['-C', repo, 'checkout', '--', 'evals/fixtures'], { stdio: 'ignore' }); } catch { /* reported below anyway */ }
+  return true;
+}
+
 // ------------------------------------------------------------ one run
 const active = new Set();
 let aborting = false;
@@ -440,7 +452,7 @@ async function runOne(job, o, brief, agentBin, runDir) {
   };
   const rec = { arm: o.arm, agent: o.agent, noOperant: o.noOperant, case: c.name, kind: c.kind, run: n, model: o.model, pass: false, error: null };
   const started = Date.now();
-  let ws = null;
+  let ws = null, fixtureBefore = null;
   try {
     ws = prepareWorkspace(c.name, n);
     fs.writeFileSync(files.scenario, JSON.stringify(c.scenario || {}, null, 2));
@@ -448,10 +460,12 @@ async function runOne(job, o, brief, agentBin, runDir) {
     const { env } = childEnv(o.noOperant ? {} : c.env || {}, files, o.noOperant);
     if (o.agent === 'opencode') {
       env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: OPENCODE_PERMISSION });
+      env.PWD = ws; // an inherited PWD from the parent shell can override the child's cwd
+      fixtureBefore = fixtureStatus(o.repo);
       // opencode reads AGENTS.md from the working directory: that is where the brief goes.
       if (brief) fs.writeFileSync(path.join(ws, 'AGENTS.md'), brief.text);
     }
-    const spec = spawnSpec(agentBin, buildArgs(c, o, brief));
+    const spec = spawnSpec(agentBin, buildArgs(c, o, brief, ws));
     const out = await new Promise(resolve => {
       const chunks = [], errChunks = [];
       let done = false, timedOut = false, seenResult = false, timer = null, grace = null;
@@ -478,6 +492,7 @@ async function runOne(job, o, brief, agentBin, runDir) {
     });
 
     fs.writeFileSync(files.raw, out.stdout);
+    const escaped = fixtureBefore !== null && guardFixture(o.repo, fixtureBefore);
     const s = o.agent === 'opencode' ? parseOpencode(out.stdout) : parseStream(out.stdout);
     const logCalls = fs.readFileSync(files.log, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
     Object.assign(rec, grade(c, s, logCalls, { baseline: o.noOperant }));
@@ -503,6 +518,7 @@ async function runOne(job, o, brief, agentBin, runDir) {
     else if (out.timedOut) rec.error = 'timeout';
     else if (!s.result) rec.error = `no result event (exit ${out.code})`;
     else if (rec.isError && rec.subtype !== 'error_max_turns') rec.error = `result: ${rec.subtype}`;
+    if (escaped) rec.error = 'wrote outside its workspace (evals/fixtures in the repo changed; restored)';
     rec.pass = rec.graded ? !rec.error && rec.checksPassed : null;
   } catch (e) {
     rec.error = `harness: ${e.message}`;
@@ -613,7 +629,7 @@ function printDryRun(cases, o, brief, claudeBin, runDir) {
   for (const c of cases) {
     const files = { log: path.join(runDir, 'stub', `${c.name}-1.log.jsonl`), scenario: path.join(runDir, 'stub', `${c.name}-1.scenario.json`) };
     const { env, removed, dropped, pathKey } = childEnv(o.noOperant ? {} : c.env || {}, files, o.noOperant);
-    const spec = spawnSpec(claudeBin, buildArgs(c, o, brief));
+    const spec = spawnSpec(claudeBin, buildArgs(c, o, brief, '<workspace>'));
     console.log(`\n=== ${c.name} (${c.kind}) ===`);
     console.log(`cwd:   ${path.join(fs.realpathSync.native(os.tmpdir()), `operant-eval-${c.name}-<n>-XXXXXX`)}  (fresh fixture copy + git repo per run)`);
     console.log(`cmd:   ${[spec.cmd, ...spec.args].map(display).join(' ')}`);
@@ -653,9 +669,6 @@ async function main() {
   const brief = loadBrief(o, workDir);
   if (o.dryRun) { printDryRun(cases, o, brief, claudeBin, runDir); return; }
 
-  if (o.agent === 'opencode' && process.env.OPERANT_EVAL_OPENCODE_UNSAFE !== '1') {
-    die('opencode has no sandbox: in a trial run it left its workspace and edited a file in the Operant repo (evals/fixtures). Set OPERANT_EVAL_OPENCODE_UNSAFE=1 to run it anyway, then `git status` the repo afterwards.');
-  }
   const setup = setupInfo(o, brief, claudeBin);
   const jobs = [];
   for (let n = 1; n <= o.runs; n++) for (const c of cases) jobs.push({ c, n }); // run 1 of every case first, so a stop still covers all cases
@@ -690,4 +703,4 @@ async function main() {
 
 // Importable (for checking the grader) without starting a run.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e.stack || e.message); process.exit(1); });
-export { classifyCommand, grade, outcomeCheck, parseOpencode, parseStream, totals, childEnv, spawnSpec };
+export { opencodeArgs, classifyCommand, grade, outcomeCheck, parseOpencode, parseStream, totals, childEnv, spawnSpec };

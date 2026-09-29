@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import os from 'node:os';
-import { classifyCommand, grade, outcomeCheck, parseOpencode, parseStream, totals, childEnv } from './run.mjs';
+import { opencodeArgs, classifyCommand, grade, outcomeCheck, parseOpencode, parseStream, totals, childEnv } from './run.mjs';
 
 const cc = classifyCommand;
 const sub = c => cc(c).operant.map(w => w[0]);
@@ -164,6 +164,9 @@ assert.equal(ot.usage.cacheRead, 5);
 assert.equal(ot.finalText, 'done');
 assert.equal(parseOpencode(ocLine({ type: 'error', error: { data: { message: 'boom' } } })).apiError, 'boom');
 assert.equal(parseOpencode('').result, null);
+const oa = opencodeArgs({ prompt: 'p' }, { model: 'm' }, '/tmp/ws');
+assert.deepEqual(oa.slice(oa.indexOf('--dir'), oa.indexOf('--dir') + 2), ['--dir', '/tmp/ws']);
+assert.equal(oa.at(-1), 'p');
 
 // child env: nothing OPERANT-ish or session-ish from the parent survives, the stub is first on PATH
 process.env.OPERANT_API = 'http://127.0.0.1:1234';
