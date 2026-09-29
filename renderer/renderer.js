@@ -1231,7 +1231,7 @@
   // Back to 'doing' in the same tile; with no live tile left, a new worker on the same tier.
   async function retryTask(t, w, lead) {
     boardChanged();
-    if (w?.alive && w.ptyId) { operant.writePty(w.ptyId, `${lead}, then ${reportLine(t.id)}\r`); return; }
+    if (w?.alive && w.ptyId) { sendLine(w, `${lead}, then ${reportLine(t.id)}`); return; }
     t.failure = Board.failureNote(t, t.note);
     t.attempts = Board.attempts(t) + 1; t.retried = false; t.owner = null;
     try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
@@ -1700,7 +1700,7 @@
       if (w.runaway) { w.runaway = null; setRunawayBadge(w); }
       if (worked >= 2500) { w.unchecked = true; gitChanged(); }
       const open = worked >= 2500 && w.tier && w.ptyId ? openTaskOf(w) : null;
-      if (open && !w.nudged) { w.nudged = true; operant.writePty(w.ptyId, `Report back now: run operant task done ${open.id} --note '<the result>'\r`); }
+      if (open && !w.nudged) { w.nudged = true; sendLine(w, `Report back now: run operant task done ${open.id} --note '<the result>'`); }
       else if (open) taskFailed(open, 'worker went idle without reporting a result');
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) {
         const what = w.title !== w.agentName ? w.title : shortPath(w.cwd || '').split(/[\\/]/).filter(Boolean).pop();
@@ -4547,7 +4547,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'send': {
         const w = needTile(args.id);
         if (!w.ptyId) throw new Error('tile has no terminal to type into');
-        operant.writePty(w.ptyId, String(args.text ?? '') + (args.enter ? '\r' : ''));
+        if (args.enter && args.text) sendLine(w, String(args.text));
+        else operant.writePty(w.ptyId, String(args.text ?? '') + (args.enter ? '\r' : ''));
         return { id: w.id };
       }
       case 'msg': {

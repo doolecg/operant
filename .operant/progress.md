@@ -26,11 +26,15 @@ full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old a
 - 54 usage: pricing.js (Claude prices from the claude-api skill 2026-09-29; unlisted models incl. Fable 5 = unknown),
   opencode-usage.js (message sums; matched `opencode stats --days 1`), usage-tags.json tier/task tags, panel views
   by model/tier/task/project with $ and cache hit. Not live-tested; watch 30d range speed (re-reads transcripts).
+- Live test 51-54 (29 Sept) passed: review/reject/escalate, Haiku budget stop, Claude<->OpenCode msg round trip,
+  usage views (30d ~3.5 s). Fixed: startup crash (isClaude used before init), retry/nudge/send --enter typed
+  without a working Enter (now sendLine). Unconfirmed: budget stop on an OpenCode worker (tokens may only arrive
+  at step end, after a quick task already reported); big-pickle tripped the runaway guard re-running `operant board`
+  after a reject; workers stop on permission prompts for commands like git status.
 
 ## Next
 - 55 evals (move salvage harness to `evals/`, back-to-back before/after when weekly usage allows), docs,
   RELEASE_NOTES, plugin.json version bump at release.
-- One batched live test for 51–54 (renderer loads team-tiers.js/board.js; review/escalation; msg round trip).
 
 ## Working rules (user)
 - Structured ~100-word handbacks; targeted edits; one item per commit; smallest model that fits

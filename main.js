@@ -688,7 +688,7 @@ async function openUrl(url, { second = false } = {}) {
 
 const findAgent = id => config.agents.find(a => a.id === id) || config.agents.find(a => a.id === config.defaultAgent) || config.agents[0];
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
-const isClaude = agent => /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim());
+function isClaude(agent) { return /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim()); }
 
 // Whether an agent's installed CLI takes what the agent plugin needs (`pluginDir`: Claude Code's
 // --plugin-dir, `skillPaths`: OpenCode's skills.paths; agent-setup.js runs the probes). Asked once per launch
