@@ -320,7 +320,9 @@ const Panels = (() => {
           <input data-team-f="${id}.model" value="${esc(t.model || '')}" placeholder="model id" spellcheck="false">
           <select data-team-f="${id}.effort" title="Effort (Claude Code only)">${[['', 'Default effort'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']].map(([v, n]) => `<option value="${v}"${v === (t.effort || '') ? ' selected' : ''}>${n}</option>`).join('')}</select></div></div>
         <div class="set-row"><div class="lbl">${label} use for<span class="hint">Shown to the lead agent, and taught in the skill</span></div>
-          <div class="ctl"><input data-team-f="${id}.use" value="${esc(t.use || '')}" placeholder="what this tier is for" spellcheck="false"></div></div>`;
+          <div class="ctl"><input data-team-f="${id}.use" value="${esc(t.use || '')}" placeholder="what this tier is for" spellcheck="false"></div></div>
+        <div class="set-row"><div class="lbl">${label} budget<span class="hint">Tokens per task (input, output, cache writes). A worker past it is stopped and the task moves up a tier. 0 = no limit</span></div>
+          <div class="ctl"><input type="number" data-team-budget="${id}" min="0" step="10000" value="${team.budgets?.[id] ?? 0}"></div></div>`;
     };
     // With OpenCode as the default agent, the tiers come from its models instead of the rows below.
     const def = cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
@@ -479,6 +481,10 @@ const Panels = (() => {
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {
         const n = Math.min(16, Math.max(1, Math.round(+el.value || 4)));
         el.value = n; set('team', { ...(cfg.team || {}), maxWorkers: n });
+      });
+      pane.querySelectorAll('[data-team-budget]').forEach(el => el.onchange = () => {
+        const n = Math.max(0, Math.round(+el.value || 0));
+        el.value = n; set('team', { ...(cfg.team || {}), budgets: { ...(cfg.team?.budgets || {}), [el.dataset.teamBudget]: n } });
       });
       pane.querySelectorAll('[data-team-top]').forEach(el => el.onchange = () => set('team', { ...(cfg.team || {}), maxTier: el.value }));
       pane.querySelectorAll('[data-team-f]').forEach(el => el.onchange = () => {

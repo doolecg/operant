@@ -50,7 +50,8 @@ Parallel work goes on the task board, where the user can see it. With team mode 
    - constraints: style, no new dependencies, how to test
    - how to report: `operant task done <id> --status done|blocked|failed --note "<files changed, one line each; open issues>"`, at most 100 words
 4. Follow progress with `operant board`; `operant read <id> --new` shows a worker's tile.
-5. Review each result before accepting it, then `operant close <id>`.
+5. A worker's done only puts the task in review (your context lists it). Check the result, then `operant task approve <id>`, or `operant task reject <id> --note "<why>"`. A reject or a failure gets one retry in the same tile, then Operant moves the task one tier up as a new worker (same task id); at the top tier it fails. Then `operant close <id>`.
+6. Each tier has a token budget per task (Settings › Agents › Team); a worker past it is stopped and moved up. `operant agent ... --budget <tokens>` overrides it for one task.
 
 Keep it to about 4 worker tiles unless the user asks for more. `operant tiles` marks a stuck or looping tile with ⚠: look with `operant read <id> --new`, and if it's off task, `operant stop <id>` and tell the user.
 

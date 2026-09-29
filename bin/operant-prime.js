@@ -84,6 +84,12 @@ function teamBlock(d) {
   ].join('\n');
 }
 
+function reviewBlock(d) {
+  const rows = (d.review || []).slice(0, 5).map(r => `Waiting for your review: task ${r.id}${r.tier ? ` (${r.tier})` : ''}: ${clean(clip(r.tldr, 80))} — operant task approve ${r.id} | reject ${r.id} --note "<why>"`);
+  const more = (d.review || []).length - rows.length;
+  return rows.length ? rows.join('\n') + (more > 0 ? `\n(+${more} more in review, \`operant board\`)` : '') : null;
+}
+
 function tilesBlock(d, max) {
   const others = (d.tiles || []).filter(t => !d.tile || t.id !== d.tile.id).slice(0, max);
   if (!others.length) return null;
@@ -122,7 +128,7 @@ function formatPrime(data, local = {}, { budget = BUDGET } = {}) {
   const build = ({ progress, memory, tiles }) => {
     const parts = [header(d)];
     if (d.role === 'worker') parts.push(workerBlock(d));
-    else parts.push(teamBlock(d));
+    else parts.push(teamBlock(d), reviewBlock(d));
     parts.push(tilesBlock(d, tiles), portsBlock(d));
     if (d.role !== 'worker') parts.push(progressBlock(local, progress), memoryBlock(d, memory));
     if (local && local.codegraph) parts.push(CODEGRAPH);

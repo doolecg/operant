@@ -194,6 +194,7 @@ const DEFAULT_CONFIG = {
       high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'hard tasks: tricky debugging, a multi-file refactor' },
       max: { agent: 'claude', model: 'claude-opus-5-5', effort: 'max', use: 'the hardest problems: architecture, where getting it right matters more than cost' },
     },
+    budgets: { xsmall: 150000, small: 300000, medium: 600000, high: 1200000, max: 2000000 }, // tokens per task (input + output + cache writes); 0 = no limit
     maxWorkers: 4,
     maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
   },
@@ -314,7 +315,7 @@ const dropTileLinks = u => u.linkBrowser === 'tile' ? { ...u, linkBrowser: 'defa
 const withShell = c => ({ ...c, shellSyntax: unix.usesSh(c.shell) ? 'sh' : 'powershell' });
 const merged = () => withShell(withTiers({ ...DEFAULT_CONFIG, ...dropTileLinks(dropRemoved(user)),
   keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) },
-  team: { ...DEFAULT_CONFIG.team, ...(user.team || {}), tiers: { ...DEFAULT_CONFIG.team.tiers, ...(user.team?.tiers || {}) } },
+  team: { ...DEFAULT_CONFIG.team, ...(user.team || {}), tiers: { ...DEFAULT_CONFIG.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...DEFAULT_CONFIG.team.budgets, ...(user.team?.budgets || {}) } },
 }));
 const config = merged();
 // Read before the app is ready, so it only changes on a restart.

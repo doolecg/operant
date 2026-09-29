@@ -188,7 +188,7 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
       done|blocked|failed --note` (files, one line each; open issues; ≤100 words).
 - [x] **51. Tiers across Claude and OpenCode by availability:** Haiku/Sonnet/Opus plus OpenCode's free and paid
       tiers, fallback when a CLI or model is missing, OpenCode tier subagents, a tier suggested when none is given.
-- [ ] **52. Review, escalation, budgets:** results wait for approval; one retry then one tier up; per-tier token
+- [x] **52. Review, escalation, budgets:** results wait for approval; one retry then one tier up; per-tier token
       budgets stop and escalate a worker.
 - [ ] **53. Messaging (opt-in):** `operant msg <tile> "<text>"` between any agents, Claude and OpenCode included.
 - [ ] **54. Token and cost tracking:** OpenCode history from opencode.db, usage by model/tier/task/project, prices

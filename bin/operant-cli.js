@@ -48,12 +48,12 @@ const COMMANDS = {
 
   browse: { group: 'browser', usage: 'operant browse <url>', desc: 'open a URL in the default browser (follows Settings › Open links in)', examples: ['operant browse localhost:3000'], flags: [] },
 
-  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier xsmall|small|medium|high|max] [--model id] [--cwd c] [--title t] [--focus]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier xsmall'], flags: ['agent', 'tier', 'model', 'cwd', 'title', 'focus'] },
+  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier xsmall|small|medium|high|max] [--budget tokens] [--model id] [--cwd c] [--title t] [--focus]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task; --budget overrides the tier\'s token budget for that task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier xsmall'], flags: ['agent', 'tier', 'budget', 'model', 'cwd', 'title', 'focus'] },
   ask: { group: 'agents & tasks', usage: 'operant ask <question...> [--options "A,B,C"] [--detail d]', desc: 'blocking dialog, returns the choice (comma-separated options; a | works in bash but PowerShell hands it to cmd.exe as a pipe)', examples: ['operant ask "Delete old migrations?" --options "Delete,Keep"'], flags: ['options', 'detail'] },
   notify: { group: 'agents & tasks', usage: 'operant notify <text...> [--title t]', desc: 'Windows notification', examples: ['operant notify "Tests pass, ready for review"'], flags: ['title'] },
   plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'], flags: [] },
-  task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | done <id> [--status done|blocked|failed] [--note n] | note <id> "<text>"', desc: 'add/claim/finish/note a board task; a worker reports with done --status and a short note (files changed, one line each; open issues)', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --status done --note "login.js: null check on refresh; open: none"', 'operant task done 3 --status blocked --note "needs the API key from the user"'], flags: ['for', 'note', 'status'] },
-  board: { group: 'agents & tasks', usage: 'operant board [--full]', desc: 'list every task: id, status, owner, one-line summary (--full: whole text), last note', examples: ['operant board', 'operant board --full'], flags: ['full'] },
+  task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | done <id> [--status done|blocked|failed] [--note n] | approve <id> | reject <id> --note "<why>" | note <id> "<text>"', desc: 'add/claim/finish/note a board task; a worker reports with done --status and a short note (files changed, one line each; open issues); done waits in review until the lead runs approve, or reject with the reason (one retry, then a tier up)', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --status done --note "login.js: null check on refresh; open: none"', 'operant task done 3 --status blocked --note "needs the API key from the user"', 'operant task approve 3', 'operant task reject 3 --note "the null check is missing on refresh"'], flags: ['for', 'note', 'status'] },
+  board: { group: 'agents & tasks', usage: 'operant board [--full]', desc: 'list every task: id, status (todo, doing, review, done, failed, blocked), tier and attempt, owner, one-line summary (--full: whole text), last note', examples: ['operant board', 'operant board --full'], flags: ['full'] },
   team: { group: 'agents & tasks', usage: 'operant team', desc: 'team mode: enabled/disabled, each tier (agent, model, use), running workers', examples: ['operant team'], flags: [] },
   summarize: { group: 'agents & tasks', usage: 'operant summarize <file|tile-id|url> ["question"]', desc: 'an xsmall-tier worker reads it and answers, so you never load it yourself', examples: ['operant summarize RELEASE_NOTES.md "what shipped in 1.10.0, 3 bullets"', 'operant summarize 7 "why did it fail"'], flags: [] },
   find: { group: 'agents & tasks', usage: 'operant find "<question>"', desc: 'an xsmall-tier worker searches the project and answers with file:line references', examples: ['operant find "where is the auto compact threshold checked"'], flags: [] },
@@ -135,7 +135,11 @@ const TOPICS = {
     '  - to report with operant task done <id> --note "<what changed, files>"; a tier adds this line for you',
     'Then operant wait <id> --errors per worker. operant tiles lists them all; a warning flag is looping or stuck:',
     'operant read <id> --new to check, operant stop <id> if it is off task, and tell the user.',
-    'Review what it changed (operant diff, the files), then operant close <id>. Never restart a stopped worker.',
+    'A worker done waits in review: check it (operant diff, the files), then operant task approve <id>',
+    'or operant task reject <id> --note "<why>". A reject or failure gets one retry in the same tile, then',
+    'the task moves a tier up as a new worker (same id); over its token budget (--budget) it moves up too.',
+    'At the top tier it fails.',
+    'After approving, operant close <id>. Never restart a stopped worker.',
   ].join('\n'),
   worker: [
     'You were started as a worker: another agent handed you one task in this tile.',
@@ -144,6 +148,7 @@ const TOPICS = {
     '  Your task is on the board: operant board lists it (--full for the whole text).',
     '  Report once, in at most 100 words, then stop: operant task done <id> --status done|blocked|failed',
     '    --note "<files changed, one line each; open issues>". No narration, no restating the task or the diff.',
+    '  The lead reviews your done: a rejection comes back once with the reason. Stay in your token budget.',
     '  Targeted edits (a whole file only if it is new); narrow reads (--errors, --new, --grep).',
     '  One retry at most: a step that fails twice means --status failed, with two lines on why.',
     '  Tests and builds: operant test, operant build.',
@@ -450,7 +455,8 @@ function formatResult(cmd, result) {
     case 'task': return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}`;
     case 'board': {
       const owner = o => o ? `${o.id} ${o.title}` : '-';
-      return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${owner(t.owner)}  ${t.text}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
+      const via = t => (t.tier ? t.tier + (t.attempts > 1 ? ` try ${t.attempts}` : '') : '-');
+      return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${via(t)}  ${owner(t.owner)}  ${t.text}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
     }
     case 'prime': {
       const prime = require('./operant-prime');

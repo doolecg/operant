@@ -1141,15 +1141,16 @@
   // and a leading "Task:" dropped). The full text stays on hover and in `operant board --full`.
   const taskTldr = t => t.title || clip((String(t.text).split('\n').map(l => l.replace(/^[\s#>*-]+/, '').replace(/^task:\s*/i, '').trim()).find(Boolean) || '').split(/(?<=[^\d\s]{2}[.!?])\s/)[0], 70);
   function renderBoard() {
-    const open = board.tasks.filter(t => t.status !== 'done').length;
+    const open = board.tasks.filter(t => t.status !== 'done' && t.status !== 'failed').length;
     $('#board-badge').textContent = open > 99 ? '99+' : open || '';
     $('#board-badge').classList.toggle('hidden', !open);
     if (openPanel() !== 'board') return;
-    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['done', 'Done']];
+    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
       return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text" title="${esc(t.text)}">${esc(taskTldr(t))}</span>`
         + (owner ? `<button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : '<span class="board-owner unassigned">unassigned</span>')
+        + (Board.attempts(t) > 1 ? `<span class="board-note">attempt ${Board.attempts(t)}${t.tier ? ' · ' + esc(t.tier) : ''}</span>` : '')
         + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '') + '</div>';
     };
     $('#board-body').innerHTML = groups.map(([k, label]) => {
@@ -1158,6 +1159,74 @@
     }).join('');
   }
   function boardChanged() { renderBoard(); saveSession(); }
+
+  // Workers, review and escalation (board.js has the rules). A worker's `done` waits in review; a
+  // failure or a second rejection closes the tile and hands the task, with a two-line failure note,
+  // to a new worker one tier up. At the top allowed tier the task fails and the user is told.
+  const reportLine = id => `when done, report in at most 100 words: operant task done ${id} --status done|blocked|failed --note '<files changed, one line each; open issues>'`;
+  const oneLine = s => String(s).replace(/["\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const allowedTierNames = () => { const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team?.maxTier); return top < 0 ? names : names.slice(0, top + 1); };
+  const openTaskOf = w => board.tasks.find(t => t.owner === w.id && Board.isOpen(t));
+  const tierBudget = t => t.budget != null ? t.budget : cfg.team?.budgets?.[t.tier] || 0;
+  // Tells the user through the lead's tile (or the worker's, or any agent tile still open).
+  const tell = (t, title, body) => {
+    const to = [wins.get(t.lead), wins.get(t.owner), ...wins.values()].find(x => x?.alive && x.kind === 'ai');
+    if (to) notify(to, title, body, null, true);
+  };
+
+  async function startWorker(t, tier) {
+    const conf = activeTiers()[tier];
+    if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
+    // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
+    // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
+    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''} — ${reportLine(t.id)}`;
+    const lead = wins.get(t.lead);
+    const w = await newTerminal('ai', t.cwd, {
+      agentId: conf.agent, prompt, title: t.title || undefined, model: conf.model, effort: conf.effort || null,
+      worker: true, ws: lead?.alive ? lead.ws : current, near: lead?.alive ? lead : undefined, focus: false,
+    });
+    w.tier = tier; setTierDot(w);
+    t.owner = w.id;
+    boardChanged();
+    return w;
+  }
+
+  function failTask(t, why) {
+    t.status = 'failed';
+    t.note = why;
+    boardChanged();
+    tell(t, `Task ${t.id} failed on the ${t.tier} tier: ${taskTldr(t)}`, why);
+    toast(`Task ${t.id} failed: ${esc(why)}`);
+  }
+
+  // Moves the task to a fresh worker one tier up, or fails it at the top.
+  async function escalateTask(t, why) {
+    const next = Board.escalation(t, allowedTierNames(), cfg.team?.maxTier);
+    if (!next) { failTask(t, `${why} (top tier ${t.tier} reached)`); return; }
+    const old = wins.get(t.owner);
+    t.failure = Board.failureNote(t, why);
+    Board.moveUp(t, next);
+    if (old?.alive) closeWin(old);
+    boardChanged();
+    try { await startWorker(t, next); tell(t, `Task ${t.id} moved up to ${next}`, why); }
+    catch (e) { failTask(t, `could not start a ${next} worker: ${e.message || e}`); }
+  }
+
+  // A worker's task went wrong. First time on a tier: the same tile is told to try again; then a tier up.
+  function taskFailed(t, why, opts) {
+    const w = wins.get(t.owner);
+    if (Board.failure(t, why, opts) === 'retry') retryTask(t, w, `Your attempt did not work: ${oneLine(why)}. Try once more, differently`);
+    else escalateTask(t, why);
+  }
+
+  // Back to 'doing' in the same tile; with no live tile left, a new worker on the same tier.
+  async function retryTask(t, w, lead) {
+    boardChanged();
+    if (w?.alive && w.ptyId) { operant.writePty(w.ptyId, `${lead}, then ${reportLine(t.id)}\r`); return; }
+    t.failure = Board.failureNote(t, t.note);
+    t.attempts = Board.attempts(t) + 1; t.retried = false; t.owner = null;
+    try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
+  }
   $('#board-body').addEventListener('click', e => {
     const b = e.target.closest('[data-owner]');
     if (!b) return;
@@ -1400,7 +1469,7 @@
   function closeWin(w) {
     if (!w.alive) return;
     // A worker that ends without `operant task done` still reports back: the master is told it never did.
-    for (const t of w.tier ? board.tasks.filter(x => x.owner === w.id && x.status !== 'done') : []) {
+    for (const t of w.tier ? board.tasks.filter(x => x.owner === w.id && Board.isOpen(x)) : []) {
       t.note = 'Worker closed without reporting a result';
       notify(w, `Task ${t.id} ended without a result`, t.text, null, true);
     }
@@ -1583,9 +1652,9 @@
       w.busySince = null;
       if (w.runaway) { w.runaway = null; setRunawayBadge(w); }
       if (worked >= 2500) { w.unchecked = true; gitChanged(); }
-      const open = worked >= 2500 && w.tier && w.ptyId ? board.tasks.find(t => t.owner === w.id && t.status !== 'done') : null;
+      const open = worked >= 2500 && w.tier && w.ptyId ? openTaskOf(w) : null;
       if (open && !w.nudged) { w.nudged = true; operant.writePty(w.ptyId, `Report back now: run operant task done ${open.id} --note '<the result>'\r`); }
-      else if (open) { open.note = 'Worker went idle without reporting a result'; notify(w, `Task ${open.id} ended without a result: ${taskTldr(open)}`, open.text, null, true); boardChanged(); }
+      else if (open) taskFailed(open, 'worker went idle without reporting a result');
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) {
         const what = w.title !== w.agentName ? w.title : shortPath(w.cwd || '').split(/[\\/]/).filter(Boolean).pop();
         notify(w, `${w.agentName} is waiting${what ? ': ' + clip(what, 50) : ''}`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
@@ -1784,6 +1853,14 @@
     if (!w || !w.alive) return;
     w.tok = { input, output, cacheWrite, cacheRead, free };
     renderIbar(w);
+    // Per-task budget: input + output + cache writes (cache reads excluded).
+    const t = w.tier && !w.overBudget ? openTaskOf(w) : null, limit = t ? tierBudget(t) : 0;
+    if (limit && input + output + cacheWrite > limit) {
+      w.overBudget = true;
+      stopTile(w);
+      toast(`Stopped <b>${esc(w.title)}</b> · budget ${limit} tokens reached`);
+      taskFailed(t, `budget ${limit} tokens reached`, { noRetry: true });
+    }
   });
 
   // ------------------------------------------------------------ idle reaper
@@ -1862,6 +1939,8 @@
     } else {
       notify(w, `${w.agentName} may be running away`, detail);
     }
+    const t = w.tier ? openTaskOf(w) : null;
+    if (t) taskFailed(t, `runaway: ${detail}`);
   }
 
   operant.on('runaway', ({ sessionId, reason, detail }) => {
@@ -4317,11 +4396,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let taskId = null, prompt = args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
-          board.tasks.push({ id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier });
+          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
+          if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
+          board.tasks.push(task);
           boardChanged();
-          // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
-          // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
-          prompt = `${args.prompt} — when done, report in at most 100 words: operant task done ${taskId} --status done|blocked|failed --note '<files changed, one line each; open issues>'`;
+          prompt = `${args.prompt} — ${reportLine(taskId)}`;
         }
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
@@ -4337,7 +4416,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         if (args.hook && !cfg.briefAgents) return { off: true };
         const project = projectDir(self.cwd || lastCwd);
-        const openTask = w => board.tasks.find(t => t.owner === w.id && t.status !== 'done');
+        const openTask = openTaskOf;
         const task = self.tier ? openTask(self) : null;
         const mem = await operant.memory('recall', { cwd: project, tokenCap: 350 }).catch(() => null);
         return {
@@ -4346,6 +4425,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           role: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell',
           task: task ? { id: task.id, text: task.text, tier: self.tier } : null,
           team: self.tier ? null : teamInfo(),
+          review: self.tier ? [] : board.tasks.filter(t => t.status === 'review').map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
           tiles: [...wins.values()].filter(w => w.alive && w.id !== self.id).map(w => ({
             id: w.id, kind: w.kind, title: w.title, busy: isWorking(w), tier: w.tier || null, taskId: w.tier ? openTask(w)?.id ?? null : null })),
           ports: scanPorts(),
@@ -4359,7 +4439,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         if (args.event === 'subagent-start') return cfg.briefAgents ? {} : { off: true };
         if (args.event !== 'stop') return {};
-        const open = self.tier ? board.tasks.find(t => t.owner === self.id && t.status !== 'done') : null;
+        const open = self.tier ? openTaskOf(self) : null;
         if (!open || self.nudged) return {};
         self.nudged = true;
         return { block: `Before you stop, report in at most 100 words: \`operant task done ${open.id} --status done|blocked|failed --note "<files changed, one line each; open issues>"\`.` };
@@ -4474,10 +4554,18 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           // A worker's handback: done, or blocked/failed with why in the note.
           const status = args.status == null ? 'done' : String(args.status);
           if (!['done', 'blocked', 'failed'].includes(status)) throw new Error(`--status must be done, blocked or failed, not "${status}"`);
-          t.status = status; if (args.note != null) t.note = String(args.note);
           const n = wins.get(t.owner);
           const from = n?.alive ? n : self;
-          if (from) notify(from, `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);
+          Board.handback(t, status, args.note);
+          if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
+          else if (from) notify(from, status === 'done' ? `Task ${t.id} ready for review: ${taskTldr(t)}` : `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);
+        }
+        else if (args.sub === 'approve') Board.approve(t);
+        else if (args.sub === 'reject') {
+          if (!args.note) throw new Error('--note "<why>" required');
+          const w = wins.get(t.owner);
+          if (Board.reject(t, args.note) === 'retry') retryTask(t, w, `The lead rejected your result: ${oneLine(args.note)}. Fix it`);
+          else escalateTask(t, `rejected twice: ${oneLine(args.note)}`);
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else throw new Error(`unknown task command "${args.sub}"`);
@@ -4485,7 +4573,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return { id: t.id, status: t.status, note: t.note, sub: args.sub };
       }
       case 'board': {
-        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: args.full ? t.text : taskTldr(t), note: t.note, owner: fmtOwner(t.owner) })) };
+        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: args.full ? t.text : taskTldr(t), note: t.note, owner: fmtOwner(t.owner), tier: t.tier || null, attempts: Board.attempts(t) })) };
       }
       case 'remember': {
         if (!args.text) throw new Error('text required');

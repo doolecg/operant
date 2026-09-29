@@ -79,7 +79,7 @@ test('the flag table is what the handlers read', () => {
   const expected = {
     run: 'title cwd focus', test: 'cwd idle timeout title focus', build: 'cwd idle timeout title focus',
     read: 'lines new errors grep digest', wait: 'idle timeout new errors grep digest lines',
-    agent: 'agent tier model cwd title focus', ask: 'options detail', notify: 'title', task: 'for note status', board: 'full',
+    agent: 'agent tier budget model cwd title focus', ask: 'options detail', notify: 'title', task: 'for note status', board: 'full',
     remember: 'type global about', recall: 'about', usage: 'breakdown days', watch: 'errors grep off',
     close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', send: 'enter',
   };

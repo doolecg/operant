@@ -1,0 +1,69 @@
+(function () {
+// Task board rules, pure over a board object { tasks, nextTaskId }. A worker's "done" is only a
+// handback: the task waits in 'review' until the lead approves it. A failure or a rejection gets one
+// retry in the same tile, then the task moves one tier up (as far as the top tier allowed) or fails.
+const STATUSES = ['todo', 'doing', 'review', 'done', 'failed', 'blocked'];
+const isOpen = t => t.status === 'todo' || t.status === 'doing';
+
+// A worker reports done, blocked or failed. Done waits for review.
+function handback(task, status, note) {
+  if (!['done', 'blocked', 'failed'].includes(status)) throw new Error(`status must be done, blocked or failed, not "${status}"`);
+  task.status = status === 'done' ? 'review' : status;
+  if (note != null) task.note = String(note);
+  return task;
+}
+
+function approve(task) {
+  if (task.status !== 'review') throw new Error(`task ${task.id} is ${task.status}, not waiting for review`);
+  task.status = 'done';
+  return task;
+}
+
+// First strike on a tier: back to 'doing' with the note. Second: 'escalate'.
+function strike(task) {
+  if (!task.retried) { task.retried = true; task.status = 'doing'; return 'retry'; }
+  return 'escalate';
+}
+
+function reject(task, note) {
+  if (task.status !== 'review') throw new Error(`task ${task.id} is ${task.status}, not waiting for review`);
+  task.note = String(note || 'rejected');
+  return strike(task);
+}
+
+// A failed attempt: retry once (unless noRetry), then 'escalate'.
+function failure(task, note, { noRetry } = {}) {
+  task.note = String(note || 'failed');
+  if (noRetry) return 'escalate';
+  return strike(task);
+}
+
+// The next tier above the task's, up to maxTier; null at the top. `tiers` is an ordered list of names.
+function escalation(task, tiers, maxTier) {
+  const names = Array.isArray(tiers) ? tiers : Object.keys(tiers || {});
+  const at = names.indexOf(task.tier);
+  const top = maxTier && names.includes(maxTier) ? names.indexOf(maxTier) : names.length - 1;
+  return at < 0 || at + 1 > top ? null : names[at + 1];
+}
+
+// Moves the task to `tier` for a fresh worker: attempts counted, strikes reset.
+function moveUp(task, tier) {
+  task.tier = tier;
+  task.attempts = attempts(task) + 1;
+  task.retried = false;
+  task.owner = null;
+  task.status = 'todo';
+  return task;
+}
+
+const attempts = task => task.attempts || 1;
+
+// Two lines the next worker starts from.
+function failureNote(task, why) {
+  const clean = s => String(s || 'no reason given').replace(/\s+/g, ' ').trim().slice(0, 240);
+  return `Attempt ${attempts(task)} on the ${task.tier || 'previous'} tier did not work: ${clean(why)}\nThe repo may hold its partial changes: check them, do not repeat the same approach.`;
+}
+
+const api = { STATUSES, isOpen, handback, approve, reject, failure, escalation, moveUp, failureNote, attempts };
+if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
+})();
