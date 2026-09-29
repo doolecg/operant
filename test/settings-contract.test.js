@@ -37,7 +37,7 @@ const defStart = mainSrc.indexOf('const DEFAULT_CONFIG = {');
 const defText = block(mainSrc, mainSrc.indexOf('{', defStart));
 const defKeys = topKeys(defText);
 const nested = name => topKeys(block(defText, defText.indexOf('{', defText.indexOf(`\n  ${name}:`))));
-const teamKeys = nested('team'), backupKeys = [...defText.match(/skillsBackup: \{([^}]*)\}/)[1].matchAll(/(\w+):/g)].map(m => m[1]);
+const teamKeys = nested('team'), stateBackupKeys = [...defText.match(/\n  backups: \{([^}]*)\}/)[1].matchAll(/(\w+):/g)].map(m => m[1]), backupKeys = [...defText.match(/skillsBackup: \{([^}]*)\}/)[1].matchAll(/(\w+):/g)].map(m => m[1]);
 
 // Keys the Settings page writes: control definitions and set('key', ...) calls.
 const controlKeys = new Set([...settingsSrc.matchAll(/\{ key: '(\w+)'/g)].map(m => m[1]));
@@ -68,6 +68,7 @@ test('the extractor found the defaults', () => {
   for (const k of ['defaultCwd', 'agents', 'team', 'skillsBackup', 'secondBrowserCommand']) assert.ok(defKeys.includes(k), k);
   assert.ok(defKeys.length > 100);
   assert.ok(teamKeys.includes('maxWorkers') && backupKeys.includes('repos'), `${teamKeys} / ${backupKeys}`);
+  assert.deepStrictEqual(stateBackupKeys, ['enabled', 'everyHours', 'keepLast', 'keepDays', 'location', 'beforeUpdate', 'beforeMigration']);
 });
 
 test('every Settings control writes a key that has a default', () => {
@@ -82,6 +83,8 @@ test('every setting is read somewhere outside Settings and the defaults', () => 
   assert.deepStrictEqual(deadTeam, [], 'team keys never read: ' + deadTeam);
   const deadBackup = backupKeys.filter(k => !new RegExp(String.raw`\b(?:skillsBackup|c|cfg|config)\)?\??\.${k}\b`).test(corpus));
   assert.deepStrictEqual(deadBackup, []);
+  const deadState = stateBackupKeys.filter(k => !new RegExp(String.raw`(?:\bbk|bkCfg\(\))\.${k}\b`).test(corpus));
+  assert.deepStrictEqual(deadState, [], 'backups keys never read: ' + deadState);
 });
 
 test('allowlisted keys still exist and each has a reason', () => {
@@ -89,8 +92,8 @@ test('allowlisted keys still exist and each has a reason', () => {
 });
 
 test('every setting saves and loads back', () => {
-  const defaults = { ...Object.fromEntries(defKeys.map(k => [k, 'default'])), team: { tiers: { a: 1 }, budgets: { a: 1 }, enabled: false, maxWorkers: 4 }, keybinds: {} };
-  for (const k of defKeys.filter(k => k !== 'team' && k !== 'keybinds')) {
+  const defaults = { ...Object.fromEntries(defKeys.map(k => [k, 'default'])), team: { tiers: { a: 1 }, budgets: { a: 1 }, enabled: false, maxWorkers: 4 }, backups: { enabled: true, keepLast: 10, location: '' }, keybinds: {} };
+  for (const k of defKeys.filter(k => k !== 'team' && k !== 'keybinds' && k !== 'backups')) {
     const user = applyPatch({}, { [k]: 'changed' }, defaults);
     const reloaded = mergeUser(defaults, JSON.parse(JSON.stringify(user)), {});
     assert.strictEqual(reloaded[k], 'changed', k);
@@ -100,4 +103,6 @@ test('every setting saves and loads back', () => {
   assert.ok(!('notAKey' in user));
   const t = mergeUser(defaults, JSON.parse(JSON.stringify(user)), {}).team;
   assert.strictEqual(t.enabled, true); assert.strictEqual(t.maxWorkers, 4); assert.strictEqual(t.tiers.a, 2);
+  const b = mergeUser(defaults, JSON.parse(JSON.stringify(applyPatch({}, { backups: { keepLast: 3 } }, defaults))), {}).backups;
+  assert.strictEqual(b.keepLast, 3); assert.strictEqual(b.enabled, true); assert.strictEqual(b.location, '');
 });

@@ -187,7 +187,10 @@ const Panels = (() => {
     ]],
     ['Updates', [
       { type: 'updates', label: 'Check for updates version release' },
-      { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and every 3 hours, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
+      { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and on the schedule below, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
+      { key: 'updateChannel', label: 'Update channel', hint: 'Stable is releases only · Beta also offers prereleases · takes effect at the next check', type: 'select',
+        options: [['stable', 'Stable'], ['beta', 'Beta']] },
+      { key: 'updateCheckHours', label: 'Check for updates every', hint: 'Hours, 1-24 · 0 = only at startup and when you click Check for updates', type: 'number', min: 0, max: 24 },
     ]],
   // Rows flagged `win` exist only on Windows; a tab left with none goes too.
   ].map(([t, items]) => [t, items.filter(it => IS_WIN || !it.win)]).filter(([, items]) => items.length);
@@ -261,8 +264,11 @@ const Panels = (() => {
     const btn = s.state === 'ready'
       ? '<button class="btn primary" data-update="install">Restart and install</button>'
       : `<button class="btn" data-update="check"${busy ? ' disabled' : ''}>${busy ? 'Checking…' : 'Check for updates'}</button>`;
+    const when = t => (t ? new Date(t).toLocaleString() : 'not yet this session');
+    const row = (l, v) => `<div class="set-row"><div class="lbl"><span>${l}</span></div><span>${esc(v)}</span></div>`;
     return `<div class="update-card"><span class="uc-logo">◈</span><div class="uc-main"><div class="uc-name">Operant ${esc(u.version)}</div>`
       + `<div class="uc-status ${esc(s.state || '')}">${esc(line)}</div></div>${btn}</div>`
+      + row('Current version', u.version) + row('Latest available', s.latest || 'unknown until a check finishes') + row('Last checked', when(s.checkedAt))
       + (s.notes && (s.state === 'ready' || s.state === 'downloading')
         ? `<details class="uc-notes" open><summary>What's new in ${esc(s.version)}</summary><div class="md">${md(s.notes)}</div></details>`
         : s.notes && s.state === 'current' ? `<details class="uc-notes"><summary>What's new in this version</summary><div class="md">${md(s.notes)}</div></details>` : '')
@@ -383,20 +389,39 @@ const Panels = (() => {
         <div class="ctl"><button class="btn primary" data-backup-run${running || !b.repos.length ? ' disabled' : ''}>Back up now</button></div></div>`;
   }
 
-  // Settings › Backups: Operant's own state (config, session, memory) copied into its data folder; Restore asks first.
-  let stateBackups = null, stateBackupsAt = 0, stateBackupMsg = '';
+  // Settings › Backups: Operant's own state (config, session, memory) copied into a backups folder on a schedule;
+  // the switches and numbers, the folder, what the last backup and the last restore test found, and the list. Restore asks first.
+  const BK_DEFAULTS = { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true };
+  let stateBackups = null, stateBackupsAt = 0, stateBackupMsg = '', stateBackupErr = '', stateBackupInfo = null;
   const fmtSize = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
-  function stateBackupsEditor() {
+  const BK_STATUS = { valid: 'valid', cantRestore: 'can’t be restored', failed: 'failed', '': 'not tested yet' };
+  function stateBackupsEditor(cfg) {
+    const bk = { ...BK_DEFAULTS, ...(cfg.backups || {}) };
+    const num = (k, label, hint, min, max) => `<div class="set-row"><div class="lbl">${label}<span class="hint">${hint}</span></div><div class="ctl"><input type="number" data-bk-num="${k}" min="${min}" max="${max}" value="${bk[k]}"></div></div>`;
+    const sw = (k, label, hint) => `<div class="set-row"><div class="lbl">${label}<span class="hint">${hint}</span></div><div class="ctl"><button class="toggle${bk[k] ? ' on' : ''}" data-bk-toggle="${k}"></button></div></div>`;
+    const info = stateBackupInfo, last = info && info.last, val = info && info.validated;
+    const lastLine = !info ? 'Loading…' : last ? `${new Date(last.at).toLocaleString()} · ${fmtSize(last.bytes)} · ${last.files} files · ${info.location}` : `No backup yet · ${info.location}`;
+    const valLine = !info ? '' : val ? `${new Date(val.at).toLocaleString()} · ${val.ok ? 'restored into a temporary folder and every file read back' : val.error}` : 'Not tested yet. A restore test runs weekly.';
     const rows = stateBackups === null ? '<div class="set-row"><div class="lbl">Loading…</div></div>'
-      : stateBackups.length ? stateBackups.map(b => `<div class="set-row"><div class="lbl"><span>${esc(b.at ? new Date(b.at).toLocaleString() : b.id)} · ${esc(b.reason || 'unknown')}</span><span class="hint">${b.ok ? `Operant ${esc(b.version || '?')} · ${b.files} files · ${fmtSize(b.bytes)}` : 'Unreadable (no manifest)'}</span></div><div class="ctl"><button class="btn" data-sbk-restore="${esc(b.id)}"${b.ok ? '' : ' disabled'}>Restore</button></div></div>`).join('')
+      : stateBackups.length ? stateBackups.map(b => `<div class="set-row"><div class="lbl"><span>${esc(b.at ? new Date(b.at).toLocaleString() : b.id)} · ${esc(b.reason || 'unknown')}</span><span class="hint">${b.ok ? `Operant ${esc(b.version || '?')} · ${b.files} files · ${fmtSize(b.bytes)}` : 'Unreadable (no manifest)'} · <span class="uc-status${b.status === 'cantRestore' || b.status === 'failed' ? ' error' : ''}" title="${esc(b.validation && b.validation.error || '')}">${BK_STATUS[b.status] || ''}</span></span></div><div class="ctl"><button class="btn" data-sbk-restore="${esc(b.id)}"${b.ok && b.status !== 'cantRestore' ? '' : ' disabled'}>Restore</button></div></div>`).join('')
       : '<div class="set-row"><div class="lbl">No backups yet</div></div>';
     return `
-      <div class="set-row"><div class="lbl">Back up now<span class="hint uc-status" data-sbk-status>${esc(stateBackupMsg || 'Config, session, usage and memory · one is taken daily, the newest 10 and one a day for a week are kept')}</span></div>
-        <div class="ctl"><button class="btn primary" data-sbk-create>Back up now</button><button class="btn" data-sbk-open>Open folder</button></div></div>${rows}`;
+      <div class="set-row"><div class="lbl">Last backup<span class="hint">${esc(lastLine)}</span></div></div>
+      <div class="set-row"><div class="lbl">Last restore test<span class="hint uc-status${val && !val.ok ? ' error' : ''}">${esc(valLine)}</span></div></div>
+      ${sw('enabled', 'Back up automatically', 'Config, session, usage and memory are copied on the schedule below')}
+      ${num('everyHours', 'Back up every', 'Hours, 1-168 · checked hourly and at startup', 1, 168)}
+      ${num('keepLast', 'Keep the newest', 'Backups, whatever their age', 1, 1000)}
+      ${num('keepDays', 'And the newest of each of the last', 'Days · older ones are removed after each backup', 0, 3650)}
+      <div class="set-row"><div class="lbl">Location<span class="hint${stateBackupErr ? ' uc-status error' : ''}">${esc(stateBackupErr || 'Empty is Operant’s data folder (backups). Backups already made stay where they are')}</span></div>
+        <div class="ctl"><input type="text" data-bk-location value="${esc(bk.location)}" placeholder="Operant's data folder" spellcheck="false"><button class="btn" data-bk-browse>Browse…</button></div></div>
+      ${sw('beforeUpdate', 'Back up before an update installs', 'So a version that fails to start can be rolled back with its settings')}
+      ${sw('beforeMigration', 'Back up before a settings upgrade', 'A full backup, not just a copy of config.json, when a new version reshapes the saved settings')}
+      <div class="set-row"><div class="lbl">Back up now<span class="hint uc-status" data-sbk-status>${esc(stateBackupMsg || 'Test restore restores the newest backup into a temporary folder and reads it back (your data is not touched)')}</span></div>
+        <div class="ctl"><button class="btn primary" data-sbk-create>Back up now</button><button class="btn" data-sbk-test>Test restore</button><button class="btn" data-sbk-open>Open folder</button></div></div>${rows}`;
   }
 
   function rowHtml(it, cfg, ext) {
-    if (it.type === 'stateBackups') return stateBackupsEditor();
+    if (it.type === 'stateBackups') return stateBackupsEditor(cfg);
     if (it.type === 'skillsBackup') return backupEditor(cfg, ext);
     if (it.type === 'projects') return projectsEditor(cfg);
     if (it.type === 'theme') return themeCards(cfg.theme);
@@ -505,13 +530,33 @@ const Panels = (() => {
         draw();
       });
       // Re-read whenever the list is older than a couple of seconds, so opening Settings or the tab shows current backups.
-      if (Date.now() - stateBackupsAt > 2000 && pane.querySelector('[data-sbk-create]')) { stateBackupsAt = Date.now(); ext.listStateBackups().then(l => { stateBackups = l; draw(); }); }
+      if (Date.now() - stateBackupsAt > 2000 && pane.querySelector('[data-sbk-create]')) { stateBackupsAt = Date.now(); Promise.all([ext.listStateBackups(), ext.stateBackupStatus()]).then(([l, i]) => { stateBackups = l; stateBackupInfo = i; draw(); }); }
+      const refreshBackups = async () => { [stateBackups, stateBackupInfo] = await Promise.all([ext.listStateBackups(), ext.stateBackupStatus()]); draw(); };
+      const setBk = patch => set('backups', { ...BK_DEFAULTS, ...(cfg.backups || {}), ...patch });
+      pane.querySelectorAll('[data-bk-toggle]').forEach(b => b.onclick = () => { const k = b.dataset.bkToggle; setBk({ [k]: !{ ...BK_DEFAULTS, ...(cfg.backups || {}) }[k] }); draw(); });
+      pane.querySelectorAll('[data-bk-num]').forEach(el => el.onchange = () => {
+        const lo = +el.min, hi = +el.max, n = Math.min(hi, Math.max(lo, Math.round(+el.value || BK_DEFAULTS[el.dataset.bkNum])));
+        el.value = n; setBk({ [el.dataset.bkNum]: n });
+      });
+      const setLocation = async dir => {
+        const msg = await ext.checkBackupLocation(dir);
+        stateBackupErr = msg;
+        if (!msg) { setBk({ location: dir }); stateBackupMsg = ''; await refreshBackups(); } else draw();
+      };
+      pane.querySelectorAll('[data-bk-location]').forEach(el => el.onchange = () => setLocation(el.value.trim()));
+      pane.querySelectorAll('[data-bk-browse]').forEach(b => b.onclick = async () => { const d = await pickFolder(); if (d) setLocation(d); });
+      pane.querySelectorAll('[data-sbk-test]').forEach(b => b.onclick = async () => {
+        b.disabled = true; b.closest('.set-row').querySelector('[data-sbk-status]').textContent = 'Testing the newest backup…';
+        const r = await ext.testStateRestore();
+        stateBackupMsg = r.ok ? 'The newest backup restores correctly' : `Restore test failed: ${r.error}`;
+        await refreshBackups();
+      });
       if (Date.now() - updateHistoryAt > 2000 && pane.querySelector('[data-uh]')) { updateHistoryAt = Date.now(); ext.updateHistory().then(l => { updateHistory = l; draw(); }); }
       pane.querySelectorAll('[data-sbk-create]').forEach(b => b.onclick = async () => {
         b.disabled = true;
         const r = await ext.createStateBackup();
         stateBackupMsg = r.ok ? 'Backed up' : `Backup failed: ${r.error}`;
-        stateBackups = await ext.listStateBackups(); draw();
+        await refreshBackups();
       });
       pane.querySelectorAll('[data-sbk-open]').forEach(b => b.onclick = () => ext.openBackupsFolder());
       pane.querySelectorAll('[data-sbk-restore]').forEach(b => b.onclick = async () => {

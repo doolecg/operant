@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
-const { verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript } = require('../updater.js');
+const { createUpdater, pickRelease, checkIntervalMs, verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript } = require('../updater.js');
 
 const isWin = process.platform === 'win32';
 const findShell = name => (isWin
@@ -414,4 +414,135 @@ test('update history: written atomically, completed in place, trimmed to the las
     assert.deepEqual(h.read(), []);
     assert.deepEqual(trimHistory('nope'), []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------- channels and schedule
+
+const rel = (tag, extra = {}) => ({ tag_name: tag, prerelease: false, draft: false, ...extra });
+
+test('pickRelease: stable skips prereleases and drafts, beta takes the highest version', () => {
+  const list = [rel('2.2.0', { draft: true }), rel('2.1.0-beta.1', { prerelease: true }), rel('2.0.5'), rel('2.0.4')];
+  assert.equal(pickRelease(list, 'stable').tag_name, '2.0.5');
+  assert.equal(pickRelease(list, 'beta').tag_name, '2.1.0-beta.1');
+  assert.equal(pickRelease([rel('2.0.5'), rel('v2.0.9'), rel('2.0.7')], 'beta').tag_name, 'v2.0.9');
+  assert.equal(pickRelease([rel('2.0.5'), rel('2.0.5', { prerelease: true })], 'beta').prerelease, false, 'a tie keeps the earlier one');
+  assert.equal(pickRelease([rel('2.1.0', { prerelease: true })], 'stable'), null);
+  assert.equal(pickRelease([], 'beta'), null);
+  assert.equal(pickRelease(null, 'beta'), null);
+});
+
+test('checkIntervalMs: 1-24 hours, 0 = no timer, anything odd is the 3 h default', () => {
+  const H = 3600000;
+  assert.equal(checkIntervalMs(3), 3 * H);
+  assert.equal(checkIntervalMs(1), H);
+  assert.equal(checkIntervalMs(24), 24 * H);
+  assert.equal(checkIntervalMs(99), 24 * H);
+  assert.equal(checkIntervalMs(0), 0);
+  assert.equal(checkIntervalMs(-4), 0);
+  assert.equal(checkIntervalMs(undefined), 3 * H);
+  assert.equal(checkIntervalMs('x'), 3 * H);
+});
+
+// ---------------------------------------------------------------- check and download, with a fake fetch
+
+const PAYLOAD = Buffer.from('operant installer bytes'.repeat(50));
+const sha = b => 'sha256:' + require('node:crypto').createHash('sha256').update(b).digest('hex');
+const TARGET = { platform: 'win32', arch: 'x64', kind: 'msi' };
+
+// A fake GitHub: `releases` answers /releases/latest and /releases?per_page=10; the .msi url answers with `body`.
+function harness({ current = '2.0.0', releases, latest, body = PAYLOAD, assetOver = {}, statfs, settings = {}, downloadFails = false } = {}) {
+  const dir = mkdir();
+  const sent = [], urls = [];
+  const asset = { name: 'Operant-2.0.5.msi', size: PAYLOAD.length, digest: sha(PAYLOAD), browser_download_url: 'https://dl.invalid/Operant-2.0.5.msi', ...assetOver };
+  const r = latest || rel('2.0.5', { assets: [asset], html_url: 'https://gh.invalid/2.0.5', body: 'notes' });
+  const fetch = async url => {
+    urls.push(url);
+    if (url.startsWith('https://dl.invalid/')) {
+      if (downloadFails) return { ok: true, body: new ReadableStream({ start(c) { c.enqueue(body.subarray(0, 10)); }, pull(c) { c.error(new Error('network down')); } }) };
+      return new Response(body);
+    }
+    if (url.includes('per_page')) return new Response(JSON.stringify(releases || [r]));
+    return new Response(JSON.stringify(r));
+  };
+  const u = createUpdater({ send: (ch, s) => sent.push(s), historyFile: path.join(dir, 'h.json'), currentVersion: current, fetch, downloadDir: dir, statfs, target: TARGET, getSettings: () => settings });
+  return { u, dir, sent, urls, last: () => sent[sent.length - 1] };
+}
+const leftovers = dir => fs.readdirSync(dir).filter(f => f !== 'h.json');
+
+test('check: nothing newer reports current and downloads nothing', async () => {
+  const h = harness({ current: '2.0.5' });
+  await h.u.check();
+  assert.equal(h.last().state, 'current');
+  assert.equal(h.last().latest, '2.0.5');
+  assert.ok(h.last().checkedAt > 0);
+  assert.deepEqual(leftovers(h.dir), []);
+  assert.ok(!h.urls.some(x => x.startsWith('https://dl.invalid/')));
+});
+
+test('check: a newer release is downloaded, verified and ready', async () => {
+  const h = harness();
+  await h.u.check();
+  assert.equal(h.last().state, 'ready');
+  assert.equal(h.last().version, '2.0.5');
+  assert.deepEqual(leftovers(h.dir), ['Operant-2.0.5.msi']);
+  assert.ok(h.u.ready.digestChecked);
+});
+
+test('check: stable asks for releases/latest, beta asks for the list and picks the highest', async () => {
+  const stable = harness();
+  await stable.u.check();
+  assert.match(stable.urls[0], /releases\/latest$/);
+  const beta = harness({ settings: { updateChannel: 'beta' }, releases: [
+    rel('2.1.0-beta.1', { prerelease: true, assets: [{ name: 'Operant-2.1.0.msi', size: PAYLOAD.length, digest: sha(PAYLOAD), browser_download_url: 'https://dl.invalid/b.msi' }] }),
+    rel('2.0.5'),
+  ] });
+  await beta.u.check();
+  assert.match(beta.urls[0], /releases\?per_page=10$/);
+  assert.equal(beta.last().state, 'ready');
+  assert.equal(beta.last().version, '2.1.0-beta.1');
+});
+
+test('check: a failed download reports the error and leaves no partial file', async () => {
+  const h = harness({ downloadFails: true });
+  await h.u.check();
+  assert.equal(h.last().state, 'error');
+  assert.match(h.last().message, /network down/);
+  assert.deepEqual(leftovers(h.dir), []);
+  assert.equal(h.u.ready, null);
+});
+
+test('check: a size mismatch is reported and the file is deleted', async () => {
+  const h = harness({ assetOver: { size: PAYLOAD.length + 5 } });
+  await h.u.check();
+  assert.equal(h.last().state, 'error');
+  assert.match(h.last().message, /size mismatch/);
+  assert.deepEqual(leftovers(h.dir), []);
+});
+
+test('check: a digest mismatch is reported and the file is deleted', async () => {
+  const h = harness({ assetOver: { digest: sha(Buffer.from('something else')) } });
+  await h.u.check();
+  assert.equal(h.last().state, 'error');
+  assert.match(h.last().message, /digest mismatch/);
+  assert.deepEqual(leftovers(h.dir), []);
+  assert.equal(h.u.ready, null);
+});
+
+test('check: not enough disk space stops before downloading, with the actionable message', async () => {
+  const size = 200 * 1048576;
+  const h = harness({ assetOver: { size }, statfs: () => ({ bavail: 100, bsize: 1048576 }) });
+  await h.u.check();
+  assert.equal(h.last().state, 'error');
+  assert.equal(h.last().message, `Not enough disk space to download Operant 2.0.5 (needs 400 MB, 100 MB free in ${h.dir}). Nothing was changed.`);
+  assert.ok(!h.urls.some(x => x.startsWith('https://dl.invalid/')));
+  assert.deepEqual(leftovers(h.dir), []);
+});
+
+test('check: exactly twice the size free is enough, and a statfs that throws is skipped', async () => {
+  const enough = harness({ statfs: () => ({ bavail: PAYLOAD.length * 2, bsize: 1 }) });
+  await enough.u.check();
+  assert.equal(enough.last().state, 'ready');
+  const broken = harness({ statfs: () => { throw new Error('unsupported'); } });
+  await broken.u.check();
+  assert.equal(broken.last().state, 'ready');
 });

@@ -35,11 +35,12 @@ function applyPatch(user, patch, defaults) {
   return user;
 }
 
-// Defaults under what the user changed; keybinds and team are nested, so a partial override keeps the rest.
+// Defaults under what the user changed; keybinds, team and backups are nested, so a partial override keeps the rest.
 function mergeUser(defaults, user, keybinds) {
   return {
     ...defaults, ...user,
     keybinds: { ...keybinds, ...(user.keybinds || {}) },
+    backups: { ...defaults.backups, ...(user.backups || {}) },
     team: { ...defaults.team, ...(user.team || {}), tiers: { ...defaults.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...defaults.team.budgets, ...(user.team?.budgets || {}) } },
   };
 }

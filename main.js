@@ -192,6 +192,8 @@ const DEFAULT_CONFIG = {
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   cacheTtlMinutes: 5,              // Claude's prompt cache lifetime; 60 if your setup uses the 1-hour cache (Settings > Agents)
   skillsBackup: { enabled: false, repos: [], auto: false }, // back up skills and rules to private git repos (Settings > Skills backup)
+  // Operant's own state backups (Settings > Backups; state-backup.js). location '' is userData/backups; keepDays keeps the newest of each of that many days.
+  backups: { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true },
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
   messaging: false,               // agents can message each other with operant msg / inbox (Settings > Agents > Team)
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
@@ -244,6 +246,8 @@ const DEFAULT_CONFIG = {
   borderAnimationSeconds: 8,
   animations: 'normal',           // 'normal' | 'fast' | 'off'
   autoUpdate: true,               // check GitHub releases and install new versions
+  updateChannel: 'stable',        // 'stable' (releases only) | 'beta' (prereleases too)
+  updateCheckHours: 3,            // 1-24 hours between update checks · 0 = only at startup and by hand
   explorerContextMenu: true,      // "Open in Operant" when right-clicking a folder
   explorerOpensIn: 'tile',        // 'tile' (in the window you used last) | 'window' (a new Operant window)
   sidebar: true,                  // the projects and folder tree on the left
@@ -315,6 +319,11 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
   else if (m.changed) {
     if (fs.existsSync(CONFIG_PATH)) {
       try {
+        // A full backup first (config, session, memory...), when Settings > Backups has it on; failing to take it never blocks the migration.
+        try {
+          const bk = stateBackup.normalizeSettings(user.backups).settings;
+          if (bk.beforeMigration) stateBackup.createBackup({ userDataDir: app.getPath('userData'), location: bk.location, reason: 'before-migration', version: app.getVersion() });
+        } catch (e) { console.error('backup before the config migration failed', e); }
         fs.copyFileSync(CONFIG_PATH, CONFIG_PATH.replace(/\.json$/, `.v${m.from}.json`));
         writeFileAtomic(CONFIG_PATH, JSON.stringify(m.user, null, 2));
         user = m.user;
@@ -353,17 +362,24 @@ function saveUser() {
 
 // patch: { key: value }; null resets a key to its default.
 ipcMain.handle('config:set', (e, patch) => {
+  if ('backups' in patch && patch.backups !== null) {
+    // Numbers clamped, and a location that can't be written to keeps the old one.
+    const r = stateBackup.normalizeSettings(patch.backups, config.backups);
+    patch = { ...patch, backups: r.settings };
+  }
   configMigrate.applyPatch(user, patch, DEFAULT_CONFIG);
   saveUser();
   Object.assign(config, merged());
   if ('explorerContextMenu' in patch && installed && process.platform === 'win32') {
     if (config.explorerContextMenu) shellIntegration.register(process.execPath); else shellIntegration.unregister();
   }
+  if ('updateCheckHours' in patch) updater.reschedule();
   if ('mediaControls' in patch) { if (config.mediaControls) media.start(); else media.stop(); }
   if ('tokenUsage' in patch) { if (config.tokenUsage) usage.start(); else usage.stop(); }
   if ('planLimits' in patch || 'planLimitAlerts' in patch || 'tokenUsage' in patch) pollLimits();
   if ('theme' in patch || 'accent' in patch) opencodeTheme.writeTheme(config);
   if ('agents' in patch || 'defaultAgent' in patch) scanOpencodeModels();
+  if ('backups' in patch) scheduleStateBackups();
   // Other Operant windows pick the change up live.
   for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
   return config;
@@ -1338,8 +1354,9 @@ ipcMain.handle('win:focused', e => { const w = winOf(e); return !!w && w.isFocus
 
 const updater = createUpdater({
   send: broadcast, log: logLine,
+  getSettings: () => ({ updateChannel: config.updateChannel, updateCheckHours: config.updateCheckHours }),
   onInstall: () => { session.restoreNext = true; writeSession(); },
-  beforeInstall: () => createStateBackup('before-update').id,
+  beforeInstall: () => bkCfg().beforeUpdate ? createStateBackup('before-update').id : null,
 });
 ipcMain.handle('update:history', () => updater.history.read());
 
@@ -1371,7 +1388,7 @@ async function offerRollback(win) {
   const dir = app.getPath('userData');
   const res = await updater.rollback(entry, () => {
     updater.history.updateLast(e => { e.result = 'failed-to-start'; }); // before the reinstall adds its own entry
-    if (stateBackup.listBackups(dir).some(b => b.ok && b.id === entry.backup)) stateBackup.restoreBackup({ userDataDir: dir, id: entry.backup, version: app.getVersion() });
+    if (stateBackup.listBackups(dir, bkCfg().location).some(b => b.ok && b.id === entry.backup)) stateBackup.restoreBackup({ userDataDir: dir, location: bkCfg().location, id: entry.backup, version: app.getVersion() });
     else logLine(`no backup ${entry.backup} to restore, reinstalling ${entry.from} only`);
   });
   if (res.ok) app.quit();
@@ -1441,41 +1458,68 @@ ipcMain.handle('backup:run', () => backupRun(false));
 ipcMain.handle('backup:state', () => ({ last: backupLast, running: !!backupBusy }));
 ipcMain.handle('backup:check-repo', async (_e, dir) => (await skillsBackup.checkRepo(dir)).error || '');
 
-// Operant's own state (state-backup.js): config, session, memory and the like, copied into userData/backups.
-// A daily one at startup when the newest is over 24 hours old; the updater calls createStateBackup('before-update').
+// Operant's own state (state-backup.js): config, session, memory and the like, copied into the backups folder
+// (userData/backups, or Settings > Backups > Location). An automatic one when the newest is older than everyHours
+// (checked hourly and at startup, re-set when the settings change), a restore test of the newest one weekly, and
+// createStateBackup('before-update') from the updater and 'before-migration' from the config migration.
+const bkCfg = () => ({ ...stateBackup.DEFAULT_SETTINGS, ...(config.backups || {}) });
 function createStateBackup(reason) {
-  return stateBackup.createBackup({ userDataDir: app.getPath('userData'), reason, version: app.getVersion() });
+  return stateBackup.createBackup({ userDataDir: app.getPath('userData'), location: bkCfg().location, reason, version: app.getVersion() });
 }
-function dailyStateBackup() {
+const AUTO_REASONS = new Set(['daily', 'auto']);
+const VALIDATE_EVERY_MS = 7 * 24 * 60 * 60 * 1000;
+function stateBackupTick() {
+  const bk = bkCfg();
+  if (!bk.enabled) return;
   try {
     const dir = app.getPath('userData');
-    const newest = stateBackup.listBackups(dir).find(b => b.ok);
-    if (newest && Date.now() - Date.parse(newest.at) < 24 * 60 * 60 * 1000) return;
-    createStateBackup('daily');
-    stateBackup.pruneBackups(dir);
+    const newest = stateBackup.listBackups(dir, bk.location).find(b => b.ok && AUTO_REASONS.has(b.reason));
+    if (!newest || Date.now() - Date.parse(newest.at) >= bk.everyHours * 60 * 60 * 1000) {
+      createStateBackup('auto');
+      stateBackup.pruneBackups(dir, { keepLast: bk.keepLast, keepDays: bk.keepDays, location: bk.location });
+    }
+    const last = stateBackup.statusSummary(dir, bk.location).validated;
+    if (!last || Date.now() - Date.parse(last.at) >= VALIDATE_EVERY_MS) {
+      const r = stateBackup.testRestore({ userDataDir: dir, location: bk.location });
+      if (r.id && !r.ok) logLine(`restore test of backup ${r.id} failed: ${r.error}`);
+    }
   } catch (e) { logLine(`state backup failed: ${e.message || e}`); }
 }
-ipcMain.handle('backups:list', () => stateBackup.listBackups(app.getPath('userData')));
+let stateBackupTimer = null;
+function scheduleStateBackups() {
+  clearInterval(stateBackupTimer);
+  stateBackupTimer = setInterval(stateBackupTick, 60 * 60 * 1000);
+  stateBackupTick();
+}
+ipcMain.handle('backups:list', () => stateBackup.listBackups(app.getPath('userData'), bkCfg().location));
+ipcMain.handle('backups:status', () => stateBackup.statusSummary(app.getPath('userData'), bkCfg().location));
+ipcMain.handle('backups:check-location', (_e, dir) => stateBackup.checkLocation(String(dir || '').trim()));
 ipcMain.handle('backups:create', () => {
   try {
+    const bk = bkCfg();
     const b = createStateBackup('manual');
-    stateBackup.pruneBackups(app.getPath('userData'));
+    stateBackup.pruneBackups(app.getPath('userData'), { keepLast: bk.keepLast, keepDays: bk.keepDays, location: bk.location });
     return { ok: true, id: b.id };
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
 });
+ipcMain.handle('backups:test-restore', () => {
+  const r = stateBackup.testRestore({ userDataDir: app.getPath('userData'), location: bkCfg().location });
+  return { ok: r.ok, id: r.id, error: r.error };
+});
 ipcMain.handle('backups:restore', async (e, id) => {
-  const row = stateBackup.listBackups(app.getPath('userData')).find(b => b.id === id);
+  const bk = bkCfg();
+  const row = stateBackup.listBackups(app.getPath('userData'), bk.location).find(b => b.id === id);
   if (!row) return { ok: false, error: 'Backup not found' };
   const when = row.at ? new Date(row.at).toLocaleString() : row.id;
   const r = await dialog.showMessageBox(winOf(e), { type: 'question', title: 'Operant', message: `Restore the backup from ${when}?`,
     detail: 'Config, session, usage and memory files in it replace the current ones (a backup of the current state is taken first). Operant restarts.',
     buttons: ['Restore and restart', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true });
   if (r.response !== 0) return { ok: false, cancelled: true };
-  try { stateBackup.restoreBackup({ userDataDir: app.getPath('userData'), id, version: app.getVersion() }); } catch (err) { return { ok: false, error: String(err.message || err) }; }
+  try { stateBackup.restoreBackup({ userDataDir: app.getPath('userData'), location: bk.location, id, version: app.getVersion() }); } catch (err) { return { ok: false, error: String(err.message || err) }; }
   setTimeout(() => { app.relaunch(); app.exit(0); }, 200);
   return { ok: true };
 });
-ipcMain.on('backups:open-folder', () => { const d = stateBackup.backupsRoot(app.getPath('userData')); fs.mkdirSync(d, { recursive: true }); shell.openPath(d); });
+ipcMain.on('backups:open-folder', () => { const d = stateBackup.backupsRoot(app.getPath('userData'), bkCfg().location); fs.mkdirSync(d, { recursive: true }); shell.openPath(d); });
 
 // -------------------------------------------------------------------- media
 
@@ -2109,7 +2153,7 @@ if (!app.requestSingleInstanceLock()) {
       const gone = agentSetup.removeLegacySkillCopies({ homeDir: os.homedir() });
       if (gone.length) logLine(`removed the skill copies older versions installed: ${gone.join(', ')}`);
     }
-    dailyStateBackup();
+    scheduleStateBackups();
     startHealthCheck();
     probeAgents(); // in the background: what the installed CLIs take, before the first tile needs to know
     opencodeTheme.writeTheme(config);

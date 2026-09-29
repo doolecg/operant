@@ -15,12 +15,31 @@ const crypto = require('crypto');
 const { writeFileAtomic } = require('./atomic-write');
 
 const REPO = 'doolecg/operant';
-const CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
+const DEFAULT_CHECK_HOURS = 3;
+
+// updateCheckHours: whole hours 1-24 between checks; 0 = only at startup and by hand. Anything else is the default.
+function checkIntervalMs(hours) {
+  const h = Number(hours);
+  if (hours === '' || hours == null || !Number.isFinite(h)) return DEFAULT_CHECK_HOURS * 3600000;
+  return Math.min(24, Math.max(0, Math.round(h))) * 3600000;
+}
 
 function newer(a, b) { // is version a > b
   const pa = a.replace(/^v/, '').split(/[.-]/).map(Number), pb = b.replace(/^v/, '').split(/[.-]/).map(Number);
   for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
   return false;
+}
+
+// The release to offer from GitHub's release list. stable: the newest non-prerelease; beta: the highest version, prereleases
+// included. Drafts never count; on a tie the earlier entry (GitHub lists newest first) wins.
+function pickRelease(releases, channel) {
+  let best = null;
+  for (const r of Array.isArray(releases) ? releases : []) {
+    if (!r || r.draft || typeof r.tag_name !== 'string') continue;
+    if (channel !== 'beta' && r.prerelease) continue;
+    if (!best || newer(r.tag_name, best.tag_name)) best = r;
+  }
+  return best;
 }
 
 const EXT = { msi: 'msi', dmg: 'dmg', appimage: 'AppImage', deb: 'deb' };
@@ -161,26 +180,44 @@ function healthState(history, version) {
   return (e.attempts || 0) >= 2 ? 'offer-rollback' : 'check';
 }
 
-function createUpdater({ send, onInstall, beforeInstall, log = () => {}, historyFile, currentVersion = app.getVersion() }) {
+// getSettings() -> { updateChannel, updateCheckHours }. fetch, downloadDir, statfs and target are injection points for tests.
+function createUpdater({ send, onInstall, beforeInstall, log = () => {}, historyFile, currentVersion = app.getVersion(), getSettings = () => ({}),
+  fetch = (...a) => net.fetch(...a), downloadDir = os.tmpdir(), statfs = fs.statfsSync, target = null }) {
   const history = historyStore(historyFile || path.join(app.getPath('userData'), 'update-history.json'));
   let ready = null;      // { version, file, notes, url, kind }
   let busy = false;
   let installing = false;
   let status = null;     // the last thing reported, for the Settings › Updates tab
-  const report = s => { status = { ...s, at: Date.now() }; send('update:status', status); };
+  let info = {};         // { checkedAt, latest, channel } of the last check, carried on every status
+  let timer = null, started = false;
+  const report = s => { status = { ...info, ...s, at: Date.now() }; send('update:status', status); };
+  const targetNow = () => target || { platform: process.platform, arch: process.arch, kind: installKind() };
+
+  // Needs twice the download free in its folder (the file, then room to install from). Skipped when the OS can't say.
+  function checkDiskSpace(dir, size, version) {
+    if (typeof statfs !== 'function') return;
+    let free;
+    try { const st = statfs(dir); free = Number(st.bavail) * Number(st.bsize); } catch { return; }
+    if (!Number.isFinite(free) || free >= size * 2) return;
+    const mb = n => Math.ceil(n / 1048576);
+    throw new Error(`Not enough disk space to download Operant ${version} (needs ${mb(size * 2)} MB, ${Math.floor(free / 1048576)} MB free in ${dir}). Nothing was changed.`);
+  }
 
   // Downloads an asset to the temp folder (reusing a finished copy of ours), checks its size and, when GitHub
   // lists one, its sha256; a bad file is deleted.
   async function fetchAsset(asset, version, kind, onDownload) {
-    const file = path.join(os.tmpdir(), `Operant-${version}.${EXT[kind]}`);
+    const file = path.join(downloadDir, `Operant-${version}.${EXT[kind]}`);
     if (!downloaded(file, asset.size)) {
+      checkDiskSpace(downloadDir, asset.size, version);
       onDownload?.();
-      const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
-      if (!dl.ok) throw new Error(`download ${dl.status}`);
       const tmp = file + '.part';
-      await pipeline(Readable.fromWeb(dl.body), fs.createWriteStream(tmp));
-      if (fs.statSync(tmp).size !== asset.size) { try { fs.unlinkSync(tmp); } catch {} throw new Error('download size mismatch'); }
-      fs.renameSync(tmp, file);
+      try {
+        const dl = await fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
+        if (!dl.ok) throw new Error(`download ${dl.status}`);
+        await pipeline(Readable.fromWeb(dl.body), fs.createWriteStream(tmp));
+        if (fs.statSync(tmp).size !== asset.size) throw new Error('download size mismatch');
+        fs.renameSync(tmp, file);
+      } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
     }
     try { return { file, digestChecked: await verifyDigest(file, asset.digest) }; } catch (e) {
       try { fs.unlinkSync(file); } catch {}
@@ -193,19 +230,25 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
     busy = true;
     report({ state: 'checking' });
     try {
-      const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      const channel = getSettings().updateChannel === 'beta' ? 'beta' : 'stable';
+      info = { ...info, checkedAt: Date.now(), channel };
+      // stable is GitHub's own "latest" (no prereleases); beta is the newest of the recent releases, prereleases included.
+      const res = await fetch(`https://api.github.com/repos/${REPO}/releases${channel === 'beta' ? '?per_page=10' : '/latest'}`, {
         headers: { 'User-Agent': 'operant', Accept: 'application/vnd.github+json' },
       });
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-      const rel = await res.json();
+      const body = await res.json();
+      const rel = channel === 'beta' ? pickRelease(body, 'beta') : body;
+      if (!rel) throw new Error('no releases found');
       const version = rel.tag_name.replace(/^v/, '');
+      info = { ...info, latest: version };
       if (!newer(version, currentVersion)) { report({ state: 'current', version: currentVersion, notes: version === currentVersion ? rel.body || '' : '' }); return; }
-      const kind = installKind();
+      const { platform, arch, kind } = targetNow();
       if (!kind) { report({ state: 'error', message: `${version} is out, get it from the releases page` }); return; }
       // Keep checking once one is downloaded: a stale ready update must not be installed over a newer release.
       // The download is fetched again if the temp folder lost it (macOS clears it after a few days).
       if (ready && !newer(version, ready.version) && fs.existsSync(ready.file)) { report({ state: 'ready', version: ready.version, notes: ready.notes, url: ready.url }); return; }
-      const asset = pickAsset(rel.assets, { platform: process.platform, arch: process.arch, kind });
+      const asset = pickAsset(rel.assets, { platform, arch, kind });
       if (!asset) { report({ state: 'error', message: `${version} has no installer for this system yet, try again in a few minutes` }); return; }
 
       const { file, digestChecked } = await fetchAsset(asset, version, kind, () => report({ state: 'downloading', version, notes: rel.body || '' }));
@@ -330,16 +373,27 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
     }
   }
 
+  // Every updateCheckHours (0 = never on a timer); called again when the setting changes.
+  function schedule() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    const ms = checkIntervalMs(getSettings().updateCheckHours);
+    if (ms > 0) timer = setInterval(check, ms);
+  }
+
+  function reschedule() { if (started) schedule(); }
+
   function start() {
     if ((!app.isPackaged || process.env.OPERANT_USER_DATA) && !process.env.OPERANT_UPDATE_TEST) return;
+    started = true;
     setTimeout(check, 5000);
-    setInterval(check, CHECK_EVERY_MS);
+    schedule();
     // Like electron-updater's autoInstallOnAppQuit: a downloaded update goes in when the app closes.
     // Never a deb: its install asks for a password.
     app.on('will-quit', () => { if (ready && ready.kind !== 'deb' && !installing && app.isPackaged) install(false); });
   }
 
-  return { start, check, rollback, history, install: () => install(true), get ready() { return ready; }, get status() { return status; } };
+  return { start, check, reschedule, rollback, history, install: () => install(true), get ready() { return ready; }, get status() { return status; } };
 }
 
-module.exports = { createUpdater, verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript };
+module.exports = { createUpdater, pickRelease, checkIntervalMs, DEFAULT_CHECK_HOURS, verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript };
