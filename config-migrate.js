@@ -91,7 +91,7 @@ const USAGE_SERIES = ['input', 'output', 'cacheWrite', 'cacheRead'];
 
 const kindOf = v => Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v;
 const A_KIND = { boolean: 'true or false', number: 'a number', string: 'text', array: 'a list', object: 'an object' };
-const shown = v => { const t = JSON.stringify(v); return t === undefined ? 'nothing' : t.length > 60 ? t.slice(0, 57) + '...' : t; };
+const shown = v => { const t = typeof v === 'string' ? `"${v}"` : JSON.stringify(v); return t === undefined ? 'nothing' : t.length > 60 ? t.slice(0, 57) + '...' : t; };
 const rangeText = r => `${r.int ? 'a whole number ' : 'a number '}${r.min}-${r.max}${r.unit ? ' ' + r.unit : ''}`;
 function isDirDefault(p) { try { return require('fs').statSync(p).isDirectory(); } catch { return false; } }
 

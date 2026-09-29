@@ -48,14 +48,14 @@ test('agents: one row each, installed / missing / not looked for yet / no comman
   assert.equal(state('agents', null), 'unknown');
 });
 
-test('models: available, fell back, none, OpenCode list unread', () => {
+test('models: installed (available, not proven), fell back, none, OpenCode list unread', () => {
   const t = (name, o) => ({ name, agent: 'claude', model: 'm', installed: true, oc: false, active: { agent: 'claude', model: 'm' }, ...o });
   const rows = one('models', { modelsRead: false, tiers: [
     t('small'), t('medium', { active: { agent: 'claude', model: 'n', fallback: 'OpenCode not installed' } }), t('high', { active: null }),
     t('max', { oc: true }), t('xsmall', { installed: undefined }),
   ] });
-  assert.deepEqual(rows.map(r => r.state), ['healthy', 'degraded', 'unavailable', 'unknown', 'unknown']);
-  assert.equal(one('models', { modelsRead: true, tiers: [t('max', { oc: true })] })[0].state, 'healthy');
+  assert.deepEqual(rows.map(r => r.state), ['available', 'degraded', 'unavailable', 'unknown', 'unknown']);
+  assert.equal(one('models', { modelsRead: true, tiers: [t('max', { oc: true })] })[0].state, 'available');
 });
 
 test('memory: readable, empty, unreadable, stale', () => {
@@ -76,7 +76,7 @@ test('codegraph: indexed, not indexed, CLI missing, not looked for', () => {
 });
 
 test('mcp: servers present or absent, never connected to', () => {
-  assert.equal(state('mcp', { servers: ['a', 'b'] }), 'healthy');
+  assert.equal(state('mcp', { servers: ['a', 'b'] }), 'available');
   assert.equal(state('mcp', { servers: [] }), 'not-configured');
   assert.equal(state('mcp', null), 'unknown');
 });

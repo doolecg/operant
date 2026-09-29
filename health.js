@@ -106,7 +106,8 @@ function checkModels(raw) {
     if (t.active.fallback) return row(id, name, 'degraded', `Fell back to ${[t.active.agent, t.active.model].filter(Boolean).join(' · ')}: ${t.active.fallback}`, act);
     if (t.installed !== true) return unknownRow(id, name, `${what}: the CLI has not been looked for yet`);
     if (t.oc && !raw.modelsRead) return unknownRow(id, name, `${what}: OpenCode's model list has not been read yet`);
-    return row(id, name, 'healthy', `${what} is available`);
+    // Installed and listed, but no call has proven it works yet: available, not healthy.
+    return row(id, name, 'available', `${what} is installed and listed (not yet proven by a run)`);
   });
 }
 
@@ -142,7 +143,7 @@ function checkMcp(raw) {
   const names = Array.isArray(raw.servers) ? raw.servers : [];
   if (!names.length) return [row('mcp', name, 'not-configured', 'No servers configured for agent tiles')];
   const shown = names.slice(0, 4).join(', ') + (names.length > 4 ? ` +${names.length - 4}` : '');
-  return [row('mcp', name, 'healthy', `${plural(names.length, 'server', 'servers')} configured (not connected to): ${shown}`)];
+  return [row('mcp', name, 'available', `${plural(names.length, 'server', 'servers')} configured (not connected to): ${shown}`)];
 }
 
 const kb = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
