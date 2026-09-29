@@ -67,3 +67,14 @@ test('verifying is not open; failed checks go back once, then wait in review', (
   assert.equal(b.verifyFailed(t, 'checks failed again'), 'review');
   assert.equal(t.status, 'review');
 });
+
+test('unreportedChange: changes since the task started are handed back, none is a failure', () => {
+  const before = { head: 'a1', status: '' };
+  assert.equal(b.unreportedChange(before, { head: 'a1', status: '' }).changed, false);
+  assert.equal(b.unreportedChange(null, { head: 'a1', status: ' M x.js\n' }).changed, false);
+  const dirty = b.unreportedChange(before, { head: 'a1', status: ' M x.js\n?? y.js\n', stat: '1 file changed, 2 insertions(+)' });
+  assert.equal(dirty.changed, true);
+  assert.equal(dirty.note, "The worker made changes but didn't report; Operant found: 1 file changed, 2 insertions(+)");
+  assert.match(b.unreportedChange(before, { head: 'a1', status: '?? y.js\n', stat: '' }).note, /1 file with uncommitted changes/);
+  assert.equal(b.unreportedChange(before, { head: 'b2', status: '' }).changed, true);
+});

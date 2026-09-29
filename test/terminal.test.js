@@ -151,3 +151,20 @@ test('the agent control takes an explicit effort and always makes a board task f
   assert.match(fn, /source: 'terminal'/);
   assert.match(fn, /requestTask/);
 });
+
+test('follow-up: a live worker gets it as a queued message, a closed one gets a new task on the same tier with the handoff', () => {
+  const entry = { title: 'Fix login', prompt: 'fix the login bug', agent: 'claude', model: 'claude-haiku-4-5', effort: 'low', tier: 'small', idx: 0 };
+  const live = T.followUpPlan({ entry, note: 'done, one file', live: true, ask: 'also add a test', nextIdx: 1 });
+  assert.equal(live.kind, 'message'); assert.ok(!live.text.includes('\n')); assert.match(live.text, /also add a test/);
+  const gone = T.followUpPlan({ entry, note: 'done, one file', live: false, ask: 'also add a test', nextIdx: 1 });
+  assert.equal(gone.kind, 'task'); assert.equal(gone.idx, 1);
+  assert.equal(gone.task.tier, 'small'); assert.equal(gone.task.model, 'claude-haiku-4-5');
+  assert.match(gone.task.prompt, /You were asked: fix the login bug/); assert.match(gone.task.prompt, /Your last note: done, one file/); assert.match(gone.task.prompt, /New ask: also add a test/);
+});
+
+test('segment prices add up; one unpriced segment makes the total unknown', () => {
+  assert.equal(T.sumSegmentUsd([{ usd: 0.5 }, { usd: 0.25 }]), 0.75);
+  assert.equal(T.sumSegmentUsd([{ usd: 0.5 }, { usd: 0 }]), 0.5);
+  assert.equal(T.sumSegmentUsd([{ usd: 0.5 }, { usd: null }]), null);
+  assert.equal(T.sumSegmentUsd([{ usd: 0.5 }, null]), null);
+});

@@ -73,6 +73,17 @@ function failureNote(task, why) {
   return `Attempt ${attempts(task)} on the ${task.tier || 'previous'} tier did not work: ${clean(why)}\nThe repo may hold its partial changes: check them, do not repeat the same approach.`;
 }
 
-const api = { STATUSES, isOpen, handback, approve, reject, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
+// A worker went idle without reporting: did it change its folder? before/after: { head, status, stat } from git:snapshot.
+// -> { changed, note } ; note is the handback text when changed. Nothing to compare (no snapshot) counts as unchanged.
+function unreportedChange(before, after) {
+  if (!before || !after) return { changed: false, note: '' };
+  const changed = before.head !== after.head || (before.status || '') !== (after.status || '');
+  if (!changed) return { changed: false, note: '' };
+  const files = (after.status || '').split('\n').filter(Boolean).length;
+  const found = after.stat || (files ? `${files} file${files === 1 ? '' : 's'} with uncommitted changes` : 'new commits');
+  return { changed: true, note: `The worker made changes but didn't report; Operant found: ${found}` };
+}
+
+const api = { unreportedChange, STATUSES, isOpen, handback, approve, reject, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
 })();

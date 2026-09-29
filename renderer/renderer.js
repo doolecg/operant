@@ -1151,8 +1151,9 @@
       setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
       allowedTiers: allowedTierNames,
       freeWorkers: () => Math.max(0, (cfg.team?.maxWorkers || 4) - [...wins.values()].filter(x => x.alive && x.tier).length),
-      usageOf: t => { const tok = wins.get(t.owner)?.tok; return { tokens: addTok(t.tokens, tok), free: tok ? !!tok.free : !!t.free, model: t.model || null, escalated: (t.escalations || 0) > 0 }; },
-      message: async (tid, text) => cfg.messaging ? runControl('msg', { id: tid, text }, w) : runControl('send', { id: tid, text, enter: true }, null),
+      usageOf: t => { const tok = wins.get(t.owner)?.tok; return { tokens: addTok(t.tokens, tok), free: tok ? !!tok.free : !!t.free, model: t.model || null, escalated: (t.escalations || 0) > 0, segments: [...(t.segments || []), ...(tok ? [{ model: t.model || null, tokens: addTok(null, tok) }] : [])] }; },
+      message: (tid, text) => runControl('followup', { id: tid, text }, null),
+      queuedFor: tid => Messaging.pending(msgState, tid),
       notifyAway: async (title, body) => { if (!(await operant.windowFocused().catch(() => false))) notify(w, title, body, null, true); },
       refinerLabel: () => { const m = [cfg.terminal?.refiner, cfg.terminal?.refinerModel].filter(x => typeof x === 'string' && x && x !== 'off').join(' '); return m ? `Cleaning your prompt with ${m}…` : 'Cleaning your prompt…'; },
     });
@@ -1234,6 +1235,7 @@
     });
     w.tier = tier; setTierDot(w);
     t.owner = w.id; t.agent = conf.agent; t.model = conf.model;
+    t.baseline = await operant.git('snapshot', { dir: t.cwd || w.cwd }).catch(() => null);
     tagUsage(w, tier, t.id);
     boardChanged();
     return w;
@@ -1268,6 +1270,7 @@
     t.escalations = (t.escalations || 0) + 1;
     recordOutcome(t, 'escalated', old);
     t.tokens = addTok(t.tokens, old?.tok);
+    if (old?.tok) t.segments = [...(t.segments || []), { model: t.model || null, tokens: addTok(null, old.tok) }];
     Board.moveUp(t, next);
     if (old?.alive) closeWin(old);
     boardChanged();
@@ -1312,6 +1315,7 @@
     if (w?.alive && w.ptyId) { sendLine(w, `${lead}. Redo the task now, without polling the board, then ${reportLine(t.id)}`); return; }
     t.failure = Board.failureNote(t, t.note);
     t.tokens = addTok(t.tokens, w?.tok);
+    if (w?.tok) t.segments = [...(t.segments || []), { model: t.model || null, tokens: addTok(null, w.tok) }];
     t.attempts = Board.attempts(t) + 1; t.retried = false; t.owner = null;
     try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
   }
@@ -1567,7 +1571,7 @@
   const msgState = Messaging.newState();
   const flatLine = s => s.replace(/\s*\n\s*/g, ' ');
   async function deliver(w) {
-    if (!cfg.messaging || !w.alive || !w.ptyId || w.delivering || !Messaging.pending(msgState, w.id)) return false;
+    if (!w.alive || !w.ptyId || w.delivering || !Messaging.pending(msgState, w.id)) return false;
     const oc = String(w.sessionId || '').startsWith('oc:');
     if (!oc && !isClaudeTile(w)) return false;
     if (oc ? w.ocBusy : isWorking(w)) return false;
@@ -1774,6 +1778,14 @@
   // Keep the relative times fresh while the panel is open, without a full re-render loop elsewhere.
   setInterval(() => { if (openPanel() === 'notifications') renderNotifications(); }, 30000);
 
+  // A worker idle past its nudge with the task still open: changes in its folder go to verification and review as done; none means failed.
+  async function idleUnreported(t, w) {
+    let found = { changed: false };
+    try { found = Board.unreportedChange(t.baseline, await operant.git('snapshot', { dir: t.cwd || w.cwd, base: t.baseline?.head })); } catch {}
+    if (!Board.isOpen(t)) return;
+    if (found.changed) await runControl('task', { sub: 'done', id: t.id, status: 'done', note: found.note }, null).catch(() => taskFailed(t, 'worker went idle without reporting a result'));
+    else taskFailed(t, 'worker went idle without reporting a result');
+  }
   setInterval(() => {
     const now = Date.now();
     for (const w of wins.values()) {
@@ -1786,7 +1798,7 @@
       if (worked >= 2500) { w.unchecked = true; gitChanged(); }
       const open = worked >= 2500 && w.tier && w.ptyId ? openTaskOf(w) : null;
       if (open && !w.nudged) { w.nudged = true; sendLine(w, `Report back now: run operant task done ${open.id} --note '<the result>'`); }
-      else if (open) taskFailed(open, 'worker went idle without reporting a result');
+      else if (open) idleUnreported(open, w);
       if (worked >= 2500 && cfg.notifyWhenIdleSeconds > 0) {
         const what = w.title !== w.agentName ? w.title : shortPath(w.cwd || '').split(/[\\/]/).filter(Boolean).pop();
         notify(w, `${w.agentName} is waiting${what ? ': ' + clip(what, 50) : ''}`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`);
@@ -4720,10 +4732,10 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'hook': {
         if (!self) throw new Error('unknown tile');
         if (args.event === 'subagent-start') return cfg.briefAgents ? {} : { off: true };
-        if (args.event === 'post-tool-use') return cfg.messaging && Messaging.pending(msgState, self.id) ? { context: Messaging.frameAll(Messaging.take(msgState, self.id)) } : {};
+        if (args.event === 'post-tool-use') return Messaging.pending(msgState, self.id) ? { context: Messaging.frameAll(Messaging.take(msgState, self.id)) } : {};
         if (args.event !== 'stop') return {};
         // Waiting messages keep the turn going, even when a Stop hook already did: the queue drains.
-        if (cfg.messaging && Messaging.pending(msgState, self.id)) return { block: Messaging.frameAll(Messaging.take(msgState, self.id)) };
+        if (Messaging.pending(msgState, self.id)) return { block: Messaging.frameAll(Messaging.take(msgState, self.id)) };
         const open = self.tier ? openTaskOf(self) : null;
         if (args.active || !open || self.nudged) return {};
         self.nudged = true;
@@ -4749,6 +4761,14 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!cfg.messaging) throw new Error(MESSAGING_OFF);
         const w = messageTarget(args.id);
         const r = Messaging.enqueue(msgState, { from: self.id, to: w.id, text: args.text, fromAgent: self.agentName, fromRole: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell' });
+        if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${Messaging.REASONS[r.reason]}`);
+        const delivered = await deliver(w);
+        return { to: w.id, delivered, queued: Messaging.pending(msgState, w.id) };
+      }
+      // The user's own follow-up from the Operant Terminal: always queued, whatever the agent-messaging setting says.
+      case 'followup': {
+        const w = messageTarget(args.id);
+        const r = Messaging.enqueue(msgState, { from: 'user', to: w.id, text: args.text, fromAgent: 'user', fromRole: 'user' });
         if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${Messaging.REASONS[r.reason]}`);
         const delivered = await deliver(w);
         return { to: w.id, delivered, queued: Messaging.pending(msgState, w.id) };

@@ -1186,6 +1186,14 @@ ipcMain.handle('git:diffstat', async (_e, dir) => {
   const r = await run('git', ['-C', dir, 'diff', 'HEAD', '--stat']);
   return r.code === 0 ? (r.stdout.trim().split('\n').pop() || '').trim() : '';
 });
+// A folder's git state for "did the worker change anything": HEAD, the porcelain status, and the diffstat since `base` (default HEAD).
+ipcMain.handle('git:snapshot', async (_e, { dir, base } = {}) => {
+  const head = await run('git', ['-C', dir, 'rev-parse', 'HEAD']);
+  if (head.code !== 0) return null;
+  const st = await run('git', ['-C', dir, 'status', '--porcelain', '-uall']);
+  const ds = await run('git', ['-C', dir, 'diff', base || 'HEAD', '--stat']);
+  return { head: head.stdout.trim(), status: st.stdout, stat: ds.code === 0 ? (ds.stdout.trim().split('\n').pop() || '').trim() : '' };
+});
 // One file's changes against HEAD (staged and not), as a unified diff. An untracked file is all added lines.
 ipcMain.handle('git:diff', async (_e, { root, file, code }) => {
   if (code === '??') {
@@ -1640,7 +1648,8 @@ async function refinerInputs(cwd) {
     const head = lines.find(l => l.startsWith('## ')) || '';
     const h = head.slice(3).replace(/^No commits yet on /, '');
     const log = await git(cwd, ['log', '-5', '--format=%s']);
-    gitState = { branch: h.startsWith('HEAD (no branch)') ? 'detached' : h.split('...')[0].split(' ')[0], files: lines.filter(l => !l.startsWith('## ')).map(l => l.slice(3).replace(/^.* -> /, '')), commits: log.ok ? log.out.split(/\r?\n/).filter(Boolean) : [] };
+    const ls = await git(cwd, ['ls-files']);
+    gitState = { tracked: ls.ok ? ls.out.split(/\r?\n/).filter(Boolean) : [], branch: h.startsWith('HEAD (no branch)') ? 'detached' : h.split('...')[0].split(' ')[0], files: lines.filter(l => !l.startsWith('## ')).map(l => l.slice(3).replace(/^.* -> /, '')), commits: log.ok ? log.out.split(/\r?\n/).filter(Boolean) : [] };
   }
   const commands = {};
   try {

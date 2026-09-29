@@ -310,3 +310,22 @@ test('checkPicks raises a high-risk task off the cheapest tier', () => {
   assert.equal(out.tasks[0].tier, 'small');
   assert.match(out.tasks[0].pickReason, /high-risk/);
 });
+
+test('brief: capped, compact file list that skips lockfiles, build output and binaries', () => {
+  const tracked = ['package-lock.json', 'node_modules/x/i.js', 'dist/a.js', 'logo.png', 'src/b.js', 'src/a.js', 'README.md', 'sub' + String.fromCharCode(92) + 'c.js',
+    ...Array.from({ length: 200 }, (_, i) => `z/f${String(i).padStart(3, '0')}.js`)];
+  const b = R.buildBrief({ cwd: '/p', gitState: { branch: 'x', files: [], tracked } });
+  assert.match(b.text, /Project files/); assert.match(b.text, /\.\/ README\.md/); assert.match(b.text, /src\/ a\.js b\.js/); assert.match(b.text, /sub\/ c\.js/);
+  assert.doesNotMatch(b.text, /package-lock|node_modules|dist|logo\.png/);
+  assert.match(b.text, /f000\.js/); assert.match(b.text, /and \d+ more files/);
+  const shown = b.text.match(/\.js|\.md/g).length;
+  assert.ok(shown <= 155);
+  assert.equal(b.tokens, Math.ceil(b.text.length / 4));
+  const r = R.buildBrief({ cwd: '/p', gitState: { branch: 'x', files: [], tracked: ['sk-abcdefghijklmnopqrstuvwxyz123456.js'] } });
+  assert.doesNotMatch(r.text, /sk-abcdef/);
+});
+
+test('refiner prompt: ask only when it changes what gets built', () => {
+  const p = R.refinerPrompt({ prompt: 'x', brief: { text: 'b' }, options: R.buildOptions({ tiers: TIERS, maxTier: 'medium' }) });
+  assert.match(p, /only when the ambiguity changes what gets built/); assert.match(p, /sensible defaults/);
+});

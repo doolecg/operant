@@ -111,6 +111,14 @@ const OperantTerminal = (() => {
     return [`Follow-up on your task "${clip(title, 80)}".`, `You were asked: ${clip(asked, 400) || 'unknown'}`,
       `Your last note: ${clip(note, 400) || 'none'}`, `New ask: ${String(ask || '').trim()}`].join('\n');
   }
+  // Follow-up route: a live worker gets it through the message queue; otherwise a new task on the same tier with the handoff.
+  function followUpPlan({ entry, note, live, ask, nextIdx }) {
+    const text = handoffText({ title: entry.title, asked: entry.prompt, note, ask });
+    if (live) return { kind: 'message', text: flatText(text) };
+    return { kind: 'task', idx: nextIdx, task: { title: `Follow-up: ${clip(entry.title, 50)}`, prompt: text, agent: entry.agent, model: entry.model, effort: entry.effort, tier: entry.tier, why: `Follow-up on #${entry.idx + 1}, same tier` } };
+  }
+  // Total price of per-model segments: each priced result is { usd } or null; one unknown makes the whole unknown.
+  const sumSegmentUsd = results => results.every(r => r && typeof r.usd === 'number') ? results.reduce((n, r) => n + r.usd, 0) : null;
   const flatText = t => String(t).replace(/\s*\n\s*/g, ' ');
   // Open = a live worker is on it; anything else gets a new task.
   const LIVE = ['todo', 'doing', 'verifying'];
@@ -151,8 +159,9 @@ const OperantTerminal = (() => {
   // ---- the tile
 
   // host: { operant, tierDot(tier), tasks(), control(cmd, args), autoSend(), setAutoSend(on), focusTile(id), toast(html),
-  //   tileAlive(id), allowedTiers() (names up to the top tier), freeWorkers(), usageOf(task) -> { tokens, free, model, escalated },
-  //   message(tileId, text) (operant msg when messaging is on, else typed into the tile), notifyAway(title, body) }
+  //   tileAlive(id), allowedTiers() (names up to the top tier), freeWorkers(), usageOf(task) -> { tokens, free, model, escalated, segments: [{ model, tokens }] },
+  //   message(tileId, text) (the user's follow-up: queued and delivered between tool calls or when the tile is idle -> { delivered, queued }),
+  //   queuedFor(tileId) (follow-ups still waiting), notifyAway(title, body) }
   function mount(w, host) {
     const { el, cwd: project } = w, op = host.operant;
     const $ = s => el.querySelector(s);
@@ -216,12 +225,14 @@ const OperantTerminal = (() => {
       if (e.final) return;
       const v = view(c), u = v.u;
       if (u && v.total && !u.free) {
-        if (u.escalated || !u.model) c.usd = null; // earlier attempts ran on other models: no honest single price
+        const segs = (u.segments || []).filter(x => x && x.tokens && (x.tokens.input || x.tokens.output || x.tokens.cacheWrite || x.tokens.cacheRead));
+        if (!segs.length || segs.some(x => !x.model)) c.usd = null; // no model recorded for some tokens: no honest price
         else {
-          const key = u.model + ':' + JSON.stringify(u.tokens);
+          const key = JSON.stringify(segs);
           if (c.costKey !== key) {
             c.costKey = key;
-            Promise.resolve(op.priceTokens?.(u.model, u.tokens)).then(r => { if (c.costKey !== key) return; c.usd = r && typeof r.usd === 'number' ? r.usd : null; c.html = null; paint(); }).catch(() => { c.usd = null; });
+            Promise.all(segs.map(x => Promise.resolve(op.priceTokens?.(x.model, x.tokens)).catch(() => null)))
+              .then(rs => { if (c.costKey !== key) return; c.usd = sumSegmentUsd(rs); c.html = null; paint(); }).catch(() => { c.usd = null; });
           }
         }
       }
@@ -383,16 +394,24 @@ const OperantTerminal = (() => {
     // ---- follow-ups (item 78): a short structured handoff, never the history
     async function followUp(c, text) {
       const e = c.entry, t = taskOf(e), tile = tileOf(c), v = view(c);
-      if (isLive(t?.status, tile != null)) {
+      const next = Math.max(...cardsOf(e.requestId).map(x => x.entry.idx)) + 1;
+      const plan = followUpPlan({ entry: e, note: t?.note || v.note, live: isLive(t?.status, tile != null), ask: text, nextIdx: next });
+      if (plan.kind === 'message') {
+        const info = txt => line(save({ role: 'operant', kind: 'info', requestId: e.requestId, text: txt }));
         try {
-          const r = await host.message(tile, flatText(handoffText({ title: e.title, asked: e.prompt || t.text, note: t.note, ask: text })));
-          line(save({ role: 'operant', kind: 'info', requestId: e.requestId, text: `Sent to the worker on #${e.idx + 1}${r?.delivered === false ? '; it gets it at its next turn' : ''}.` }));
-        } catch (err) { line(save({ role: 'operant', kind: 'info', requestId: e.requestId, text: `Could not reach the worker on #${e.idx + 1}: ${String(err.message || err)}` })); }
+          const r = await host.message(tile, plan.text);
+          if (r?.delivered) { info(`Follow-up delivered to #${e.idx + 1}.`); return; }
+          info(`Follow-up queued for #${e.idx + 1}.`);
+          const timer = setInterval(() => {
+            if (!el.isConnected || !host.tileAlive(tile)) { clearInterval(timer); return; }
+            if (host.queuedFor?.(tile) > 0) return;
+            clearInterval(timer);
+            info(`Follow-up delivered to #${e.idx + 1}.`);
+          }, 1000);
+        } catch (err) { info(`Could not reach the worker on #${e.idx + 1}: ${String(err.message || err)}`); }
         return;
       }
-      const next = Math.max(...cardsOf(e.requestId).map(x => x.entry.idx)) + 1;
-      await launch(e.requestId, [{ title: `Follow-up: ${clip(e.title, 50)}`, prompt: handoffText({ title: e.title, asked: e.prompt, note: v.note, ask: text }),
-        agent: e.agent, model: e.model, effort: e.effort, tier: e.tier, why: `Follow-up on #${e.idx + 1}, same tier` }], next);
+      await launch(e.requestId, [plan.task], plan.idx);
     }
 
     // ---- review (item 75)
@@ -538,7 +557,7 @@ const OperantTerminal = (() => {
     return { refresh: refreshCards, focus: () => box.focus({ preventScroll: true }), drawAuto };
   }
 
-  const api = { mount, assertTierAllowed, dispatchArgs, planDispatch, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
+  const api = { mount, assertTierAllowed, dispatchArgs, planDispatch, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
   return api;
 })();
 
