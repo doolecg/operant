@@ -253,7 +253,7 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
 Branch `dev-2.1.0`. Same rules as 2.0: one item per commit, tests with each, Sonnet builds from a spec, a live
 check in an isolated profile before release.
 
-- [ ] **67. Atomic state writes:** config.json, the board, outcomes, usage tags and memory stats are written to a
+- [x] **67. Atomic state writes:** config.json, the board, outcomes, usage tags and memory stats are written to a
       temp file and renamed, so a crash or power cut mid-write never leaves a half file; a file that doesn't parse
       is kept as `.broken` (as config already is) and the last good backup is offered.
 - [ ] **68. Operant's own backups:** a snapshot of Operant's state (config, personal memory, board, usage tags,

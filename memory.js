@@ -9,6 +9,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const { writeFileAtomic } = require('./atomic-write');
 
 const TYPES = ['user', 'feedback', 'project', 'reference'];
 const CONFIDENCE = ['verified', 'observed', 'inferred', 'stale'];
@@ -107,7 +108,7 @@ function readFact(dir, file) {
 // Rewrites one fact's frontmatter with a patch (counters, confidence), keeping its body and any keys we don't know.
 function patchFact(f, patch) {
   const meta = { ...f.meta, ...patch };
-  try { fs.writeFileSync(f.path, toFrontmatter(meta) + '\n' + f.body + '\n'); } catch { /* best effort */ }
+  try { writeFileAtomic(f.path, toFrontmatter(meta) + '\n' + f.body + '\n'); } catch { /* best effort */ }
 }
 
 // Usage telemetry (recalls, uses, rejects, lastUsed) lives in userData memory-stats.json, keyed by the
@@ -127,7 +128,7 @@ function updateStats(userDataDir, edits) { // edits: [[fact, patch]]
     const k = statsKey(f.path);
     all[k] = { recalls: f.recalls, uses: f.uses, rejects: f.rejects, lastUsed: f.lastUsed, ...all[k], ...patch };
   }
-  try { fs.mkdirSync(userDataDir, { recursive: true }); fs.writeFileSync(path.join(userDataDir, 'memory-stats.json'), JSON.stringify(all)); } catch { /* best effort */ }
+  try { writeFileAtomic(path.join(userDataDir, 'memory-stats.json'), JSON.stringify(all)); } catch { /* best effort */ }
 }
 
 // Every fact file in a memory dir (not its MEMORY.md index). With userDataDir, usage stats are overlaid
@@ -151,7 +152,7 @@ function indexLine(f) {
 function rebuildIndex(dir) {
   const facts = listFacts(dir).sort((a, b) => a.name.localeCompare(b.name));
   const body = facts.map(indexLine).join('\n');
-  try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'MEMORY.md'), body + (body ? '\n' : '')); } catch (e) { /* best effort */ }
+  try { writeFileAtomic(path.join(dir, 'MEMORY.md'), body + (body ? '\n' : '')); } catch (e) { /* best effort */ }
   return facts;
 }
 
@@ -248,7 +249,7 @@ function remember({ cwd, userDataDir, text, type = 'project', global = false, ab
     confidence: conf, created: (existing && existing.created) || now, updated: now,
     supersedes: supId || (existing ? existing.supersedes : ''),
   };
-  fs.writeFileSync(path.join(dir, file), toFrontmatter(meta) + '\n' + fact + '\n');
+  writeFileAtomic(path.join(dir, file), toFrontmatter(meta) + '\n' + fact + '\n');
   // An older fact's frontmatter counters move to the sidecar, since remember no longer writes them.
   if (existing && (existing.recalls || existing.uses || existing.rejects || existing.lastUsed)) updateStats(userDataDir, [[existing, {}]]);
   rebuildIndex(dir);

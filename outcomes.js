@@ -1,6 +1,7 @@
 // Task outcomes (item 57): one JSON line per finished or escalated board task, kept for 90 days, as data
 // for routing from outcomes (item 59) and benchmarks.
 const fs = require('fs');
+const { writeFileAtomic } = require('./atomic-write');
 
 function appendOutcome(file, entry) {
   fs.appendFileSync(file, JSON.stringify(entry) + '\n');
@@ -26,7 +27,7 @@ function readOutcomes(file, { sinceMs } = {}) {
 function trimOutcomes(file, keepMs, now = Date.now()) {
   const all = parse(file);
   const kept = all.filter(e => e.t > now - keepMs);
-  if (kept.length !== all.length) fs.writeFileSync(file, kept.map(e => JSON.stringify(e) + '\n').join(''));
+  if (kept.length !== all.length) writeFileAtomic(file, kept.map(e => JSON.stringify(e) + '\n').join(''));
   return all.length - kept.length;
 }
 

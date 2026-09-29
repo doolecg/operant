@@ -15,6 +15,7 @@ const hub = require('./hub');
 const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
+const { writeFileAtomic } = require('./atomic-write');
 const { createStuckTracker } = require('./stuck');
 const outcomes = require('./outcomes');
 const { priceOf } = require('./pricing');
@@ -120,7 +121,7 @@ function hookSettingsFile({ reroute, worker, messaging }) {
     const content = JSON.stringify(settings);
     let existing = null;
     try { existing = fs.readFileSync(file, 'utf8'); } catch {}
-    if (existing !== content) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content); }
+    if (existing !== content) { writeFileAtomic(file, content); }
     return file;
   } catch (e) { console.error('hook settings write failed', e.message); return null; }
 }
@@ -331,8 +332,7 @@ if (!config.hardwareAcceleration) app.disableHardwareAcceleration();
 
 function saveUser() {
   try {
-    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(user, null, 2));
+    writeFileAtomic(CONFIG_PATH, JSON.stringify(user, null, 2));
   } catch (e) { console.error('config save failed', e); }
 }
 
@@ -1439,7 +1439,7 @@ ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile }) => {
   const id = sessionId || (ptyId && opencode.rootSession(ptyId));
   if (!id) return { ok: false };
   loadUsageTags()[id] = { tier: tier || null, taskId: taskId ?? null, tile: tile ?? null, at: Date.now() };
-  try { fs.writeFileSync(USAGE_TAGS_PATH, JSON.stringify(usageTags)); } catch {}
+  try { writeFileAtomic(USAGE_TAGS_PATH, JSON.stringify(usageTags)); } catch {}
   return { ok: true };
 });
 // Item 57: one line per finished or escalated board task, kept 90 days.
@@ -1845,7 +1845,7 @@ function writeSession() {
   clearTimeout(sessionT); sessionT = null;
   // Nothing saved yet this run: keep what's on disk for the next start.
   if (snapshots.size) session.windows = [...snapshots.values()];
-  try { fs.writeFileSync(SESSION_PATH, JSON.stringify(session)); } catch (e) { console.error('session save failed', e); }
+  try { writeFileAtomic(SESSION_PATH, JSON.stringify(session)); } catch (e) { console.error('session save failed', e); }
 }
 ipcMain.on('session:save', (e, snap) => {
   snapshots.set(e.sender.id, snap);
