@@ -63,7 +63,7 @@ function workerBlock(d) {
   const k = d.task;
   if (!k) return 'You were started as a worker: do your task yourself (workers can\'t start workers; your own subagents are fine).';
   return [`Your task (board task ${k.id}): ${clean(clip(k.text, 400))}`,
-    `Do it yourself (workers can't start workers; your own subagents are fine). When it's done: \`operant task done ${k.id} --note "<what changed, files>"\`. If you're blocked: \`operant task note ${k.id} "<why>"\`, then stop.`].join('\n');
+    `Do it yourself (workers can't start workers; your own subagents are fine): targeted edits, narrow reads, at most one retry of a failing step. Then report in at most 100 words, and stop: \`operant task done ${k.id} --status done|blocked|failed --note "<files changed, one line each; open issues>"\`.`].join('\n');
 }
 
 function teamBlock(d) {

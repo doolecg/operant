@@ -184,7 +184,7 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
       (OpenCode); nothing written to the user's home, old copies removed.
 - [x] **49. Live context:** `operant prime` injected at session start and after every compact (SessionStart hook,
       OpenCode plugin), a short brief for subagents, a ~600-byte launch brief.
-- [ ] **50. Skill body and worker discipline:** a lean skill; workers hand back `task done --status
+- [x] **50. Skill body and worker discipline:** a lean skill; workers hand back `task done --status
       done|blocked|failed --note` (files, one line each; open issues; ≤100 words).
 - [ ] **51. Tiers across Claude and OpenCode by availability:** Haiku/Sonnet/Opus plus OpenCode's free and paid
       tiers, fallback when a CLI or model is missing, OpenCode tier subagents, a tier suggested when none is given.

@@ -57,7 +57,7 @@ test('a worker gets its task and how to report, not the team or the progress not
   { progress: 'lead notes', codegraph: true });
   assert.match(text, /a worker in tile 8 \(xsmall tier\)/);
   assert.match(text, /Your task \(board task 12\): Rename foo to bar in src\//);
-  assert.match(text, /operant task done 12 --note/);
+  assert.match(text, /operant task done 12 --status done|blocked|failed --note/);
   assert.doesNotMatch(text, /Team mode|Progress note|Project memory/);
   assert.match(text, /CodeGraph index found/);
 });

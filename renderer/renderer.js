@@ -4316,7 +4316,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           boardChanged();
           // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
           // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
-          prompt = `${args.prompt} — when done, run: operant task done ${taskId} --note '<what changed, files>'`;
+          prompt = `${args.prompt} — when done, report in at most 100 words: operant task done ${taskId} --status done|blocked|failed --note '<files changed, one line each; open issues>'`;
         }
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
@@ -4357,7 +4357,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const open = self.tier ? board.tasks.find(t => t.owner === self.id && t.status !== 'done') : null;
         if (!open || self.nudged) return {};
         self.nudged = true;
-        return { block: `Before you stop, report your result: \`operant task done ${open.id} --note "<what changed, files>"\`, or \`operant task note ${open.id} "<why>"\` if you couldn't finish.` };
+        return { block: `Before you stop, report in at most 100 words: \`operant task done ${open.id} --status done|blocked|failed --note "<files changed, one line each; open issues>"\`.` };
       }
       case 'read': {
         const w = needTile(args.id);
@@ -4466,10 +4466,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!t) throw new Error(`no task ${id}`);
         if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
         else if (args.sub === 'done') {
-          t.status = 'done'; if (args.note != null) t.note = String(args.note);
+          // A worker's handback: done, or blocked/failed with why in the note.
+          const status = args.status == null ? 'done' : String(args.status);
+          if (!['done', 'blocked', 'failed'].includes(status)) throw new Error(`--status must be done, blocked or failed, not "${status}"`);
+          t.status = status; if (args.note != null) t.note = String(args.note);
           const n = wins.get(t.owner);
           const from = n?.alive ? n : self;
-          if (from) notify(from, `Task ${t.id} done: ${taskTldr(t)}`, t.note || '', null, true);
+          if (from) notify(from, `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else throw new Error(`unknown task command "${args.sub}"`);
