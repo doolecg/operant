@@ -12,6 +12,8 @@ const MIGRATIONS = [
     if (user.defaultAgent === 'operant') delete user.defaultAgent;
     for (const d of Object.values(user.projectDefaults || {})) if (d && d.agent === 'operant') delete d.agent;
   } },
+  // Gemma 3 can't call tools in Ollama, so it can't run a tier: a saved gemma3 local model goes back to the default.
+  { to: 3, run(user) { if (/^gemma3(:|$)/.test(user.localModel?.model || '')) delete user.localModel.model; } },
 ];
 const CURRENT = MIGRATIONS[MIGRATIONS.length - 1].to;
 
@@ -133,7 +135,7 @@ function validatePatch(patch, defaults, opts = {}) {
       if (v.some(a => !isPlain(a) || typeof a.id !== 'string' || !a.id || typeof a.name !== 'string' || typeof a.command !== 'string' || (a.args !== undefined && !Array.isArray(a.args)))) { bad(key, 'agents with an id, name, command and argument list'); continue; }
       if (new Set(v.map(a => a.id)).size !== v.length) { bad(key, 'agents with different ids'); continue; }
     }
-    if (key === 'localModel' && !(isPlain(v) && (v.model === undefined || (typeof v.model === 'string' && /^[A-Za-z0-9._\/-]+(:[A-Za-z0-9._-]+)?$/.test(v.model))))) { bad(key, 'an Ollama model name like gemma3:4b'); continue; }
+    if (key === 'localModel' && !(isPlain(v) && (v.model === undefined || (typeof v.model === 'string' && /^[A-Za-z0-9._\/-]+(:[A-Za-z0-9._-]+)?$/.test(v.model))))) { bad(key, 'an Ollama model name like gemma4:e4b'); continue; }
     if (key === 'team') teamErrors(v, current.team || {}, agentIds, (expected, sub) => bad('team', expected, sub));
     if (key === 'projectDefaults') {
       for (const [p, d] of Object.entries(v)) {

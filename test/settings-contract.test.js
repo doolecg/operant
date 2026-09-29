@@ -92,7 +92,7 @@ test('allowlisted keys still exist and each has a reason', () => {
 });
 
 test('every setting saves and loads back', () => {
-  const defaults = { ...Object.fromEntries(defKeys.map(k => [k, 'default'])), team: { tiers: { a: 1 }, budgets: { a: 1 }, enabled: false, maxWorkers: 4 }, backups: { enabled: true, keepLast: 10, location: '' }, localModel: { model: 'gemma3:4b' }, keybinds: {} };
+  const defaults = { ...Object.fromEntries(defKeys.map(k => [k, 'default'])), team: { tiers: { a: 1 }, budgets: { a: 1 }, enabled: false, maxWorkers: 4 }, backups: { enabled: true, keepLast: 10, location: '' }, localModel: { model: 'gemma4:e4b' }, keybinds: {} };
   for (const k of defKeys.filter(k => k !== 'team' && k !== 'keybinds' && k !== 'backups' && k !== 'localModel')) {
     const user = applyPatch({}, { [k]: 'changed' }, defaults);
     const reloaded = mergeUser(defaults, JSON.parse(JSON.stringify(user)), {});
@@ -103,9 +103,9 @@ test('every setting saves and loads back', () => {
   assert.ok(!('notAKey' in user));
   const t = mergeUser(defaults, JSON.parse(JSON.stringify(user)), {}).team;
   assert.strictEqual(t.enabled, true); assert.strictEqual(t.maxWorkers, 4); assert.strictEqual(t.tiers.a, 2);
-  const lm = mergeUser(defaults, JSON.parse(JSON.stringify(applyPatch({}, { localModel: { model: 'gemma3:1b' } }, defaults))), {}).localModel;
-  assert.strictEqual(lm.model, 'gemma3:1b');
-  assert.strictEqual(mergeUser(defaults, applyPatch({ localModel: { model: 'x' } }, { localModel: null }, defaults), {}).localModel.model, 'gemma3:4b');
+  const lm = mergeUser(defaults, JSON.parse(JSON.stringify(applyPatch({}, { localModel: { model: 'gemma4:e2b' } }, defaults))), {}).localModel;
+  assert.strictEqual(lm.model, 'gemma4:e2b');
+  assert.strictEqual(mergeUser(defaults, applyPatch({ localModel: { model: 'x' } }, { localModel: null }, defaults), {}).localModel.model, 'gemma4:e4b');
   const b = mergeUser(defaults, JSON.parse(JSON.stringify(applyPatch({}, { backups: { keepLast: 3 } }, defaults))), {}).backups;
   assert.strictEqual(b.keepLast, 3); assert.strictEqual(b.enabled, true); assert.strictEqual(b.location, '');
 });

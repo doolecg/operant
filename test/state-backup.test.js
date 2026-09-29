@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const sb = require('../state-backup');
+const { CURRENT } = require('../config-migrate');
 
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-sb-'));
@@ -53,7 +54,7 @@ test('restore takes a safety backup, restores content and keeps newer memory fil
     fs.writeFileSync(path.join(dir, 'memory', 'one.md'), 'changed');
     fs.writeFileSync(path.join(dir, 'memory', 'newer.md'), 'newer fact');
     const r = sb.restoreBackup({ userDataDir: dir, id: b.id });
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')), { a: 1, configVersion: 2 });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')), { a: 1, configVersion: CURRENT });
     assert.strictEqual(fs.readFileSync(path.join(dir, 'memory', 'one.md'), 'utf8'), 'fact one');
     assert.strictEqual(fs.readFileSync(path.join(dir, 'memory', 'newer.md'), 'utf8'), 'newer fact');
     assert.ok(r.restored.includes('config.json'));
@@ -180,7 +181,7 @@ test('a custom location holds the backups, restores and status; the default fold
     assert.strictEqual(sb.statusSummary(dir, loc).location, path.resolve(loc));
     fs.writeFileSync(path.join(dir, 'config.json'), '{"a":9}');
     sb.restoreBackup({ userDataDir: dir, location: loc, id: b.id });
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')), { a: 1, configVersion: 2 });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')), { a: 1, configVersion: CURRENT });
   } finally { done(dir); done(loc); }
 });
 

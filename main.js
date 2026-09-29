@@ -190,7 +190,7 @@ const DEFAULT_CONFIG = {
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // Claude Code & OpenCode tiles get the `operant` skill per session, from the app's own agent-plugin folder (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
-  localModel: { model: 'gemma3:4b' }, // Settings > Agents > Team > Local model: the Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use
+  localModel: { model: 'gemma4:e4b' }, // Settings > Agents > Team > Local model: the Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use
   backgroundAfterSeconds: 5,       // a rerouted long command (test/build/install) that is still running after this many seconds moves to the Backrooms and the agent waits for its errors · 0 = always at once (Settings > Agents)
   longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)

@@ -157,3 +157,8 @@ test('the Operant Terminal settings are dropped and a default agent of operant i
   assert.deepStrictEqual(r.user, { configVersion: CURRENT, projectDefaults: { '/p': { agents: 'claude' } }, theme: 'dark' });
   assert.deepStrictEqual(migrate({ configVersion: 1, defaultAgent: 'claude' }).user.defaultAgent, 'claude');
 });
+
+test('a saved gemma3 local model goes back to the default, other models are kept', () => {
+  assert.deepStrictEqual(migrate({ configVersion: 2, localModel: { model: 'gemma3:4b' } }).user.localModel, {});
+  assert.deepStrictEqual(migrate({ configVersion: 2, localModel: { model: 'qwen3:4b' } }).user.localModel, { model: 'qwen3:4b' });
+});

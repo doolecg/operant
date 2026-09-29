@@ -370,7 +370,7 @@ const Panels = (() => {
 
   // Settings › Agents › Team (item 33): enable toggle, one row per tier (agent, model, "use for"), max workers.
   // Settings > Agents > Team > Local model: an Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use.
-  const LOCAL_MODELS = ['gemma3:4b', 'gemma3:1b', 'gemma3:12b'];
+  const LOCAL_MODELS = ['gemma4:e4b', 'gemma4:e2b', 'gemma4:12b'];
   function localModelBlock(cfg, ext) {
     const s = ext.localModelState();
     const model = (cfg.localModel && cfg.localModel.model) || LOCAL_MODELS[0];

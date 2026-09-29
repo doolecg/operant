@@ -458,5 +458,5 @@ module.exports = {
   buildOpencodeConfigContent, workerAllowRules, opencodeWorkerPermission, opencodeConfigFiles,
   isOperantSkillFile, removeLegacySkillCopies, pluginDirsEnv, opencodeSkillPaths,
   probeClaudePluginDir, probeOpencodeSkillPaths,
-  desirePathLine, appendDesirePath, hookSettingsContent,
+  desirePathLine, appendDesirePath, hookSettingsContent, readJson,
 };

@@ -4,8 +4,8 @@
 // takes its process spawner, so it is tested without Ollama; main.js owns the one instance and the IPC.
 const { spawn: nodeSpawn } = require('child_process');
 
-const MODELS = ['gemma3:4b', 'gemma3:1b', 'gemma3:12b'];
-const DEFAULT_MODEL = 'gemma3:4b';
+const MODELS = ['gemma4:e4b', 'gemma4:e2b', 'gemma4:12b'];
+const DEFAULT_MODEL = 'gemma4:e4b';
 const BASE_URL = 'http://localhost:11434/v1';
 const FREE_MODEL = 'opencode/big-pickle';
 const FREE_TIER = 'xsmall';
