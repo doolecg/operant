@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('operant', {
+  platform: process.platform,
   config: () => ipcRenderer.invoke('config'),
   setConfig: patch => ipcRenderer.invoke('config:set', patch),
   defaults: () => ipcRenderer.invoke('config:defaults'),
@@ -11,6 +12,7 @@ contextBridge.exposeInMainWorld('operant', {
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
   openConfig: () => ipcRenderer.send('open-config'),
   configPath: () => ipcRenderer.invoke('config:path'),
+  raise: () => ipcRenderer.send('win:raise'),
   minimize: () => ipcRenderer.send('win:minimize'),
   maximize: () => ipcRenderer.send('win:maximize'),
   close: () => ipcRenderer.send('win:close'),

@@ -11,9 +11,12 @@ const AgentRender = (() => {
   };
   const nl = s => String(s).replace(/\r?\n/g, '\r\n');
 
+  // Claude names a project's folder after its path: F--PROGRAMMING-REPOS-Operant, -Users-me-proj.
+  const projectPath = p => IS_WIN ? p.replace(/--/g, ':\\').replace(/-/g, ' ') : p.replace(/-/g, '/');
+
   function header(info) {
     return `${c.purple}${c.bold}◆ ${info.agentType}${c.reset}  ${c.white}${info.description}${c.reset}\r\n`
-      + `${c.grey}${info.project.replace(/--/g, ':\\').replace(/-/g, ' ')} · agent ${info.agentId.slice(0, 8)}`
+      + `${c.grey}${projectPath(info.project)} · agent ${info.agentId.slice(0, 8)}`
       + `${info.spawnDepth > 1 ? ` · depth ${info.spawnDepth}` : ''}${c.reset}\r\n\r\n`;
   }
 

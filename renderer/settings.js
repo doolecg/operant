@@ -24,6 +24,9 @@ const Panels = (() => {
     return m ? Math.round(+m[1] * ({ k: 1e3, m: 1e6, b: 1e9 }[m[2].toLowerCase()] || 1)) : null;
   };
   const NEW_TILES = 'Applies to new tiles';
+  // The browser choices name what "default" means and what a custom one is: an exe on Windows, an app on macOS.
+  const DEFAULT_BROWSER = IS_WIN ? "Windows' default browser" : 'Default browser';
+  const BROWSER_PATH = IS_WIN ? 'path to the browser\'s exe' : IS_MAC ? 'the browser app, e.g. /Applications/Firefox.app' : 'path to the browser, e.g. /usr/bin/firefox';
 
   const SECTIONS = [
     ['Appearance', [
@@ -62,7 +65,7 @@ const Panels = (() => {
     ]],
     ['Agents', [
       { key: 'agents', type: 'agents' },
-      { key: 'defaultAgent', label: 'Default agent', hint: 'Alt+Enter, the master tile and Explorer\'s entry open this', type: 'select',
+      { key: 'defaultAgent', label: 'Default agent', hint: IS_WIN ? 'Alt+Enter, the master tile and Explorer\'s entry open this' : 'Alt+Enter and the master tile open this', type: 'select',
         options: cfg => cfg.agents.map(a => [a.id, a.name]) },
       { key: 'opencodeTheme', label: 'OpenCode uses Operant’s theme', hint: 'OpenCode tiles get the current theme and accent, with a see-through background · your own OpenCode settings stay as they are · applies to new OpenCode tiles', type: 'toggle' },
       { key: 'installSkill', label: 'Operant skill for agents',
@@ -80,7 +83,7 @@ const Panels = (() => {
         type: 'toggle' },
     ]],
     ['Notifications', [
-      { key: 'notifications', label: 'Windows notifications', type: 'toggle' },
+      { key: 'notifications', label: IS_WIN ? 'Windows notifications' : 'Notifications', type: 'toggle' },
       { key: 'notifyWhenIdleSeconds', label: 'Agent is waiting for you', hint: 'Notify when a working agent goes quiet for this many seconds · 0 = off', type: 'number', min: 0, max: 600 },
       { key: 'notifySubagents', label: 'Claude subagent finished', type: 'toggle' },
       { key: 'notifyOnlyUnfocused', label: 'Only when I\'m not looking at it', hint: 'Skip it for the focused tile while Operant is in front', type: 'toggle' },
@@ -108,31 +111,31 @@ const Panels = (() => {
       { key: 'sidebarHiddenFiles', label: 'Show hidden files', hint: 'Dotfiles like .git and .claude', type: 'toggle' },
       { key: 'sidebarGit', label: 'Git in the sidebar', hint: 'Each project’s branch and number of changed files (click it to see the changes) · changed files tinted', type: 'toggle' },
       { key: 'ide', label: 'IDE', hint: 'What a folder\'s "Open in IDE" button opens it in', type: 'select', options: IDES },
-      { key: 'ideCommand', label: 'Custom IDE command', hint: 'When IDE is Custom command · the folder is added at the end, e.g. "C:\\Tools\\IDE\\bin\\ide64.exe"', type: 'text' },
+      { key: 'ideCommand', label: 'Custom IDE command', hint: 'When IDE is Custom command · the folder is added at the end, e.g. ' + (IS_WIN ? '"C:\\Tools\\IDE\\bin\\ide64.exe"' : '"/opt/ide/bin/ide"'), type: 'text' },
     ]],
     ['Projects', [
       { type: 'projects', label: 'Project defaults agent arguments startup command per project' },
     ]],
     ['Files', [
       { key: 'fileOpens', label: 'Double-clicking a file in the sidebar', hint: 'Right-click a file for the others', type: 'select',
-        options: [['view', 'Views it in Operant'], ['edit', 'Edits it in a terminal'], ['system', 'Opens it with Windows']] },
+        options: [['view', 'Views it in Operant'], ['edit', 'Edits it in a terminal'], ['system', IS_WIN ? 'Opens it with Windows' : 'Opens it with the default app']] },
       { key: 'editor', label: 'Editor', hint: 'The terminal editor for “Edit” · Auto takes the first found: Neovim, Vim, micro, Edit, nano', type: 'select',
         options: [['auto', 'Auto'], ['vim', 'Vim'], ['nvim', 'Neovim'], ['micro', 'micro'], ['nano', 'nano'], ['edit', 'Edit (Windows)'], ['custom', 'Custom command']] },
       { key: 'configOpensIn', label: 'Edit config.json in', hint: 'The settings file, from Settings’ Open config.json button', type: 'select',
-        options: [['system', 'Windows’ app for .json'], ['editor', 'The editor tile (vim…)']] },
-      { key: 'editorCommand', label: 'Custom editor command', hint: 'When Editor is Custom command · the file is added at the end, e.g. "C:\\Tools\\hx.exe"', type: 'text' },
+        options: [['system', IS_WIN ? 'Windows’ app for .json' : 'The default app for .json'], ['editor', 'The editor tile (vim…)']] },
+      { key: 'editorCommand', label: 'Custom editor command', hint: 'When Editor is Custom command · the file is added at the end, e.g. ' + (IS_WIN ? '"C:\\Tools\\hx.exe"' : '"/usr/local/bin/hx"'), type: 'text' },
     ]],
     ['Top bar', [
       { key: 'clockFormat', label: 'Clock', hint: 'Hover it for a calendar · click it to copy the time and date', type: 'select',
-        options: [['auto', 'Like Windows'], ['24', '24-hour'], ['12', '12-hour']] },
+        options: [['auto', IS_WIN ? 'Like Windows' : 'Like the system'], ['24', '24-hour'], ['12', '12-hour']] },
       { key: 'clockSeconds', label: 'Show seconds', type: 'toggle' },
       { key: 'clockDate', label: 'Show the date', type: 'toggle' },
       { key: 'barTitle', label: 'Focused tile’s title beside the clock', type: 'toggle' },
       { key: 'gitButton', label: 'Git tile', hint: 'In the gear’s quick menu: the focused project’s branch and changes · click to see and commit them', type: 'toggle' },
     ]],
     ['Media', [
-      { key: 'mediaControls', label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },
-      { key: 'mediaSize', label: 'Size', type: 'select',
+      { key: 'mediaControls', win: true, label: 'Media controls in the top bar', hint: 'What Windows is playing (Spotify, a browser tab…): cover, track, buttons and that app’s volume', type: 'toggle' },
+      { key: 'mediaSize', win: true, label: 'Size', type: 'select',
         options: [['compact', 'Compact: cover, title and play; the rest on hover'], ['full', 'Full: everything always shown']] },
     ]],
     ['Usage', [
@@ -148,18 +151,18 @@ const Panels = (() => {
     ['Startup', [
       { key: 'masterOnStartup', label: 'Ask where to work on startup', type: 'toggle' },
       { key: 'defaultCwd', label: 'Default folder', type: 'folder' },
-      { key: 'shell', label: 'Shell', hint: 'PowerShell runs the agents · ' + NEW_TILES, type: 'text' },
-      { key: 'explorerContextMenu', label: 'Explorer right-click entry', hint: '"Open in Operant" on folders (installed app)', type: 'toggle' },
+      { key: 'shell', label: 'Shell', hint: (IS_WIN ? 'PowerShell' : 'Your shell (zsh, bash…)') + ' runs the agents · ' + NEW_TILES, type: 'text' },
+      { key: 'explorerContextMenu', win: true, label: 'Explorer right-click entry', hint: '"Open in Operant" on folders (installed app)', type: 'toggle' },
       { key: 'explorerOpensIn', label: '"Open in Operant" opens', hint: 'Starting Operant again always opens another window', type: 'select',
         options: [['tile', 'A tile in the window I used last'], ['window', 'A new Operant window']] },
       { key: 'linkBrowser', label: 'Open links in', hint: 'Links from agents, viewers and release notes', type: 'select',
-        options: cfg => [['default', "Windows' default browser"],
+        options: cfg => [['default', DEFAULT_BROWSER],
           ...cfg.__browsers.map(b => [b.id, b.name]), ['custom', 'Custom']] },
-      { key: 'linkBrowserCommand', label: 'Custom browser', hint: 'When Open links in is Custom · path to the browser\'s exe', type: 'text' },
+      { key: 'linkBrowserCommand', label: 'Custom browser', hint: 'When Open links in is Custom · ' + BROWSER_PATH, type: 'text' },
       { key: 'secondBrowser', label: 'Second browser', hint: 'Shift+click a link', type: 'select',
-        options: cfg => [['auto', 'Zen if installed, else Windows\' default'], ['default', "Windows' default browser"],
+        options: cfg => [['auto', IS_WIN ? 'Zen if installed, else Windows\' default' : 'Zen if installed, else the default browser'], ['default', DEFAULT_BROWSER],
           ...cfg.__browsers.map(b => [b.id, b.name]), ['custom', 'Custom']] },
-      { key: 'secondBrowserCommand', label: 'Custom second browser', hint: 'When Second browser is Custom · path to the browser\'s exe', type: 'text' },
+      { key: 'secondBrowserCommand', label: 'Custom second browser', hint: 'When Second browser is Custom · ' + BROWSER_PATH, type: 'text' },
     ]],
     ['Keybinds', [
       { key: 'vimKeys', label: 'Vim keys', hint: 'j/k and h/l scroll, gg/G top and end, Ctrl+D/U half a page, / finds, n/N next and previous in viewer and diff tiles ([ and ] change file); in the sidebar (Alt+Shift+B) j/k move, l opens, h closes, e edits, a and s open an agent or shell · Ctrl+J/K move in the pickers', type: 'toggle' },
@@ -182,7 +185,8 @@ const Panels = (() => {
       { type: 'updates', label: 'Check for updates version release' },
       { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and every 3 hours, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
     ]],
-  ];
+  // Rows flagged `win` exist only on Windows; a tab left with none goes too.
+  ].map(([t, items]) => [t, items.filter(it => IS_WIN || !it.win)]).filter(([, items]) => items.length);
   const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
     Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', 'Skills backup': '⤒', Updates: '↻' };
 
@@ -302,7 +306,7 @@ const Panels = (() => {
         + `<select data-pf="agent"><option value="">Default (${esc(cfg.agents.find(a => a.id === cfg.defaultAgent)?.name || '')})</option>${cfg.agents.map(a => `<option value="${esc(a.id)}"${a.id === v.agent ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`
         + `<input data-pf="args" value="${esc(v.args || '')}" placeholder="--flags" spellcheck="false">`
         + `<input data-pf="startup" value="${esc(v.startup || '')}" placeholder="e.g. nvm use 22" spellcheck="false"></div>`; }).join('')
-      + '</div><div class="set-row"><div class="lbl"><span class="hint">The agent is used by ＋ in the sidebar, Alt+Enter and new tiles in that folder. The startup command runs in PowerShell before the agent or shell starts. Applies to new tiles.</span></div></div>';
+      + '</div><div class="set-row"><div class="lbl"><span class="hint">The agent is used by ＋ in the sidebar, Alt+Enter and new tiles in that folder. The startup command runs in ' + (IS_WIN ? 'PowerShell' : 'your shell') + ' before the agent or shell starts. Applies to new tiles.</span></div></div>';
   }
 
   // Settings › Agents › Team (item 33): enable toggle, one row per tier (agent, model, "use for"), max workers.
@@ -526,7 +530,7 @@ const Panels = (() => {
       swapLeft: 'Swap ←', swapRight: 'Swap →', swapUp: 'Swap ↑', swapDown: 'Swap ↓' }],
     ['Layout', { toggleLayout: 'Master ⇄ dwindle layout', toggleSplit: 'Flip split direction',
       resizeLeft: 'Resize ←', resizeRight: 'Resize →', resizeUp: 'Resize ↑', resizeDown: 'Resize ↓' }],
-    ['Media', { mediaPlayPause: 'Play / pause', mediaNext: 'Next track', mediaPrev: 'Previous track', mediaShuffle: 'Shuffle' }],
+    ...(IS_WIN ? [['Media', { mediaPlayPause: 'Play / pause', mediaNext: 'Next track', mediaPrev: 'Previous track', mediaShuffle: 'Shuffle' }]] : []),
     ['Workspaces', { prevWorkspace: 'Previous workspace', nextWorkspace: 'Next workspace' }],
     ['App', { commandPalette: 'Command palette', help: 'Keybinds (this popup)', settings: 'Settings', notifications: 'Notifications', tokenUsage: 'Token usage graph', newWindow: 'New Operant window', openConfig: 'Edit config.json', devtools: 'DevTools', saveQuit: 'Save and quit' }],
   ];
@@ -543,7 +547,7 @@ const Panels = (() => {
     }</div></div>`).join('')
       + `<div class="kb-mouse"><h3>Mouse</h3>
         Click a tile to focus · <kbd>Alt</kbd>+drag onto another tile to swap · <kbd>Alt</kbd>+right-drag to resize · <kbd>Alt</kbd>+wheel switches workspace ·
-        <kbd>Ctrl+C</kbd> copies a selection, <kbd>Ctrl+V</kbd> pastes</div>`;
+        <kbd>${MOD}+C</kbd> copies a selection, <kbd>${MOD}+V</kbd> pastes</div>`;
     body.querySelectorAll('[data-add]').forEach(b => b.onclick = () => onAdd(b.dataset.add));
     body.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => onRemove(b.dataset.rm, +b.dataset.i));
   }

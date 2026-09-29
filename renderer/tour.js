@@ -8,7 +8,7 @@ const Tour = (() => {
       <li><kbd>Alt+1…9</kbd> jumps to a workspace</li>
       <li>${k('focusLeft')} ${k('focusRight')} move between tiles, ${k('toggleLayout')} switches the layout</li>
       <li>${k('fullscreen')} zooms a tile, ${k('close')} closes it</li></ul>` },
-    { title: 'You don\'t have to watch', body: `<p>When an agent finishes or asks you something, Operant sends a Windows notification. Click it to land on that tile.</p>
+    { title: 'You don\'t have to watch', body: `<p>When an agent finishes or asks you something, Operant sends a ${IS_WIN ? 'Windows ' : ''}notification. Click it to land on that tile.</p>
       <p>Claude Code subagents open in their own tiles as soon as they start, so you can see what each one is doing. The 🔔 in the top bar keeps a list of what you missed.</p>` },
     { title: 'Save tokens', body: `<p>Long commands (tests, builds, installs) run in their own tile with <code>operant run</code>, and the agent reads back only the part it needs. The Operant skill installs itself for agents, so this happens without you asking.</p>
       <p>Each tile shows its context size, so you can see when it's time to compact or start fresh. The token pill in the top bar tracks your usage.</p>` },

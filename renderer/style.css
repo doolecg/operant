@@ -21,7 +21,7 @@
   --flow: 8s;
   --glass: rgba(var(--glass-rgb), var(--opacity));
   --serif: 'Tiempos Text', 'Copernicus', Georgia, 'Times New Roman', serif;
-  --mono: 'Cascadia Mono', Consolas, monospace;
+  --mono: 'Cascadia Mono', Consolas, Menlo, 'DejaVu Sans Mono', monospace;
   --rounding: 12px;
   --border: 2px;
   --ease: cubic-bezier(0.05, 0.9, 0.1, 1.05);
@@ -162,6 +162,9 @@ body.wp-glow-dots #wallpaper::after { content: ''; position: absolute; inset: 0;
 .wc button { width: 44px; height: 100%; color: var(--dim); font-size: 12px; }
 .wc button:hover { background: rgba(var(--ink-rgb), .08); color: var(--text); }
 #wc-close:hover { background: #c42b1c; color: #fff; }
+/* macOS: the native traffic lights (x 14-70) sit over the bar's left edge, so there are no window buttons and the bar starts after them. */
+body.os-darwin .wc { display: none; }
+body.os-darwin #bar { padding: 0 14px 0 80px; }
 
 /* -------------------------------------------------------------- desktop */
 #desktop { position: fixed; top: var(--bar-h); left: 0; right: 0; bottom: 0; overflow: hidden; }

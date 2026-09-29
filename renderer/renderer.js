@@ -11,6 +11,8 @@
   const $ = s => document.querySelector(s);
   const desktop = $('#desktop');
   const root = document.documentElement.style;
+  // Which syntax a shell tile's `run` string is written in: main hands it to PowerShell's -Command or to sh -c.
+  const isSh = () => cfg.shellSyntax === 'sh';
 
   const WS_COUNT = 9;
   const workspaces = [];       // { el, hint, tree, focused, fullscreen }
@@ -363,7 +365,7 @@
       '--opacity': cfg.opacity, '--blur': cfg.blur + 'px', '--flow': cfg.borderAnimationSeconds + 's',
     };
     for (const [k, v] of Object.entries(vars)) root.setProperty(k, v);
-    document.body.className = `wp-${cfg.wallpaper} border-${cfg.borderAnimation} anim-${cfg.animations}`;
+    document.body.className = `os-${PLATFORM} wp-${cfg.wallpaper} border-${cfg.borderAnimation} anim-${cfg.animations}`;
     applySidebar();
     for (const w of wins.values()) if (w.term) Object.assign(w.term.options, termOptions(w.kind));
     workspaces.forEach((_, i) => layout(i, i !== current));
@@ -493,6 +495,12 @@
   const refreshEditorName = () => (editorReady = operant.editorName().then(n => { editorName = n; }));
   refreshEditorName();
   const dirOf = p => String(p).replace(/[\\/][^\\/]*$/, '');
+  // A folder plus a git-style relative path ('/'-separated), in this OS's own form.
+  const joinRel = (base, rel) => base + SEP + rel.replace(/\//g, SEP);
+  // What this OS calls its default app and its file manager.
+  const OPEN_DEFAULT = IS_WIN ? 'Open with Windows' : 'Open with the default app';
+  const SHOW_FILE = IS_WIN ? 'Show in Explorer' : IS_MAC ? 'Show in Finder' : 'Show in folder';
+  const OPEN_FOLDER = IS_WIN ? 'Open in Explorer' : IS_MAC ? 'Open in Finder' : 'Open folder';
   const isMarkdown = p => /\.(md|markdown|mdx|mdown)$/i.test(p);
   const isImageFile = p => /\.(png|jpe?g|gif|webp|bmp|ico|svg|avif)$/i.test(p);
 
@@ -722,7 +730,7 @@
     el.className = 'win view opening';
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">▤</span><span class="title"></span><span class="badge"></span>
       <span class="view-acts"><button data-v="source" title="Show the Markdown source">Source</button><button data-v="edit" title="Edit">✎</button>
-      <button data-v="open" title="Open with Windows">↗</button></span><button class="x" title="Close">✕</button></div>
+      <button data-v="open" title="${OPEN_DEFAULT}">↗</button></span><button class="x" title="Close">✕</button></div>
       <div class="plan-bar hidden"><span class="plan-msg">Review this plan</span><span class="plan-actions">
         <button class="btn primary" data-p="approve">Approve</button><button class="btn" data-p="change">Change</button></span>
         <div class="plan-change hidden"><input class="plan-note" type="text" placeholder="What should change?">
@@ -784,7 +792,7 @@
     w.page.addEventListener('dblclick', e => { if (e.target.closest('.view-img img')) { w.imgFit = true; drawImgSize(w); } });
     w.page.addEventListener('mouseup', () => copySelection(w));
     w.page.addEventListener('wheel', e => {
-      if (!e.ctrlKey || !w.image) return;
+      if (!ctrlOrCmd(e) || !w.image) return;
       const img = w.el.querySelector('.view-img img');
       if (!img || !img.naturalWidth) return;
       e.preventDefault();
@@ -800,11 +808,12 @@
     return w;
   }
 
+  // Splitting '/Users/me' gives a leading '', so joining with '/' keeps the root.
   function resolvePath(dir, rel) {
-    if (/^[a-z]:[\\/]/i.test(rel) || rel.startsWith('\\\\')) return rel;
+    if (/^[a-z]:[\\/]/i.test(rel) || rel.startsWith('\\\\') || (!IS_WIN && rel.startsWith('/'))) return rel;
     const parts = dir.split(/[\\/]/);
     for (const seg of rel.split(/[\\/]/)) { if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg); }
-    return parts.join('\\');
+    return parts.join(SEP);
   }
 
   // Swap a viewer tile to another file (a link, or a drop), like reopening it fresh.
@@ -882,7 +891,7 @@
     btn.title = w.source ? 'Show it rendered' : 'Show the Markdown source';
     w.el.querySelector('[data-v="edit"]').hidden = !!w.image;
     w.el.classList.toggle('md', md);
-    if (w.error) body.innerHTML = `<div class="view-msg">${esc(w.error)}<br><button class="btn" data-v2="open">Open with Windows</button></div>`;
+    if (w.error) body.innerHTML = `<div class="view-msg">${esc(w.error)}<br><button class="btn" data-v2="open">${OPEN_DEFAULT}</button></div>`;
     else if (w.image) {
       body.innerHTML = `<div class="view-img"><img alt="" draggable="false"><div class="view-cap"></div></div>`;
       const img = body.querySelector('img');
@@ -1042,7 +1051,7 @@
       <div class="diff-wrap"><div class="diff-side"><label class="diff-all"><input type="checkbox" checked><span></span></label><div class="diff-files"></div>
         <div class="commit-box"><textarea class="commit-msg" placeholder="Commit message" spellcheck="true"></textarea>
         <div class="commit-row"><label class="commit-amend" title="Change the last commit instead of making a new one"><input type="checkbox"> Amend</label><span class="commit-status"></span></div>
-        <div class="commit-row"><button class="btn primary" data-c="commit" title="Ctrl+Enter">Commit</button><button class="btn" data-c="push">Commit and Push</button></div></div></div>
+        <div class="commit-row"><button class="btn primary" data-c="commit" title="${MOD}+Enter">Commit</button><button class="btn" data-c="push">Commit and Push</button></div></div></div>
       <div class="view-wrap"><div class="view-page diff-page" tabindex="-1"><div class="diff-body"></div></div>${FIND_BAR}</div></div></div>`;
     const w = { id, kind: 'diff', el, term: null, title: `Changes · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
       cwd: dir, page: el.querySelector('.diff-page'), files: [], sel: null, skip: new Set() };
@@ -1065,7 +1074,7 @@
       el.querySelectorAll('.df-row').forEach(r => r.classList.toggle('on', r === b));
       showDiffFile(w);
     });
-    const fullOf = f => w.status.root + '\\' + f.replace(/\//g, '\\');
+    const fullOf = f => joinRel(w.status.root, f);
     list.addEventListener('dblclick', e => {
       const b = e.target.closest('[data-file]');
       if (b && w.status && !e.target.matches('.df-check')) openViewer(fullOf(b.dataset.file), { ws: w.ws });
@@ -1077,7 +1086,7 @@
       const f = w.files.find(x => x.path === b.dataset.file), full = fullOf(f.path), gone = f.code.includes('D');
       showMenu(e.clientX, e.clientY, [
         ...(gone ? [] : [['▤', 'View', () => openViewer(full, { ws: w.ws })], ['✎', `Edit in ${editorName || 'editor'}`, () => openEditor(full, { ws: w.ws })],
-          ['▤', 'Show in Explorer', () => operant.reveal(full)]]),
+          ['▤', SHOW_FILE, () => operant.reveal(full)]]),
         '-',
         ['↶', 'Roll back…', () => rollback(w, f)],
       ]);
@@ -1088,7 +1097,7 @@
       markAll(w);
     };
     const msg = el.querySelector('.commit-msg');
-    msg.addEventListener('keydown', e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); commit(w, e.shiftKey); } });
+    msg.addEventListener('keydown', e => { if (e.key === 'Enter' && ctrlOrCmd(e)) { e.preventDefault(); commit(w, e.shiftKey); } });
     el.querySelector('.commit-amend input').onchange = async e => {
       if (e.target.checked && !msg.value.trim() && w.status) msg.value = (await operant.git('last-message', w.status.root)).trim();
     };
@@ -1233,7 +1242,7 @@
     w.el.classList.toggle('no-git', !st);
     if (!st) { w.files = []; list.innerHTML = ''; markAll(w); body.innerHTML = `<div class="view-msg">${esc(baseName(w.cwd))} isn't in a git repository</div>`; return setBadge(w, ''); }
     // Only the project's own files, when it's a folder inside a bigger repository.
-    const inside = f => isUnder(st.root + '\\' + f.path.replace(/\//g, '\\'), w.cwd);
+    const inside = f => isUnder(joinRel(st.root, f.path), w.cwd);
     w.files = st.files.filter(inside);
     for (const p of [...w.skip]) if (!w.files.some(f => f.path === p)) w.skip.delete(p);
     setBadge(w, `${w.files.length} changed`);
@@ -1373,7 +1382,7 @@
     return made.some(Boolean);
   }
 
-  function shortPath(p) { const parts = p.split(/[\\/]/).filter(Boolean); return parts.slice(-2).join('\\'); }
+  function shortPath(p) { const parts = p.split(/[\\/]/).filter(Boolean); return parts.slice(-2).join(SEP); }
 
   function closeWin(w) {
     if (!w.alive) return;
@@ -2138,9 +2147,11 @@
   // ------------------------------------------------------------ keys
 
   const norm = code => code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Arrow/, '').replace(/^NumpadEnter$/, 'Enter');
-  const MODS = ['Ctrl', 'Alt', 'Shift'];
+  // Cmd is only ever pressed on macOS (elsewhere metaKey is the Win/Super key and is ignored). It's kept in MODS
+  // everywhere so a Cmd+P from a shared config stays a combo nothing presses, instead of collapsing into a bare P.
+  const MODS = ['Cmd', 'Ctrl', 'Alt', 'Shift'];
   const canon = combo => { const p = combo.split('+').map(s => s.trim()); const k = p.pop(); return [...MODS.filter(m => p.includes(m)), k].join('+'); };
-  const eventCombo = e => [...(e.ctrlKey ? ['Ctrl'] : []), ...(e.altKey ? ['Alt'] : []), ...(e.shiftKey ? ['Shift'] : []), norm(e.code)].join('+');
+  const eventCombo = e => [...(IS_MAC && e.metaKey ? ['Cmd'] : []), ...(e.ctrlKey ? ['Ctrl'] : []), ...(e.altKey ? ['Alt'] : []), ...(e.shiftKey ? ['Shift'] : []), norm(e.code)].join('+');
 
   const actions = {
     newAgent: () => newTerminal('ai'),
@@ -2199,11 +2210,13 @@
     if (e.type !== 'keydown') return true;
     const bound = bindMap.get(eventCombo(e));
     if (bound && !VIEW_ONLY.has(bound)) return false;
-    // Windows-style clipboard: Ctrl+C copies when there's a selection, Ctrl+V pastes.
-    if (e.ctrlKey && !e.altKey && e.code === 'KeyC' && w.term.hasSelection()) {
-      navigator.clipboard.writeText(w.term.getSelection()); w.term.clearSelection(); return false;
+    // Windows-style clipboard: Ctrl+C copies when there's a selection, Ctrl+V pastes. On macOS it's Cmd+C
+    // and Cmd+V, and Ctrl+C (interrupt) and Ctrl+V (Claude Code's image paste) go through to the terminal.
+    const clip = IS_MAC ? e.metaKey && !e.ctrlKey && !e.altKey : e.ctrlKey && !e.altKey;
+    if (clip && e.code === 'KeyC' && w.term.hasSelection()) {
+      navigator.clipboard.writeText(w.term.getSelection()); if (!IS_MAC) w.term.clearSelection(); return false;
     }
-    if (e.ctrlKey && !e.altKey && e.code === 'KeyV' && w.ptyId) {
+    if (clip && e.code === 'KeyV' && w.ptyId) {
       pasteClipboard(w); e.preventDefault(); return false;
     }
     // Alt+V (Claude Code's image-paste key on Windows) isn't bound to anything, so it already
@@ -2591,7 +2604,8 @@
         + '<div class="cg-note">A code index your agents query instead of grepping. Installing runs <code>codegraph install</code>, which connects it to your agents. Index a project with ◇ in the sidebar.</div>';
       el.querySelector('[data-cg="install"]').onclick = () => {
         closePanels(false); cgVersion = undefined;
-        newTerminal('shell', null, { run: 'npm i -g @colbymchenry/codegraph@latest; if ($?) { codegraph install }', title: 'CodeGraph' });
+        const install = 'npm i -g @colbymchenry/codegraph@latest';
+        newTerminal('shell', null, { run: isSh() ? `${install} && codegraph install` : `${install}; if ($?) { codegraph install }`, title: 'CodeGraph' });
       };
       el.querySelector('[data-cg="index"]').onclick = () => { closePanels(false); runCodegraph(allProjects(), 'all projects'); };
     };
@@ -2659,7 +2673,7 @@
     const a = recording;
     if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey) { recording = null; return renderKeys(); }
     const combo = eventCombo(e);
-    if (!e.ctrlKey && !e.altKey && !/^F\d+$/.test(norm(e.code))) return toast('Use Ctrl or Alt with it (or an F-key), so typing still reaches the terminal.');
+    if (!e.ctrlKey && !e.altKey && !(IS_MAC && e.metaKey) && !/^F\d+$/.test(norm(e.code))) return toast(`Use ${IS_MAC ? 'Ctrl, Alt or Cmd' : 'Ctrl or Alt'} with it (or an F-key), so typing still reaches the terminal.`);
     if (/^Alt\+(Shift\+)?[1-9]$/.test(combo)) return toast(`<b>${combo}</b> is fixed for workspaces.`);
     recording = null;
     for (const [other, combos] of Object.entries(cfg.keybinds)) {
@@ -2717,7 +2731,7 @@
     const items = [];
     rootsList.forEach((root, i) => {
       for (const rel of lists[i]) {
-        const name = rel.split('/').pop(), full = root + '\\' + rel.replace(/\//g, '\\');
+        const name = rel.split('/').pop(), full = joinRel(root, rel);
         items.push({ label: name, sub: `${baseName(root)} · ${rel.slice(0, -name.length - 1) || '.'}`, text: rel, bonus: i === 0 && here ? 1 : 0,
           run: () => openViewer(full), alt: () => openEditor(full) });
       }
@@ -2772,9 +2786,9 @@
   pickInput.addEventListener('keydown', e => {
     const move = e.key === 'ArrowDown' || (e.ctrlKey && e.code === 'KeyJ') ? 1 : e.key === 'ArrowUp' || (e.ctrlKey && e.code === 'KeyK') ? -1 : 0;
     if (move) { e.preventDefault(); if (pick.shown.length) { pick.k = (pick.k + move + pick.shown.length) % pick.shown.length; markPick(); } }
-    else if (e.key === 'Enter') { e.preventDefault(); runPick(pick.k, e.shiftKey || e.ctrlKey); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPick(pick.k, e.shiftKey || ctrlOrCmd(e)); }
   });
-  pickBody.addEventListener('click', e => { const r = e.target.closest('.pick-row'); if (r) runPick(+r.dataset.i, e.shiftKey || e.ctrlKey); });
+  pickBody.addEventListener('click', e => { const r = e.target.closest('.pick-row'); if (r) runPick(+r.dataset.i, e.shiftKey || ctrlOrCmd(e)); });
 
   // ------------------------------------------------------------ bar
 
@@ -2998,6 +3012,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   calEl.onmouseleave = () => hideCal();
   window.addEventListener('blur', () => hideCal(0));
   $('#wc-min').onclick = operant.minimize; $('#wc-max').onclick = operant.maximize; $('#wc-close').onclick = operant.close;
+  // A click or touch anywhere brings the window to the front, also where the system didn't (main skips it when focused).
+  window.addEventListener('pointerdown', () => { if (!document.hasFocus()) operant.raise(); }, true);
 
   let resizeT;
   window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { workspaces.forEach((_, i) => layout(i, true)); drawUsage(); }, 60); });
@@ -3184,9 +3200,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       if (!status) continue;
       for (const f of status.files) {
         const [, cls] = gitKind(f.code);
-        let p = (status.root + '\\' + f.path.replace(/\//g, '\\')).toLowerCase();
+        let p = joinRel(status.root, f.path).toLowerCase();
         gitFiles.set(p, cls);
-        while ((p = p.replace(/\\[^\\]*$/, '')) && p.length > status.root.length) if (!gitFiles.has(p)) gitFiles.set(p, 'dir');
+        while ((p = dirOf(p)) && p.length > status.root.length) if (!gitFiles.has(p)) gitFiles.set(p, 'dir');
       }
     }
   }
@@ -3197,7 +3213,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   };
   function gitChanges(p) {
     const st = gitState.get(p)?.status;
-    return st ? st.files.filter(f => isUnder(st.root + '\\' + f.path.replace(/\//g, '\\'), p)).length : 0;
+    return st ? st.files.filter(f => isUnder(joinRel(st.root, f.path), p)).length : 0;
   }
   function gitInfoHtml(p) {
     const st = cfg.sidebarGit && gitState.get(p)?.status;
@@ -3341,11 +3357,21 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   function runCodegraph(dirs, label, { focus = true } = {}) {
     dirs = (dirs || []).filter(Boolean);
     if (!dirs.length) return toast('No projects to index. Pin a folder first.');
-    const q = s => `'${String(s).replace(/'/g, "''")}'`;
-    const steps = dirs.map(d => `Write-Host ''; Write-Host ${q('== ' + d)} -ForegroundColor Cyan; `
-      + `if (Test-Path -LiteralPath (Join-Path ${q(d)} '.codegraph')) { codegraph sync ${q(d)} } else { codegraph init -y ${q(d)} }`);
-    const run = `if (-not (Get-Command codegraph -ErrorAction SilentlyContinue)) { Write-Host 'CodeGraph is not installed. Install it from Settings > CodeGraph.' -ForegroundColor Yellow } else { `
-      + steps.join('; ') + `; Write-Host ''; Write-Host 'CodeGraph done for ${dirs.length} project(s)' -ForegroundColor Green }`;
+    let run;
+    if (isSh()) {
+      // Single quotes throughout (a ' inside becomes '\''), and printf's %s so a folder's name is never read as a format.
+      const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
+      const steps = dirs.map(d => `printf '\\n\\033[36m== %s\\033[0m\\n' ${q(d)}; `
+        + `if [ -d ${q(d + '/.codegraph')} ]; then codegraph sync ${q(d)}; else codegraph init -y ${q(d)}; fi`);
+      run = `if ! command -v codegraph >/dev/null 2>&1; then printf '\\033[33mCodeGraph is not installed. Install it from Settings > CodeGraph.\\033[0m\\n'; else `
+        + steps.join('; ') + `; printf '\\n\\033[32mCodeGraph done for ${dirs.length} project(s)\\033[0m\\n'; fi`;
+    } else {
+      const q = s => `'${String(s).replace(/'/g, "''")}'`;
+      const steps = dirs.map(d => `Write-Host ''; Write-Host ${q('== ' + d)} -ForegroundColor Cyan; `
+        + `if (Test-Path -LiteralPath (Join-Path ${q(d)} '.codegraph')) { codegraph sync ${q(d)} } else { codegraph init -y ${q(d)} }`);
+      run = `if (-not (Get-Command codegraph -ErrorAction SilentlyContinue)) { Write-Host 'CodeGraph is not installed. Install it from Settings > CodeGraph.' -ForegroundColor Yellow } else { `
+        + steps.join('; ') + `; Write-Host ''; Write-Host 'CodeGraph done for ${dirs.length} project(s)' -ForegroundColor Green }`;
+    }
     newTerminal('shell', dirs[0], { run, title: `CodeGraph · ${label || baseName(dirs[0])}`, focus });
   }
 
@@ -3513,7 +3539,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const copy = ['⧉', 'Copy path', () => navigator.clipboard.writeText(p)];
     if (!row.dataset.dir) return showMenu(e.clientX, e.clientY, [
       ['▤', 'View in Operant', () => openFile(p, 'view')], ['✎', `Edit in ${editorName || 'editor'}`, () => openFile(p, 'edit')], '-',
-      ['↗', 'Open with Windows', () => operant.openPath(p)], ['▤', 'Show in Explorer', () => operant.reveal(p)], copy]);
+      ['↗', OPEN_DEFAULT, () => operant.openPath(p)], ['▤', SHOW_FILE, () => operant.reveal(p)], copy]);
     const pinned = isPinned(p), gi = groupOf(p);
     const grouping = !pinned ? [] : [
       ...groups().map((g, i) => i === gi ? null : ['▣', `Move to ${g.name}`, () => moveToGroup(p, i)]).filter(Boolean),
@@ -3527,7 +3553,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       ['❯', 'New shell here', () => openHere(p, 'shell')],
       '-',
       ['⌨', `Open in ${ideName()}`, () => openInIde(p)],
-      ['▤', 'Open in Explorer', () => operant.openPath(p)],
+      ['▤', OPEN_FOLDER, () => operant.openPath(p)],
       ...(cfg.codegraphButtons ? [['◇', 'Index with CodeGraph', () => runCodegraph([p])]] : []),
       ['±', 'Show changes', () => showChanges(p)],
       copy,
@@ -3565,7 +3591,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
 
   function renderMedia(s = mediaState) {
     mediaState = s;
-    const show = !!(cfg.mediaControls && s.active && (s.title || s.artist));
+    const show = !!(IS_WIN && cfg.mediaControls && s.active && (s.title || s.artist));
     mediaEl.classList.toggle('hidden', !show);
     mediaEl.classList.toggle('full', cfg.mediaSize === 'full');
     if (!show) return;
@@ -4163,7 +4189,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     if (kind === 'test' && (await has('pytest.ini') || (await read('pyproject.toml')).includes('pytest') || (await read('setup.cfg')).includes('pytest'))) return 'pytest';
     if (await has('Cargo.toml')) return kind === 'test' ? 'cargo test' : 'cargo build';
     if (await has('go.mod')) return kind === 'test' ? 'go test ./...' : 'go build ./...';
-    if (await has('gradlew.bat')) return `gradlew.bat ${kind}`;
+    if (IS_WIN && !isSh() && await has('gradlew.bat')) return `gradlew.bat ${kind}`;
     if (await has('gradlew')) return `./gradlew ${kind}`;
     if (await has('pom.xml')) return kind === 'test' ? 'mvn test' : 'mvn package';
     const list = await operant.listDir(cwd).catch(() => []);
