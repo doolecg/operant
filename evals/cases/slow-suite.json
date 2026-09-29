@@ -1,0 +1,10 @@
+{
+  "name": "slow-suite",
+  "kind": "use",
+  "prompt": "The test suite takes ages. Run it and tell me which tests fail and why.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 12,
+  "expect": { "routed": true }
+}

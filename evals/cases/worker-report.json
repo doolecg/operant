@@ -1,0 +1,13 @@
+{
+  "name": "worker-report",
+  "kind": "behaviour",
+  "prompt": "Fix the bug in src/sum.js that makes test/sum.test.js fail. — when done, run: operant task done 12 --note '<what changed, files>'",
+  "scenario": {
+    "team": "off",
+    "tasks": [{ "id": 12, "text": "Fix the bug in src/sum.js that makes test/sum.test.js fail.", "status": "doing", "owner": 7, "tier": "small" }]
+  },
+  "env": { "OPERANT_WORKER": "1" },
+  "extraTools": ["Edit"],
+  "maxTurns": 12,
+  "expect": { "operant": ["task done 12"] }
+}

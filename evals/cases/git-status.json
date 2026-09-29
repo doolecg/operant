@@ -1,0 +1,10 @@
+{
+  "name": "git-status",
+  "kind": "negative",
+  "prompt": "What's the git status of this repo?",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 8,
+  "expect": { "noOperant": ["run", "test", "build", "agent"] }
+}

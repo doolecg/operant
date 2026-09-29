@@ -1,0 +1,10 @@
+{
+  "name": "last-commit",
+  "kind": "negative",
+  "prompt": "What was the last commit message?",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 8,
+  "expect": { "noOperant": ["run", "test", "build", "agent"] }
+}

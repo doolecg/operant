@@ -1,0 +1,10 @@
+{
+  "name": "notify-when-done",
+  "kind": "use",
+  "prompt": "Run the tests. I'm stepping away, so ping me when you know the result.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 12,
+  "expect": { "routed": true, "operant": ["notify"] }
+}

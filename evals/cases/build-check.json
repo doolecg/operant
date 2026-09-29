@@ -1,0 +1,10 @@
+{
+  "name": "build-check",
+  "kind": "use",
+  "prompt": "Build the project and tell me whether anything breaks.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 12,
+  "expect": { "routed": true }
+}

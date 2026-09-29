@@ -1,0 +1,10 @@
+{
+  "name": "explain-fn",
+  "kind": "negative",
+  "prompt": "Explain what src/sum.js does.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 8,
+  "expect": { "noOperant": ["run", "test", "build", "agent"] }
+}

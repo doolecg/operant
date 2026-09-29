@@ -1,0 +1,10 @@
+{
+  "name": "fan-out",
+  "kind": "use",
+  "prompt": "Add input validation to src/sum.js and src/avg.js and write tests for both. Split the work across cheaper workers so it goes faster.",
+  "scenario": { "team": "on" },
+  "env": {},
+  "extraTools": ["Agent"],
+  "maxTurns": 20,
+  "expect": { "delegated": true }
+}

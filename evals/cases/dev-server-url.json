@@ -1,0 +1,10 @@
+{
+  "name": "dev-server-url",
+  "kind": "use",
+  "prompt": "Start the dev server and tell me the URL it's on.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 12,
+  "expect": { "routed": true }
+}

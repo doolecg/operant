@@ -1,0 +1,10 @@
+{
+  "name": "read-script",
+  "kind": "negative",
+  "prompt": "What does the test script in package.json run? Don't run it.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 8,
+  "expect": { "noOperant": ["run", "test", "build", "agent"] }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "plan-approval",
+  "kind": "use",
+  "prompt": "Before you change anything, write a short plan for adding a multiply() function to src/sum.js and get my OK on it.",
+  "scenario": { "team": "off", "planAnswer": "approved" },
+  "env": {},
+  "extraTools": ["Write"],
+  "maxTurns": 10,
+  "expect": { "operant": ["plan"] }
+}

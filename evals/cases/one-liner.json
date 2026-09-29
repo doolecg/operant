@@ -1,0 +1,10 @@
+{
+  "name": "one-liner",
+  "kind": "negative",
+  "prompt": "Run node -e \"console.log(2+2)\" and show me its full output.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 8,
+  "expect": { "noOperant": ["run", "test", "build", "agent"] }
+}

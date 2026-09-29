@@ -1,0 +1,13 @@
+{
+  "name": "tinycalc",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Tiny number helpers with a build step and a dev server",
+  "main": "src/sum.js",
+  "scripts": {
+    "test": "node --test",
+    "build": "node build.js",
+    "dev": "node server.js"
+  },
+  "license": "MIT"
+}
