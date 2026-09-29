@@ -321,6 +321,7 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       the refiner's own cost), a live test per project, and the terminal's numbers shown only when measured.
 
 ## Operant 2.0 master spec: everything, and where it stands (mapped 29 Sept)
+Kept private (29 Sept): `docs/` is git-ignored and stays on this PC, with copies in ~/.claude/plans/operant-2.0-specs.
 Two versions: `docs/operant-2.0-spec.md` (first, with UI/operations 84A-84S) and `docs/operant-2.0-master-prompt.md`
 (the full 100-section edition). The first spec is `docs/operant-2.0-spec.md` (pasted 28 Sept; 2.0.0 was built from a short outline of it, so most
 of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers are the spec's sections.

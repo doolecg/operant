@@ -4,3 +4,4 @@ config.json
 .idea/
 *.stackdump
 evals/results/
+docs/
