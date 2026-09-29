@@ -1932,6 +1932,7 @@ ipcMain.on('stuck:reset', (_e, { sessionId }) => {
 
 function noteToolUse(sessionId, owner, name, input, label, toolId) {
   noteStuckUse(sessionId, owner, name, input, toolId);
+  sendTo(owner, 'activity', { sessionId, text: toolDisplay(name, input), who: label || null, t: Date.now() }); // the Terminal's live card feed
   if (!config.runawayLoopRepeats || isReadonlyOperantCall(input)) return;
   const list = toolHistory.get(sessionId) || [];
   list.push({ key: stableToolKey(name, input), display: toolDisplay(name, input) });

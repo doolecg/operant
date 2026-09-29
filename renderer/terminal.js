@@ -367,12 +367,16 @@ const OperantTerminal = (() => {
         open && tile != null ? '<button class="btn" data-c="stop" title="Interrupt the worker&#39;s current step (like Esc); the task stays open">Stop</button>' : '',
         (t || e.queued) && !e.final && !e.error && !['done', 'cancelled'].includes(t?.status) ? '<button class="btn" data-c="close" title="Stop the worker and close the task">Close</button><button class="btn" data-c="close-why">Close with reason</button>' : '',
       ].join('');
+      const live = tile != null && !e.final ? host.activityOf?.(tile) : null, last = live?.items[live.items.length - 1];
+      const feed = last ? `<details class="ot-feed"${c.feedOpen ? ' open' : ''}><summary><span class="ot-dim">${live.count} step${live.count === 1 ? '' : 's'} ·</span> ${esc(clip((last.who ? last.who + ': ' : '') + last.text, 100))}</summary>
+        <div class="ot-feed-list">${live.items.slice(-15).map(a => `<div>${a.who ? `<span class="ot-dim">${esc(clip(a.who, 28))}</span> ` : ''}${esc(a.text)}</div>`).join('')}</div></details>` : '';
       return `<div class="ot-card-head">${host.tierDot(e.tier)}<b class="ot-card-title">${esc(`#${e.idx + 1} ${e.title || 'Task'}`)}</b><span class="ot-pill ${look}">${esc(label)}</span></div>
         ${pick ? `<div class="ot-dim">${esc(pick)}${e.tier ? ' · ' + esc(e.tier) : ''}${e.boardId != null ? ' · task #' + e.boardId : ''}</div>` : ''}
         ${e.why ? `<div class="ot-why">${esc(e.why)}</div>` : ''}
         ${e.error ? `<div class="ot-bad">${esc(e.error)}</div>` : ''}
         ${v.note ? `<div class="ot-note">${renderText(v.note)}</div>` : ''}
         ${facts ? `<div class="ot-dim">${facts}</div>` : ''}
+        ${feed}
         ${askHtml}
         <div class="ot-card-acts">${acts}</div>
         ${inp ? `<div class="ot-reject"><input class="ot-reject-note" type="text" placeholder="${INPUT[inp.kind] || ''}" value="${esc(inp.text)}"><button class="btn primary" data-c="input-send">${inp.kind === 'close' ? 'Close task' : 'Send'}</button><button class="btn" data-c="input-cancel">Cancel</button></div>` : ''}`;
@@ -524,6 +528,12 @@ const OperantTerminal = (() => {
       } catch (err) { host.toast(`<b>${esc(err.message || err)}</b>`); }
       c.html = null; paint();
     });
+    // A card's activity feed stays open (or shut) across repaints.
+    log.addEventListener('toggle', e => {
+      if (!e.target.matches?.('.ot-feed')) return;
+      const c = [...cards.values()].find(x => x.node === e.target.closest('.ot-card'));
+      if (c) { c.feedOpen = e.target.open; c.html = cardHtml(c); }
+    }, true);
     log.addEventListener('keydown', e => {
       if (!e.target.matches('.ot-reject-note')) return;
       if (e.key === 'Enter') { e.preventDefault(); e.target.closest('.ot-card').querySelector('[data-c="input-send"]').click(); }

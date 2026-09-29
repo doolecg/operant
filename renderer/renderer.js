@@ -1167,6 +1167,7 @@
       setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
       allowedTiers: () => allowedTierNames(dir),
       agentKind, subagentLimit,
+      activityOf: tid => { const x = wins.get(Number(tid)); return x ? { items: x.activity || [], count: x.activityCount || 0 } : { items: [], count: 0 }; },
       agentMode: () => { const m = agentMode(dir); return { mode: m, label: m === 'both' ? '' : TeamTiers.MODE_LABEL[m], empty: m !== 'both' && !Object.keys(tiersIn(dir)).length }; },
       openProjectSettings: () => { togglePanel('settings'); Panels.showTab('Operant Terminal'); renderSettings(); },
       freeWorkers: () => Math.max(0, (cfg.team?.maxWorkers || 4) - [...wins.values()].filter(x => x.alive && x.tier).length),
@@ -2126,6 +2127,16 @@
     else if (kind === 'command') flagRunaway(w, 'stuck', `Stuck: ${reason}`);
   });
 
+  // A worker's tool calls (its subagents' too, named by `who`) for the Operant Terminal's live card feed.
+  let activityTimer = null;
+  operant.on('activity', ({ sessionId, text, who, t }) => {
+    const w = sessionWin.get(sessionId);
+    if (!w || !w.alive || !w.tier) return;
+    (w.activity ||= []).push({ text: String(text || ''), who: who || null, t: t || Date.now() });
+    if (w.activity.length > 40) w.activity.shift();
+    w.activityCount = (w.activityCount || 0) + 1;
+    if (!activityTimer) activityTimer = setTimeout(() => { activityTimer = null; for (const x of wins.values()) if (x.kind === 'operant' && x.alive) x.ui?.refresh(); }, 800);
+  });
   operant.on('runaway', ({ sessionId, reason, detail }) => {
     if (cfg.runawayGuard === 'off') return;
     const w = sessionWin.get(sessionId);

@@ -996,6 +996,10 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 .ot-target { flex: none; padding: 0 12px 4px; }
 .ot-target.hidden { display: none; }
 .ot-target select { max-width: 100%; padding: 2px 6px; border-radius: 8px; border: 1px solid rgba(var(--ink-rgb), .15); background: rgba(var(--bar-rgb), .7); color: var(--text); font: inherit; font-size: 12px; }
+.ot-feed { font-size: 12px; }
+.ot-feed summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.ot-feed-list { margin-top: 4px; padding: 6px 8px; max-height: 180px; overflow: auto; border-radius: 8px; background: rgba(var(--bar-rgb), .55); font-family: var(--mono); font-size: 11.5px; }
+.ot-feed-list div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ot-foot { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 12px; }
 .ot-foot-text { flex: 1; min-width: 0; }
 .ot-stop-all.hidden { display: none; }
