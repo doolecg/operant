@@ -1,3 +1,30 @@
+# Operant 2.0.0
+
+Team work learns from what happened: every task's outcome is recorded, `operant agent` picks a tier from those results, a stuck worker moves up a tier on evidence, code tasks are checked before you review them, and remembered facts now know when they've gone stale.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.0.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.0.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.0.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.0.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.0.0-linux-amd64.deb` (`sudo apt install ./Operant-2.0.0-linux-amd64.deb`).
+
+## New
+- **The tier is picked from real results:** `operant agent` without a tier chooses the cheapest tier that has passed most tasks of that kind, and says why in one line (for example "small: 7/8 fixes passed"). With too little history it says "insufficient data" and falls back to the usual suggestion. Now and then it tries the tier below a proven one, so a cheaper tier can earn its way back. It never goes above the top tier you allow.
+- **Every team task's outcome is recorded:** type, tier, model, tokens, cost, attempts, escalations and result, kept for 90 days. This is what tier picking reads.
+- **A stuck worker moves up a tier on evidence:** when the same command fails again with the same output, or fails three times, or a code task runs 30 tool calls without editing a file. The limit sits next to the runaway guard in Settings (*Tool calls without a file edit*; 0 turns it off).
+- **Checks before review:** when a worker finishes a fix, feature, refactor or test task, Operant runs the project's test (else build) command, and the review card shows a pass or fail mark and the size of the diff. A failing check goes back to the worker once. Docs and lookup tasks skip it. Turn it off under Settings › Agents › Team › *Run checks before review*.
+- **Memory that knows when it's stale:** facts record their confidence, dates and the code they describe. A fact whose code has changed shows as stale instead of being trusted or deleted. Recall ranks by relevance, how useful a fact has been and its age. `operant recall used <id>` and `operant recall wrong <id>` tell it which facts helped, `operant remember --supersedes <id>` replaces an old fact, and `--confidence` and `--about` set the rest. Usage counters are kept outside your memory files, so recalling never edits them. Existing memories keep working unchanged.
+- **Agents report back with `operant notify`** when you ask them to say when long work is done.
+- **A benchmark suite in the evals** covers team work and compares against a run without Operant (for developers).
+
+## Changed
+- **A rejected worker is told exactly what to do next:** redo the task and hand it back.
+
+## Fixed
+- **A rejected worker no longer trips the runaway guard** by checking the board.
+- **Board checks don't count as a loop:** read-only `operant` status calls are ignored by the guard.
+
+---
+
 # Operant 1.19.0
 
 Agents get cheaper and better briefed: the Operant skill loads per session, a live context is injected at start and after every compact, team tiers span Claude and OpenCode, results are reviewed before they count, agents can message each other, and usage shows cost by model, tier, task and project.

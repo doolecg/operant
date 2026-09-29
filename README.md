@@ -25,7 +25,10 @@ operant wait 7 --errors
 ## What your agents get
 - **The Operant skill and live context.** Operant loads its skill into each Claude Code and OpenCode session itself, so nothing is written to your home folder. At session start and after every compact, `operant prime` hands the agent the current state, so it doesn't have to rediscover it.
 - **Team mode and tiers.** A lead agent hands work to tiers: Haiku, Sonnet and Opus on Claude Code, and OpenCode's free and paid models. Each tier uses what's available and falls back when a CLI or model is missing. Workers finish with `operant task done --status done|blocked|failed --note "<files, open issues>"`.
-- **Review, escalation and budgets.** A worker's result waits for approval. A failed task is retried once, then moved up a tier. Per-tier token budgets (Settings › Agents › Team, or `--budget`) stop a worker and escalate it.
+- **Tiers picked from results.** Every team task's outcome is recorded. `operant agent` without a tier picks the cheapest one that has passed most tasks of that kind, says why, says "insufficient data" when there isn't enough history, and now and then tries a cheaper tier.
+- **Review, escalation and budgets.** A worker's result waits for approval. A failed task is retried once, then moved up a tier. A worker that is stuck (the same command failing again, or 30 tool calls without an edit on a code task) moves up on its own. Per-tier token budgets (Settings › Agents › Team, or `--budget`) stop a worker and escalate it.
+- **Checks before review.** When a code task comes back, Operant runs the project's tests (else build) and shows the result and diff size on the review card. A failure goes back to the worker once. Toggle: Settings › Agents › Team.
+- **Memory that knows when it's stale.** `operant remember` and `operant recall` keep facts with confidence, dates and the code they describe; a fact whose code changed shows as stale. Recall ranks by relevance, usefulness and age, and `operant recall used|wrong <id>` feeds that back.
 - **Messaging, opt-in.** With it on (Settings › Agents › Team), agents can send each other short messages with `operant msg <tile> "<text>"` and read them with `operant inbox`, Claude Code and OpenCode included. Repeats are dropped and each pair is rate limited.
 
 ## Install

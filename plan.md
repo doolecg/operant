@@ -233,10 +233,13 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
       run the same cases on two providers (Claude tier vs OpenCode tier) and without Operant as a baseline; one
       summary table per run. (OpenCode arm gated behind OPERANT_EVAL_OPENCODE_UNSAFE=1: `opencode run` edited the
       repo's own fixture instead of the temp copy; fix before using it.)
-- [ ] **63. Provider seams, only where two implementations exist:** model launching (Claude Code, OpenCode) and
+- [ ] ~~**63.**~~ Skipped for 2.0 (user, 29 Sept), later: **Provider seams, only where two implementations exist:** model launching (Claude Code, OpenCode) and
       code context (CodeGraph, grep fallback) behind small interfaces, so a third can be added without touching the
       renderer. (A refactor: ask the user before starting; Opus medium.)
-- [ ] **64. Optional local helper model (ask first, downloads ~3 GB):** llama.cpp `llama-server` + a small open
+- [ ] ~~**64.**~~ Skipped for 2.0 (user, 29 Sept), later: **Optional local helper model (ask first, downloads ~3 GB):** llama.cpp `llama-server` + a small open
       model registered as an OpenCode provider for an offline xsmall tier; or a user-supplied Ollama/LM Studio URL.
       Nothing downloads without an explicit yes in Settings.
-- [ ] **65. 2.0 docs, evals before/after, release.**
+- [x] **65. 2.0 docs, evals before/after, release.** Evals (Sonnet, 17 cases x 3): 1.19.0 88% vs 2.0 88%, cost
+      $0.090 vs $0.097/run; notify-when-done 0/3 -> 3/3; review-approve 3/3 -> 3/6 and plan-approval 3/3 -> 5/6 over
+      two runs, all failures after a denied raw verification command (eval don't-ask mode); handoff 0/3 in both (the
+      lead does everything itself). Follow-ups: handoff and review-approve.
