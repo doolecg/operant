@@ -145,6 +145,70 @@ const OperantTerminal = (() => {
         why: `One master ${KIND_NAME[kind]} worker runs these as parallel subagents: ${items.map((t, i) => `${i + 1}. ${t.title}`).join('; ')}` }];
     });
   }
+  // ---- slash commands and the input helpers (items 84, 85)
+  const SLASH = [
+    { name: 'help', desc: 'What you can type here' },
+    { name: 'stop', args: '[#n | all]', desc: 'Interrupt a task (like Esc), or every running task of the last request' },
+    { name: 'close', args: '#n [reason]', desc: 'Stop a task and close it, with an optional reason' },
+    { name: 'retry', args: '#n', desc: 'Run a task again with a new worker' },
+    { name: 'approve', args: '#n', desc: 'Accept a task waiting for review' },
+    { name: 'reject', args: '#n <why>', desc: 'Send a task back with the reason' },
+    { name: 'tasks', desc: 'Every task in this conversation and where it stands' },
+    { name: 'cost', desc: 'Tokens and cost of this conversation' },
+    { name: 'status', desc: 'Agents, tiers, workers and settings for this project' },
+    { name: 'tier', args: '<name> | auto', desc: 'Run the next prompts on one tier' },
+    { name: 'original', args: '<prompt>', desc: 'Send a prompt as written, without cleaning it' },
+    { name: 'auto', desc: 'Turn auto-send on or off' },
+    { name: 'diff', desc: "Open the project's changes" },
+    { name: 'settings', desc: "Open this project's Terminal settings" },
+    { name: 'clear', desc: 'Clear this conversation' },
+  ];
+  // "/close #2 not needed" -> { name: 'close', card: 2, rest: 'not needed', known: true }; not a command -> null.
+  function parseSlash(text) {
+    const m = /^\/(\S*)\s*([\s\S]*)$/.exec(String(text || '').trim());
+    if (!m) return null;
+    const name = m[1].toLowerCase();
+    let rest = m[2].trim(), card = null;
+    const c = /^#(\d+)\b\s*/.exec(rest);
+    if (c) { card = Number(c[1]); rest = rest.slice(c[0].length).trim(); }
+    return { name, card, rest, known: SLASH.some(x => x.name === name) };
+  }
+  const slashMatches = prefix => { const q = String(prefix || '').replace(/^\//, '').toLowerCase(); return SLASH.filter(x => x.name.startsWith(q)); };
+  // The @word at the caret -> { start, query } (start = index of the @), else null.
+  function atToken(text, caret) {
+    const m = /(^|\s)@([^\s@]*)$/.exec(String(text || '').slice(0, caret));
+    return m ? { start: caret - m[2].length - 1, query: m[2] } : null;
+  }
+  // Project files for @query: file names that start with it first, then paths that contain it; shortest first.
+  function fileMatches(files, query, n = 8) {
+    const q = String(query || '').toLowerCase().replaceAll('\\', '/');
+    const base = f => f.slice(f.lastIndexOf('/') + 1).toLowerCase();
+    const scored = [];
+    for (const f of files || []) {
+      const lf = f.toLowerCase(), b = base(f);
+      const s = !q ? 2 : b.startsWith(q) ? 0 : lf.includes(q) ? 1 : -1;
+      if (s >= 0) scored.push([s, f.length, f]);
+      if (!q && scored.length >= n) break;
+    }
+    return scored.sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, n).map(x => x[2]);
+  }
+  // Ctrl+R: earlier prompts containing the text, newest first, no repeats.
+  function histMatches(hist, query, n = 8) {
+    const q = String(query || '').toLowerCase(), out = [];
+    for (let i = (hist || []).length - 1; i >= 0 && out.length < n; i--) {
+      const h = hist[i];
+      if (h.toLowerCase().includes(q) && !out.includes(h)) out.push(h);
+    }
+    return out;
+  }
+  // What a line typed in the box is: a slash command, a shell command (!), a memory (# then a non-digit), or a prompt.
+  function inputKind(text) {
+    const t = String(text || '').trim();
+    if (t.startsWith('/')) return 'slash';
+    if (t.startsWith('!') && t.length > 1) return 'shell';
+    if (/^#[^\d\s#]|^# \S/.test(t)) return 'memory';
+    return 'prompt';
+  }
   // Follow-up for a worker: the task, what it was asked, its last note and the new ask; never the history.
   function handoffText({ title, asked, note, ask }) {
     return [`Follow-up on your task "${clip(title, 80)}".`, `You were asked: ${clip(asked, 400) || 'unknown'}`,
@@ -205,7 +269,11 @@ const OperantTerminal = (() => {
     const { el, cwd: project } = w, op = host.operant;
     const $ = s => el.querySelector(s);
     const log = $('.ot-log'), box = $('.ot-box textarea'), status = $('.ot-status'), autoBtn = $('[data-v="auto"]');
-    const st = { review: null, question: null, refining: null, hist: [], histIdx: 0, draft: '', queue: [], pumping: false, restored: false, latest: null, picked: false };
+    const st = { review: null, question: null, refining: null, hist: [], histIdx: 0, draft: '', queue: [], pumping: false, restored: false, latest: null, picked: false,
+      menu: null, tier: null, lastEsc: 0 };
+    const menu = document.createElement('div');
+    menu.className = 'ot-menu hidden';
+    $('.ot-box').before(menu);
     const cards = new Map(); // requestId:idx -> { entry, node, input, usd, costKey, html, task, ask }
     const reqs = new Map(); // requestId -> { refiner, foot, summarized }
     const target = $('.ot-target select'), targetRow = $('.ot-target');
@@ -509,8 +577,9 @@ const OperantTerminal = (() => {
       paint();
     }
     async function send(res, which) {
-      const tasks = which === 'original' ? [{ title: clip(res.original, 60), prompt: res.original }]
+      let tasks = which === 'original' ? [{ title: clip(res.original, 60), prompt: res.original }]
         : bundleTasks(res.tasks, { kindOf: host.agentKind || (() => 'other'), allowed: host.allowedTiers(), limit: host.subagentLimit?.() || 9 });
+      if (st.tier) tasks.forEach((t, i) => { tasks[i] = { ...t, tier: st.tier, agent: undefined, model: undefined, effort: undefined, why: `/tier ${st.tier}` }; });
       await launch(res.requestId, tasks, 0);
     }
     // ---- follow-ups (item 78): a short structured handoff, never the history
@@ -618,9 +687,14 @@ const OperantTerminal = (() => {
       const text = box.value.trim();
       if (!text || st.refining) return;
       if (st.review) endReview();
+      closeMenu();
       st.hist.push(text); st.histIdx = st.hist.length; st.draft = '';
       box.value = ''; autosize();
       line(save({ role: 'user', text }));
+      const kind = st.question ? 'prompt' : inputKind(text);
+      if (kind === 'slash') return void runSlash(parseSlash(text)).catch(err => info(String(err.message || err)));
+      if (kind === 'shell') return void runShell(text.slice(1).trim());
+      if (kind === 'memory') return void remember(text.slice(1).trim());
       const q = st.question;
       st.question = null;
       const tc = !q && !targetRow.classList.contains('hidden') && target.value !== 'new' ? cards.get(target.value) : null;
@@ -629,12 +703,157 @@ const OperantTerminal = (() => {
       if (tc) { followUp(tc, text); return; }
       refine(q ? `${q.original}\n\nYou asked: ${q.question}\nMy answer: ${text}` : text);
     }
+    const info = (text, rid) => line(save({ role: 'operant', kind: 'info', ...(rid ? { requestId: rid } : {}), text }));
+    // #n: the newest card with that number.
+    const cardN = n => [...cards.values()].filter(c => c.entry.idx === n - 1).pop() || null;
+    const needCard = cmd => { if (cmd.card == null) throw new Error(`/${cmd.name} needs a task number, like /${cmd.name} #1`); const c = cardN(cmd.card); if (!c) throw new Error(`There is no task #${cmd.card}.`); return c; };
+    async function runSlash(cmd) {
+      const n = cmd.name;
+      if (!cmd.known) return info(`Unknown command /${n}. /help lists them.`);
+      if (n === 'help') return info(['Commands:', ...SLASH.map(x => `/${x.name}${x.args ? ' ' + x.args : ''} - ${x.desc}`), '',
+        '!<command> runs it in a shell tile and shows the result · #<fact> saves a project memory · @ completes a file path',
+        'Ctrl+R searches earlier prompts · Esc Esc clears the box · pasted images go to the workers as files'].join('\n'));
+      if (n === 'clear') return $('[data-v="clear"]').click();
+      if (n === 'settings') return host.openProjectSettings?.();
+      if (n === 'diff') { await host.control('diff', { dir: project, focus: true }); return; }
+      if (n === 'auto') { host.setAutoSend(!host.autoSend()); drawAuto(); return info(`Auto-send is ${host.autoSend() ? 'on: cleaned prompts go straight to the agents' : 'off: you review each cleaned prompt first'}.`); }
+      if (n === 'tier') {
+        const want = cmd.rest.toLowerCase();
+        if (!want || want === 'auto') { st.tier = null; return info('Tiers are picked per task again.'); }
+        const allowed = host.allowedTiers();
+        if (!allowed.includes(want)) throw new Error(`No tier "${want}" here. Allowed: ${allowed.join(', ') || 'none'}.`);
+        st.tier = want; drawHint();
+        return info(`Your next prompts all run on the ${want} tier. /tier auto goes back to per-task picks.`);
+      }
+      if (n === 'original') {
+        if (!cmd.rest) throw new Error('/original needs the prompt, like /original fix the login bug');
+        return send({ requestId: newId(), original: cmd.rest, tasks: [] }, 'original');
+      }
+      if (n === 'stop') {
+        if (cmd.card == null) { if (!st.latest) throw new Error('Nothing is running.'); return stopAll(st.latest); }
+        const c = needCard(cmd); await stopCard(c); return info(`Stopped #${cmd.card}. It stays open: message it, or /close #${cmd.card}.`, c.entry.requestId);
+      }
+      if (n === 'close') { const c = needCard(cmd); await closeCard(c, cmd.rest); paint(); return; }
+      if (n === 'approve' || n === 'reject') {
+        const c = needCard(cmd), t = taskOf(c.entry);
+        if (!t || t.status !== 'review' && t.status !== 'blocked') throw new Error(`#${cmd.card} is not waiting for review.`);
+        if (n === 'reject' && !cmd.rest) throw new Error('/reject needs the reason, like /reject #1 the tests still fail');
+        await host.control('task', n === 'approve' ? { sub: 'approve', id: t.id } : { sub: 'reject', id: t.id, note: cmd.rest });
+        paint(); return;
+      }
+      if (n === 'retry') {
+        const c = needCard(cmd), e = c.entry, next = Math.max(...cardsOf(e.requestId).map(x => x.entry.idx)) + 1;
+        return launch(e.requestId, [{ title: `Retry: ${clip(e.title, 50)}`, prompt: c.task?.prompt || e.prompt, agent: e.agent, model: e.model, effort: e.effort, tier: e.tier, files: e.files, why: `Retry of #${cmd.card}` }], next);
+      }
+      if (n === 'tasks') {
+        const all = [...cards.values()];
+        if (!all.length) return info('No tasks yet.');
+        return info(all.slice(-20).map(c => { const v = view(c); return `#${c.entry.idx + 1} ${clip(c.entry.title, 60)} - ${statusOf({ status: v.status })[0]}${c.entry.tier ? ' · ' + c.entry.tier : ''}${c.entry.boardId != null ? ' · task ' + c.entry.boardId : ''}`; }).join('\n'));
+      }
+      if (n === 'cost') {
+        const vs = [...cards.values()].map(view), paid = vs.reduce((a, v) => a + (v.paid || 0), 0), usd = vs.reduce((a, v) => a + (v.usd || 0), 0);
+        const unknown = vs.filter(v => v.paid && v.usd == null).length, freeTok = vs.filter(v => v.free).reduce((a, v) => a + (v.total || 0), 0);
+        const ref = [...reqs.values()].map(r => r.refiner?.tokens).filter(Boolean).reduce((a, t) => a + (t.input || 0) + (t.output || 0), 0);
+        return info([`${vs.length} task${vs.length === 1 ? '' : 's'} in this conversation.`, `Paid tokens: ${fmtN(paid)}${paid ? (unknown ? ` (≈ ${fmtUsd(usd) || '$0'} plus ${unknown} unpriced)` : ` (≈ ${fmtUsd(usd) || '$0'})`) : ''}.`,
+          `Free tokens: ${fmtN(freeTok)}.`, `Refiner: ${fmtN(ref)} tokens.`].join('\n'));
+      }
+      if (n === 'status') {
+        const am = host.agentMode?.() || {}, allowed = host.allowedTiers();
+        return info([`Agents: ${am.label || 'Claude and OpenCode'}.`, `Tiers allowed: ${allowed.join(', ') || 'none'}${st.tier ? ` (next prompts: ${st.tier})` : ''}.`,
+          `Free worker slots: ${host.freeWorkers()}. Subagents per worker: up to ${host.subagentLimit?.() || 9}.`, `Auto-send: ${host.autoSend() ? 'on' : 'off'}. Waiting to start: ${st.queue.length}.`].join('\n'));
+      }
+    }
+    // !command: runs in its own shell tile; the output comes back here once it goes quiet.
+    async function runShell(command) {
+      const r = await host.control('run', { command, cwd: project, title: `! ${clip(command, 36)}` }).catch(err => { info(String(err.message || err)); return null; });
+      if (!r) return;
+      const node = line(save({ role: 'operant', kind: 'info', text: `Running \`${clip(command, 120)}\` in tile ${r.id}...` }));
+      try {
+        const out = await host.control('wait', { id: r.id, lines: 60 });
+        const text = String(out?.text || '').trim();
+        info(`\`${clip(command, 120)}\`${out?.exited ? ' finished' : ' is still running (tile ' + r.id + ')'}:\n\`\`\`\n${text || '(no output)'}\n\`\`\``);
+      } catch (err) { info(`Could not read tile ${r.id}: ${String(err.message || err)}`); }
+      void node;
+    }
+    async function remember(text) {
+      if (!text) return;
+      try {
+        const r = await op.memory('remember', { cwd: project, text });
+        if (r && r.ok === false) throw new Error(r.error);
+        info(`Saved to project memory: ${clip(text, 160)}`);
+      } catch (err) { info(`Could not save it: ${String(err.message || err)}`); }
+    }
+
+    // ---- the menu above the box: / commands, @ files, Ctrl+R history. Arrows move, Tab or Enter picks, Esc closes.
+    let files = null, filesAt = 0;
+    async function projectFiles() {
+      if (!files || Date.now() - filesAt > 20000) { filesAt = Date.now(); files = await Promise.resolve(op.listFiles?.(project)).catch(() => []) || []; }
+      return files;
+    }
+    function drawMenu() {
+      const m = st.menu;
+      menu.classList.toggle('hidden', !m || !m.items.length);
+      if (!m || !m.items.length) { menu.innerHTML = ''; return; }
+      m.sel = Math.min(Math.max(0, m.sel), m.items.length - 1);
+      menu.innerHTML = (m.kind === 'hist' ? '<div class="ot-menu-head">Earlier prompts</div>' : '') + m.items.map((it, i) => `<div class="ot-menu-item${i === m.sel ? ' sel' : ''}" data-i="${i}"><span class="ot-menu-label">${esc(it.label)}</span>${it.desc ? `<span class="ot-dim">${esc(it.desc)}</span>` : ''}</div>`).join('');
+      menu.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+    }
+    function closeMenu() { st.menu = null; drawMenu(); }
+    async function updateMenu() {
+      const v = box.value, caret = box.selectionStart;
+      if (st.menu?.kind === 'hist') { st.menu.items = histMatches(st.hist, v).map(h => ({ label: clip(h, 120), value: h })); return drawMenu(); }
+      if (/^\/\S*$/.test(v) && caret === v.length) {
+        st.menu = { kind: 'slash', sel: st.menu?.kind === 'slash' ? st.menu.sel : 0, items: slashMatches(v).map(x => ({ label: `/${x.name}${x.args ? ' ' + x.args : ''}`, desc: x.desc, value: `/${x.name}` })) };
+        return drawMenu();
+      }
+      const at = atToken(v, caret);
+      if (at) {
+        const list = fileMatches(await projectFiles(), at.query);
+        if (box.value !== v) return; // typed on while the list loaded
+        st.menu = { kind: 'file', sel: st.menu?.kind === 'file' ? st.menu.sel : 0, at, items: list.map(f => ({ label: f, value: f })) };
+        return drawMenu();
+      }
+      closeMenu();
+    }
+    function pickMenu(i = st.menu?.sel) {
+      const m = st.menu, it = m?.items[i];
+      if (!it) return;
+      if (m.kind === 'slash') box.value = it.value + (SLASH.find(x => '/' + x.name === it.value)?.args ? ' ' : '');
+      else if (m.kind === 'hist') box.value = it.value;
+      else { const v = box.value, end = box.selectionStart; box.value = v.slice(0, m.at.start) + '@' + it.value + ' ' + v.slice(end); const pos = m.at.start + it.value.length + 2; box.setSelectionRange(pos, pos); }
+      closeMenu(); autosize(); box.focus();
+    }
+    menu.addEventListener('mousedown', e => { const it = e.target.closest('.ot-menu-item'); if (it) { e.preventDefault(); pickMenu(Number(it.dataset.i)); } });
+    // Menu keys first; true = the key was used.
+    function menuKey(e) {
+      const m = st.menu;
+      if (!m || !m.items.length) return false;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { m.sel += e.key === 'ArrowDown' ? 1 : -1; if (m.sel < 0) m.sel = m.items.length - 1; if (m.sel >= m.items.length) m.sel = 0; drawMenu(); return true; }
+      if (e.key === 'Escape') { closeMenu(); return true; }
+      if (e.key === 'Tab') { pickMenu(); return true; }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        const it = m.items[m.sel];
+        if (m.kind === 'slash' && box.value.trim() === it.value) { closeMenu(); return false; } // the whole command is typed: Enter runs it
+        pickMenu(); return true;
+      }
+      return false;
+    }
+    const drawHint = () => { const h = el.querySelector('.ot-hint'); if (h) h.dataset.tier = st.tier || ''; box.placeholder = st.tier ? `Ask Operant to do something… (all on the ${st.tier} tier)` : 'Ask Operant to do something…'; };
+    box.addEventListener('input', updateMenu);
+    box.addEventListener('click', updateMenu);
+    box.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== box) closeMenu(); }, 100));
     box.addEventListener('input', autosize);
     box.addEventListener('keydown', e => {
       if (e.isComposing) return;
       if (st.refining) { if (e.key === 'Escape') { e.preventDefault(); cancelRefine(); } else if (e.key === 'Enter') e.preventDefault(); return; }
+      if (menuKey(e)) { e.preventDefault(); return; }
+      if (e.key === 'r' && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) { e.preventDefault(); st.menu = { kind: 'hist', sel: 0, items: [] }; updateMenu(); return; }
       const act = st.review && reviewKey(e, box.value === '');
       if (act) { e.preventDefault(); return reviewAct(act); }
+      if (e.key === 'Escape' && box.value) {
+        if (Date.now() - st.lastEsc < 700) { e.preventDefault(); st.draft = ''; box.value = ''; autosize(); st.lastEsc = 0; return; }
+        st.lastEsc = Date.now(); return;
+      }
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); return submit(); }
       const lines = box.value.split('\n').length, multi = lines > 1;
       if (e.key === 'ArrowUp' && !e.shiftKey && (!multi || box.selectionStart === 0) && st.histIdx > 0) {
@@ -647,12 +866,14 @@ const OperantTerminal = (() => {
         st.histIdx = historyStep(st.hist.length, st.histIdx, 1); box.value = st.histIdx === st.hist.length ? st.draft : st.hist[st.histIdx]; autosize();
       }
     });
-    // Text pastes as it is. Images are a later item: say so instead of silently dropping them.
-    box.addEventListener('paste', e => {
-      if ([...(e.clipboardData?.items || [])].some(i => i.kind === 'file' && i.type.startsWith('image/')) && !e.clipboardData.getData('text')) {
-        e.preventDefault();
-        host.toast('<b>Image paste is not supported in the Operant Terminal yet</b>');
-      }
+    // Text pastes as it is. An image is saved as a file and its path goes in the prompt, so the workers can open it.
+    box.addEventListener('paste', async e => {
+      if (![...(e.clipboardData?.items || [])].some(i => i.kind === 'file' && i.type.startsWith('image/')) || e.clipboardData.getData('text')) return;
+      e.preventDefault();
+      const file = await Promise.resolve(op.saveClipboardImage?.()).catch(() => null);
+      if (!file) { host.toast('<b>Could not save the pasted image</b>'); return; }
+      const at = box.selectionStart, v = box.value, ins = `[image: ${file}] `;
+      box.value = v.slice(0, at) + ins + v.slice(box.selectionEnd); box.setSelectionRange(at + ins.length, at + ins.length); autosize();
     });
     // Reads from the transcript (Ctrl+C on a selection) and clicks in it keep the keyboard on the box.
     el.addEventListener('keydown', e => {
@@ -691,7 +912,7 @@ const OperantTerminal = (() => {
     return { refresh: refreshCards, focus: () => box.focus({ preventScroll: true }), drawAuto, ask };
   }
 
-  const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, bundleTasks, masterPrompt, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
+  const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, bundleTasks, masterPrompt, SLASH, parseSlash, slashMatches, atToken, fileMatches, histMatches, inputKind, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
   return api;
 })();
 

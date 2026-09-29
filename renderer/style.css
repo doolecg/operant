@@ -1010,6 +1010,13 @@ body.anim-off .ot-spin { animation: none; }
 .ot-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
 .ot-prompt { color: var(--accent); font-family: var(--mono); line-height: 1.5; }
 .ot-box textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: none; background: transparent; color: var(--text); font: 13px/1.5 var(--mono); user-select: text; }
+.ot-menu { flex: none; margin: 0 10px; max-height: 220px; overflow: auto; padding: 4px; border-radius: 10px; background: rgba(var(--card-rgb), .96); border: 1px solid rgba(var(--ink-rgb), .12); font-size: 12px; }
+.ot-menu.hidden { display: none; }
+.ot-menu-head { padding: 2px 8px 4px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.ot-menu-item { display: flex; gap: 10px; align-items: baseline; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.ot-menu-item.sel { background: var(--accent-tint); }
+.ot-menu-label { flex: none; font-family: var(--mono); color: var(--text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ot-menu-item .ot-dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ot-hint { flex: none; padding: 4px 14px 7px; font-size: 10.5px; color: var(--dim); }
 .ot-hint kbd { margin: 0 3px 0 6px; padding: 0 4px; font-size: 10px; }
 @container (max-width: 420px) { .ot-hint { display: none; } }

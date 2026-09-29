@@ -1153,7 +1153,7 @@
       <div class="ot-wrap"><div class="ot-log" tabindex="-1"></div><div class="ot-status hidden"></div>
       <div class="ot-target hidden"><select title="Where your next message goes"></select></div>
       <div class="ot-box"><span class="ot-prompt">❯</span><textarea rows="1" spellcheck="true" placeholder="Ask Operant to do something…"></textarea></div>
-      <div class="ot-hint"><kbd>Enter</kbd> send <kbd>Shift+Enter</kbd> new line <kbd>↑</kbd><kbd>↓</kbd> earlier prompts <kbd>Esc</kbd> cancel</div></div></div>`;
+      <div class="ot-hint"><kbd>Enter</kbd> send <kbd>Shift+Enter</kbd> new line <kbd>/</kbd> commands <kbd>!</kbd> shell <kbd>#</kbd> memory <kbd>@</kbd> files <kbd>Ctrl+R</kbd> history <kbd>Esc</kbd> cancel</div></div></div>`;
     const w = { id, kind: 'operant', el, term: null, title: `Operant · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
       cwd: dir, page: el.querySelector('.ot-box textarea') };
     el.querySelector('.title').textContent = w.title;

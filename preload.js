@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('operant', {
   outcomeStats: () => ipcRenderer.invoke('outcome:stats'),
   recordOutcome: entry => ipcRenderer.invoke('outcome:record', entry),
   clipboardHasImage: () => ipcRenderer.invoke('clipboard:has-image'),
+  saveClipboardImage: () => ipcRenderer.invoke('clipboard:save-image'),
   pathForFile: f => webUtils.getPathForFile(f),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
   onControl: fn => ipcRenderer.on('control', (_e, d) => fn(d)),

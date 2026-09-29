@@ -1068,6 +1068,16 @@ ipcMain.handle('clipboard:has-image', async () => {
   if (!items.some(i => i.types.some(t => t.startsWith('image/')))) return false;
   return !(await clipboard.readText());
 });
+// The Operant Terminal's image paste: the clipboard image as a PNG in Operant's temp folder; the workers get its path.
+ipcMain.handle('clipboard:save-image', async () => {
+  const img = clipboard.readImage();
+  if (img.isEmpty()) return null;
+  const dir = path.join(os.tmpdir(), 'operant-paste');
+  await fs.promises.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `image-${Date.now()}.png`);
+  await fs.promises.writeFile(file, img.toPNG());
+  return file;
+});
 ipcMain.handle('config:path', () => { if (!fs.existsSync(CONFIG_PATH)) saveUser(); return CONFIG_PATH; });
 ipcMain.on('open-config', () => {
   if (!fs.existsSync(CONFIG_PATH)) saveUser();

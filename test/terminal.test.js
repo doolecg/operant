@@ -206,3 +206,31 @@ test('modeNote: the review names the project mode and flags an OpenCode refiner 
   assert.equal(c.label, 'Claude only'); assert.match(c.note, /refiner itself runs on OpenCode/);
   assert.equal(T.modeNote('claude', 'local').note, '');
 });
+
+test('slash commands parse with an optional #n card and the rest', () => {
+  assert.deepEqual(T.parseSlash('/close #2 not needed'), { name: 'close', card: 2, rest: 'not needed', known: true });
+  assert.deepEqual(T.parseSlash('/stop'), { name: 'stop', card: null, rest: '', known: true });
+  assert.equal(T.parseSlash('/nope').known, false);
+  assert.equal(T.parseSlash('fix it'), null);
+  assert.deepEqual(T.slashMatches('/st').map(x => x.name), ['stop', 'status']);
+  assert.equal(T.slashMatches('/').length, T.SLASH.length);
+});
+
+test('what a line is: a command, a shell command, a memory or a prompt', () => {
+  assert.equal(T.inputKind('/help'), 'slash');
+  assert.equal(T.inputKind('!npm test'), 'shell');
+  assert.equal(T.inputKind('!'), 'prompt');
+  assert.equal(T.inputKind('# use tabs here'), 'memory');
+  assert.equal(T.inputKind('#tabs'), 'memory');
+  assert.equal(T.inputKind('#2 fix it'), 'prompt', '#n is a task number, not a memory');
+  assert.equal(T.inputKind('fix #2'), 'prompt');
+});
+
+test('@ completes project files, file names first; Ctrl+R finds earlier prompts newest first', () => {
+  assert.deepEqual(T.atToken('look at @ren', 12), { start: 8, query: 'ren' });
+  assert.equal(T.atToken('mail me@x', 9), null);
+  const files = ['test/terminal.test.js', 'renderer/terminal.js', 'main.js', 'docs/term.md'];
+  assert.deepEqual(T.fileMatches(files, 'term'), ['docs/term.md', 'renderer/terminal.js', 'test/terminal.test.js']);
+  assert.deepEqual(T.fileMatches(files, 'renderer/'), ['renderer/terminal.js']);
+  assert.deepEqual(T.histMatches(['fix a', 'add b', 'fix c', 'fix a'], 'fix'), ['fix a', 'fix c']);
+});
