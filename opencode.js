@@ -203,6 +203,9 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
+  // The tile's root session id once OpenCode has announced it (item 54 tags usage by it); null before.
+  const rootSession = ptyId => { const t = tiles.get(ptyId); return t && [...t.roots][0] || null; };
+
   // Agent messages (plan item 53): a new prompt on the tile's root session, through the async endpoint
   // (204, returns at once). Never throws; { ok: false } tells the caller to type it into the terminal.
   async function prompt(ptyId, text) {
@@ -257,7 +260,7 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
   }
   function start() { if (!pollT) pollT = setInterval(poll, 2000); }
 
-  return { freePort, watch, unwatch, start, abort, summarize, prompt };
+  return { freePort, watch, unwatch, start, abort, summarize, prompt, rootSession };
 }
 
 // The OpenCode CLI, however its command is written.

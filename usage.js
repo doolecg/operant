@@ -4,6 +4,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { priceOf, isFreeModel, info: pricingInfo } = require('./pricing');
 
 const KEEP_MS = 31 * 86400e3;
 const CHUNK = 4 << 20;
@@ -189,7 +190,8 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
 // (Claude Code session, subagents folded into their parent) totals, the biggest single turns with
 // the tool call that likely caused them, files read more than 3 times in a session, and each
 // session's fixed first-turn overhead. Claude Code transcripts carry no free/paid flag (unlike
-// OpenCode's free Zen models), so everything here is "paid" — this only covers Claude Code usage.
+// OpenCode's free Zen models), so Claude rows are all "paid". Item 54 adds OpenCode's database events
+// (free Zen models count as free), a price per model (pricing.js) and rows per model, tier and task.
 
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
 function toolArg(input) {
@@ -214,19 +216,31 @@ async function listJsonl(dir, depth, out) {
   return out;
 }
 
-async function computeBreakdown(projectsDir, { days = 1, project = null } = {}) {
+// opencode: readOpenCodeUsage events; tags: session id -> { tier, taskId } (a Claude session id, or an OpenCode root session id);
+// sinceMs overrides the window (the usage panel's ranges).
+async function computeBreakdown(projectsDir, { days = 1, project = null, sinceMs = 0, opencode = [], tags = {} } = {}) {
   const now = Date.now();
-  const since = days <= 1 ? new Date(now).setHours(0, 0, 0, 0) : now - 7 * 86400e3;
+  const since = sinceMs > 0 ? sinceMs : days <= 1 ? new Date(now).setHours(0, 0, 0, 0) : now - 7 * 86400e3;
   const files = await listJsonl(projectsDir, 0, []);
   const seen = new Set();
   const perProject = new Map(), perTile = new Map(), fileReads = new Map(), overhead = [], turns = [];
+  const perModel = new Map(), perTier = new Map(), perTask = new Map();
 
+  // e.free: a free OpenCode model; e.usd: the priced cost of the event, null when its model has no price.
   const bump = (map, key, label, e) => {
     let a = map.get(key);
-    if (!a) map.set(key, { key, label, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, free: 0, paid: 0 });
+    if (!a) map.set(key, { key, label, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, free: 0, paid: 0, usdKnown: 0, unpriced: 0 });
     a = map.get(key);
     a.input += e.input; a.output += e.output; a.cacheWrite += e.cacheWrite; a.cacheRead += e.cacheRead;
-    a.paid += e.input + e.output + e.cacheWrite + e.cacheRead; // Claude Code usage is always paid (subscription)
+    a[e.free ? 'free' : 'paid'] += e.input + e.output + e.cacheWrite + e.cacheRead;
+    if (e.usd == null) a.unpriced++; else a.usdKnown += e.usd;
+  };
+  // Model, tier and task rows share the event; a session's tag (tier, task) comes from tags.
+  const bumpCost = (sessionKey, model, e) => {
+    const tag = tags[sessionKey] || {};
+    bump(perModel, model || 'unknown', model || 'unknown', e);
+    bump(perTier, tag.tier || '', tag.tier || 'No tier', e);
+    if (tag.taskId != null) bump(perTask, String(tag.taskId), `#${tag.taskId}`, e);
   };
 
   for (const file of files) {
@@ -258,6 +272,7 @@ async function computeBreakdown(projectsDir, { days = 1, project = null } = {}) 
         if (!seen.has(key)) {
           seen.add(key);
           const e = { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0 };
+          e.usd = priceOf(m.model, e).usd;
           const wasFirst = !firstUsageSeen;
           firstUsageSeen = true;
           if (t >= since) {
@@ -269,6 +284,7 @@ async function computeBreakdown(projectsDir, { days = 1, project = null } = {}) 
               }
               bump(perProject, p, p, e);
               bump(perTile, mergedKey, meta?.description || shortLabel(mergedKey, p), e);
+              bumpCost(mergedKey, m.model, e);
               const total = e.input + e.output + e.cacheWrite + e.cacheRead;
               turns.push({ tokens: total, tile: (perTile.get(mergedKey) || {}).label || mergedKey, project: p, time: t, cause: lastTool });
             }
@@ -294,6 +310,19 @@ async function computeBreakdown(projectsDir, { days = 1, project = null } = {}) 
     }
   }
 
+  // OpenCode's database events: exact per message; reasoning tokens count as output.
+  for (const o of opencode) {
+    if (o.at < since) continue;
+    const p = o.directory ? path.basename(o.directory) || o.directory : 'opencode';
+    if (project && p !== project) continue;
+    const e = { input: o.input, output: o.output + (o.reasoning || 0), cacheWrite: o.cacheWrite, cacheRead: o.cacheRead };
+    e.usd = priceOf(o.model, e, o.cost).usd;
+    e.free = isFreeModel(o.model);
+    bump(perProject, p, p, e);
+    bump(perTile, o.rootSessionId, `${p} · oc ${String(o.rootSessionId).slice(-6)}`, e);
+    bumpCost(o.rootSessionId, o.model, e);
+  }
+
   turns.sort((a, b) => b.tokens - a.tokens);
   const repeatedReads = [];
   for (const [tile, fm] of fileReads) {
@@ -303,10 +332,23 @@ async function computeBreakdown(projectsDir, { days = 1, project = null } = {}) 
   repeatedReads.sort((a, b) => b.count - a.count);
   overhead.sort((a, b) => b.tokens - a.tokens);
 
+  // usd is null (unknown) when any event in the row has no price; usdKnown is the sum of the priced ones.
+  const finish = map => [...map.values()].map(r => {
+    const all = r.input + r.output + r.cacheWrite + r.cacheRead;
+    const inTotal = r.input + r.cacheRead + r.cacheWrite;
+    return { ...r, usd: r.unpriced ? null : r.usdKnown, cacheHitRate: inTotal ? r.cacheRead / inTotal : 0, tokens: all, accuracy: 'exact' };
+  }).sort((a, b) => b.tokens - a.tokens);
+  const total = finish(new Map([['all', [...perModel.values()].reduce((a, r) => {
+    for (const k of ['input', 'output', 'cacheWrite', 'cacheRead', 'free', 'paid', 'usdKnown', 'unpriced']) a[k] += r[k];
+    return a;
+  }, { key: 'all', label: 'All', input: 0, output: 0, cacheWrite: 0, cacheRead: 0, free: 0, paid: 0, usdKnown: 0, unpriced: 0 })]]))[0];
+
   return {
     since, days,
-    projects: [...perProject.values()].sort((a, b) => b.paid - a.paid),
-    tiles: [...perTile.values()].sort((a, b) => b.paid - a.paid),
+    projects: finish(perProject).sort((a, b) => (b.paid + b.free) - (a.paid + a.free)),
+    tiles: finish(perTile).sort((a, b) => (b.paid + b.free) - (a.paid + a.free)),
+    models: finish(perModel), tiers: finish(perTier), tasks: finish(perTask),
+    total, cacheHitRate: total.cacheHitRate, pricing: pricingInfo,
     biggestTurns: turns.slice(0, 10),
     repeatedReads: repeatedReads.slice(0, 20),
     overhead: overhead.slice(0, 15),

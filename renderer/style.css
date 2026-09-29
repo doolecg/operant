@@ -871,6 +871,10 @@ button.u-tile:hover { border-color: rgba(var(--ink-rgb), .2); }
 .up-row { display: grid; grid-template-columns: 180px 1fr 56px; align-items: center; gap: 12px; font-size: 12px; }
 .up-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .up-row.other .up-nm { color: var(--dim); }
+.usage-cost { margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; }
+.usage-cost-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.ucost-row { display: grid; grid-template-columns: 180px 1fr 56px 84px 48px; align-items: center; gap: 12px; font-size: 12px; }
+.ucost-th { color: var(--dim); font-size: 11px; }
 .up-bar { height: 8px; }
 .up-bar i { display: block; height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; background: var(--accent); }
 .up-row.other .up-bar i { background: rgba(var(--ink-rgb), .3); }

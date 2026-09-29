@@ -23,17 +23,14 @@ full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old a
 - 53 messaging (opt-in setting `messaging`): messaging.js (dedupe 10 min, 6/min per pair, cap 20), `operant msg`/`inbox`;
   OpenCode via POST /session/{root}/prompt_async (verified from /doc, not live), Claude via PostToolUse context,
   Stop block, or typed when idle (never onto a permission prompt). Not live-tested.
+- 54 usage: pricing.js (Claude prices from the claude-api skill 2026-09-29; unlisted models incl. Fable 5 = unknown),
+  opencode-usage.js (message sums; matched `opencode stats --days 1`), usage-tags.json tier/task tags, panel views
+  by model/tier/task/project with $ and cache hit. Not live-tested; watch 30d range speed (re-reads transcripts).
 
 ## Next
-- 54 findings (29 Sept): opencode.db `message.data` JSON has tokens.{input,output,reasoning,cache.read,cache.write},
-  cost, modelID, providerID, time.created; sum assistant messages only (step-finish parts repeat the same numbers).
-  24 h message sums matched `opencode stats --days 1` exactly. `session` has project_id (-> project.id), directory,
-  and its own token/cost totals.
-- 54 token and cost tracking: opencode.db via node:sqlite, tags model/tier/task, pricing table with source
-  (unknown stays unknown), cache hit rate; cross-check with `opencode stats --days 1`.
 - 55 evals (move salvage harness to `evals/`, back-to-back before/after when weekly usage allows), docs,
   RELEASE_NOTES, plugin.json version bump at release.
-- One batched live test for 51–53 (renderer loads team-tiers.js/board.js; review/escalation; msg round trip).
+- One batched live test for 51–54 (renderer loads team-tiers.js/board.js; review/escalation; msg round trip).
 
 ## Working rules (user)
 - Structured ~100-word handbacks; targeted edits; one item per commit; smallest model that fits

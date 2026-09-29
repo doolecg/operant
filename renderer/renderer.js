@@ -1167,6 +1167,14 @@
   const oneLine = s => String(s).replace(/["\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
   const allowedTierNames = () => { const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team?.maxTier); return top < 0 ? names : names.slice(0, top + 1); };
   const openTaskOf = w => board.tasks.find(t => t.owner === w.id && Board.isOpen(t));
+  // Cost views group tokens by tier and task: tag the worker's session (Claude: its id; OpenCode: its root
+  // session, known once the first message starts, so opencode:busy retries a tag that came too early).
+  function tagUsage(w, tier, taskId) {
+    w.usageTag = { tier, taskId: taskId ?? null, tile: w.id };
+    const oc = !w.sessionId || w.sessionId.startsWith('oc:');
+    if (!oc) operant.usageTag({ sessionId: w.sessionId, ...w.usageTag });
+    else if (w.ptyId) operant.usageTag({ ptyId: w.ptyId, ...w.usageTag }).then(r => { w.tagPending = !r?.ok; });
+  }
   const tierBudget = t => t.budget != null ? t.budget : cfg.team?.budgets?.[t.tier] || 0;
   // Tells the user through the lead's tile (or the worker's, or any agent tile still open).
   const tell = (t, title, body) => {
@@ -1187,6 +1195,7 @@
     });
     w.tier = tier; setTierDot(w);
     t.owner = w.id;
+    tagUsage(w, tier, t.id);
     boardChanged();
     return w;
   }
@@ -1711,6 +1720,7 @@
   operant.on('opencode:busy', ({ ptyId, busy }) => {
     const w = ptyWins.get(ptyId);
     if (!w) return;
+    if (busy && w.tagPending && w.usageTag) tagUsage(w, w.usageTag.tier, w.usageTag.taskId);
     if (busy) { w.typed = true; w.ocBusy = true; w.busySince ??= Date.now(); w.lastOut = Date.now(); }
     else { w.ocBusy = false; deliver(w); }
   });
@@ -3910,6 +3920,40 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   async function loadUsage() {
     usageData = await operant.usageSeries(usageRange);
     drawUsage();
+    loadUsageCost();
+  }
+  // Item 54: cost views (model, tier, task, project) from the on-demand breakdown; it re-reads the transcripts,
+  // so it reloads on a range change or when a minute old, not on every usage tick.
+  const USAGE_SPAN = { '5h': 5 * 3600e3, '24h': 24 * 3600e3, '7d': 7 * 86400e3, '30d': 30 * 86400e3 };
+  let usageCost = null, usageCostBusy = false, usageView = 'models';
+  try { usageView = localStorage.getItem('operant.usage.view') || usageView; } catch {}
+  async function loadUsageCost() {
+    if (usageCostBusy || (usageCost && usageCost.range === usageRange && Date.now() - usageCost.at < 60e3)) return;
+    usageCostBusy = true;
+    const range = usageRange;
+    try {
+      const d = await operant.usageBreakdown({ sinceMs: Date.now() - USAGE_SPAN[range] });
+      if (d) usageCost = { ...d, range, at: Date.now() };
+    } catch {}
+    usageCostBusy = false;
+    if (usageCost && usageCost.range === usageRange) drawUsage();
+    else if (usageRange !== range) loadUsageCost();
+  }
+  const usd = v => v > 0 && v < 0.01 ? '<$0.01' : '$' + v.toFixed(v < 10 ? 2 : 0);
+  const usdCell = r => r.usd == null ? `<span title="No price for this model${r.usdKnown ? `; the priced part is ${usd(r.usdKnown)}` : ''}">unknown</span>` : usd(r.usd);
+  const USAGE_VIEWS = [['models', 'By model'], ['tiers', 'By tier'], ['tasks', 'By task'], ['projects', 'By project']];
+  function usageCostHtml() {
+    const c = usageCost;
+    const rows = (c[usageView] || []).filter(r => r.tokens > 0);
+    const max = Math.max(1, ...rows.map(r => r.tokens));
+    const body = rows.length ? rows.slice(0, 12).map(r => `<div class="ucost-row"><span class="up-nm" title="${esc(r.label)}">${esc(r.label)}</span>`
+      + `<span class="up-bar"><i style="width:${(r.tokens / max * 100).toFixed(1)}%"></i></span><span class="up-val">${fmtTok(r.tokens)}</span>`
+      + `<span class="up-val">${usdCell(r)}</span><span class="up-val" title="Cache reads as a share of input, cache reads and cache writes">${Math.round(r.cacheHitRate * 100)}%</span></div>`).join('')
+      : `<div class="hint">${usageView === 'tiers' || usageView === 'tasks' ? 'Nothing tagged yet. Tiers and tasks fill in as team workers run.' : 'No tokens in this range.'}</div>`;
+    return `<div class="usage-cost"><div class="usage-cost-head"><div class="seg">${USAGE_VIEWS.map(([k, n]) => `<button data-uview="${k}"${k === usageView ? ' class="on"' : ''}>${n}</button>`).join('')}</div>`
+      + `<span class="hint">All tokens ${fmtTok(c.total.tokens)} · ${usdCell(c.total)} · cache hit ${Math.round(c.cacheHitRate * 100)}%</span></div>`
+      + `<div class="ucost-row ucost-th"><span>Name</span><span></span><span class="up-val">Tokens</span><span class="up-val">Cost</span><span class="up-val">Cache</span></div>${body}`
+      + `<div class="hint">Prices: ${esc(c.pricing.source)}, ${esc(c.pricing.date)}. Cost for Claude is API-equivalent (a subscription isn't billed per token); OpenCode rows use its recorded cost, and free models are $0. Cache writes are priced at the 5-minute rate. Unknown: the model isn't in the price table.</div></div>`;
   }
   function renderUsage() {
     $('#usage-range').querySelectorAll('[data-range]').forEach(b => b.classList.toggle('on', b.dataset.range === usageRange));
@@ -3953,8 +3997,14 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const maxP = Math.max(1, ...top.map(p => p.n));
     const list = top.length ? `<h3>By project</h3><div class="usage-projects">${top.map(p => `<div class="up-row${p.other ? ' other' : ''}"><span class="up-nm" title="${esc(p.name)}">${esc(p.name)}</span>`
       + `<span class="up-bar"><i style="width:${(p.n / maxP * 100).toFixed(1)}%"></i></span><span class="up-val">${fmtTok(p.n)}</span></div>`).join('')}</div>` : '';
-    usageBody.innerHTML = tiles + '<div class="usage-chart"><div class="u-tip hidden"></div></div>' + list;
+    const cost = usageCost && usageCost.range === usageRange ? usageCostHtml() : list;
+    usageBody.innerHTML = tiles + '<div class="usage-chart"><div class="u-tip hidden"></div></div>' + cost;
     usageBody.querySelectorAll('[data-series]').forEach(b => b.onclick = () => toggleSeries(b.dataset.series));
+    usageBody.querySelectorAll('[data-uview]').forEach(b => b.onclick = () => {
+      usageView = b.dataset.uview;
+      try { localStorage.setItem('operant.usage.view', usageView); } catch {}
+      drawUsage();
+    });
     const chart = usageBody.querySelector('.usage-chart');
     if (!total) chart.insertAdjacentHTML('afterbegin', '<div class="usage-empty">No Claude Code tokens in this range.</div>');
     else drawUsageChart(chart, d, series);
@@ -4444,7 +4494,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
-        if (tier) { w.tier = tier; setTierDot(w); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; boardChanged(); } }
+        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; boardChanged(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(suggested ? { reason: suggested.reason } : {}) };
       }
       case 'team':

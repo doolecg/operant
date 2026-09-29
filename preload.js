@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('operant', {
   usageSeries: range => ipcRenderer.invoke('usage:series', range),
   usageLimits: force => ipcRenderer.invoke('usage:limits', !!force),
   usageBreakdown: opts => ipcRenderer.invoke('usage:breakdown', opts),
+  usageTag: tag => ipcRenderer.invoke('usage:tag', tag),
   clipboardHasImage: () => ipcRenderer.invoke('clipboard:has-image'),
   pathForFile: f => webUtils.getPathForFile(f),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),

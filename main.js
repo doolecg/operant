@@ -15,6 +15,7 @@ const hub = require('./hub');
 const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
+const { readOpenCodeUsage } = require('./opencode-usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
@@ -470,7 +471,7 @@ function startControlServer() {
           const r = await forwardControl(ownerForTile(tile), cmd, args, tile, 20000);
           if (!r.ok) return reply(400, r);
           const extra = { limits: await fetchLimits() };
-          if (args.breakdown) extra.breakdown = await usage.breakdown({ days: args.days === 7 ? 7 : 1, project: r.result.project || null });
+          if (args.breakdown) extra.breakdown = await usageBreakdown({ days: args.days === 7 ? 7 : 1, project: r.result.project || null });
           return reply(200, { ok: true, result: { ...r.result, ...extra }, warn: r.warn });
         }
         // Item 35: cheap readers run a hidden child process, no tile, no forward to the renderer's
@@ -1398,7 +1399,35 @@ const usage = createUsage({
 });
 ipcMain.handle('usage:summary', () => usage.summary());
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
-ipcMain.handle('usage:breakdown', (_e, opts) => usage.breakdown(opts));
+
+
+// Item 54: which tier and task a session's tokens belong to. Persisted for a month so the cost views can
+// group by them; a Claude session is tagged by its id, an OpenCode tile by its root session (asked of opencode.js).
+const USAGE_TAGS_PATH = path.join(app.getPath('userData'), 'usage-tags.json');
+const USAGE_TAGS_KEEP = 31 * 86400e3;
+let usageTags = null;
+function loadUsageTags() {
+  if (usageTags) return usageTags;
+  try { usageTags = JSON.parse(fs.readFileSync(USAGE_TAGS_PATH, 'utf8')); } catch { usageTags = {}; }
+  for (const [k, v] of Object.entries(usageTags)) if (!(v && v.at > Date.now() - USAGE_TAGS_KEEP)) delete usageTags[k];
+  return usageTags;
+}
+ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile }) => {
+  const id = sessionId || (ptyId && opencode.rootSession(ptyId));
+  if (!id) return { ok: false };
+  loadUsageTags()[id] = { tier: tier || null, taskId: taskId ?? null, tile: tile ?? null, at: Date.now() };
+  try { fs.writeFileSync(USAGE_TAGS_PATH, JSON.stringify(usageTags)); } catch {}
+  return { ok: true };
+});
+// Claude transcripts plus OpenCode's database, tagged; days/sinceMs pick the window.
+async function usageBreakdown(opts = {}) {
+  const days = opts.days === 7 ? 7 : 1;
+  const sinceMs = +opts.sinceMs > 0 ? +opts.sinceMs : days <= 1 ? new Date().setHours(0, 0, 0, 0) : Date.now() - 7 * 86400e3;
+  const project = opts.project || null;
+  const oc = readOpenCodeUsage({ since: sinceMs, project });
+  return usage.breakdown({ days, sinceMs, project, opencode: oc, tags: loadUsageTags() });
+}
+ipcMain.handle('usage:breakdown', (_e, opts) => usageBreakdown(opts));
 
 const opencode = createOpenCode({
   sendTo, primary: agentWindow, config,

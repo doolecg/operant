@@ -191,7 +191,7 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
 - [x] **52. Review, escalation, budgets:** results wait for approval; one retry then one tier up; per-tier token
       budgets stop and escalate a worker.
 - [x] **53. Messaging (opt-in):** `operant msg <tile> "<text>"` between any agents, Claude and OpenCode included.
-- [ ] **54. Token and cost tracking:** OpenCode history from opencode.db, usage by model/tier/task/project, prices
+- [x] **54. Token and cost tracking:** OpenCode history from opencode.db, usage by model/tier/task/project, prices
       with source (unknown stays unknown), cache hit rate.
 - [ ] **55. Evals, docs, release notes:** back-to-back before/after evals when usage allows.
 
