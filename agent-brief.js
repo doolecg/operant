@@ -10,11 +10,13 @@ const path = require('path');
 const SKILL_NAME = { claude: 'operant:operant', opencode: 'operant' };
 function briefFor(agent) {
   return [
-    "You're running inside Operant, a terminal for agents; the `operant` CLI is on PATH (`operant help`).",
-    'Your live Operant context (tile, role, team, board task, memory) is in an <operant-context> block (refreshed on compact); if you have none, run `operant prime`.',
-    'Run tests, builds, installs and dev servers through `operant test`, `operant build` or `operant run "<cmd>"` then `operant wait <id> --errors` (only failures come back).',
-    'When asked to tell or ping the user when work finishes, end with `operant notify "<text>"`, not a chat message.',
-    `For parallel work, plans, questions, context and memory, use the \`${SKILL_NAME[agent] || 'operant'}\` skill.`,
+    "You're in Operant; `operant` CLI is on PATH.",
+    'Live context is in <operant-context>, else run `operant prime`.',
+    'Run tests, builds, installs, dev servers via `operant test`, `operant build`, `operant run "<cmd>"` then `operant wait <id> --errors`.',
+    'To ping the user, end with `operant notify "<text>"`.',
+    'Team mode, several parts? First send each independent, self-contained one to a worker: `operant agent --tier xsmall "<brief>"`; do the rest yourself.',
+    'Review a worker with `operant read <tile>`, `operant board`, `operant test`, then `operant task approve <id>` or `reject <id> --note "<why>"`.',
+    `More: the \`${SKILL_NAME[agent] || 'operant'}\` skill.`,
   ].join('\n');
 }
 const BRIEF = briefFor('claude');

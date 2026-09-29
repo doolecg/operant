@@ -196,7 +196,6 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
 - [x] **55. Evals, docs, release notes:** before/after on Sonnet, 13 cases x 3: pass 74% -> 95%, worker reports
       0% -> 100%, plan approval 0% -> 100%, raw long commands 0.2 -> 0 per run, cost flat; notify-when-done 33%.
 
-Later: operations (update rollback, validated backups/restore, config migrations) after 2.0.
 
 ## 2.0: the core — memory that knows when it's stale, routing from real outcomes (planned 29 Sept, after 1.19)
 
@@ -243,3 +242,32 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
       $0.090 vs $0.097/run; notify-when-done 0/3 -> 3/3; review-approve 3/3 -> 3/6 and plan-approval 3/3 -> 5/6 over
       two runs, all failures after a denied raw verification command (eval don't-ask mode); handoff 0/3 in both (the
       lead does everything itself). Follow-ups: handoff and review-approve.
+
+## 2.0.1 follow-ups (shipping in 2.1, 29 Sept)
+- [x] **66.** `operant remember` outside a project (home folder, drive root) saves to personal memory, not
+      `<home>/.operant/memory`; leads hand independent parts to a cheap tier (eval `handoff` 0/3) and always decide
+      a review (eval `review-approve` 3/6); the OpenCode eval mode stays inside its temp workspace. Evals after:
+      handoff 2/3, review-approve 3/3, negatives 6/6, dev-server and slow-suite 3/3.
+
+## 2.1: operations — updates you can undo, backups you can restore, settings that carry over (planned 29 Sept)
+Branch `dev-2.1.0`. Same rules as 2.0: one item per commit, tests with each, Sonnet builds from a spec, a live
+check in an isolated profile before release.
+
+- [ ] **67. Atomic state writes:** config.json, the board, outcomes, usage tags and memory stats are written to a
+      temp file and renamed, so a crash or power cut mid-write never leaves a half file; a file that doesn't parse
+      is kept as `.broken` (as config already is) and the last good backup is offered.
+- [ ] **68. Operant's own backups:** a snapshot of Operant's state (config, personal memory, board, usage tags,
+      outcomes, memory stats) into userData/backups/<time>/ with a manifest of sha256 per file, read back and
+      checked after writing. Daily and before every update; keeps the last 10 plus one a day for a week. Settings ›
+      Backups lists them with *Back up now* and *Restore*; a restore takes a safety backup first.
+- [ ] **69. Updates you can undo:** before installing, a backup (item 68); the download is checked against the
+      release asset's size and its sha256 digest from GitHub when the API gives one (recorded either way); an update
+      history (from, to, when, result) in userData shown in the About/update panel. The new version marks itself
+      healthy once its window has loaded; if it fails to get there twice, Operant offers to reinstall the previous
+      release and restore the pre-update backup (never automatically).
+- [ ] **70. Config versions and migrations:** `configVersion` in config.json and an ordered list of migrations run
+      at load (after a backup), each tested from a fresh install, an old config and an interrupted migration; an
+      unknown future version is left untouched and read as far as possible.
+- [ ] **71. Every setting works:** a test walks every Settings control and every DEFAULT_CONFIG key: each one saves,
+      loads back, and is read somewhere outside settings/defaults (a dead setting fails the test); fix what it finds.
+- [ ] **72. 2.1 docs, release.**

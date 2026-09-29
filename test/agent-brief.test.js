@@ -17,6 +17,6 @@ test('it points at prime and the skill by the name each agent sees', () => {
   assert.match(briefFor('opencode'), /`operant` skill/);
 });
 
-test('team rules, the progress note and CodeGraph live in prime, not here', () => {
-  for (const agent of ['claude', 'opencode']) assert.doesNotMatch(briefFor(agent), /tier|progress\.md|codegraph explore/i);
+test('team tiers, the progress note and CodeGraph live in prime, not here', () => {
+  for (const agent of ['claude', 'opencode']) assert.doesNotMatch(briefFor(agent), /progress\.md|codegraph explore/i);
 });
