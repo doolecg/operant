@@ -144,3 +144,9 @@ test('all or nothing: one bad key means the patch reports it and applyPatch is n
   if (!errs.length) applyPatch(user, { fontSize: 16 }, DEF);
   assert.deepStrictEqual(user, { fontSize: 14 });
 });
+
+test('a project agent choice must be both, claude or opencode', () => {
+  assert.deepStrictEqual(v({ projectDefaults: { '/p': { agents: 'claude' } } }), []);
+  assert.deepStrictEqual(v({ projectDefaults: { '/p': { agents: 'both' } } }), []);
+  assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agents: 'gemini' } } })), ['projectDefaults']);
+});

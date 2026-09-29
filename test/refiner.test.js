@@ -329,3 +329,16 @@ test('refiner prompt: ask only when it changes what gets built', () => {
   const p = R.refinerPrompt({ prompt: 'x', brief: { text: 'b' }, options: R.buildOptions({ tiers: TIERS, maxTier: 'medium' }) });
   assert.match(p, /only when the ambiguity changes what gets built/); assert.match(p, /sensible defaults/);
 });
+
+test('item 82: the refiner only gets, and is held to, the project mode tiers', () => {
+  const tt = require('../team-tiers');
+  const kinds = { isClaude: t => t.agent === 'claude', isOpenCode: t => t.agent === 'opencode' };
+  const claude = tt.tiersForMode(TIERS, 'claude', kinds).tiers, oc = tt.tiersForMode(TIERS, 'opencode', kinds).tiers;
+  assert.ok(R.buildOptions({ tiers: claude, maxTier: 'high' }).tiers.every(o => o.agent === 'claude'));
+  assert.deepEqual(R.buildOptions({ tiers: oc, maxTier: 'high' }).tiers.map(o => o.tier), ['xsmall']);
+  assert.equal(R.buildOptions({ tiers: oc, maxTier: 'high' }).maxTier, 'high' in oc ? 'high' : 'xsmall');
+  const picked = R.checkPicks({ tasks: [task({ agent: 'opencode', model: 'opencode/big-pickle', tier: 'xsmall' })] }, { tiers: claude, maxTier: 'high' }).tasks[0];
+  assert.equal(picked.agent, 'claude');
+  const back = R.checkPicks({ tasks: [task({ tier: 'small' })] }, { tiers: oc, maxTier: 'xsmall' }).tasks[0];
+  assert.equal(back.agent, 'opencode'); assert.equal(back.tier, 'xsmall');
+});

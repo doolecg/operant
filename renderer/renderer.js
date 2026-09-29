@@ -432,6 +432,17 @@
   const defaultAgent = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
   // The team tiers for the default agent (main's team-tiers.js); OpenCode gets its own set.
   const activeTiers = () => cfg.teamTiers || cfg.team?.tiers || {};
+  // Item 82: a project can be limited to Claude only or OpenCode only. The tiers then come from main's
+  // cfg.teamModes (team-tiers.js tiersForMode), with fallbacks inside that CLI.
+  const agentMode = dir => { const m = projectDefaults(dir).agents; return m === 'claude' || m === 'opencode' ? m : 'both'; };
+  const tiersIn = dir => { const m = agentMode(dir); return m === 'both' ? activeTiers() : cfg.teamModes?.[m]?.tiers || {}; };
+  function setAgentMode(dir, mode) {
+    const all = { ...(cfg.projectDefaults || {}) }, v = { ...(all[dir] || {}) };
+    if (mode === 'both') delete v.agents; else v.agents = mode;
+    if (Object.keys(v).length) all[dir] = v; else delete all[dir];
+    setSetting('projectDefaults', all);
+  }
+  const agentKind = id => { const c = String(cfg.agents.find(a => a.id === id)?.command || '').trim().split(/\s+/)[0]; return /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(c) ? 'opencode' : /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(c) ? 'claude' : 'other'; };
   // Settings › Projects: what tiles opened in a project start with (the innermost project, if they nest).
   function projectDefaults(dir) {
     const d = cfg.projectDefaults || {};
@@ -442,14 +453,17 @@
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
   async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt, model, effort, worker } = {}) {
-    const chosen = agentId ?? projectDefaults(cwd || lastCwd).agent;
+    let chosen = agentId ?? projectDefaults(cwd || lastCwd).agent;
+    // A project set to Claude only / OpenCode only opens that CLI for a new agent tile, unless one was named.
+    const mode = kind === 'ai' && agentId == null ? agentMode(cwd || lastCwd) : 'both';
+    if (mode !== 'both' && agentKind(chosen || cfg.defaultAgent) !== mode) chosen = cfg.agents.find(a => agentKind(a.id) === mode)?.id || chosen;
     let agent = kind === 'ai' ? cfg.agents.find(a => a.id === (chosen || cfg.defaultAgent)) || defaultAgent() : null;
     if (kind === 'ai' && !agent) { toast('No agents set up. Add one in Settings › Agents.'); return; }
     // With team mode on, a new agent with no model of its own runs as the top tier (quick menu slider):
     // that tier's agent and model, or, for an agent picked by name, its highest allowed tier using the same CLI.
     if (kind === 'ai' && !model && !resume && cfg.team?.enabled) {
-      const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
-      const tier = names.slice(0, top < 0 ? names.length : top + 1).reverse().map(n => activeTiers()[n])
+      const tiers = tiersIn(cwd || lastCwd);
+      const tier = allowedTierNames(cwd || lastCwd).reverse().map(n => tiers[n])
         .find(t => t.model && (chosen ? t.agent === agent.id : cfg.agents.some(a => a.id === t.agent)));
       if (tier) { agent = cfg.agents.find(a => a.id === tier.agent); model = tier.model; effort ??= tier.effort || null; }
     }
@@ -1149,7 +1163,9 @@
       focusTile: tid => { const t = wins.get(Number(tid)); if (t?.alive) { if (t.ws !== current) switchWorkspace(t.ws); focusWin(t); } },
       autoSend: () => !!cfg.terminal?.autoSend?.[key],
       setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
-      allowedTiers: allowedTierNames,
+      allowedTiers: () => allowedTierNames(dir),
+      agentMode: () => { const m = agentMode(dir); return { mode: m, label: m === 'both' ? '' : TeamTiers.MODE_LABEL[m], empty: m !== 'both' && !Object.keys(tiersIn(dir)).length }; },
+      openProjectSettings: () => { togglePanel('settings'); Panels.showTab('Operant Terminal'); renderSettings(); },
       freeWorkers: () => Math.max(0, (cfg.team?.maxWorkers || 4) - [...wins.values()].filter(x => x.alive && x.tier).length),
       usageOf: t => { const tok = wins.get(t.owner)?.tok; return { tokens: addTok(t.tokens, tok), free: tok ? !!tok.free : !!t.free, model: t.model || null, escalated: (t.escalations || 0) > 0, segments: [...(t.segments || []), ...(tok ? [{ model: t.model || null, tokens: addTok(null, tok) }] : [])] }; },
       message: (tid, text) => runControl('followup', { id: tid, text }, null),
@@ -1205,7 +1221,13 @@
   // to a new worker one tier up. At the top allowed tier the task fails and the user is told.
   const reportLine = id => `when done, report in at most 100 words: operant task done ${id} --status done|blocked|failed --note '<files changed, one line each; open issues>'`;
   const oneLine = s => String(s).replace(/["\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const allowedTierNames = () => { const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team?.maxTier); return top < 0 ? names : names.slice(0, top + 1); };
+  // Tier names a project may use, up to the top tier allowed (by slot order, since a mode can drop slots).
+  const allowedTierNames = dir => {
+    const names = Object.keys(tiersIn(dir));
+    if (agentMode(dir) === 'both') { const top = names.indexOf(cfg.team?.maxTier); return top < 0 ? names : names.slice(0, top + 1); }
+    const order = Object.keys(cfg.team?.tiers || {}), top = order.indexOf(cfg.team?.maxTier);
+    return top < 0 ? names : names.filter(n => order.indexOf(n) <= top);
+  };
   const openTaskOf = w => board.tasks.find(t => t.owner === w.id && Board.isOpen(t));
   // Cost views group tokens by tier and task: tag the worker's session (Claude: its id; OpenCode: its root
   // session, known once the first message starts, so opencode:busy retries a tag that came too early).
@@ -1223,8 +1245,8 @@
   };
 
   async function startWorker(t, tier) {
-    const conf = activeTiers()[tier];
-    if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
+    const conf = tiersIn(t.cwd || lastCwd)[tier];
+    if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (agentMode(t.cwd || lastCwd) === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[agentMode(t.cwd || lastCwd)]})`));
     // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
     // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
     const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''} — ${reportLine(t.id)}`;
@@ -1263,7 +1285,7 @@
 
   // Moves the task to a fresh worker one tier up, or fails it at the top.
   async function escalateTask(t, why) {
-    const next = Board.escalation(t, allowedTierNames(), cfg.team?.maxTier);
+    const next = Board.escalation(t, allowedTierNames(t.cwd || lastCwd), cfg.team?.maxTier);
     if (!next) { failTask(t, `${why} (top tier ${t.tier} reached)`); return; }
     const old = wins.get(t.owner);
     t.failure = Board.failureNote(t, why);
@@ -2780,6 +2802,7 @@
         return;
       }
       onTeamTiers(c?.teamTiers);
+      if (c?.teamModes) cfg.teamModes = c.teamModes;
       for (const k of Object.keys(sent)) if (!(k in pending) && c && k in c) cfg[k] = c[k];
     });
   }
@@ -3853,6 +3876,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       copy,
       '-',
       ...grouping,
+      ...(pinned ? ['-', ...['both', 'claude', 'opencode'].map(m => [projectDefaults(p).agents === m || (m === 'both' && !projectDefaults(p).agents) ? '●' : '○', `Agents: ${TeamTiers.MODE_LABEL[m]}`, () => setAgentMode(p, m)])] : []),
       ...(pinned ? [['⚙', 'Project defaults…', () => { togglePanel('settings'); Panels.showTab('Projects'); renderSettings(); }]] : []),
       pinned ? ['✕', 'Remove from projects', () => unpinProject(p)] : ['◈', 'Pin as project', () => pinProject(p)],
     ]);
@@ -4329,6 +4353,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     if (openPanel() === 'quickmenu') drawTeamSliders();
   }
   operant.on('team:tiers', onTeamTiers);
+  operant.on('team:modes', m => { if (m) cfg.teamModes = m; });
   // A setting changed in another Operant window.
   operant.on('config:changed', c => {
     Object.assign(cfg, c);
@@ -4570,13 +4595,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   }
 
   // `operant team` and the team part of `operant prime`: the tiers up to the slider's top tier.
-  function teamInfo() {
+  function teamInfo(dir) {
     const team = cfg.team || {};
     if (!team.enabled) return { enabled: false };
     const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
-    const names = Object.keys(activeTiers()), top = names.indexOf(team.maxTier);
-    const tiers = top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]]));
-    return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers };
+    const all = tiersIn(dir), tiers = Object.fromEntries(allowedTierNames(dir).map(n => [n, all[n]]));
+    const mode = agentMode(dir);
+    return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers, ...(mode !== 'both' ? { agents: TeamTiers.MODE_LABEL[mode] } : {}) };
   }
 
   const MESSAGING_OFF = 'messaging is off - turn it on in Settings › Agents › Team (Let agents message each other)';
@@ -4653,10 +4678,19 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!args.prompt) throw new Error('prompt required');
         let agentId = args.agent, model = args.model, effort = args.effort ? String(args.effort) : null, tier = null, suggested = null;
         const fromTerminal = args.source === 'terminal';
-        // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt.
-        if (!args.tier && !args.agent && !args.model && cfg.team?.enabled) {
-          const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
-          const capped = top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]]));
+        // Item 82: the project's agent choice. An explicit --agent/--model/--tier for the other CLI is an error.
+        const dir = args.cwd || self?.cwd || lastCwd, mode = agentMode(dir), mtiers = tiersIn(dir);
+        if (mode !== 'both') {
+          const conflict = (args.agent && TeamTiers.modeConflict(mode, `agent "${args.agent}"`, agentKind(args.agent)))
+            || (args.model && TeamTiers.modeConflict(mode, `model "${args.model}"`, /^claude/i.test(args.model) ? 'claude' : /\//.test(args.model) ? 'opencode' : 'other'))
+            || (args.tier && !mtiers[args.tier] && activeTiers()[args.tier] && TeamTiers.modeConflict(mode, `tier "${args.tier}"`, agentKind(activeTiers()[args.tier].agent)));
+          if (conflict) throw new Error(conflict);
+          if (!Object.keys(mtiers).length) throw new Error(`this project is set to ${TeamTiers.MODE_LABEL[mode]}, but no tier for it can run right now - change it in the project's sidebar menu (Agents) or Settings › Operant Terminal`);
+        }
+        // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt. A project limited to one CLI always routes within its tiers.
+        if (!args.tier && !args.agent && !args.model && (cfg.team?.enabled || mode !== 'both')) {
+          const capped = Object.fromEntries(allowedTierNames(dir).map(n => [n, mtiers[n]]));
+          if (!Object.keys(capped).length) throw new Error('no worker tiers are set up - set them up in Settings › Agents › Team');
           const fallback = TeamTiers.suggestTier(args.prompt, capped);
           const key = 'operant.route.' + TaskType.classifyTask(args.prompt);
           let counter = 0;
@@ -4667,16 +4701,16 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         // The Operant Terminal's tasks always get a tier (the cards need the board task): the one matching its agent and model, else the cheapest allowed.
         let wantTier = args.tier || suggested?.tier;
         if (!wantTier && fromTerminal) {
-          const all = activeTiers(), names = allowedTierNames();
+          const all = mtiers, names = allowedTierNames(dir);
           wantTier = names.find(n => all[n].agent === args.agent && (!args.model || all[n].model === args.model)) || names[0];
           if (!wantTier) throw new Error('no worker tiers are set up - set them up in Settings › Agents › Team');
         }
         if (wantTier) {
           tier = String(wantTier);
-          const t = activeTiers()[tier];
-          if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
-          const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
-          if (top >= 0 && names.indexOf(tier) > top) throw new Error(`tier "${tier}" is above the top tier allowed (${cfg.team.maxTier}) - use --tier ${names.slice(0, top + 1).join(' or ')}`);
+          const t = mtiers[tier];
+          if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (mode === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[mode]}: ${Object.keys(mtiers).join(', ') || 'no tiers'})`));
+          const allowed = allowedTierNames(dir);
+          if (!allowed.includes(tier)) throw new Error(`tier "${tier}" is above the top tier allowed (${cfg.team.maxTier}) - use --tier ${allowed.join(' or ')}`);
           const maxWorkers = cfg.team?.maxWorkers || 4;
           const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
           if (workers >= maxWorkers) throw new Error(`max workers already running (${maxWorkers}) - wait for one to finish`);
@@ -4703,7 +4737,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}) };
       }
       case 'team':
-        return teamInfo();
+        return teamInfo(self?.cwd || lastCwd);
       // The live context bin/operant-prime.js formats: sent by the SessionStart hook at every start
       // and compact (args.hook), and by `operant prime`. The hook path follows "Brief agents at launch".
       case 'prime': {
@@ -4718,7 +4752,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           tile: { id: self.id, kind: self.kind, title: self.title, cwd: self.cwd, project, branch: gitState.get(project)?.status?.branch, agent: self.agentId || null },
           role: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell',
           task: task ? { id: task.id, text: task.text, tier: self.tier } : null,
-          team: self.tier ? null : teamInfo(),
+          team: self.tier ? null : teamInfo(self.cwd || lastCwd),
           review: self.tier ? [] : board.tasks.filter(t => t.status === 'review').map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
           tiles: [...wins.values()].filter(w => w.alive && w.id !== self.id).map(w => ({
             id: w.id, kind: w.kind, title: w.title, busy: isWorking(w), tier: w.tier || null, taskId: w.tier ? openTask(w)?.id ?? null : null })),

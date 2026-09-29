@@ -341,7 +341,7 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       that did the task, or becomes a new task), without resending the whole history to anyone.
 - [~] **79. Settings (Settings › Terminal):** refiner provider and model, auto-send, max workers per request,
       show savings, where it opens. All real, saved, validated (84B-84E).
-- [ ] **82. Per-project agent choice (asked 29 Sept):** each project can be set to Claude and OpenCode (default), Claude
+- [x] **82. Per-project agent choice (asked 29 Sept):** each project can be set to Claude and OpenCode (default), Claude
       only, or OpenCode only, from the project's menu in the sidebar and Settings › Operant Terminal. It limits
       everything for that project: the tiers the refiner may pick from, routing and escalation (tier fallbacks stay
       inside that CLI, e.g. Claude only = Haiku -> Sonnet -> Opus; OpenCode only = its free and paid models), worker

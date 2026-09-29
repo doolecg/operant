@@ -267,6 +267,10 @@ const Panels = (() => {
       + (local ? row('Local URL', 'The server address, e.g. http://localhost:11434', `<input type="text" data-ot="localUrl" value="${esc(t.localUrl)}" placeholder="http://localhost:11434" spellcheck="false">`)
         + row('Local model', 'The model name that server knows', `<input type="text" data-ot="localModel" value="${esc(t.localModel)}" spellcheck="false">`) : '')
       + row('Most tasks per request', 'A request is split into at most this many tasks (1-8)', `<input type="number" data-ot-num="maxTasks" min="1" max="8" value="${t.maxTasks}">`)
+      + `<div class="pane-title">Agents per project</div>`
+      + (pinned(cfg).length ? pinned(cfg).map(p => row(esc(p.split(/[\\/]/).filter(Boolean).pop() || p), esc(p),
+        `<select data-ot-mode="${esc(p)}">${[['both', 'Claude and OpenCode'], ['claude', 'Claude only'], ['opencode', 'OpenCode only']].map(([v, n]) => `<option value="${v}"${v === (cfg.projectDefaults?.[p]?.agents || 'both') ? ' selected' : ''}>${n}</option>`).join('')}</select>`)).join('')
+        : row('No projects', 'Pin a project in the sidebar to limit it to Claude or OpenCode', ''))
       + `<div class="pane-title">Send without review</div>`
       + (auto.length ? auto.map(([k]) => row(esc(k), '', `<button class="btn" data-ot-rm="${esc(k)}">Remove</button>`)).join('')
         : row('No projects', 'Turn on Auto-send in an Operant Terminal and it shows here', ''));
@@ -630,6 +634,13 @@ const Panels = (() => {
       pane.querySelectorAll('[data-messaging]').forEach(b => b.onclick = () => { set('messaging', !cfg.messaging); draw(); });
       const setTerm = patch => set('terminal', { ...(cfg.terminal || {}), ...patch });
       pane.querySelectorAll('[data-ot]').forEach(el => el.onchange = () => { setTerm({ [el.dataset.ot]: el.value.trim() }); draw(); });
+      pane.querySelectorAll('[data-ot-mode]').forEach(el => el.onchange = () => {
+        const p = el.dataset.otMode, all = { ...(cfg.projectDefaults || {}) }, v = { ...(all[p] || {}) };
+        if (el.value === 'both') delete v.agents; else v.agents = el.value;
+        if (Object.keys(v).length) all[p] = v; else delete all[p];
+        set('projectDefaults', all);
+        draw();
+      });
       pane.querySelectorAll('[data-ot-num]').forEach(el => el.onchange = () => {
         const n = Math.min(8, Math.max(1, Math.round(+el.value || 4)));
         el.value = n; setTerm({ [el.dataset.otNum]: n });

@@ -348,7 +348,10 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
 let ocModels = null;
 // cliInstalled (agent id -> found on PATH) is filled in by scanInstalled; unknown counts as installed.
 let cliInstalled = {};
-const withTiers = c => ({ ...c, teamTiers: teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }) });
+const withTiers = c => ({ ...c, teamTiers: teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }),
+  // Per-project agent choice: the tiers left when a project is Claude only or OpenCode only (team-tiers.js tiersForMode).
+  teamModes: teamTiers.tiersByMode({ base: c.team?.tiers || {}, agents: c.agents, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }) });
+const refreshTiers = () => { const t = withTiers(config); config.teamTiers = t.teamTiers; config.teamModes = t.teamModes; broadcast('team:tiers', t.teamTiers); broadcast('team:modes', t.teamModes); };
 // Codex and Gemini CLI are no longer built in: drop them from a saved agents list.
 const dropRemoved = u => {
   if (!Array.isArray(u.agents)) return u;
@@ -617,8 +620,7 @@ async function scanOpencodeModels() {
   const r = await run(await resolveExe(String(agent.command).trim().split(/\s+/)[0]), ['models', '--verbose'], { env: await withFreshPath({ ...process.env }) });
   if (r.code !== 0) { logLine('opencode models failed: ' + (r.stderr || r.code)); return; }
   ocModels = teamTiers.parseModels(r.stdout);
-  config.teamTiers = withTiers(config).teamTiers;
-  broadcast('team:tiers', config.teamTiers);
+  refreshTiers();
 }
 
 // Which agent CLIs are on PATH, for the team tiers' fallbacks; refreshed with each model scan.
@@ -632,7 +634,7 @@ async function scanInstalled() {
   }));
   const changed = JSON.stringify(found) !== JSON.stringify(cliInstalled);
   cliInstalled = found;
-  if (changed) { config.teamTiers = withTiers(config).teamTiers; broadcast('team:tiers', config.teamTiers); }
+  if (changed) refreshTiers();
 }
 
 // execFile('opencode', ...) with a `cwd` option set fails ENOENT on Windows for PATH-only (shim)
@@ -862,6 +864,8 @@ ipcMain.handle('editor:name', async () => { const c = await editorCommand(); ret
 const projectOf = dir => Object.keys(config.projectDefaults || {})
   .filter(p => { const a = path.resolve(dir).toLowerCase(), b = path.resolve(p).toLowerCase(); return a === b || a.startsWith(b.replace(/[\\/]$/, '') + path.sep); })
   .sort((a, b) => b.length - a.length)[0];
+// Item 82: a project's agent choice (both | claude | opencode).
+const agentModeOf = dir => { const m = dir ? config.projectDefaults?.[projectOf(dir)]?.agents : null; return m === 'claude' || m === 'opencode' ? m : 'both'; };
 
 ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit, tileId, prompt, model, effort, worker }) => {
   await controlReady;
@@ -1664,14 +1668,20 @@ async function refinerInputs(cwd) {
 ipcMain.handle('terminal:refine', async (_e, { project, prompt } = {}) => {
   const cwd = typeof project === 'string' ? project : project?.cwd;
   const team = config.team || DEFAULT_CONFIG.team;
+  const mode = agentModeOf(cwd), modeTiers = mode === 'both' ? null : config.teamModes?.[mode];
+  if (modeTiers?.empty) return { requestId: null, original: String(prompt ?? ''), refined: null, tasks: [], brief: { tokens: 0 }, mode, noTiers: true, refiner: { provider: config.terminal?.refiner, model: '', tokens: { input: null, output: null }, ms: 0, usd: null }, error: `This project is set to ${teamTiers.MODE_LABEL[mode]}, but ${mode === 'claude' ? 'Claude Code' : 'OpenCode'} has no tier that can run right now.` };
   const exe = async () => resolveExe(String((config.agents.find(a => isOpenCode(a)) || { command: 'opencode' }).command).trim().split(/\s+/)[0]);
   try {
-    return await refiner.refine({
+    const res = await refiner.refine({
       project: cwd, prompt, settings: config.terminal,
       deps: {
         inputs: refinerInputs,
-        tiers: () => config.teamTiers || team.tiers,
-        maxTier: () => team.maxTier,
+        tiers: () => modeTiers ? modeTiers.tiers : config.teamTiers || team.tiers,
+        maxTier: () => {
+          if (!modeTiers) return team.maxTier;
+          const order = Object.keys(team.tiers), left = order.filter(n => n in modeTiers.tiers), top = order.indexOf(team.maxTier);
+          return top < 0 ? left[left.length - 1] : left.filter(n => order.indexOf(n) <= top).pop() || left[0];
+        },
         outcomesStats: outcomeStats,
         providers: {
           opencode: async a => refiner.runOpencodeFast({ ...a, command: await exe(), env: await freshEnv() }),
@@ -1680,6 +1690,7 @@ ipcMain.handle('terminal:refine', async (_e, { project, prompt } = {}) => {
         record: entry => outcomes.appendOutcome(OUTCOMES_PATH, entry),
       },
     });
+    return { ...res, mode };
   } catch (e) { logLine(`terminal:refine failed: ${e.message || e}`); return { requestId: null, original: String(prompt ?? ''), refined: null, tasks: [], brief: { tokens: 0 }, refiner: { provider: config.terminal?.refiner, model: '', tokens: { input: null, output: null }, ms: 0, usd: null }, error: String(e.message || e) }; }
 });
 // Health view (health.js): each part of the app with a state, checked from what Operant already knows (no new probes

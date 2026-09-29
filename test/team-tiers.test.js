@@ -103,3 +103,55 @@ test('suggestTier scores, floors and defaults', () => {
   assert.equal(tt.suggestTier('rename it', { xsmall: full.xsmall, small: full.small }).tier, 'xsmall');
   assert.equal(tt.suggestTier('x '.repeat(500), { xsmall: full.xsmall, small: full.small }).tier, 'small');
 });
+
+// Item 82: per-project agent choice.
+const tierKinds = { isClaude: t => t.agent === 'claude', isOpenCode: t => t.agent === 'opencode' };
+
+test('tiersForMode: both leaves the tiers as they are', () => {
+  const r = tt.tiersForMode(full, 'both', tierKinds);
+  assert.equal(r.tiers, full); assert.deepEqual(r.removed, []); assert.equal(r.empty, false);
+  assert.equal(tt.tiersForMode(full, undefined, tierKinds).tiers, full);
+});
+
+test('tiersForMode: Claude only swaps the OpenCode slot for the next Claude tier, marked', () => {
+  const r = tt.tiersForMode(full, 'claude', tierKinds);
+  assert.deepEqual(Object.keys(r.tiers), ['xsmall', 'small', 'medium', 'high', 'max']);
+  assert.ok(Object.values(r.tiers).every(t => t.agent === 'claude'));
+  assert.equal(r.tiers.xsmall.model, 'claude-haiku-4-5');
+  assert.equal(r.tiers.xsmall.use, full.xsmall.use);
+  assert.equal(r.tiers.xsmall.fallback, 'Claude only');
+  assert.equal(r.tiers.small, full.small);
+  assert.deepEqual(r.removed, []); assert.equal(r.empty, false);
+});
+
+test('tiersForMode: OpenCode only drops Claude slots it has no tier for, never faking one', () => {
+  const r = tt.tiersForMode(full, 'opencode', tierKinds);
+  assert.deepEqual(Object.keys(r.tiers), ['xsmall']);
+  assert.deepEqual(r.removed, ['small', 'medium', 'high', 'max']);
+  assert.equal(r.empty, false);
+  const d = tt.opencodeTiers([free, openai], full, 'opencode');
+  const withPaid = tt.tiersForMode(full, 'opencode', { ...tierKinds, derived: d });
+  assert.equal(withPaid.tiers.small.model, 'openai/gpt-5.5');
+  assert.equal(withPaid.tiers.small.use, full.small.use);
+  assert.equal(withPaid.tiers.max.effort, 'xhigh');
+  assert.ok(Object.values(withPaid.tiers).every(t => t.agent === 'opencode'));
+});
+
+test('tiersForMode: OpenCode only with OpenCode not installed is empty', () => {
+  const avail = act({ claude: true, opencode: false }, null);
+  const r = tt.tiersForMode(avail, 'opencode', tierKinds);
+  assert.deepEqual(r.tiers, {}); assert.equal(r.empty, true); assert.equal(r.removed.length, 5);
+  const byMode = tt.tiersByMode({ base: full, agents, isOpenCode, isClaude, installed: { claude: true, opencode: false }, models: null });
+  assert.equal(byMode.opencode.empty, true);
+  assert.equal(byMode.claude.empty, false);
+  assert.equal(tt.tiersByMode({ base: full, agents, isOpenCode, isClaude, installed: { claude: false, opencode: true }, models: [free] }).claude.empty, true);
+});
+
+test('modeConflict: an explicit choice for the other CLI names the mode and how to change it', () => {
+  assert.equal(tt.modeConflict('both', 'agent "opencode"', 'opencode'), null);
+  assert.equal(tt.modeConflict('claude', 'agent "claude"', 'claude'), null);
+  assert.equal(tt.modeConflict('claude', 'model "x"', 'other'), null);
+  const m = tt.modeConflict('claude', 'agent "opencode"', 'opencode');
+  assert.match(m, /Claude only/); assert.match(m, /agent "opencode"/); assert.match(m, /sidebar menu/); assert.match(m, /Settings/);
+  assert.match(tt.modeConflict('opencode', 'tier "small"', 'claude'), /OpenCode only.*Claude/);
+});

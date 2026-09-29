@@ -78,3 +78,11 @@ test('unreportedChange: changes since the task started are handed back, none is 
   assert.match(b.unreportedChange(before, { head: 'a1', status: '?? y.js\n', stat: '' }).note, /1 file with uncommitted changes/);
   assert.equal(b.unreportedChange(before, { head: 'b2', status: '' }).changed, true);
 });
+
+test('escalation only reaches tiers the project mode allows', () => {
+  const claudeOnly = ['xsmall', 'small', 'high'];
+  assert.equal(b.escalation(mk({ tier: 'small' }), claudeOnly, 'max'), 'high');
+  assert.equal(b.escalation(mk({ tier: 'high' }), claudeOnly, 'max'), null);
+  assert.equal(b.escalation(mk({ tier: 'medium' }), claudeOnly, 'max'), null);
+  assert.equal(b.escalation(mk({ tier: 'xsmall' }), ['xsmall'], 'max'), null);
+});

@@ -81,6 +81,46 @@ function activeTiers({ team, agents, defaultAgent, isOpenCode, isClaude, models,
   return availableTiers({ base, agents, isOpenCode, isClaude, installed, models });
 }
 
+// Per-project agent choice (item 82): mode is 'both' (default), 'claude' or 'opencode'. `tiers` are the tiers that
+// can run now (availableTiers output); isClaude(tier) / isOpenCode(tier) say which CLI a tier runs on. A tier the mode
+// rules out is swapped for the nearest tier of equal or higher rank on the allowed CLI (carrying its `use` and a
+// `fallback` reason), or, for OpenCode only, OpenCode's own tier for that slot (`derived`, from opencodeTiers).
+// Nothing else is invented: a slot with no allowed tier is dropped and listed in `removed`; `empty` = nothing left.
+const AGENT_MODES = ['both', 'claude', 'opencode'];
+const MODE_LABEL = { both: 'Claude and OpenCode', claude: 'Claude only', opencode: 'OpenCode only' };
+function tiersForMode(tiers, mode, { isClaude, isOpenCode, derived } = {}) {
+  const names = Object.keys(tiers || {});
+  if (mode !== 'claude' && mode !== 'opencode') return { tiers: tiers || {}, removed: [], empty: !names.length };
+  const kind = t => (isOpenCode?.(t) ? 'opencode' : isClaude?.(t) ? 'claude' : 'other');
+  const out = {}, removed = [];
+  names.forEach((name, i) => {
+    const t = tiers[name];
+    if (kind(t) === mode) { out[name] = t; return; }
+    const sub = (mode === 'opencode' && derived?.[name] && kind(derived[name]) === 'opencode' ? derived[name] : null)
+      || names.slice(i).map(n => tiers[n]).find(c => kind(c) === mode);
+    if (sub) out[name] = { ...sub, use: t.use, fallback: MODE_LABEL[mode] };
+    else removed.push(name);
+  });
+  return { tiers: out, removed, empty: !Object.keys(out).length };
+}
+
+// `operant agent --agent/--model/--tier` that names the other CLI than the project's mode allows -> the error text, else null.
+// kind: 'claude' | 'opencode' | 'other' for what was named.
+function modeConflict(mode, what, kind) {
+  if ((mode !== 'claude' && mode !== 'opencode') || kind === mode || (kind !== 'claude' && kind !== 'opencode')) return null;
+  return `this project is set to ${MODE_LABEL[mode]}, and ${what} runs on ${kind === 'claude' ? 'Claude' : 'OpenCode'} - change it in the project's sidebar menu (Agents) or Settings › Operant Terminal`;
+}
+
+// The tiers for each single-CLI mode, from the configured tiers (not the default agent's set), for main to keep in config.
+function tiersByMode({ base, agents, isOpenCode, isClaude, installed, models }) {
+  const avail = availableTiers({ base, agents, isOpenCode, isClaude, installed, models });
+  const agentOf = t => (agents || []).find(a => a.id === t.agent);
+  const kinds = { isOpenCode: t => { const a = agentOf(t); return !!a && isOpenCode(a); }, isClaude: t => { const a = agentOf(t); return !!a && !!isClaude && isClaude(a); } };
+  const oc = (agents || []).find(a => isOpenCode(a) && installed?.[a.id] !== false);
+  const derived = oc && models?.length ? opencodeTiers(models, base, oc.id) : null;
+  return { claude: tiersForMode(avail, 'claude', kinds), opencode: tiersForMode(avail, 'opencode', { ...kinds, derived }) };
+}
+
 // `agent` entries for OpenCode's config: each OpenCode-run tier becomes a `tier-<name>` subagent
 // the lead can hand work to. isOc(agentId) says whether a tier's agent is OpenCode.
 function opencodeSubagents(tiers, isOc) {
@@ -119,6 +159,6 @@ function suggestTier(prompt, tiers) {
   return { tier: names[idx], reason };
 }
 
-const api = { parseModels, reasoningModel, opencodeTiers, availableTiers, activeTiers, opencodeSubagents, mergeSubagents, suggestTier, FREE_MODEL };
+const api = { parseModels, reasoningModel, opencodeTiers, availableTiers, activeTiers, opencodeSubagents, mergeSubagents, suggestTier, tiersForMode, modeConflict, tiersByMode, AGENT_MODES, MODE_LABEL, FREE_MODEL };
   if (typeof module !== 'undefined') module.exports = api; else globalThis.TeamTiers = api;
 })();

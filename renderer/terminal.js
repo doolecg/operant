@@ -73,8 +73,15 @@ const OperantTerminal = (() => {
       cleaned: typeof r.refined === 'string' && r.refined.trim() ? r.refined : null,
       question: typeof r.question === 'string' && r.question.trim() ? r.question.trim() : null, summary: r.summary || '',
       tasks: tasks.map(t => ({ ...t, title: t.title || clip(t.prompt || prompt, 60), prompt: t.prompt || prompt })),
-      refiner: r.refiner || null, brief: r.brief || null, error: r.error || error || null,
+      refiner: r.refiner || null, brief: r.brief || null, error: r.error || error || null, mode: r.mode || null, noTiers: !!r.noTiers,
     };
+  }
+  // Item 82: what the review says about the project's agent choice ('claude' | 'opencode' | else nothing), and a note when the refiner
+  // itself is OpenCode while the project is Claude only (the refiner keeps its own setting).
+  const MODE_NAMES = { claude: 'Claude only', opencode: 'OpenCode only' };
+  function modeNote(mode, refinerProvider) {
+    if (!MODE_NAMES[mode]) return { label: '', note: '' };
+    return { label: MODE_NAMES[mode], note: mode === 'claude' && refinerProvider === 'opencode' ? 'The refiner itself runs on OpenCode (its own setting in Settings › Operant Terminal); only the tasks stay on Claude.' : '' };
   }
   // Board status -> [label, look].
   const STATUS = { todo: ['Queued', 'wait'], doing: ['Working', 'run'], verifying: ['Running checks', 'run'], review: ['Ready for review', 'ok'],
@@ -420,7 +427,9 @@ const OperantTerminal = (() => {
       const d = cleaned ? diffHtml(res.original, cleaned) : null, r = res.refiner;
       const before = estTokens(res.original), after = estTokens(cleaned || res.original);
       const rmeta = r && (r.tokens || r.provider) ? [r.provider && `${r.provider}${r.model ? ' ' + r.model : ''}`, r.tokens && `${fmtN(r.tokens.input || 0)} in / ${fmtN(r.tokens.output || 0)} out`, r.usd != null ? fmtUsd(r.usd) : r.tokens ? 'cost unknown' : null].filter(Boolean).join(' · ') : '';
-      return `<div class="ot-review" tabindex="-1"><div class="ot-rv-head"><b>Review</b><span class="ot-dim">${esc(res.summary)}</span></div>
+      const mn = modeNote(res.mode || host.agentMode?.().mode, r?.provider);
+      return `<div class="ot-review" tabindex="-1"><div class="ot-rv-head"><b>Review</b>${mn.label ? `<span class="ot-dim"> · ${esc(mn.label)} · </span>` : ''}<span class="ot-dim">${esc(res.summary)}</span></div>
+        ${mn.note ? `<div class="ot-dim ot-rv-meta">${esc(mn.note)}</div>` : ''}
         ${res.error ? `<div class="ot-bad ot-rv-err">${esc(clip(res.error, 160))}. Your prompt goes as written.</div>` : ''}
         ${d ? `<div class="ot-cols"><div><h4>Your prompt</h4><div class="ot-pre">${d.original}</div></div><div><h4>Cleaned</h4><div class="ot-pre">${d.cleaned}</div></div></div>`
           : `<div class="ot-pre">${esc(res.original)}</div>`}
@@ -447,7 +456,7 @@ const OperantTerminal = (() => {
       else if (what === 'edit') { box.value = rv.res.cleaned || rv.res.original; autosize(); box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
       else send(rv.res, what === 'original' ? 'original' : 'cleaned');
     }
-    el.addEventListener('click', e => { const b = e.target.closest('[data-r]'); if (b && st.review) reviewAct(b.dataset.r); });
+    el.addEventListener('click', e => { if (e.target.closest('[data-ot-settings]')) { e.preventDefault(); host.openProjectSettings?.(); return; } const b = e.target.closest('[data-r]'); if (b && st.review) reviewAct(b.dataset.r); });
 
     // ---- the prompt
     const tick = () => { const s = Math.round((Date.now() - st.refining.at) / 1000); status.querySelector('.ot-elapsed').textContent = s ? ` ${s}s` : ''; };
@@ -457,7 +466,15 @@ const OperantTerminal = (() => {
       statusTimer = setInterval(tick, 1000);
     }
     function hideStatus() { clearInterval(statusTimer); status.classList.add('hidden'); }
+    // A project limited to a CLI that can't run right now: say so, keep the prompt in the box, send nothing.
+    function noTiers(prompt, label) {
+      box.value = prompt; autosize();
+      log.querySelector('.ot-hello')?.remove();
+      append(`<div class="ot-msg operant"><span class="ot-who">Operant</span><div class="ot-body">This project is set to ${esc(label)}, but nothing for it can run right now (is that CLI installed?). Nothing was sent. Change it in <a href="#" data-ot-settings>Settings › Operant Terminal</a>.</div></div>`);
+    }
     async function refine(prompt) {
+      const am = host.agentMode?.();
+      if (am?.empty) return noTiers(prompt, am.label);
       const token = { at: Date.now(), prompt, cancelled: false };
       st.refining = token; showStatus();
       let res, error = null;
@@ -467,6 +484,7 @@ const OperantTerminal = (() => {
       if (token.cancelled) return;
       st.refining = null; hideStatus();
       res = normalizeResult(res, prompt, error);
+      if (res.noTiers) return noTiers(prompt, MODE_NAMES[res.mode] || 'one agent');
       line(save({ role: 'refiner', requestId: res.requestId, original: res.original, cleaned: res.cleaned, summary: res.summary, refiner: res.refiner, error: res.error, tasks: res.tasks.map(t => t.title) }));
       if (res.question) {
         st.question = { original: prompt, question: res.question };
@@ -557,7 +575,7 @@ const OperantTerminal = (() => {
     return { refresh: refreshCards, focus: () => box.focus({ preventScroll: true }), drawAuto };
   }
 
-  const api = { mount, assertTierAllowed, dispatchArgs, planDispatch, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
+  const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
   return api;
 })();
 

@@ -133,6 +133,7 @@ function validatePatch(patch, defaults, opts = {}) {
       for (const [p, d] of Object.entries(v)) {
         if (!isPlain(d)) { bad(key, 'per-project settings as objects'); break; }
         if (d.agent && d.agent !== current.projectDefaults?.[p]?.agent && !agentIds.has(d.agent)) { bad(key, 'an agent that exists', `"${d.agent}" is not one`); break; }
+        if (d.agents !== undefined && !['both', 'claude', 'opencode'].includes(d.agents)) { bad(key, 'agents as both, claude or opencode'); break; }
       }
     }
   }

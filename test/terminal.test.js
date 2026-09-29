@@ -168,3 +168,13 @@ test('segment prices add up; one unpriced segment makes the total unknown', () =
   assert.equal(T.sumSegmentUsd([{ usd: 0.5 }, { usd: null }]), null);
   assert.equal(T.sumSegmentUsd([{ usd: 0.5 }, null]), null);
 });
+
+test('modeNote: the review names the project mode and flags an OpenCode refiner on a Claude only project', () => {
+  assert.deepEqual(T.modeNote('both', 'opencode'), { label: '', note: '' });
+  assert.deepEqual(T.modeNote(undefined, 'opencode'), { label: '', note: '' });
+  assert.equal(T.modeNote('opencode', 'opencode').label, 'OpenCode only');
+  assert.equal(T.modeNote('opencode', 'opencode').note, '');
+  const c = T.modeNote('claude', 'opencode');
+  assert.equal(c.label, 'Claude only'); assert.match(c.note, /refiner itself runs on OpenCode/);
+  assert.equal(T.modeNote('claude', 'local').note, '');
+});
