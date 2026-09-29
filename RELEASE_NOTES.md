@@ -1,3 +1,29 @@
+# Operant 1.18.0
+
+Operant now runs on macOS and Linux as well as Windows, with an installer for each in every release. Every tile also gets the info bar, and tile titles no longer overlap their buttons.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-1.18.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-1.18.0-mac-arm64.dmg` (Apple Silicon) or `Operant-1.18.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-1.18.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need `sudo apt install libfuse2t64` first, `libfuse2` on 22.04) or `Operant-1.18.0-linux-amd64.deb` (`sudo apt install ./Operant-1.18.0-linux-amd64.deb`).
+
+## New
+- **macOS and Linux versions:** tiles run your own shell (zsh or bash) with the PATH your terminal has, so tools from Homebrew, nvm or `~/.local/bin` are found. Agents, subagent tiles, the `operant` command, git, viewers, notifications and updates all work as on Windows.
+- **macOS:** the window keeps its own traffic-light buttons. Cmd+C and Cmd+V copy and paste in terminals, while Ctrl+C and Ctrl+V go to the terminal (so Ctrl+V still pastes images into Claude Code). Quick open, the command palette, find and devtools use Cmd (defaults `Cmd+P`, `Cmd+Shift+P`, `Cmd+F`, `Cmd+Alt+I`). Drop a folder on the Dock icon, or open it with Operant from Finder, to open it in a tile; right-click the Dock icon for a new window. The token pill reads Claude Code's login from the Keychain, so macOS asks once.
+- **Updates on every system:** each copy downloads its own system's installer. macOS swaps the new app in place, the AppImage replaces itself, and the .deb installs through a password prompt when you click *Update*.
+- **Info bar on every tile:** viewer, image and changes tiles get the bar under the title too: the folder and branch, an image's size, file size and zoom, and the number of changed files. Pieces drop out one at a time when a tile gets narrow (⚙ Settings › Usage › *Tile info bar*).
+- **Click to bring forward:** a click or touch anywhere on an Operant window brings it to the front, including from a remote desktop app on a phone.
+
+## Changed
+- **Download names say the system:** `Operant-1.18.0-windows-x64.msi`, `-mac-arm64.dmg` and so on. Installed copies find the new names by themselves.
+- **Windows only for now:** the Explorer "Open in Operant" entry and the media controls in the top bar. Their settings are hidden on macOS and Linux.
+
+## Fixed
+- **Tile titles overlapped their buttons:** on viewer, image, changes and subagent tiles the folder was drawn over the buttons. The title now shortens before the buttons, and the folder moved to the info bar.
+- **OpenCode tiles lost prompts that named code:** Operant's CodeGraph context was added in a form OpenCode 1.18 rejects, so a prompt naming a real function or file never reached the agent. It now arrives with the context attached, and the context stays out of the message bubble.
+
+---
+
 # Operant 1.17.5
 
 The task board now shows a one-line summary for each task instead of the worker's whole prompt.
