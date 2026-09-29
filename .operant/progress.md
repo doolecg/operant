@@ -1,5 +1,10 @@
 # Progress
 
+Now: **2.1** on branch `dev-2.1.0` (operations: plan.md items 66-72 plus the 84D-84S list). Next: **2.2 = the Operant
+Terminal** (plan.md items 73-81 and what it needs, see "Release order (final)" at the end of plan.md). The 2.0
+specs are docs/operant-2.0-master-prompt.md (100 sections) and docs/operant-2.0-spec.md (with 84A-84S); plan.md
+maps both. Read them before planning.
+
 2.0.0 released 29 Sept (plan.md items 56–62, 65; 63/64 skipped). Follow-ups: eval cases handoff (0/3) and
 review-approve (3/6); `operant remember` in a tile at the home folder writes ~/.operant/memory. 1.19 was (main checkout, based on main = 1.18.1). Plan: `plan.md` items 46–55,
 full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old attempt kept on the local branch

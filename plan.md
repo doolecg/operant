@@ -279,6 +279,7 @@ the relevant agents, then receives the answers back of what the agents did. This
 It is the front door for the spec's core flow (first spec 90; master prompt 7/8/27/53/81): request -> refine ->
 classify -> route -> run -> verify -> report. Built into the existing tiled UI (84A), not a separate app. User decisions (29 Sept): build it as the headline of 2.2,
 after 2.1 ships; the cleaned prompt is shown for review and Enter sends it (auto-send is a per-project setting).
+What it needs from later milestones is pulled into 2.2: see "Release order (final)" at the end of this file.
 
 - [ ] **73. The Operant tile:** a new tile kind, one per project (opened from the projects sidebar, a key, or
       `operant terminal`). Looks and behaves like Claude Code: transcript above, a multi-line prompt box below,
@@ -403,7 +404,7 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
 - [ ] 93 Docs: architecture, providers, routing, memory, analytics, configuration, security, privacy,
       troubleshooting.
 
-**Order (first spec; superseded by the revised order below)**
+**Order (first spec; superseded by the final release order below)**
 - 2.1 (in progress) also takes the ops gaps: update channel and check frequency, disk-space check, backup
   location/frequency/count, backup before migration, restore validation, reset-to-default, failure tests.
 - 2.2 Measure everything: SQLite analytics (33), token economy with net savings and orchestration cost (18/19/45),
@@ -472,7 +473,7 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
 - Note: section 1 says "Do not build a dashboard around Claude/OpenCode. Build the system that coordinates them",
   so the dashboard (first spec, 84) is a window onto the analytics, not the product.
 
-**Order, revised with both specs (superseded by the order with all three documents below)**
+**Order, revised with both specs (superseded by the final release order below)**
 - 2.1 (in progress): operations, plus secure handling of credentials in config and backups, auto-update opt-in check.
 - 2.2 Measure everything: the versioned local database (26), token/cost/latency/cache events incl. Operant's own
       overhead (12/38/52), failure classification (42), stored routing decisions with evidence (27), provider and
@@ -545,27 +546,45 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
 - [~] 100 Memory conflicts: supersedes chain. Missing: detect conflicts, prefer newer verified evidence, keep the
       conflict record.
 
-**Order with all three documents**
-- 2.1: operations (84A-84S full edition, 54-57, 64), plus secrets out of logs/backups/prompts (65) and the auto-update
-      opt-in check; the 84D-84S list above (validation, effective values, restart notice, first-run detection, health
-      states, restore with health check, backup metadata, error pass, UI regression pass).
-- 2.2 Measure: versioned local database with correlation ids (26), token/cost/latency/cache events and Operant's own
-      overhead (1.2/12/38/52), failure classification (42), decision trace (83), provider health with decay (87),
-      model profiles with uncertainty (88), `operant doctor` / `stats` / `route explain` (33/34/90), dashboard +
-      health strip (first spec 84/84M).
-- 2.3 Decide and run: task classification (78), expected-utility routing (8/9) as a configurable policy engine
-      (84) with scoped overrides (85), bounded exploration (10), retries that change something (43), escalation
-      signals (44), verification by risk (22/77), budgets and guardrails for cost, latency, retries, time (23/75/76),
-      rate-limit awareness (74), concurrency limits (73), task state machine with cancellation, checkpoints and
-      idempotent retries (69-72), plan validation and clarification gate (80/82), strategy selection (79/81).
-- 2.4 Context: context engine with budgets, dedup, provenance, freshness (13/40/91-94), git awareness (39),
-      overflow recovery (20), tool-output compression with a worth check (12/19), retrieval and compression
-      evaluation (95/96), structured handoffs (41), memory linked to symbols/commits, lifecycle, provenance and
-      conflicts (45/97/98/100).
-- 2.5 Providers and safety: provider interfaces (5/6), model capability registry (86), component registry (29),
-      degradation chains (30), MCP, prompt-injection resistance (66), tool permissions (67), sandboxing (68),
-      collaboration roles (11), benchmarks by category with replay (35-37), architecture map and dependency
-      inventory (61/62), optional local model (ask first), docs.
+**Release order (final, 29 Sept: all three documents plus the Operant Terminal)**
+- 2.1 Operations (in progress): 84A-84S full edition, 54-57, 64; secrets kept out of logs, backups and prompts (65);
+      settings validation, effective values, restart notices and reset (84C-84E); first-run / upgrade / recovery
+      detection (84O); restore that migrates, validates and health-checks (84M/84N); backup metadata (84L); the
+      status and health strip with real states (84P); actionable errors (84Q); auto-update opt-in check (55); a UI
+      regression pass and live test before release (84S).
+- 2.2 The Operant Terminal (items 73-81) and what it needs to work properly, pulled forward from later milestones:
+    - a small provider seam for the refiner and utility calls: OpenCode free model, a local OpenAI-compatible URL,
+      later Gemma (5/6/17, item 80 asks first);
+    - task classification by type, complexity, risk, likely files and verification need (78/39), so the refiner's
+      split and routing agree;
+    - structured routing explanations shared by the CLI and the Terminal cards (27/90) and a stored decision trace
+      (83) with correlation ids linking request -> refined prompt -> tasks -> workers -> results;
+    - honest accounting for the Terminal: refiner tokens as orchestration cost, gross vs net savings, cache-aware
+      cost (1.2/12/19/38/45) - kept in the outcomes/usage files for now, moved into the database in 2.3;
+    - a project brief for the refiner from project knowledge (60) and git state (39): branch, changed files, recent
+      commits, known commands, top memory facts;
+    - prompt-injection and secret safety for the refiner path (65/66): the brief is data, not instructions; no keys
+      or tokens in what's sent;
+    - structured handoffs for follow-ups (41): a follow-up carries task state, decisions and files, not the whole
+      conversation;
+    - clarification gate (82): the refiner can come back with one question instead of guessing;
+    - evals for the refiner (does it keep success while cutting tokens, net of its own cost).
+- 2.3 Measure and decide: versioned local database with migrations and retention (26/84N), token/latency/failure
+      events incl. Operant's own overhead (12/52), failure classification (42), provider health with decay (87),
+      model profiles per task type and project with uncertainty (88/9), expected-utility routing as a configurable
+      policy engine with scoped overrides (8/84/85), risk-bounded exploration (10), retries that change something
+      (43), escalation/downgrade signals (44), verification by risk (22/77), budgets and guardrails for cost, time,
+      retries, latency (23/75/76), rate limits (74), concurrency limits (73), task state machine with cancellation,
+      checkpoints and idempotent retries (69-72), plan validation and strategy selection (79-81), `operant doctor` /
+      `stats` / `route explain` (33/34), and the analytics dashboard (first spec 84), whose numbers also show in
+      the Terminal.
+- 2.4 Context: context engine with budgets, dedup, provenance, freshness (13/40/91-94), overflow recovery (20),
+      tool-output compression with a worth check (19/31/32), retrieval and compression evaluation (95/96), memory
+      linked to symbols and commits, lifecycle, provenance and conflicts (45/97/98/100).
+- 2.5 Providers and safety: full provider interfaces and capability routing (5/6/56, item 63), model capability
+      registry (86), component registry (29), degradation chains (30), MCP (57), tool permissions and sandboxing
+      (67/68), collaboration roles incl. planner -> implementer and implementer -> reviewer, run from the Terminal
+      (11), benchmarks by category with replay (35-37), architecture map and dependency inventory (61/62), docs (93).
 
 **UI and operations, full edition (84A-84S of `docs/operant-2.0-spec.md`, uploaded 29 Sept) - what it adds for 2.1**
 - [~] 84D Settings show the current effective value, apply at the right time, and never look live when they need a
