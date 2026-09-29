@@ -21,7 +21,7 @@ const OC_SOURCE = 'OpenCode recorded cost';
 
 // "anthropic/claude-opus-4.8[1m]", "anthropic.claude-haiku-4-5-20251001" -> "claude-opus-4-8", "claude-haiku-4-5"
 const normalize = id => String(id || '').toLowerCase().replace(/\[.*\]$/, '').replace(/^.*[/]/, '').replace(/^anthropic\./, '').replace(/\./g, '-').replace(/-\d{8}$/, '');
-const isFreeModel = id => { const n = normalize(id); return n === 'big-pickle' || /-free$/.test(n); };
+const isFreeModel = id => { const n = normalize(id); return n === 'big-pickle' || /-free$/.test(n) || /^ollama\//i.test(String(id || '')); };
 
 function tableRow(model) {
   const n = normalize(model);

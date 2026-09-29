@@ -4,7 +4,7 @@
 // Node built-ins only, no deps, must start fast.
 
 const POSITIONAL = {
-  view: ['path'], edit: ['path'], open: ['target'], diff: ['dir'], terminal: ['dir'], usage: [], compact: [],
+  view: ['path'], edit: ['path'], open: ['target'], diff: ['dir'], usage: [], compact: [],
   run: ['command'], agent: ['prompt'], notify: ['text'], title: ['text'],
   test: ['command'], build: ['command'],
   ask: ['question'], ws: ['index'],
@@ -37,10 +37,9 @@ const COMMANDS = {
   view: { group: 'files', usage: 'operant view <path> [--focus]', desc: 'open a viewer tile (Markdown/code/images)', examples: ['operant view plan.md'], flags: ['focus'] },
   edit: { group: 'files', usage: 'operant edit <path> [--focus]', desc: 'open an editor tile', examples: ['operant edit foo.js'], flags: ['focus'] },
   diff: { group: 'files', usage: 'operant diff [dir] [--focus]', desc: 'open a changes tile', examples: ['operant diff'], flags: ['focus'] },
-  terminal: { group: 'files', usage: 'operant terminal [dir] [--focus]', desc: "open the Operant Terminal (the prompt box that plans and dispatches work) for a project", examples: ['operant terminal'], flags: ['focus'] },
   open: { group: 'files', usage: 'operant open <target>', desc: 'open a file/folder/URL', examples: ['operant open report.pdf'], flags: [] },
 
-  run: { group: 'terminals', usage: 'operant run <command...> [--title t] [--cwd c] [--focus]', desc: 'run a command in a new tile, stays open', examples: ['operant run "npm run dev" --title dev'], flags: ['title', 'cwd', 'focus'] },
+  run: { group: 'terminals', usage: 'operant run <command...> [--title t] [--cwd c] [--focus] [--background [--inline]]', desc: 'run a command in a new tile, stays open (--background: detached, output in the Basement page; --inline: with it, answers at once when it finishes within a few seconds, else waits for its errors)', examples: ['operant run "npm run dev" --title dev', 'operant run "npm test" --background --inline'], flags: ['title', 'cwd', 'focus', 'background', 'inline'] },
   test: { group: 'terminals', usage: 'operant test [command...] [--cwd c] [--idle s] [--timeout s] [--title t] [--focus] [--json]', desc: 'run tests in a new tile (auto-detected if no command), wait, return a runner/summary/failures digest', examples: ['operant test', 'operant test "pytest -k foo"'], flags: ['cwd', 'idle', 'timeout', 'title', 'focus'] },
   build: { group: 'terminals', usage: 'operant build [command...] [--cwd c] [--idle s] [--timeout s] [--title t] [--focus] [--json]', desc: 'like test, for a build/compile command', examples: ['operant build', 'operant build "cargo build --release"'], flags: ['cwd', 'idle', 'timeout', 'title', 'focus'] },
   read: { group: 'terminals', usage: 'operant read <id> [--lines n] [--new] [--errors] [--grep p] [--digest]', desc: "a tile's terminal output", examples: ['operant read 7 --errors', 'operant read 7 --digest'], flags: ['lines', 'new', 'errors', 'grep', 'digest'] },
@@ -438,9 +437,9 @@ function formatResult(cmd, result) {
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
     case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}${result.tokens ? '  ' + result.tokens + ' tokens' : ''}`;
-    case 'view': case 'edit': case 'diff': case 'terminal': return `tile ${result.id}`;
+    case 'view': case 'edit': case 'diff': return `tile ${result.id}`;
     // A bare "tile 12" was once read as "the tests passed": say it only started, and how to get the outcome.
-    case 'run': return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
+    case 'run': if (result.text) return result.text; return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
     case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', ' + (result.basis || 'suggested') + ': ' + result.reason : ''}]  task ${result.taskId}` : '');
     case 'summarize': case 'find': return result.text || '(no answer)';
     case 'msg': return result.delivered ? `delivered to tile ${result.to}` : `queued for tile ${result.to} (${result.queued} waiting); it gets it when it is between steps`;
@@ -560,9 +559,12 @@ async function main() {
     process.exit(2);
   }
 
-  const { cmd, positionals, flags } = r;
+  const { positionals, flags } = r;
+  let cmd = r.cmd;
   const args = buildArgs(cmd, positionals, flags);
   const asJson = !!flags.json;
+  // A Basement task runs in the folder the agent is in.
+  if (cmd === 'run' && args.background && args.cwd == null) args.cwd = process.cwd();
 
   // Item 33 guardrail: a tile opened as a team worker (env set in main.js's pty:create) can't start
   // its own workers - checked here, before any request, since it's this process's own env.
@@ -588,6 +590,10 @@ async function main() {
 
   let body;
   try { body = JSON.parse(res.text); } catch { body = null; }
+  // --inline: not finished within the threshold, so it now lives in the Basement: wait for its errors only.
+  if (cmd === 'run' && body && body.ok !== false && body.result && body.result.handedOver) {
+    try { res = await post(api, { cmd: 'wait', args: { id: body.result.id, errors: true }, tile: process.env.OPERANT_TILE }); body = JSON.parse(res.text); cmd = 'wait'; } catch { body = null; }
+  }
 
   if (body && body.warn) console.error(body.warn);
 

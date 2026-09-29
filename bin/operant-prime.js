@@ -75,7 +75,7 @@ function teamBlock(d) {
   const rows = names.map(n => {
     const t = team.tiers[n] || {};
     const model = `${t.agent || ''} ${t.model || ''}${t.effort ? ` (${t.effort} effort)` : ''}`.trim();
-    return `  ${n.padEnd(width)}  ${model}${t.use ? ` - ${clean(t.use)}` : ''}`;
+    return `  ${n.padEnd(width)}  ${model}${t.active && !/^Big Pickle/.test(t.active) ? ` [now ${clean(t.active)}: ${clean(t.fallback || '')}]` : ''}${t.use ? ` - ${clean(t.use)}` : ''}`;
   });
   const own = d.tile?.agent === 'claude' ? ' (Claude Code: the Agent tool with `model` set to the tier model\'s alias, e.g. sonnet or opus)' : '';
   return [`Team mode is on (${team.workers || 0}/${team.maxWorkers || 4} workers running). Tiers you may use, cheapest first:`,

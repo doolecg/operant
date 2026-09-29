@@ -6,6 +6,12 @@ const MIGRATIONS = [
   // Template: version 1 only establishes the version number, it changes nothing. A later one looks like
   //   { to: 2, run(user) { if ('oldKey' in user) { user.newKey ??= user.oldKey; delete user.oldKey; } } },
   { to: 1, run() {} },
+  // The Operant Terminal is gone: drop its settings, and a default agent of 'operant' goes back to the first agent.
+  { to: 2, run(user) {
+    delete user.terminal;
+    if (user.defaultAgent === 'operant') delete user.defaultAgent;
+    for (const d of Object.values(user.projectDefaults || {})) if (d && d.agent === 'operant') delete d.agent;
+  } },
 ];
 const CURRENT = MIGRATIONS[MIGRATIONS.length - 1].to;
 
@@ -65,6 +71,7 @@ const RANGES = {
   sidebarWidth: { min: 160, max: 600, int: true, unit: 'px' },
   codegraphChangedFiles: { min: 1, max: 100000, int: true, unit: 'files' },
   updateCheckHours: { min: 0, max: 24, int: true, unit: 'hours' },
+  backgroundAfterSeconds: { min: 0, max: 600, int: true, unit: 'seconds' },
   // Token counts have no control min/max (typed as 2M or 500k), so only a sane ceiling.
   tokenBudget: { min: 0, max: 1e12, int: true, unit: 'tokens' },
   runawayTokens: { min: 0, max: 1e12, int: true, unit: 'tokens' },
@@ -87,7 +94,6 @@ const ENUMS = {
   updateChannel: ['stable', 'beta'],
   explorerOpensIn: ['tile', 'window'],
 };
-const TERMINAL_REFINERS = ['opencode', 'local', 'off'];
 const USAGE_SERIES = ['input', 'output', 'cacheWrite', 'cacheRead'];
 
 const kindOf = v => Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v;
@@ -127,7 +133,7 @@ function validatePatch(patch, defaults, opts = {}) {
       if (v.some(a => !isPlain(a) || typeof a.id !== 'string' || !a.id || typeof a.name !== 'string' || typeof a.command !== 'string' || (a.args !== undefined && !Array.isArray(a.args)))) { bad(key, 'agents with an id, name, command and argument list'); continue; }
       if (new Set(v.map(a => a.id)).size !== v.length) { bad(key, 'agents with different ids'); continue; }
     }
-    if (key === 'terminal') terminalErrors(v, (expected, sub) => bad('terminal', expected, sub));
+    if (key === 'localModel' && !(isPlain(v) && (v.model === undefined || (typeof v.model === 'string' && /^[A-Za-z0-9._\/-]+(:[A-Za-z0-9._-]+)?$/.test(v.model))))) { bad(key, 'an Ollama model name like gemma3:4b'); continue; }
     if (key === 'team') teamErrors(v, current.team || {}, agentIds, (expected, sub) => bad('team', expected, sub));
     if (key === 'projectDefaults') {
       for (const [p, d] of Object.entries(v)) {
@@ -137,25 +143,12 @@ function validatePatch(patch, defaults, opts = {}) {
       }
     }
   }
-  // Conflict: the default agent has to be one of the agents (or 'operant', the Operant Terminal), in this patch or already saved.
+  // Conflict: the default agent has to be one of the agents in this patch or already saved.
   const dAgent = typeof patch.defaultAgent === 'string' ? patch.defaultAgent : 'agents' in patch ? current.defaultAgent : null;
-  if (typeof dAgent === 'string' && dAgent !== 'operant' && agentIds.size && !agentIds.has(dAgent) && !errors.some(e => e.key === 'defaultAgent' || e.key === 'agents')) {
-    bad('defaultAgent', 'operant or one of the agents: ' + [...agentIds].join(', '), 'the agents in this change do not include it');
+  if (typeof dAgent === 'string' && agentIds.size && !agentIds.has(dAgent) && !errors.some(e => e.key === 'defaultAgent' || e.key === 'agents')) {
+    bad('defaultAgent', 'one of the agents: ' + [...agentIds].join(', '), 'the agents in this change do not include it');
   }
   return errors;
-}
-
-function terminalErrors(t, bad) {
-  if (!isPlain(t)) return bad('an object');
-  if (t.refiner !== undefined && !TERMINAL_REFINERS.includes(t.refiner)) return bad('a refiner of ' + TERMINAL_REFINERS.join(', '));
-  for (const k of ['refinerModel', 'localModel']) if (t[k] !== undefined && typeof t[k] !== 'string') return bad(`${k} as text`);
-  if (t.localUrl !== undefined) {
-    let ok = typeof t.localUrl === 'string';
-    if (ok && t.localUrl !== '') { try { ok = /^https?:$/.test(new URL(t.localUrl).protocol); } catch { ok = false; } }
-    if (!ok) return bad('the local model URL empty or like http://localhost:11434');
-  }
-  if (t.autoSend !== undefined && (!isPlain(t.autoSend) || Object.values(t.autoSend).some(x => typeof x !== 'boolean'))) return bad('auto-send as true or false per project');
-  if (t.maxTasks !== undefined && !(Number.isInteger(t.maxTasks) && t.maxTasks >= 1 && t.maxTasks <= 8)) return bad('max tasks a whole number 1-8');
 }
 
 function teamErrors(team, cur, agentIds, bad) {
@@ -178,7 +171,7 @@ function mergeUser(defaults, user, keybinds) {
     ...defaults, ...user,
     keybinds: { ...keybinds, ...(user.keybinds || {}) },
     backups: { ...defaults.backups, ...(user.backups || {}) },
-    terminal: { ...defaults.terminal, ...(user.terminal || {}) },
+    localModel: { ...defaults.localModel, ...(user.localModel || {}) },
     team: { ...defaults.team, ...(user.team || {}), tiers: { ...defaults.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...defaults.team.budgets, ...(user.team?.budgets || {}) } },
   };
 }

@@ -1,6 +1,8 @@
 // Item 37: a Claude Code PreToolUse hook that reroutes long-running shell commands
-// (test/build/install runners) through `operant test`/`operant build`/`operant run`+`wait` instead
-// of the agent's own Bash tool, so the raw output never floods the agent's context. On by default
+// (test/build/install runners) through `operant run --background --inline` instead of the agent's own
+// Bash tool, so the raw output never floods the agent's context. The command runs as a Basement task: one
+// that finishes within Settings > Agents > "Run in the Basement after" (5 s) returns its result at once,
+// a slower one is handed over to the Basement and the same call waits for its errors only. On by default
 // (Settings > Agents > "Reroute long commands"). It only rewrites the command and never approves it,
 // so the rewritten command still goes through the user's normal permission prompts; ending a command
 // with `# raw` opts out. Only rewrites when it's actually running inside an Operant tile (env
@@ -66,22 +68,14 @@ function dq(s) { return `"${String(s).replace(/(["\\$`])/g, '\\$1')}"`; }
 function sq(s) { return `'${String(s).replace(/'/g, "''")}'`; }
 
 // The rewritten command, or null if `command` isn't a long-running kind we know about (or is
-// already unsafe/already-operant, via classify). `shell` is 'bash' (default) or 'powershell' —
-// Claude Code's Windows tool is named "PowerShell", not "Bash", and the install rewrite below
-// pipes through a tiny script that only parses as one or the other.
+// already unsafe/already-operant, via classify). `shell` is 'bash' (default) or 'powershell' (the
+// quoting differs). Tests, builds and installs all go the same way: a Basement task that the app
+// waits on inline for a few seconds, then hands over and waits for the errors of (bin/operant-cli.js).
 function rewriteCommand(command, shell = 'bash') {
-  const kind = classify(command);
-  if (!kind) return null;
+  if (!classify(command)) return null;
   const cmd = String(command).trim();
   const q = shell === 'powershell' ? sq : dq;
-  if (kind === 'test') return `operant test ${q(cmd)}`;
-  if (kind === 'build') return `operant build ${q(cmd)}`;
-  // Installs: start it in its own tile, then wait for it with just the errors.
-  const title = titleFor(cmd);
-  if (shell === 'powershell') {
-    return `$id = (operant run ${q(cmd)} --title ${q(title)}) -split ' ' | Select-Object -Last 1; operant wait $id --errors`;
-  }
-  return `id=$(operant run ${q(cmd)} --title ${q(title)} | awk '{print $2}'); operant wait "$id" --errors`;
+  return `operant run ${q(cmd)} --background --inline --title ${q(titleFor(cmd))}`;
 }
 
 // The hook's JSON reply for one PreToolUse event (the parsed stdin), or null to leave the call alone.
@@ -104,8 +98,8 @@ function hookOutput(input, env = {}) {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       updatedInput: { ...toolInput, command: updated, timeout: Math.max(Number(toolInput.timeout) || 0, 600000) },
-      additionalContext: `Operant rerouted \`${command.trim()}\` to \`${updated}\`: it runs in its own tile and returns only the summary and failures. `
-        + 'Full output: `operant read <tile id>` (`operant tiles` lists them). To run a command unchanged, end it with `# raw`.',
+      additionalContext: `Operant rerouted \`${command.trim()}\` to \`${updated}\`: it runs in the Basement and returns only the summary and failing lines (a run over a few seconds is waited on for its errors). `
+        + 'To run a command unchanged, end it with `# raw`.',
     },
   };
 }
@@ -122,6 +116,109 @@ function main() {
   });
 }
 
-if (require.main === module) main();
+// Background tasks: a long command started detached, its output collected as it arrives, and only a
+// status (running / passed / failed with its exit code) surfaced. main.js owns one registry and pushes
+// summaries to the renderer's Basement page, which is the only place the retained output is shown.
+const KEEP_TASKS = 30;
+function createBackgroundTasks({ spawn, maxBytes = 256 * 1024, now = Date.now, onChange = () => {} } = {}) {
+  spawn = spawn || require('child_process').spawn;
+  const tasks = new Map();
+  let seq = 0;
+  const add = (t, text) => {
+    t.output += text;
+    if (t.output.length > maxBytes) { t.output = t.output.slice(-maxBytes); t.truncated = true; }
+  };
+  const waiters = new Map(); // task id -> callbacks for settled()
+  const finish = (t, status, exitCode) => {
+    if (t.status !== 'running') return;
+    t.status = status; t.exitCode = exitCode; t.endedAt = now();
+    onChange(t);
+    for (const w of waiters.get(t.id) || []) w();
+    waiters.delete(t.id);
+  };
+  // Resolves with the task once it has finished, or null if it is still running after `ms` (0 = at once). No task -> null.
+  function settled(id, ms) {
+    const t = tasks.get(Number(String(id).replace(/^bg/i, '')));
+    if (!t) return Promise.resolve(null);
+    if (t.status !== 'running') return Promise.resolve(t);
+    return new Promise(resolve => {
+      const cb = () => { clearTimeout(timer); resolve(t); };
+      const timer = setTimeout(() => { waiters.set(t.id, (waiters.get(t.id) || []).filter(x => x !== cb)); resolve(t.status !== 'running' ? t : null); }, Math.max(0, ms));
+      waiters.set(t.id, [...(waiters.get(t.id) || []), cb]);
+    });
+  }
+  function start(command, { cwd, title, env, shell = true } = {}) {
+    const t = { id: ++seq, title: title || titleFor(command), command: String(command), cwd: cwd || null,
+      status: 'running', exitCode: null, startedAt: now(), endedAt: null, output: '', truncated: false };
+    tasks.set(t.id, t);
+    for (const [id, old] of tasks) { if (tasks.size <= KEEP_TASKS) break; if (old.status !== 'running') tasks.delete(id); }
+    let child;
+    try {
+      child = spawn(t.command, { cwd: t.cwd || undefined, env: env || process.env, shell, windowsHide: true,
+        detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) { add(t, String(e.message || e)); finish(t, 'failed', -1); return t; }
+    const feed = d => { add(t, d.toString('utf8')); onChange(t); };
+    child.stdout && child.stdout.on('data', feed);
+    child.stderr && child.stderr.on('data', feed);
+    child.on('error', e => { add(t, String(e.message || e)); finish(t, 'failed', -1); });
+    child.on('close', (code, signal) => finish(t, code === 0 ? 'passed' : 'failed', code == null ? (signal || -1) : code));
+    if (child.unref) child.unref();
+    onChange(t);
+    return t;
+  }
+  return { start, settled, get: id => tasks.get(Number(String(id).replace(/^bg/i, ''))) || null, all: () => [...tasks.values()] };
+}
 
-module.exports = { classify, rewriteCommand, titleFor, hookOutput };
+// The status line for a task, e.g. "running", "passed", "failed (exit 1)".
+function statusText(t) {
+  if (t.status === 'running') return 'running';
+  return t.status === 'passed' ? 'passed' : `failed (exit ${t.exitCode})`;
+}
+
+// What an agent gets back from a Basement task: one status line, then only what matters. A pass is its digest
+// summary (or nothing more); a failure is the digest's failures, else the error lines, else the last few lines.
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g;
+const ERROR_RE = /\b(error|failed|failure|fatal|exception|traceback|panic|warn(ing)?|FAIL)\b|[✗✖]/i;
+function errorLines(text, max = 60) {
+  const lines = String(text || '').replace(ANSI, '').replace(/\r/g, '\n').split('\n').map(l => l.replace(/\s+$/, '')).filter(l => l.trim());
+  const keep = new Set();
+  lines.forEach((l, i) => { if (ERROR_RE.test(l)) for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 2); j++) keep.add(j); });
+  const out = [...keep].sort((a, b) => a - b).map(i => lines[i]);
+  return out.length > max ? ['... (earlier lines dropped)', ...out.slice(-max)] : out;
+}
+function taskReport(t, { errors = false, digest } = {}) {
+  const secs = Math.max(0, Math.round(((t.endedAt || Date.now()) - t.startedAt) / 1000));
+  const head = `${t.title} (bg${t.id}): ${statusText(t)}${t.status === 'running' ? ` after ${secs}s, still in the Basement` : ` in ${secs}s`}`;
+  const text = String(t.output || '').replace(ANSI, '');
+  let d = null;
+  try { d = digest ? digest(text) : null; } catch {}
+  if (t.status === 'passed' && !errors) return d ? `${head}\n${d.runner}: ${d.summary}` : head;
+  const body = [];
+  if (d) {
+    body.push(`${d.runner}: ${d.summary}`);
+    for (const f of d.failures || []) body.push(`${f.file ? f.file + (f.line ? ':' + f.line : '') : '?'}  ${f.title}${f.message ? ' - ' + String(f.message).split('\n')[0] : ''}`);
+    if (d.more) body.push(`... and ${d.more} more`);
+  } else {
+    const el = errorLines(text);
+    body.push(...(el.length ? el : t.status === 'passed' ? ['no errors or warnings'] : text.split(/\r?\n/).filter(l => l.trim()).slice(-15)));
+  }
+  return `${head}\n${body.join('\n')}`;
+}
+
+// What the Basement page draws: newest first, the running ones first of all, each row with its status
+// and duration, and the selected task (default: the first row) with its full retained output.
+function basementModel(tasks, selectedId, now = Date.now()) {
+  const list = (Array.isArray(tasks) ? tasks : []).slice().sort((a, b) =>
+    (b.status === 'running') - (a.status === 'running') || b.startedAt - a.startedAt);
+  const rows = list.map(t => ({ id: t.id, title: t.title, command: t.command, status: t.status, label: statusText(t),
+    seconds: Math.max(0, Math.round(((t.endedAt || now) - t.startedAt) / 1000)) }));
+  const sel = list.find(t => t.id === selectedId) || list[0] || null;
+  return { rows, selected: sel && { ...rows.find(r => r.id === sel.id), output: sel.output || '', truncated: !!sel.truncated },
+    running: rows.filter(r => r.status === 'running').length };
+}
+
+const api = { classify, rewriteCommand, titleFor, hookOutput, createBackgroundTasks, statusText, basementModel, taskReport, errorLines };
+if (typeof module !== 'undefined') {
+  if (require.main === module) main();
+  module.exports = { classify, rewriteCommand, titleFor, hookOutput, createBackgroundTasks, statusText, basementModel, taskReport, errorLines };
+} else if (typeof window !== 'undefined') window.OperantLongCommands = api; // loaded by the renderer for the Basement page

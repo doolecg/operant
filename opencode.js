@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const net = require('net');
 const { contextMax } = require('./usage');
+const { isFreeFailure: localFailure } = require('./local-model');
 
 const DB_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -19,7 +20,7 @@ const freePort = () => new Promise((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
 });
 
-function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTokens, onSubagentCount }) {
+function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTokens, onSubagentCount, onFreeFailure }) {
   const tiles = new Map();   // pty id -> { port, owner, alive, abort, roots: Set, subs: Map, ctx }
   const external = new Map(); // child session id -> sub read from the database
   const ownedRoots = new Set(); // root sessions of Operant's own OpenCode tiles
@@ -39,7 +40,14 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTo
     return !prev ? d : { input: d.input - prev.input, output: d.output - prev.output, cache: { read: d.cache.read - prev.cache.read, write: d.cache.write - prev.cache.write } };
   };
   // Free Zen models: the id ends in "-free", or the always-free opencode/big-pickle.
-  const isFreeModel = id => !id ? false : id === 'opencode/big-pickle' || /-free$/i.test(id);
+  // Local Ollama models (ollama/<model>) cost nothing either.
+  const isFreeModel = id => !id ? false : id === 'opencode/big-pickle' || /-free$/i.test(id) || /^ollama\//i.test(id);
+  // Big Pickle turning work away (rate limit, overload, timeout, free use used up): the lowest team tier moves to the local model.
+  const errText = err => [err && err.name, err && err.data && (err.data.message || err.data.statusCode), err && err.message].filter(Boolean).join(' ');
+  const bigPickleFailed = (modelID, providerID, err) => {
+    if (!err || !onFreeFailure || !/big-pickle$/i.test(providerID ? `${providerID}/${modelID}` : modelID || '')) return;
+    if (localFailure(errText(err))) onFreeFailure(errText(err));
+  };
   const liveSubs = t => { let n = 0; for (const s of t.subs.values()) if (!s.done) n++; return n; };
 
   // One subagent: which window it's in, the roles of its messages, and what has been sent already.
@@ -102,6 +110,8 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTo
   function handle(t, ptyId, e) {
     const p = e.properties || {};
     const key = `oc:${ptyId}`;
+    if (e.type === 'message.updated' && p.info?.role === 'assistant' && p.info.error) bigPickleFailed(p.info.modelID, p.info.providerID, p.info.error);
+    else if (e.type === 'session.error' && (t.roots.has(p.sessionID) || t.subs.has(p.sessionID))) bigPickleFailed(t.modelID, t.providerID, p.error);
     if (e.type === 'session.created' || e.type === 'session.updated') {
       const info = p.info || {};
       if (!info.parentID) { t.roots.add(info.id); ownedRoots.add(info.id); if (info.directory) t.directory = info.directory; return; }

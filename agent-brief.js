@@ -10,12 +10,13 @@ const path = require('path');
 const SKILL_NAME = { claude: 'operant:operant', opencode: 'operant' };
 function briefFor(agent) {
   return [
-    "You're in Operant; `operant` CLI is on PATH.",
-    'Live context is in <operant-context>, else run `operant prime`.',
-    'Run tests, builds, installs, dev servers via `operant test`, `operant build`, `operant run "<cmd>"` then `operant wait <id> --errors`.',
-    'To ping the user, end with `operant notify "<text>"`.',
-    'Team mode, several parts? Parallel subagents; the other CLI\'s parts go to one master worker: `operant agent --tier <t> "<numbered parts>"`.',
-    'Review a worker with `operant read <tile>`, `operant board`, `operant test`, then `operant task approve <id>` or `reject <id> --note "<why>"`.',
+    "In Operant; `operant` CLI on PATH.",
+    'Context: <operant-context> or `operant prime`.',
+    'Tests, builds, installs, dev servers: `operant test|build|run "<cmd>"`, then `operant wait <id> --errors`.',
+    'Ping user: `operant notify "<text>"`.',
+    "Cheapest subagent tier that fits (xsmall/small/medium), independents in parallel; the other CLI's parts go to one master worker: `operant agent --tier <t> \"<numbered parts>\"`.",
+    'Review a worker: `operant read <tile>`, `operant test`, then `operant task approve <id>` or `reject <id> --note "<why>"`.',
+    'CodeGraph before grep or file reads (if .codegraph exists). Keep replies short.',
     `More: the \`${SKILL_NAME[agent] || 'operant'}\` skill.`,
   ].join('\n');
 }

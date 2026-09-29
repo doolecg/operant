@@ -16,7 +16,7 @@ test('rewrites the bash tool command when OPERANT=1', async () => {
   try {
     const output = { args: { command: 'npm test' } };
     await before({ tool: 'bash' }, output);
-    assert.strictEqual(output.args.command, 'operant test "npm test"');
+    assert.strictEqual(output.args.command, 'operant run "npm test" --background --inline --title "npm-test"');
   } finally {
     if (old === undefined) delete process.env.OPERANT; else process.env.OPERANT = old;
   }

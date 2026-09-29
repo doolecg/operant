@@ -18,9 +18,9 @@ function runScript(stdin, env) {
 
 test('rewrites test/build/install commands', () => {
   assert.strictEqual(classify('npm test'), 'test');
-  assert.strictEqual(rewriteCommand('npm test'), 'operant test "npm test"');
+  assert.strictEqual(rewriteCommand('npm test'), 'operant run "npm test" --background --inline --title "npm-test"');
   assert.strictEqual(classify('npm run build'), 'build');
-  assert.strictEqual(rewriteCommand('yarn run build'), 'operant build "yarn run build"');
+  assert.strictEqual(rewriteCommand('yarn run build'), 'operant run "yarn run build" --background --inline --title "yarn-run"');
   assert.strictEqual(classify('pytest'), 'test');
   assert.strictEqual(classify('cargo test'), 'test');
   assert.strictEqual(classify('cargo build'), 'build');
@@ -37,7 +37,7 @@ test('rewrites test/build/install commands', () => {
   assert.strictEqual(classify('npm ci'), 'install');
   assert.strictEqual(classify('mvn install'), 'install');
   const rewritten = rewriteCommand('npm install');
-  assert.match(rewritten, /^id=\$\(operant run "npm install" --title "npm-install" \| awk '\{print \$2\}'\); operant wait "\$id" --errors$/);
+  assert.strictEqual(rewritten, 'operant run "npm install" --background --inline --title "npm-install"');
 });
 
 test('leaves everything else alone', () => {
@@ -77,10 +77,9 @@ test('a command ending in # raw is the agent opting out', () => {
 });
 
 test('rewrites for PowerShell too, Claude Code\'s Windows shell tool', () => {
-  assert.strictEqual(rewriteCommand('npm test', 'powershell'), "operant test 'npm test'");
-  assert.strictEqual(rewriteCommand('cargo build', 'powershell'), "operant build 'cargo build'");
-  const rewritten = rewriteCommand('npm install', 'powershell');
-  assert.strictEqual(rewritten, "$id = (operant run 'npm install' --title 'npm-install') -split ' ' | Select-Object -Last 1; operant wait $id --errors");
+  assert.strictEqual(rewriteCommand('npm test', 'powershell'), "operant run 'npm test' --background --inline --title 'npm-test'");
+  assert.strictEqual(rewriteCommand('cargo build', 'powershell'), "operant run 'cargo build' --background --inline --title 'cargo-build'");
+  assert.strictEqual(rewriteCommand('npm install', 'powershell'), "operant run 'npm install' --background --inline --title 'npm-install'");
 });
 
 test('the hook rewrites the command without approving it', () => {
@@ -90,14 +89,15 @@ test('the hook rewrites the command without approving it', () => {
   // No decision at all, so Claude Code's own permission flow still judges the rewritten command.
   assert.ok(!('permissionDecision' in h));
   assert.deepStrictEqual(h.updatedInput, {
-    command: 'operant test "npm test"', description: 'Run the unit tests', run_in_background: true, timeout: 600000,
+    command: 'operant run "npm test" --background --inline --title "npm-test"', description: 'Run the unit tests', run_in_background: true, timeout: 600000,
   });
 });
 
 test('the hook tells the agent about both commands, and how to opt out', () => {
   const bash = hookOutput(call('Bash', { command: 'npm test' }), IN_TILE).hookSpecificOutput.additionalContext;
   assert.ok(bash.includes('`npm test`'));
-  assert.ok(bash.includes('`operant test "npm test"`'));
+  assert.ok(bash.includes('`operant run "npm test" --background --inline --title "npm-test"`'));
+  assert.ok(bash.includes('Basement'));
   assert.ok(bash.includes('`# raw`'));
   const ps = hookOutput(call('PowerShell', { command: 'npm install' }), IN_TILE).hookSpecificOutput;
   assert.ok(ps.additionalContext.includes('`npm install`'));
@@ -114,9 +114,9 @@ test('the hook raises a short tool timeout to the 600 s operant test/build wait,
 
 test('the hook gives PowerShell calls PowerShell quoting', () => {
   const { updatedInput } = hookOutput(call('PowerShell', { command: 'npm install', description: 'Install' }), IN_TILE).hookSpecificOutput;
-  assert.strictEqual(updatedInput.command, "$id = (operant run 'npm install' --title 'npm-install') -split ' ' | Select-Object -Last 1; operant wait $id --errors");
+  assert.strictEqual(updatedInput.command, "operant run 'npm install' --background --inline --title 'npm-install'");
   assert.strictEqual(updatedInput.description, 'Install');
-  assert.strictEqual(hookOutput(call('PowerShell', { command: 'npm test' }), IN_TILE).hookSpecificOutput.updatedInput.command, "operant test 'npm test'");
+  assert.strictEqual(hookOutput(call('PowerShell', { command: 'npm test' }), IN_TILE).hookSpecificOutput.updatedInput.command, "operant run 'npm test' --background --inline --title 'npm-test'");
 });
 
 test('the hook does nothing outside an Operant tile, for other tools or events, or for other commands', () => {
@@ -147,4 +147,93 @@ test('the script exits 0 with no output for garbage, empty or unrelated input', 
     assert.strictEqual(r.status, 0, JSON.stringify(stdin));
     assert.strictEqual(r.stdout, '', JSON.stringify(stdin));
   }
+});
+
+const { createBackgroundTasks, basementModel, statusText } = require('../hooks/long-commands');
+const waitFor = async (fn) => { for (let i = 0; i < 100 && !fn(); i++) await new Promise(r => setTimeout(r, 50)); };
+const node = (code) => `"${process.execPath}" -e "${code}"`;
+
+test('background start returns at once, accumulates output and ends passed', async () => {
+  const seen = [];
+  const bg = createBackgroundTasks({ onChange: t => seen.push(t.status) });
+  const t = bg.start(node("console.log('hello');console.error('warn')"));
+  assert.strictEqual(t.status, 'running');
+  await waitFor(() => t.status !== 'running');
+  assert.strictEqual(t.status, 'passed');
+  assert.strictEqual(t.exitCode, 0);
+  assert.match(t.output, /hello/);
+  assert.match(t.output, /warn/);
+  assert.strictEqual(statusText(t), 'passed');
+  assert.ok(seen.includes('running') && seen.includes('passed'));
+  assert.strictEqual(bg.get(t.id), t);
+});
+
+test('background failure keeps the exit code; output is capped', async () => {
+  const bg = createBackgroundTasks({ maxBytes: 100 });
+  const t = bg.start(node("console.log('x'.repeat(500));process.exit(3)"));
+  await waitFor(() => t.status !== 'running');
+  assert.strictEqual(t.status, 'failed');
+  assert.strictEqual(t.exitCode, 3);
+  assert.strictEqual(statusText(t), 'failed (exit 3)');
+  assert.ok(t.output.length <= 100 && t.truncated);
+});
+
+test('a spawn that throws is a failed task', () => {
+  const bg = createBackgroundTasks({ spawn: () => { throw new Error('nope'); } });
+  const t = bg.start('x');
+  assert.strictEqual(t.status, 'failed');
+  assert.match(t.output, /nope/);
+});
+
+test('basement model: running first, then newest; selected task carries its output', () => {
+  const mk = (id, status, startedAt, output = '') => ({ id, title: 't' + id, command: 'c', status, exitCode: status === 'failed' ? 1 : 0, startedAt, endedAt: status === 'running' ? null : startedAt + 4000, output });
+  const tasks = [mk(1, 'passed', 1000, 'one'), mk(2, 'running', 500), mk(3, 'failed', 2000, 'boom')];
+  const m = basementModel(tasks, null, 10000);
+  assert.deepStrictEqual(m.rows.map(r => r.id), [2, 3, 1]);
+  assert.strictEqual(m.running, 1);
+  assert.strictEqual(m.selected.id, 2);
+  const s = basementModel(tasks, 3, 10000);
+  assert.strictEqual(s.selected.output, 'boom');
+  assert.strictEqual(s.selected.label, 'failed (exit 1)');
+  assert.strictEqual(s.rows.find(r => r.id === 1).seconds, 4);
+  assert.deepStrictEqual(basementModel([], null), { rows: [], selected: null, running: 0 });
+});
+
+const { taskReport, errorLines } = require('../hooks/long-commands');
+const { EventEmitter } = require('node:events');
+const fakeSpawn = () => { const kids = []; const spawn = () => { const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stderr = new EventEmitter(); kids.push(c); return c; }; return { spawn, kids }; };
+
+test('the 5 s rule: a task that ends within the threshold settles with its result, a slower one is handed over', async () => {
+  const { spawn, kids } = fakeSpawn();
+  const tasks = createBackgroundTasks({ spawn });
+  const quick = tasks.start('npm test');
+  const p = tasks.settled(quick.id, 5000);
+  kids[0].stdout.emit('data', Buffer.from('ok\n'));
+  kids[0].emit('close', 0);
+  const done = await p;
+  assert.strictEqual(done.status, 'passed');
+  assert.match(taskReport(done), /^npm-test \(bg1\): passed in \d+s$/);
+
+  const slow = tasks.start('npm run build');
+  assert.strictEqual(await tasks.settled(slow.id, 20), null, 'still running after the threshold: null');
+  assert.strictEqual(await tasks.settled(slow.id, 0), null, '0 = always handed over at once');
+  const waiting = tasks.settled('bg' + slow.id, 5000);
+  kids[1].stderr.emit('data', Buffer.from('src/a.js:3 error: boom\nmore noise\n'));
+  kids[1].emit('close', 1);
+  const fin = await waiting;
+  assert.strictEqual(fin.status, 'failed');
+  const report = taskReport(fin, { errors: true });
+  assert.match(report, /failed \(exit 1\)/);
+  assert.match(report, /error: boom/);
+  assert.strictEqual(await tasks.settled(99, 10), null, 'no such task');
+});
+
+test('a report keeps only the failing lines', () => {
+  const output = Array.from({ length: 200 }, (_, i) => `line ${i} fine`).concat(['FAIL test/a.test.js', 'AssertionError: nope']).join('\n');
+  const lines = errorLines(output);
+  assert.ok(lines.length <= 5, lines.join('|'));
+  assert.ok(lines.some(l => /AssertionError/.test(l)));
+  const r = taskReport({ id: 2, title: 't', status: 'failed', exitCode: 1, startedAt: 0, endedAt: 3000, output }, { errors: true });
+  assert.ok(r.split('\n').length < 10);
+  assert.match(taskReport({ id: 3, title: 't', status: 'running', startedAt: Date.now(), output: '' }), /still in the Basement/);
 });

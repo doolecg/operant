@@ -27,6 +27,7 @@ async function call(cmd, args) {
 export default async ({ directory }) => {
   if (process.env.OPERANT !== '1' || !process.env.OPERANT_API) return {};
   const subagents = new Set();
+  const replies = new Map(); // sessionID -> { id, parts: Map(partID -> text) } of the latest assistant reply
   const texts = new Map(); // sessionID -> the text to add ('' for nothing)
 
   async function textFor(sessionID) {
@@ -43,6 +44,17 @@ export default async ({ directory }) => {
     event: async ({ event }) => {
       const info = event?.properties?.info;
       if (event?.type === 'session.created' && info?.parentID) subagents.add(info.id);
+      const part = event?.type === 'message.part.updated' ? event.properties?.part : null;
+      if (part && part.type === 'text' && typeof part.text === 'string' && part.sessionID && !part.synthetic) {
+        let r = replies.get(part.sessionID);
+        if (!r || r.id !== part.messageID) replies.set(part.sessionID, r = { id: part.messageID, parts: new Map() });
+        r.parts.set(part.id, part.text);
+      }
+      if (event?.type === 'session.idle' && !subagents.has(event.properties?.sessionID)) {
+        const r = replies.get(event.properties?.sessionID);
+        const output = r ? [...r.parts.values()].join('\n\n').slice(0, 200000) : '';
+        if (output.trim()) await call('hook', { event: 'output', output }).catch(() => {});
+      }
       if (event?.type === 'session.compacted') texts.delete(event.properties?.sessionID);
     },
     // Title and summary calls come without a session; they don't need Operant's context.

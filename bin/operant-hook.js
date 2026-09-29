@@ -53,7 +53,7 @@ const HANDLERS = {
   // board task open is asked once for the report. The app decides which; stop_hook_active tells it
   // Claude is already continuing because of a Stop hook (a worker is never asked twice, messages drain).
   async stop(input) {
-    const r = await call('hook', { event: 'stop', active: !!input.stop_hook_active });
+    const r = await call('hook', { event: 'stop', active: !!input.stop_hook_active, output: typeof input.last_assistant_message === 'string' ? input.last_assistant_message.slice(0, 200000) : undefined });
     return r && r.block ? { decision: 'block', reason: r.block } : null;
   },
   // Messaging on: agent messages waiting for this tile, handed over after each tool call.

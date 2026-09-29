@@ -64,9 +64,6 @@ const Panels = (() => {
       { key: 'hardwareAcceleration', label: 'Hardware acceleration', hint: 'Use the graphics card for the whole window · turn off if Operant flickers or draws wrongly · ' + RESTART, type: 'toggle' },
       { key: 'copyOnSelect', label: 'Copy text when you select it', hint: 'In terminals, viewers and diffs · a small Copied note shows', type: 'toggle' },
     ]],
-    ['Operant Terminal', [
-      { key: 'terminal', label: 'Operant Terminal', type: 'operantTerminal' },
-    ]],
     ['Layout', [
       { key: 'defaultLayout', label: 'Default layout', hint: 'For empty workspaces; Alt+M switches the current one',
         type: 'select', options: [['master', 'Master + stack'], ['dwindle', 'Dwindle']] },
@@ -77,13 +74,14 @@ const Panels = (() => {
     ['Agents', [
       { key: 'agents', type: 'agents' },
       { key: 'defaultAgent', label: 'Default agent', hint: IS_WIN ? 'Alt+Enter, the master tile and Explorer\'s entry open this' : 'Alt+Enter and the master tile open this', type: 'select',
-        options: cfg => [...cfg.agents.map(a => [a.id, a.name]), ['operant', 'Operant (the Operant Terminal)']] },
+        options: cfg => cfg.agents.map(a => [a.id, a.name]) },
       { key: 'opencodeTheme', label: 'OpenCode uses Operant’s theme', hint: 'OpenCode tiles get the current theme and accent, with a see-through background · your own OpenCode settings stay as they are · applies to new OpenCode tiles', type: 'toggle' },
       { key: 'installSkill', label: 'Operant skill for agents',
         hint: 'Gives Claude Code and OpenCode tiles the Operant skill for each session, straight from the app, so it always matches this version. Nothing is written to your agents’ own folders, and copies older versions put there are removed. Applies to new tiles',
         type: 'toggle' },
       { key: 'briefAgents', label: 'Brief agents at launch', hint: 'A short brief in every agent tile\'s first message (master, workers, reopened) so the rules apply from the start, not only once it loads the skill', type: 'toggle' },
       { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Claude Code and OpenCode: a hook rewrites test/build/install commands to operant test/build/run so only the failures reach the agent; the rewritten command still asks for permission like any other, and ending a command with # raw leaves it alone', type: 'toggle' },
+      { key: 'backgroundAfterSeconds', label: 'Run in the Basement after', hint: 'Seconds · a rerouted test, build or install that is still running after this long moves to the Basement page and the agent waits for its errors only · a faster one returns its result at once · 0 = always at once', type: 'number', min: 0, max: 600 },
       { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
         type: 'number', min: 0, max: 100 },
       { key: 'cacheTtlMinutes', label: 'Prompt cache lifetime', hint: 'Minutes an idle tile\'s cache stays warm before its next message pays full price · 60 if your setup uses the 1-hour cache', type: 'number', min: 1, max: 120 },
@@ -211,7 +209,7 @@ const Panels = (() => {
   const TABS = [
     ['General', ['Startup', 'Notifications', 'Updates']],
     ['Look', ['Appearance', 'Terminal', 'Top bar', 'Media']],
-    ['Agents', ['Agents', 'Operant Terminal']],
+    ['Agents', ['Agents']],
     ['Tiles', ['Layout', 'Tiles & subagents']],
     ['Projects', ['Projects', 'Sidebar', 'Files', 'CodeGraph']],
     ['Usage', ['Usage', 'Context and cache']],
@@ -283,29 +281,6 @@ const Panels = (() => {
         <button class="rm" data-agent-rm="${i}" title="Remove">✕</button></div>`).join('')
       + `</div><div class="set-row"><div class="lbl"><span class="hint">Any command that runs in a terminal works. Claude Code and OpenCode tiles also get their subagents as tiles. ${NEW_TILES}.</span></div>
         <div class="ctl"><button class="btn" data-agent-add>+ Add agent</button></div></div>`;
-  }
-
-  // Settings › Agents › Operant Terminal: the prompt refiner (refiner.js), how many tasks a request splits into, and the projects that skip the review.
-  function operantTerminalEditor(cfg, ext) {
-    const t = { refiner: 'opencode', refinerModel: '', localUrl: '', localModel: '', autoSend: {}, maxTasks: 4, ...(cfg.terminal || {}) };
-    const err = ext.errors && ext.errors.terminal;
-    const row = (label, hint, ctl) => `<div class="set-row"><div class="lbl">${label}${hint ? `<span class="hint">${hint}</span>` : ''}</div><div class="ctl">${ctl}</div></div>`;
-    const local = t.refiner === 'local', oc = t.refiner === 'opencode';
-    const auto = Object.entries(t.autoSend || {}).filter(([, on]) => on);
-    return (err ? `<div class="set-row"><div class="lbl"><span class="hint uc-status error">Not saved: ${esc(err)}</span></div></div>` : '')
-      + row('Prompt refiner', 'Cleans your prompt and splits it into tasks · OpenCode uses its free model · Local uses an OpenAI-compatible server (Ollama, LM Studio, llama.cpp) · Off sends your prompt as written',
-        `<select data-ot="refiner">${[['opencode', 'OpenCode (free model)'], ['local', 'Local model'], ['off', 'Off']].map(([v, n]) => `<option value="${v}"${v === t.refiner ? ' selected' : ''}>${n}</option>`).join('')}</select>`)
-      + (oc ? row('Refiner model', 'An OpenCode model id, e.g. opencode/big-pickle', `<input type="text" data-ot="refinerModel" value="${esc(t.refinerModel)}" spellcheck="false">`) : '')
-      + (local ? row('Local URL', 'The server address, e.g. http://localhost:11434', `<input type="text" data-ot="localUrl" value="${esc(t.localUrl)}" placeholder="http://localhost:11434" spellcheck="false">`)
-        + row('Local model', 'The model name that server knows', `<input type="text" data-ot="localModel" value="${esc(t.localModel)}" spellcheck="false">`) : '')
-      + row('Most tasks per request', 'A request is split into at most this many tasks (1-8)', `<input type="number" data-ot-num="maxTasks" min="1" max="8" value="${t.maxTasks}">`)
-      + `<div class="pane-title">Agents per project</div>`
-      + (pinned(cfg).length ? pinned(cfg).map(p => row(esc(p.split(/[\\/]/).filter(Boolean).pop() || p), esc(p),
-        `<select data-ot-mode="${esc(p)}">${[['both', 'Claude and OpenCode'], ['claude', 'Claude only'], ['opencode', 'OpenCode only']].map(([v, n]) => `<option value="${v}"${v === (cfg.projectDefaults?.[p]?.agents || 'both') ? ' selected' : ''}>${n}</option>`).join('')}</select>`)).join('')
-        : row('No projects', 'Pin a project in the sidebar to limit it to Claude or OpenCode', ''))
-      + `<div class="pane-title">Send without review</div>`
-      + (auto.length ? auto.map(([k]) => row(esc(k), '', `<button class="btn" data-ot-rm="${esc(k)}">Remove</button>`)).join('')
-        : row('No projects', 'Turn on Auto-send in an Operant Terminal and it shows here', ''));
   }
 
   // The Updates tab: this version, the last check and what to do next.
@@ -394,6 +369,24 @@ const Panels = (() => {
   }
 
   // Settings › Agents › Team (item 33): enable toggle, one row per tier (agent, model, "use for"), max workers.
+  // Settings > Agents > Team > Local model: an Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use.
+  const LOCAL_MODELS = ['gemma3:4b', 'gemma3:1b', 'gemma3:12b'];
+  function localModelBlock(cfg) {
+    const s = ext.localModelState();
+    const model = (cfg.localModel && cfg.localModel.model) || LOCAL_MODELS[0];
+    const models = LOCAL_MODELS.includes(model) ? LOCAL_MODELS : [model, ...LOCAL_MODELS];
+    const status = s.status === 'installing' ? `Installing… ${s.pct ? s.pct + '%' : ''} ${s.message || ''}`
+      : s.status === 'ready' ? `Ready: ${s.model}` : s.status === 'error' ? `Error: ${s.message}` : 'Not installed';
+    const active = cfg.teamTiers && cfg.teamTiers.xsmall && cfg.teamTiers.xsmall.active;
+    const link = s.status === 'error' && s.link ? ` <a href="#" data-local-link="${esc(s.link)}">${esc(s.link)}</a>` : '';
+    const bar = s.status === 'installing' ? `<progress max="100" value="${s.pct || 0}" style="width:100%"></progress>` : '';
+    const busy = s.status === 'installing';
+    return `<div class="set-row"><div class="lbl">Local model<span class="hint uc-status${s.status === 'error' ? ' error' : ''}">${esc(status)}${link}${active ? ' · lowest tier is using ' + esc(active) : ''}</span>
+        <span class="hint">The lowest tier uses Big Pickle first. When it is rate limited, busy or out of free use, and this model is installed, it runs here instead (free, on your computer) and goes back to Big Pickle later. Install downloads Ollama (Windows: winget) and the model in the background</span>${bar}</div>
+        <div class="ctl"><select data-local-model${busy ? ' disabled' : ''}>${models.map(m => `<option value="${esc(m)}"${m === model ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
+          <button class="btn primary" data-local-install${busy || s.status === 'ready' ? ' disabled' : ''}>Install</button>
+          <button class="btn" data-local-remove${busy || s.status !== 'ready' ? ' disabled' : ''}>Remove</button></div></div>`;
+  }
   function teamEditor(cfg) {
     const team = cfg.team || {};
     const tiers = team.tiers || {};
@@ -422,6 +415,7 @@ const Panels = (() => {
       <div class="set-row"><div class="lbl">Run checks before review<span class="hint">When a worker finishes a fix, feature, refactor or test task, Operant runs the project's test (else build) command and attaches the result; a failing check sends the task back once</span></div>
         <div class="ctl"><button class="toggle${team.verifyBeforeReview !== false ? ' on' : ''}" data-team-verify></button></div></div>
       ${ocNote}${fbNote}
+      ${localModelBlock(cfg)}
       ${tierBlock('xsmall', 'XSmall')}
       ${tierBlock('small', 'Small')}
       ${tierBlock('medium', 'Medium')}
@@ -493,7 +487,6 @@ const Panels = (() => {
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
     if (it.type === 'team') return teamEditor(cfg);
-    if (it.type === 'operantTerminal') return operantTerminalEditor(cfg, ext);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
     if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';
@@ -674,20 +667,6 @@ const Panels = (() => {
       pane.querySelectorAll('[data-backup-run]').forEach(b => b.onclick = () => { b.disabled = true; ext.backupRun(); });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
       pane.querySelectorAll('[data-messaging]').forEach(b => b.onclick = () => { set('messaging', !cfg.messaging); draw(); });
-      const setTerm = patch => set('terminal', { ...(cfg.terminal || {}), ...patch });
-      pane.querySelectorAll('[data-ot]').forEach(el => el.onchange = () => { setTerm({ [el.dataset.ot]: el.value.trim() }); draw(); });
-      pane.querySelectorAll('[data-ot-mode]').forEach(el => el.onchange = () => {
-        const p = el.dataset.otMode, all = { ...(cfg.projectDefaults || {}) }, v = { ...(all[p] || {}) };
-        if (el.value === 'both') delete v.agents; else v.agents = el.value;
-        if (Object.keys(v).length) all[p] = v; else delete all[p];
-        set('projectDefaults', all);
-        draw();
-      });
-      pane.querySelectorAll('[data-ot-num]').forEach(el => el.onchange = () => {
-        const n = Math.min(8, Math.max(1, Math.round(+el.value || 4)));
-        el.value = n; setTerm({ [el.dataset.otNum]: n });
-      });
-      pane.querySelectorAll('[data-ot-rm]').forEach(b => b.onclick = () => { const a = { ...(cfg.terminal?.autoSend || {}) }; delete a[b.dataset.otRm]; setTerm({ autoSend: a }); draw(); });
       pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
       pane.querySelectorAll('[data-team-verify]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), verifyBeforeReview: cfg.team?.verifyBeforeReview === false }); draw(); });
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {
@@ -698,6 +677,10 @@ const Panels = (() => {
         const n = Math.max(0, Math.round(+el.value || 0));
         el.value = n; set('team', { ...(cfg.team || {}), budgets: { ...(cfg.team?.budgets || {}), [el.dataset.teamBudget]: n } });
       });
+      pane.querySelectorAll('[data-local-model]').forEach(el => el.onchange = () => { set('localModel', { ...(cfg.localModel || {}), model: el.value }); ext.localModelRefresh(); });
+      pane.querySelectorAll('[data-local-install]').forEach(b => b.onclick = () => { b.disabled = true; ext.localModelInstall(cfg.localModel && cfg.localModel.model); });
+      pane.querySelectorAll('[data-local-remove]').forEach(b => b.onclick = () => { b.disabled = true; ext.localModelRemove(cfg.localModel && cfg.localModel.model); });
+      pane.querySelectorAll('[data-local-link]').forEach(a => a.onclick = e => { e.preventDefault(); ext.openLink(a.dataset.localLink); });
       pane.querySelectorAll('[data-team-top]').forEach(el => el.onchange = () => set('team', { ...(cfg.team || {}), maxTier: el.value }));
       pane.querySelectorAll('[data-team-f]').forEach(el => el.onchange = () => {
         const [tierId, field] = el.dataset.teamF.split('.');
@@ -746,7 +729,7 @@ const Panels = (() => {
   const GROUPS = [
     ['Tiles', { newAgent: 'New default agent', pickAgent: 'Pick an agent…', newAgentIn: 'New agent in folder…', newShell: 'New shell', close: 'Close tile',
       fullscreen: 'Fullscreen tile', promoteMaster: 'Make focused tile the master', closeDoneAgents: 'Close finished subagents', stopAgent: 'Stop the focused agent', toggleSidebar: 'Show / hide the sidebar', focusSidebar: 'Keyboard to the sidebar',
-      quickOpen: 'Quick open a file', showChanges: 'Show changes (git diff)', openTerminal: 'Operant Terminal for this project', findInView: 'Find in a viewer or diff tile' }],
+      quickOpen: 'Quick open a file', showChanges: 'Show changes (git diff)', findInView: 'Find in a viewer or diff tile' }],
     ['Focus & swap', { focusLeft: 'Focus ←', focusRight: 'Focus →', focusUp: 'Focus ↑', focusDown: 'Focus ↓',
       swapLeft: 'Swap ←', swapRight: 'Swap →', swapUp: 'Swap ↑', swapDown: 'Swap ↓' }],
     ['Layout', { toggleLayout: 'Master ⇄ dwindle layout', toggleSplit: 'Flip split direction',

@@ -1,3 +1,23 @@
+# Operant 2.3.1
+
+The Operant Terminal is gone, and the lowest tier now has a local fallback. Long commands no longer block you, and finished workers tidy themselves up.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.3.1-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.3.1-mac-arm64.dmg` (Apple Silicon) or `Operant-2.3.1-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.3.1-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.3.1-linux-amd64.deb` (`sudo apt install ./Operant-2.3.1-linux-amd64.deb`).
+
+## New
+- **Local-model fallback:** the lowest tier runs Big Pickle first. When Big Pickle is busy or out of free use, it falls back to a local model (Gemma via Ollama), installed in the background from Settings › Agents › Team.
+- **Long commands don't block:** tests, builds and installs run inline and move to the Basement after 5 seconds. The delay is a setting.
+- **Workers close themselves:** a worker tile closes automatically once its result has been read by the lead.
+
+## Changed
+- **Tighter agent rules:** agents are told to use the cheapest subagent tier that fits, look at CodeGraph first, and keep replies short.
+- **Removed:** the Operant Terminal (added in 2.2 and 2.3) and Operant as the default agent. Your existing settings migrate automatically. The OpenCode and Claude link, team mode and the 8 settings tabs stay.
+
+---
+
 # Operant 2.3.0
 
 The Operant Terminal now works much more like Claude Code: workers can ask you questions in it, you can stop or close any task, and it has slash commands, `!` shell commands, `#` memories and `@` files. Operant can also be your default agent, and Settings is down from 21 tabs to 8.

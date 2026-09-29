@@ -429,10 +429,8 @@
   function setTierDot(w) { w.el.querySelector('.tier').innerHTML = tierDot(w.tier); }
   function setBadge(w, html) { w.el.querySelector('.badge').innerHTML = html; }
 
-  // The default agent can be Operant itself (item 87): new agents then open the folder's Operant Terminal.
-  const OPERANT_AGENT = { id: 'operant', name: 'Operant Terminal', icon: '◆', command: '' };
   const defaultCli = () => cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
-  const defaultAgent = () => cfg.defaultAgent === 'operant' ? OPERANT_AGENT : defaultCli();
+  const defaultAgent = defaultCli;
   // The team tiers for the default agent (main's team-tiers.js); OpenCode gets its own set.
   const activeTiers = () => cfg.teamTiers || cfg.team?.tiers || {};
   // Item 82: a project can be limited to Claude only or OpenCode only. The tiers then come from main's
@@ -458,9 +456,6 @@
   // kind: 'ai' (an agent CLI from cfg.agents) or 'shell'.
   // resume: a Claude session id to continue; ws/focus: where a restored tile goes, without taking focus.
   async function newTerminal(kind, cwd, { master = false, agentId, run, title, resume, ws = current, focus = true, edit, icon, near = null, prompt, model, effort, worker } = {}) {
-    // Operant as the default agent: a plain new agent (Alt+Enter, the master, "New … here", Explorer) opens the folder's Operant Terminal.
-    if (kind === 'ai' && agentId == null && !prompt && !worker && !resume && !run && (projectDefaults(cwd || lastCwd).agent || cfg.defaultAgent) === 'operant')
-      return openOperantTerminal(projectDir(cwd || lastCwd), { ws, focus, near });
     let chosen = agentId ?? projectDefaults(cwd || lastCwd).agent;
     // A project set to Claude only / OpenCode only opens that CLI for a new agent tile, unless one was named.
     const mode = kind === 'ai' && agentId == null ? agentMode(cwd || lastCwd) : 'both';
@@ -1146,49 +1141,6 @@
     return w;
   }
 
-  // The Operant Terminal (renderer/terminal.js): one per project, its conversation saved by main (terminal-store.js).
-  function openOperantTerminal(dir, { ws = current, focus = true, near = null } = {}) {
-    const key = normPath(dir);
-    const open = [...wins.values()].find(x => x.kind === 'operant' && x.alive && normPath(x.cwd) === key);
-    if (open) { if (focus) { if (open.ws !== current) switchWorkspace(open.ws); focusWin(open); } return open; }
-    const id = nextId++;
-    const el = document.createElement('div');
-    el.className = 'win operant opening';
-    el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">◆</span><span class="title"></span><span class="badge"></span>
-      <span class="view-acts"><button data-v="auto" title="">Auto-send</button><button data-v="clear" title="Clear this conversation">Clear</button></span><button class="x" title="Close">✕</button></div>
-      <div class="ot-wrap"><div class="ot-log" tabindex="-1"></div><div class="ot-status hidden"></div>
-      <div class="ot-target hidden"><select title="Where your next message goes"></select></div>
-      <div class="ot-box"><span class="ot-prompt">❯</span><textarea rows="1" spellcheck="true" placeholder="Ask Operant to do something…"></textarea></div>
-      <div class="ot-hint"><kbd>Enter</kbd> send <kbd>Shift+Enter</kbd> new line <kbd>/</kbd> commands <kbd>!</kbd> shell <kbd>#</kbd> memory <kbd>@</kbd> files <kbd>Ctrl+R</kbd> history <kbd>Esc</kbd> cancel</div></div></div>`;
-    const w = { id, kind: 'operant', el, term: null, title: `Operant · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
-      cwd: dir, page: el.querySelector('.ot-box textarea') };
-    el.querySelector('.title').textContent = w.title;
-    el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
-    el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
-    w.ui = OperantTerminal.mount(w, {
-      operant, tierDot, toast, tasks: () => board.tasks, control: (cmd, args) => runControl(cmd, args, null),
-      tileAlive: tid => !!wins.get(Number(tid))?.alive,
-      focusTile: tid => { const t = wins.get(Number(tid)); if (t?.alive) { if (t.ws !== current) switchWorkspace(t.ws); focusWin(t); } },
-      autoSend: () => !!cfg.terminal?.autoSend?.[key],
-      setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
-      allowedTiers: () => allowedTierNames(dir),
-      agentKind, subagentLimit,
-      activityOf: tid => { const x = wins.get(Number(tid)); return x ? { items: x.activity || [], count: x.activityCount || 0 } : { items: [], count: 0 }; },
-      agentMode: () => { const m = agentMode(dir); return { mode: m, label: m === 'both' ? '' : TeamTiers.MODE_LABEL[m], empty: m !== 'both' && !Object.keys(tiersIn(dir)).length }; },
-      openProjectSettings: () => { togglePanel('settings'); Panels.showTab('Operant Terminal'); renderSettings(); },
-      freeWorkers: () => Math.max(0, (cfg.team?.maxWorkers || 4) - [...wins.values()].filter(x => x.alive && x.tier).length),
-      usageOf: t => { const tok = wins.get(t.owner)?.tok; return { tokens: addTok(t.tokens, tok), free: tok ? !!tok.free : !!t.free, model: t.model || null, escalated: (t.escalations || 0) > 0, segments: [...(t.segments || []), ...(tok ? [{ model: t.model || null, tokens: addTok(null, tok) }] : [])] }; },
-      message: (tid, text) => runControl('followup', { id: tid, text }, null),
-      queuedFor: tid => Messaging.pending(msgState, tid),
-      notifyAway: async (title, body) => { if (!(await operant.windowFocused().catch(() => false))) notify(w, title, body, null, true); },
-      refinerLabel: () => { const m = [cfg.terminal?.refiner, cfg.terminal?.refinerModel].filter(x => typeof x === 'string' && x && x !== 'off').join(' '); return m ? `Cleaning your prompt with ${m}…` : 'Cleaning your prompt…'; },
-    });
-    wins.set(id, w);
-    mount(w, ws, near, { focus });
-    saveSession();
-    return w;
-  }
-
   // Task board: one global list shown in the top-bar Tasks panel. `operant task add/claim/done/note`
   // and `operant board` all read/write board.tasks; it is saved with the session.
   const board = { tasks: [], nextTaskId: 1 };
@@ -1205,6 +1157,18 @@
   // One line for a task: its --title, else the first sentence of its first line (headings, bullets
   // and a leading "Task:" dropped). The full text stays on hover and in `operant board --full`.
   const taskTldr = t => t.title || clip((String(t.text).split('\n').map(l => l.replace(/^[\s#>*-]+/, '').replace(/^task:\s*/i, '').trim()).find(Boolean) || '').split(/(?<=[^\d\s]{2}[.!?])\s/)[0], 70);
+  // Basement: background (long-command) tasks with their status; output shown only for the selected one.
+  let basementSel = null, basementTimer = null;
+  async function renderBasement() {
+    const tasks = await operant.basementList().catch(() => []);
+    if (openPanel() !== 'basement') return;
+    const m = OperantLongCommands.basementModel(tasks, basementSel);
+    const body = $('#basement-body');
+    if (!m.rows.length) { body.innerHTML = '<div class="board-note">Nothing running in the background. Start one with <code>operant run "npm test" --background</code>.</div>'; return; }
+    body.innerHTML = m.rows.map(r => `<div class="board-row basement-row${m.selected && r.id === m.selected.id ? ' sel' : ''}" data-bg="${r.id}" title="${esc(r.command)}">`
+      + `<span class="board-id">#${r.id}</span><span class="board-text">${esc(r.title)}</span><span class="board-note basement-${r.status}">${esc(r.label)} · ${r.seconds}s</span></div>`).join('')
+      + (m.selected ? `<pre class="basement-out">${m.selected.truncated ? '[earlier output dropped]\n' : ''}${esc(m.selected.output || '(no output yet)')}</pre>` : '');
+  }
   function renderBoard() {
     const open = board.tasks.filter(t => t.status !== 'done' && t.status !== 'failed').length;
     $('#board-badge').textContent = open > 99 ? '99+' : open || '';
@@ -1224,7 +1188,7 @@
       return `<div class="board-group"><h3>${label} (${items.length})</h3>${items.length ? items.map(row).join('') : '<div class="board-empty">—</div>'}</div>`;
     }).join('');
   }
-  function boardChanged() { renderBoard(); saveSession(); for (const w of wins.values()) if (w.kind === 'operant' && w.alive) w.ui?.refresh(); }
+  function boardChanged() { renderBoard(); saveSession(); }
 
   // Workers, review and escalation (board.js has the rules). A worker's `done` waits in review; a
   // failure or a second rejection closes the tile and hands the task, with a two-line failure note,
@@ -1278,7 +1242,7 @@
   function recordOutcome(t, status, tile) {
     const w = tile === undefined ? wins.get(t.owner) : tile;
     operant.recordOutcome({
-      taskId: t.id, requestId: t.requestId || null, requestTask: t.requestTask ?? null, source: t.source || null, type: TaskType.classifyTask(t.text), tier: t.tier || null, agent: t.agent || null, model: t.model || null,
+      taskId: t.id, type: TaskType.classifyTask(t.text), tier: t.tier || null, agent: t.agent || null, model: t.model || null,
       attempts: Board.attempts(t), escalations: t.escalations || 0, status, reason: String(t.failure && status === 'escalated' ? t.failure.split('\n')[0] : t.note || '').slice(0, 200),
       durationMs: t.createdAt ? Date.now() - t.createdAt : null, tokens: addTok(t.tokens, w?.tok), cwd: t.cwd || null,
     });
@@ -1344,11 +1308,15 @@
   async function retryTask(t, w, lead) {
     boardChanged();
     if (w?.sessionId) operant.stuckReset(w.sessionId);
-    if (w?.alive && w.ptyId) { sendLine(w, `${lead}. Redo the task now, without polling the board, then ${reportLine(t.id)}`); return; }
+    // The tier's model changed since this worker started (Big Pickle down, the local model up, or back): retry on the tier's current one.
+    const now = tiersIn(t.cwd || lastCwd)[t.tier];
+    const swap = !!(w?.alive && w.ptyId && now?.model && t.model && now.model !== t.model);
+    if (w?.alive && w.ptyId && !swap) { sendLine(w, `${lead}. Redo the task now, without polling the board, then ${reportLine(t.id)}`); return; }
     t.failure = Board.failureNote(t, t.note);
     t.tokens = addTok(t.tokens, w?.tok);
     if (w?.tok) t.segments = [...(t.segments || []), { model: t.model || null, tokens: addTok(null, w.tok) }];
     t.attempts = Board.attempts(t) + 1; t.retried = false; t.owner = null;
+    if (swap) closeWin(w);
     try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
   }
   $('#board-body').addEventListener('click', e => {
@@ -1502,11 +1470,6 @@
     openDiff(projectDir(dir));
   }
 
-  function openTerminal(dir = focused()?.cwd || lastCwd) {
-    if (!dir) return toast('Open a tile in a project first');
-    openOperantTerminal(projectDir(dir));
-  }
-
   // ------------------------------------------------------------- session
   // Main keeps each window's tiles and layout so they can be reopened after an update. Subagent
   // tiles and one-off command tiles (CodeGraph) aren't kept.
@@ -1562,7 +1525,6 @@
       const ws = Math.max(snap.workspaces.findIndex(s => JSON.stringify(s.tree || null).includes(`{"tile":${i}}`)), 0);
       if (t.kind === 'view') return openViewer(t.file, { ws, focus: false });
       if (t.kind === 'diff') return openDiff(t.cwd, { ws, focus: false });
-      if (t.kind === 'operant') return openOperantTerminal(t.cwd, { ws, focus: false });
       if (t.kind === 'board' || t.kind === 'browser') return null; // old sessions kept the tasks in a board tile
       if (t.edit) return openEditor(t.edit, { ws, focus: false });
       return newTerminal(t.kind, t.cwd, { agentId: t.agent, title: t.title, master: t.master, resume: t.sessionId, ws, focus: false });
@@ -2052,7 +2014,7 @@
   function idleLimit(w) {
     if (w.kind === 'agent') return w.status === 'done' ? cfg.autoCloseDoneAgentsSeconds * 1000 : 0;
     // Viewers, diffs and the task board are read, not run; an editor with unsaved changes would lose them.
-    if (w.kind === 'view' || w.kind === 'diff' || w.kind === 'operant' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
+    if (w.kind === 'view' || w.kind === 'diff' || (w.edit && (w.tracksDirty ? w.dirty : w.typed))) return 0;
     if (w.busySince) return 0;
     return cfg.idleCloseTerminalMinutes * 60000;
   }
@@ -2133,16 +2095,6 @@
     else if (kind === 'command') flagRunaway(w, 'stuck', `Stuck: ${reason}`);
   });
 
-  // A worker's tool calls (its subagents' too, named by `who`) for the Operant Terminal's live card feed.
-  let activityTimer = null;
-  operant.on('activity', ({ sessionId, text, who, t }) => {
-    const w = sessionWin.get(sessionId);
-    if (!w || !w.alive || !w.tier) return;
-    (w.activity ||= []).push({ text: String(text || ''), who: who || null, t: t || Date.now() });
-    if (w.activity.length > 40) w.activity.shift();
-    w.activityCount = (w.activityCount || 0) + 1;
-    if (!activityTimer) activityTimer = setTimeout(() => { activityTimer = null; for (const x of wins.values()) if (x.kind === 'operant' && x.alive) x.ui?.refresh(); }, 800);
-  });
   operant.on('runaway', ({ sessionId, reason, detail }) => {
     if (cfg.runawayGuard === 'off') return;
     const w = sessionWin.get(sessionId);
@@ -2386,6 +2338,19 @@
     refreshBar();
   }
 
+  // A worker whose result the lead just read (operant read) closes by itself a few seconds later, once its task is
+  // handed back for review. Checked again when the timer fires: a busy tile, an open plan, or a rejected task stays.
+  function closeWorkerAfterRead(w) {
+    if (!w?.tier || w.closeAfterRead) return;
+    const ready = () => Board.readyToClose(board, w, { busy: isWorking(w), waiting: !!w.planQueue?.length, read: true });
+    if (!ready()) return;
+    w.closeAfterRead = setTimeout(() => {
+      w.closeAfterRead = null;
+      const t = wins.get(w.id) === w && w.alive && ready();
+      if (t) { t.free = !!w.tok?.free; closeWin(w); boardChanged(); }
+    }, 4000);
+  }
+
   function closeDoneAgents() {
     for (const w of [...wins.values()]) if (w.kind === 'agent' && w.status === 'done') closeWin(w);
   }
@@ -2483,7 +2448,6 @@
     commandPalette: () => openPicker('commands'),
     findInView: () => openFind(focused()),
     showChanges: () => showChanges(),
-    openTerminal: () => openTerminal(),
     saveQuit: () => saveAndQuit(),
     notifications: () => togglePanel('notifications'),
   };
@@ -2560,7 +2524,7 @@
 
   // ------------------------------------------------------------ panels
 
-  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'hub', 'health', 'tour', 'startpick', 'about'];
+  const PANELS = ['keys', 'settings', 'launcher', 'usage', 'picker', 'quickmenu', 'notifications', 'board', 'basement', 'hub', 'health', 'tour', 'startpick', 'about'];
   const openPanel = () => PANELS.find(p => !$('#' + p).classList.contains('hidden'));
   function togglePanel(name) {
     if (name === 'picker') return openPicker(pick.mode || 'commands');
@@ -2573,6 +2537,7 @@
     else if (name === 'quickmenu') { drawGitButton(); drawTeamSliders(); }
     else if (name === 'notifications') { renderNotifications(); markAllNotifsRead(); }
     else if (name === 'board') { $('#board').classList.remove('hidden'); renderBoard(); }
+    else if (name === 'basement') renderBasement();
     else if (name === 'hub') scanHub();
     else if (name === 'health') healthRefresh(true);
     else if (name === 'tour') { tourStep = 0; renderTour(); }
@@ -2626,6 +2591,9 @@
   $('#about-tour').onclick = () => togglePanel('tour');
   $('#about-site').onclick = () => operant.openLink('https://github.com/doolecg/operant');
   $('#btn-keys').onclick = () => togglePanel('keys');
+  $('#btn-basement').onclick = () => togglePanel('basement');
+  $('#basement-body').onclick = e => { const r = e.target.closest('[data-bg]'); if (r) { basementSel = Number(r.dataset.bg); renderBasement(); } };
+  operant.on('basement:changed', () => { if (openPanel() === 'basement') { clearTimeout(basementTimer); basementTimer = setTimeout(renderBasement, 250); } });
   $('#btn-new').onclick = () => togglePanel('launcher');
   $('#btn-gear').onclick = () => togglePanel('quickmenu');
   $('#btn-notifs').onclick = () => togglePanel('notifications');
@@ -2771,7 +2739,7 @@
     $('#launcher-title').textContent = welcome ? 'Choose your agent' : 'New agent';
     $('#launcher-sub').textContent = welcome ? '1–9 or click to choose' : '1–9 opens one · Shift picks a folder first';
     $('#launcher-foot').textContent = welcome ? 'Your default agent from now on. Change it in Settings › Agents.' : 'Add or change agents in Settings › Agents';
-    const rows = [...cfg.agents, { ...OPERANT_AGENT, small: 'Plans, hands out and reports on the work in one prompt box' }];
+    const rows = cfg.agents;
     $('#launcher-body').innerHTML = rows.map((a, i) => `<button class="launch-row" data-i="${i}">
       <span class="ico">${esc(a.icon || '●')}</span><span class="nm">${esc(a.name)}<small>${esc(a.small || [a.command, ...[].concat(a.args || [])].join(' '))}</small></span>
       ${a.id === cfg.defaultAgent && !welcome ? '<span class="def">default</span>' : ''}${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}</button>`).join('')
@@ -2784,20 +2752,18 @@
     if (nw) nw.onclick = () => { closePanels(false); operant.newWindow(); };
   }
   const k = a => bindLabel(a) ? `<kbd>${esc(Panels.pretty(bindLabel(a)))}</kbd>` : '';
-  // The row after the agents is Operant itself (the Operant Terminal).
   async function launch(i, pickDir) {
-    const a = i === cfg.agents.length ? OPERANT_AGENT : cfg.agents[i];
+    const a = cfg.agents[i];
     if (!a) return;
     const first = welcome;
     closePanels(false);
     if (first) {
       setSetting('defaultAgent', a.id);
       if (!first.dir) return togglePanel('startpick');
-      return a === OPERANT_AGENT ? openOperantTerminal(projectDir(first.dir)) : newTerminal('ai', first.dir, { agentId: a.id, master: true });
+      return newTerminal('ai', first.dir, { agentId: a.id, master: true });
     }
     let dir;
     if (pickDir) { dir = await operant.pickFolder(); if (!dir) return; lastCwd = dir; }
-    if (a === OPERANT_AGENT) return openOperantTerminal(projectDir(dir || lastCwd));
     newTerminal('ai', dir, { agentId: a.id });
   }
   // Settings save a moment after the last change, so dragging a slider writes once.
@@ -2861,6 +2827,9 @@
     if (bad) logNotification({ id: 0, ws: current, title: 'Skills backup' }, 'Skills backup failed', (bad.path ? bad.path + ': ' : '') + bad.message);
     if (openPanel() === 'settings') renderSettings();
   });
+  let localState = { status: 'none', pct: 0, message: '', model: '' };
+  operant.localModelState().then(s => { localState = s; });
+  operant.on('localmodel:state', s => { localState = s; if (openPanel() === 'settings') renderSettings(); });
   let updateStatus = null;
   Panels.noteLaunch(cfg);
   const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, {
@@ -2870,6 +2839,10 @@
     renderKeys: el => { keysTarget = el; renderKeys(); },
     renderCodegraph,
     renderMemory,
+    localModelState: () => localState,
+    localModelInstall: model => { localState = { ...localState, status: 'installing', message: 'Starting…' }; operant.localModelInstall(model); },
+    localModelRemove: model => operant.localModelRemove(model),
+    localModelRefresh: () => operant.localModelRefresh(),
     backupStatus: () => ({ last: backupLast, running: backupRunning }),
     checkBackupRepo: dir => operant.backupCheckRepo(dir),
     backupRun: () => { backupRunning = true; operant.backupRun(); },
@@ -3431,7 +3404,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       + `<span class="nm">${esc(entry.name)}</span>`
       + (project ? `<span class="git-info">${gitInfoHtml(p)}</span>` : '')
       + (count ? `<span class="count" title="${count} open tile${count === 1 ? '' : 's'}">${count}</span>` : '')
-      + (entry.dir ? `<span class="acts">${project && cfg.codegraphButtons ? '<button data-act="cg" title="Index with CodeGraph">◇</button>' : ''}${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button><button data-act="terminal" title="Operant Terminal">◆</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
+      + (entry.dir ? `<span class="acts">${project && cfg.codegraphButtons ? '<button data-act="cg" title="Index with CodeGraph">◇</button>' : ''}${project ? `<button data-act="ide" title="Open in ${esc(ideName())}">⌨</button>` : ''}<button data-act="agent" title="New ${esc(agent?.name || 'agent')} here">${esc(agent?.icon || '✻')}</button><button data-act="shell" title="New shell here">❯</button></span>` : '')
       + '</div>';
     if (open) html += kidsHtml(p, depth);
     return html;
@@ -3684,7 +3657,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
 
   function openHere(dir, what) {
     if (what === 'ide') return openInIde(dir);
-    if (what === 'terminal') return openOperantTerminal(dir);
     lastCwd = dir;
     if (what === 'agent') newTerminal('ai', dir);
     else if (what === 'shell') newTerminal('shell', dir);
@@ -3895,7 +3867,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       ['▤', OPEN_FOLDER, () => operant.openPath(p)],
       ...(cfg.codegraphButtons ? [['◇', 'Index with CodeGraph', () => runCodegraph([p])]] : []),
       ['±', 'Show changes', () => showChanges(p)],
-      ['◆', 'Operant Terminal', () => openOperantTerminal(projectDir(p))],
       copy,
       '-',
       ...grouping,
@@ -4638,14 +4609,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           ...(w.runaway ? { runaway: w.runaway.reason } : {}),
           ...(w.waitingPrompt ? { waiting: true } : {}),
         }));
-      // `operant ask` from a worker the Operant Terminal started: the question shows in that project's Terminal and waits
-      // for your answer there. Anyone else (or no Terminal open) -> { dialog: true }, and main shows its dialog.
-      case 'ask': {
-        const t = self?.tier ? openTaskOf(self) : null;
-        const ot = t?.source === 'terminal' && [...wins.values()].find(x => x.kind === 'operant' && x.alive && x.cwd === projectDir(t.cwd || self.cwd || lastCwd));
-        if (!ot?.ui?.ask) return { dialog: true };
-        return { answer: await ot.ui.ask({ taskId: t.id, tile: self.id, question: String(args.question || ''), detail: args.detail ? String(args.detail) : '', options: Array.isArray(args.options) ? args.options.map(String) : [] }) };
-      }
       case 'stop': {
         const w = needTile(args.id);
         const how = stopTile(w);
@@ -4672,11 +4635,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'diff': {
         const dir = projectDir(args.dir ? resolvePath(self?.cwd || lastCwd, args.dir) : (self?.cwd || lastCwd));
         const w = openDiff(dir, { ws: self?.ws ?? current, near: self, focus: !!args.focus });
-        return { id: w.id };
-      }
-      case 'terminal': {
-        const dir = projectDir(args.dir ? resolvePath(self?.cwd || lastCwd, args.dir) : (self?.cwd || lastCwd));
-        const w = openOperantTerminal(dir, { ws: self?.ws ?? current, near: self, focus: !!args.focus });
         return { id: w.id };
       }
       case 'browse': {
@@ -4708,7 +4666,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'agent': {
         if (!args.prompt) throw new Error('prompt required');
         let agentId = args.agent, model = args.model, effort = args.effort ? String(args.effort) : null, tier = null, suggested = null;
-        const fromTerminal = args.source === 'terminal';
         // Item 82: the project's agent choice. An explicit --agent/--model/--tier for the other CLI is an error.
         const dir = args.cwd || self?.cwd || lastCwd, mode = agentMode(dir), mtiers = tiersIn(dir);
         if (mode !== 'both') {
@@ -4716,7 +4673,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             || (args.model && TeamTiers.modeConflict(mode, `model "${args.model}"`, /^claude/i.test(args.model) ? 'claude' : /\//.test(args.model) ? 'opencode' : 'other'))
             || (args.tier && !mtiers[args.tier] && activeTiers()[args.tier] && TeamTiers.modeConflict(mode, `tier "${args.tier}"`, agentKind(activeTiers()[args.tier].agent)));
           if (conflict) throw new Error(conflict);
-          if (!Object.keys(mtiers).length) throw new Error(`this project is set to ${TeamTiers.MODE_LABEL[mode]}, but no tier for it can run right now - change it in the project's sidebar menu (Agents) or Settings › Agents › Operant Terminal`);
+          if (!Object.keys(mtiers).length) throw new Error(`this project is set to ${TeamTiers.MODE_LABEL[mode]}, but no tier for it can run right now - change it in the project's sidebar menu (Agents) or Settings › Agents`);
         }
         // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt. A project limited to one CLI always routes within its tiers.
         if (!args.tier && !args.agent && !args.model && (cfg.team?.enabled || mode !== 'both')) {
@@ -4729,13 +4686,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           suggested = Routing.route({ prompt: args.prompt, tiers: Object.keys(capped), stats: await operant.outcomeStats().catch(() => ({})), counter, fallback });
           try { localStorage.setItem(key, String(counter + 1)); } catch {}
         }
-        // The Operant Terminal's tasks always get a tier (the cards need the board task): the one matching its agent and model, else the cheapest allowed.
-        let wantTier = args.tier || suggested?.tier;
-        if (!wantTier && fromTerminal) {
-          const all = mtiers, names = allowedTierNames(dir);
-          wantTier = names.find(n => all[n].agent === args.agent && (!args.model || all[n].model === args.model)) || names[0];
-          if (!wantTier) throw new Error('no worker tiers are set up - set them up in Settings › Agents › Team');
-        }
+        const wantTier = args.tier || suggested?.tier;
         if (wantTier) {
           tier = String(wantTier);
           const t = mtiers[tier];
@@ -4745,7 +4696,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const maxWorkers = cfg.team?.maxWorkers || 4;
           const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
           if (workers >= maxWorkers) throw new Error(`max workers already running (${maxWorkers}) - wait for one to finish`);
-          agentId = fromTerminal && args.agent ? args.agent : t.agent;
+          agentId = t.agent;
           model = model || t.model;
           if (!args.model && !args.effort) effort = t.effort || null;
         }
@@ -4755,7 +4706,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let taskId = null, prompt = args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
-          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd, ...(args.requestId ? { requestId: String(args.requestId) } : {}), ...(fromTerminal ? { source: 'terminal', requestTask: Number.isInteger(args.taskId) ? args.taskId : null, agent: agentId, model } : {}) };
+          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
           board.tasks.push(task);
           boardChanged();
@@ -4798,6 +4749,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         if (args.event === 'subagent-start') return cfg.briefAgents ? {} : { off: true };
         if (args.event === 'post-tool-use') return Messaging.pending(msgState, self.id) ? { context: Messaging.frameAll(Messaging.take(msgState, self.id)) } : {};
+        if (args.event === 'output' || args.event === 'stop') {
+          if (args.event === 'output') return {};
+        }
         if (args.event !== 'stop') return {};
         // Waiting messages keep the turn going, even when a Stop hook already did: the queue drains.
         if (Messaging.pending(msgState, self.id)) return { block: Messaging.frameAll(Messaging.take(msgState, self.id)) };
@@ -4812,6 +4766,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const def = (args.errors || args.grep) ? 400 : 60;
         const lines = Math.min(Math.max(1, +args.lines || def), 2000);
         const { text, total, shown } = readOutput(self, w, { lines, isNew: !!args.new, errors: !!args.errors, grep: args.grep });
+        closeWorkerAfterRead(w);
         return { id: w.id, title: w.title, busy: isWorking(w), text, total, shown };
       }
       case 'send': {
@@ -4826,14 +4781,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!cfg.messaging) throw new Error(MESSAGING_OFF);
         const w = messageTarget(args.id);
         const r = Messaging.enqueue(msgState, { from: self.id, to: w.id, text: args.text, fromAgent: self.agentName, fromRole: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell' });
-        if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${Messaging.REASONS[r.reason]}`);
-        const delivered = await deliver(w);
-        return { to: w.id, delivered, queued: Messaging.pending(msgState, w.id) };
-      }
-      // The user's own follow-up from the Operant Terminal: always queued, whatever the agent-messaging setting says.
-      case 'followup': {
-        const w = messageTarget(args.id);
-        const r = Messaging.enqueue(msgState, { from: 'user', to: w.id, text: args.text, fromAgent: 'user', fromRole: 'user' });
         if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${Messaging.REASONS[r.reason]}`);
         const delivered = await deliver(w);
         return { to: w.id, delivered, queued: Messaging.pending(msgState, w.id) };

@@ -96,3 +96,18 @@ test('closing a task ends it with your reason, never retried or open again', () 
   assert.throws(() => b.cancel(mk({ status: 'done' })), /already done/);
   assert.throws(() => b.cancel(t), /already cancelled/);
 });
+
+test('readyToClose: only a read, idle worker whose task waits in review', () => {
+  const w = { id: 7, tier: 'small' };
+  const board = { tasks: [b.handback(mk({ owner: 7 }), 'done', 'ok')] };
+  assert.equal(b.readyToClose(board, w, { read: true }).id, 1);
+  assert.equal(b.readyToClose(board, w, {}), null, 'not read yet');
+  assert.equal(b.readyToClose(board, w, { read: true, busy: true }), null);
+  assert.equal(b.readyToClose(board, w, { read: true, waiting: true }), null);
+  assert.equal(b.readyToClose(board, { id: 7 }, { read: true }), null, 'not a worker');
+  b.reject(board.tasks[0], 'redo');
+  assert.equal(b.readyToClose(board, w, { read: true }), null, 'rejected work stays');
+  const two = { tasks: [b.handback(mk({ owner: 7 }), 'done'), mk({ id: 2, owner: 7, status: 'doing' })] };
+  assert.equal(b.readyToClose(two, w, { read: true }), null, 'other open task');
+  assert.equal(b.readyToClose({ tasks: [b.handback(mk({ owner: 7 }), 'blocked')] }, w, { read: true }), null);
+});

@@ -89,6 +89,7 @@
       <div class="card-body qm-body">
         <div class="qm-tiles">
           <button class="qm-tile git hidden" id="git-pill"></button>
+          <button class="qm-tile" id="btn-basement" title="Basement: long commands running in the background"><span class="qm-ico">▁</span><span class="qm-lbl">Basement</span></button>
           <button class="qm-tile" id="btn-keys" title="Keybinds (Alt+K)"><span class="qm-ico">⌨</span><span class="qm-lbl">Shortcuts</span></button>
           <button class="qm-tile" id="btn-save-quit" title="Save and quit (Alt+Shift+Q): everything reopens next time"><span class="qm-ico"><svg viewBox="0 0 16 16"><path d="M8 1v7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M4.2 3.4a5.5 5.5 0 1 0 7.6 0" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg></span><span class="qm-lbl">Save &amp; quit</span></button>
         </div>
@@ -122,6 +123,13 @@
     <div class="card qm-card notif-card board-card">
       <div class="card-head notif-head"><h2>Tasks</h2><button class="link" id="board-clear-done">Clear done</button><button class="link" id="board-clear">Clear all</button></div>
       <div class="card-body" id="board-body"></div>
+    </div>
+  </div>
+
+  <div id="basement" class="overlay anchor hidden">
+    <div class="card qm-card notif-card board-card basement-card">
+      <div class="card-head notif-head"><h2>Basement</h2></div>
+      <div class="card-body" id="basement-body"></div>
     </div>
   </div>
 
@@ -238,13 +246,13 @@
   <script src="../task-type.js"></script>
   <script src="../routing.js"></script>
   <script src="../messaging.js"></script>
+  <script src="../hooks/long-commands.js"></script>
   <script src="platform.js"></script>
   <script src="themes.js"></script>
   <script src="render-agent.js"></script>
   <script src="md-view.js"></script>
   <script src="highlight.js"></script>
   <script src="digest.js"></script>
-  <script src="terminal.js"></script>
   <script src="settings.js"></script>
   <script src="tour.js"></script>
   <script src="renderer.js"></script>

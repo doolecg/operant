@@ -23,7 +23,6 @@ const installState = require('./install-state');
 const { redactText } = require('./redact');
 const { createStuckTracker } = require('./stuck');
 const outcomes = require('./outcomes');
-const terminalStore = require('./terminal-store');
 const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
@@ -32,9 +31,9 @@ const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
 const teamTiers = require('./team-tiers');
 const agentBrief = require('./agent-brief');
+const localModelLib = require('./local-model');
 const agentSetup = require('./agent-setup');
 const memory = require('./memory');
-const refiner = require('./refiner');
 // macOS and Linux: tiles run zsh/bash (platform/unix.js), and each OS keeps its own browser and IDE
 // locations (plus the macOS menus and Keychain).
 const unix = require('./platform/unix');
@@ -171,7 +170,6 @@ const DEFAULT_KEYBINDS = {
   showChanges: ['Alt+G'], // the changes tile (git) for the focused tile's project
   saveQuit: ['Alt+Shift+Q'], // save every editor tile, snapshot the session, and quit
   notifications: ['Alt+I'], // the notification panel
-  openTerminal: ['Alt+Shift+O'], // the Operant Terminal for the focused tile's project
   // Alt+1..9 switch workspace, Alt+Shift+1..9 move the focused tile there.
 };
 // macOS uses Cmd for these; its Ctrl keys go on to the terminal.
@@ -192,6 +190,8 @@ const DEFAULT_CONFIG = {
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // Claude Code & OpenCode tiles get the `operant` skill per session, from the app's own agent-plugin folder (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
+  localModel: { model: 'gemma3:4b' }, // Settings > Agents > Team > Local model: the Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use
+  backgroundAfterSeconds: 5,       // a rerouted long command (test/build/install) that is still running after this many seconds moves to the Basement and the agent waits for its errors · 0 = always at once (Settings > Agents)
   longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
@@ -202,7 +202,6 @@ const DEFAULT_CONFIG = {
   backups: { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true },
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
   messaging: false,               // agents can message each other with operant msg / inbox (Settings > Agents > Team)
-  terminal: { refiner: 'opencode', refinerModel: 'opencode/big-pickle', localUrl: '', localModel: '', autoSend: {}, maxTasks: 4 }, // the Operant Terminal's prompt refiner (refiner.js): opencode | local | off
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
     tiers: {
@@ -348,9 +347,14 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
 let ocModels = null;
 // cliInstalled (agent id -> found on PATH) is filled in by scanInstalled; unknown counts as installed.
 let cliInstalled = {};
-const withTiers = c => ({ ...c, teamTiers: teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }),
+// The lowest tier runs Big Pickle; while that is rate limited or out of free use and the local Ollama model is
+// ready, it runs the local model instead (local-model.js), and goes back after a cooldown.
+const localFailover = localModelLib.createFailover();
+let localReady = false, localTimer = null;
+const localOverlay = c => ({ ready: localReady, model: c.localModel?.model || localModelLib.DEFAULT_MODEL, down: localFailover.active() });
+const withTiers = c => ({ ...c, teamTiers: localModelLib.overlay(teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), localOverlay(c)),
   // Per-project agent choice: the tiers left when a project is Claude only or OpenCode only (team-tiers.js tiersForMode).
-  teamModes: teamTiers.tiersByMode({ base: c.team?.tiers || {}, agents: c.agents, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }) });
+  teamModes: localModelLib.overlayModes(teamTiers.tiersByMode({ base: c.team?.tiers || {}, agents: c.agents, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), localOverlay(c)) });
 const refreshTiers = () => { const t = withTiers(config); config.teamTiers = t.teamTiers; config.teamModes = t.teamModes; broadcast('team:tiers', t.teamTiers); broadcast('team:modes', t.teamModes); };
 // Codex and Gemini CLI are no longer built in: drop them from a saved agents list.
 const dropRemoved = u => {
@@ -395,6 +399,7 @@ ipcMain.handle('config:set', (e, patch) => {
   if ('planLimits' in patch || 'planLimitAlerts' in patch || 'tokenUsage' in patch) pollLimits();
   if ('theme' in patch || 'accent' in patch) opencodeTheme.writeTheme(config);
   if ('agents' in patch || 'defaultAgent' in patch) scanOpencodeModels();
+  if ('localModel' in patch) { localModel.setModel(config.localModel?.model || localModelLib.DEFAULT_MODEL); localModel.refresh(config.localModel?.model).then(refreshTiers); }
   if ('backups' in patch) scheduleStateBackups();
   // Other Operant windows pick the change up live.
   for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
@@ -520,13 +525,7 @@ function startControlServer() {
         // The CLI reporting a command or flag an agent tried that doesn't exist (bin/operant-cli.js). Answered
         // here, not forwarded, so it can't take the caller's pending watch warning.
         if (cmd === '_desire') { agentSetup.appendDesirePath(path.join(app.getPath('userData'), 'desire-paths.jsonl'), args); return reply(200, { ok: true, result: {} }); }
-        if (cmd === 'ask') {
-          // A worker the Operant Terminal started asks in the Terminal (answered there, as long as you take);
-          // anyone else gets the dialog.
-          const t = await forwardControl(ownerForTile(tile), 'ask', args, tile, 7 * 24 * 3600 * 1000);
-          if (t.ok && !t.result?.dialog) return reply(200, t);
-          const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r);
-        }
+        if (cmd === 'ask') { const r = await controlAsk(ownerForTile(tile), args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'open') { const r = await controlOpen(args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'usage') {
           // The renderer knows the calling tile's own context size and project; main owns the Claude
@@ -540,6 +539,25 @@ function startControlServer() {
         // Item 35: cheap readers run a hidden child process, no tile, no forward to the renderer's
         // command switch (only a couple of small side-calls into it, for the caller's cwd/tile output).
         if (cmd === 'summarize' || cmd === 'find') { const r = await controlSummarize(cmd, args, tile); return reply(r.ok ? 200 : 400, r); }
+        // `operant run "<cmd>" --background`: a long command started detached, its output kept for the Basement page.
+        if (cmd === 'run' && args.background && typeof args.command === 'string') {
+          const t = bgTasks.start(args.command, { cwd: args.cwd, title: args.title });
+          // --inline: wait a few seconds (Settings > Agents) and answer with the result when it finished; else it is handed over
+          // to the Basement and the CLI goes on to `wait` for its errors.
+          if (args.inline) {
+            const done = await bgTasks.settled(t.id, (Number.isFinite(config.backgroundAfterSeconds) ? config.backgroundAfterSeconds : 5) * 1000);
+            const id = 'bg' + t.id;
+            return reply(200, { ok: true, result: done ? { id, done: true, text: longCommands.taskReport(done, { digest: digestText }) } : { id, handedOver: true, text: `${id} moved to the Basement` } });
+          }
+          return reply(200, { ok: true, result: { id: 'bg' + t.id, status: t.status, text: `background task ${t.id} · ${t.status}; output in the Basement page` } });
+        }
+        // `operant wait bg<N>`: a Basement task; blocks until it finishes (or --timeout), answers with its status and only its errors.
+        if (cmd === 'wait' && /^bg\d+$/i.test(String(args.id))) {
+          const t = bgTasks.get(args.id);
+          if (!t) return reply(400, { ok: false, error: `no background task ${args.id}` });
+          const done = await bgTasks.settled(t.id, (Number(args.timeout) || 600) * 1000);
+          return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
+        }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -990,6 +1008,11 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
       skillPaths,
     });
   }
+  // The local model's provider, so `opencode -m ollama/<model>` works; merged per process, the user's own ollama provider is kept.
+  if (isOc && localReady) {
+    const own = agentSetup.opencodeConfigFiles(dir).map(f => agentSetup.readJson(f)?.provider?.ollama).find(Boolean);
+    envBase.OPENCODE_CONFIG_CONTENT = localModelLib.withProvider(envBase.OPENCODE_CONFIG_CONTENT, config.localModel?.model || localModelLib.DEFAULT_MODEL, own);
+  }
   // Folds the main agent's MCP servers, plugin skills and CodeGraph hook into whatever
   // OPENCODE_CONFIG_CONTENT already carries (brief instructions, rules, other plugin entries),
   // rather than replacing it. Per process only — never touches ~/.config/opencode.
@@ -1067,16 +1090,6 @@ ipcMain.handle('clipboard:has-image', async () => {
   const items = await clipboard.read();
   if (!items.some(i => i.types.some(t => t.startsWith('image/')))) return false;
   return !(await clipboard.readText());
-});
-// The Operant Terminal's image paste: the clipboard image as a PNG in Operant's temp folder; the workers get its path.
-ipcMain.handle('clipboard:save-image', async () => {
-  const img = clipboard.readImage();
-  if (img.isEmpty()) return null;
-  const dir = path.join(os.tmpdir(), 'operant-paste');
-  await fs.promises.mkdir(dir, { recursive: true });
-  const file = path.join(dir, `image-${Date.now()}.png`);
-  await fs.promises.writeFile(file, img.toPNG());
-  return file;
 });
 ipcMain.handle('config:path', () => { if (!fs.existsSync(CONFIG_PATH)) saveUser(); return CONFIG_PATH; });
 ipcMain.on('open-config', () => {
@@ -1608,6 +1621,12 @@ const usage = createUsage({
     if (breakdown) addTileTokens(sessionId, owner, breakdown, t, false);
   },
 });
+// Basement: long commands run in the background; the renderer's Basement page lists them and their output.
+const longCommands = require('./hooks/long-commands');
+const digestText = require('./renderer/digest');
+const bgTasks = longCommands.createBackgroundTasks({ onChange: () => broadcast('basement:changed') });
+ipcMain.handle('basement:list', () => bgTasks.all());
+ipcMain.handle('basement:start', (_e, { command, cwd, title }) => bgTasks.start(String(command || ''), { cwd, title }));
 ipcMain.handle('usage:summary', () => usage.summary());
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 
@@ -1632,11 +1651,6 @@ ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile }) => {
 });
 // Item 57: one line per finished or escalated board task, kept 90 days.
 const OUTCOMES_PATH = path.join(app.getPath('userData'), 'outcomes.jsonl');
-// The Operant Terminal's per-project conversation (terminal-store.js).
-const termStore = terminalStore.createStore(path.join(app.getPath('userData'), 'terminal'));
-ipcMain.handle('terminal:history', (_e, { project, limit } = {}) => { try { return termStore.history(project, { limit }); } catch { return []; } });
-ipcMain.handle('terminal:append', (_e, { project, entry } = {}) => { try { return { ok: true, entry: termStore.append(project, entry) }; } catch (e) { return { ok: false, error: e.message }; } });
-ipcMain.handle('terminal:clear', (_e, { project } = {}) => { termStore.clear(project); return { ok: true }; });
 const OUTCOMES_KEEP = 90 * 86400e3;
 try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch {}
 ipcMain.handle('outcome:record', async (_e, o) => {
@@ -1647,8 +1661,6 @@ ipcMain.handle('outcome:record', async (_e, o) => {
     return { ok: true };
   } catch { return { ok: false }; }
 });
-// The Operant Terminal's result cards: what these tokens cost on this model (usd null = no price for it, never a guess).
-ipcMain.handle('pricing:tokens', (_e, { model, tokens } = {}) => { try { return { usd: priceOf(model, tokens).usd }; } catch { return { usd: null }; } });
 // Item 59: summary of the last 30 days, at most the 20 most recent entries per type and tier.
 function outcomeStats() {
   try {
@@ -1659,56 +1671,6 @@ function outcomeStats() {
   } catch { return {}; }
 }
 ipcMain.handle('outcome:stats', async () => outcomeStats());
-// Operant Terminal (items 74-76): the prompt refiner. refiner.js does the work; these are its real inputs.
-async function refinerInputs(cwd) {
-  const g = await git(cwd, ['status', '--porcelain=v1', '-b', '-uall']);
-  let gitState = null;
-  if (g.ok) {
-    const lines = g.out.split(/\r?\n/).filter(Boolean);
-    const head = lines.find(l => l.startsWith('## ')) || '';
-    const h = head.slice(3).replace(/^No commits yet on /, '');
-    const log = await git(cwd, ['log', '-5', '--format=%s']);
-    const ls = await git(cwd, ['ls-files']);
-    gitState = { tracked: ls.ok ? ls.out.split(/\r?\n/).filter(Boolean) : [], branch: h.startsWith('HEAD (no branch)') ? 'detached' : h.split('...')[0].split(' ')[0], files: lines.filter(l => !l.startsWith('## ')).map(l => l.slice(3).replace(/^.* -> /, '')), commits: log.ok ? log.out.split(/\r?\n/).filter(Boolean) : [] };
-  }
-  const commands = {};
-  try {
-    const scripts = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts || {};
-    if (scripts.test) commands.test = 'npm test';
-    if (scripts.build) commands.build = 'npm run build';
-  } catch {}
-  let memoryFacts = [];
-  try { memoryFacts = memory.recall({ cwd, userDataDir: app.getPath('userData') }).text.split(/\r?\n/).filter(l => l.startsWith('- ')).map(l => l.slice(2).replace(/\*\*/g, '')).slice(0, 5); } catch {}
-  return { cwd, gitState, commands, memoryFacts };
-}
-ipcMain.handle('terminal:refine', async (_e, { project, prompt } = {}) => {
-  const cwd = typeof project === 'string' ? project : project?.cwd;
-  const team = config.team || DEFAULT_CONFIG.team;
-  const mode = agentModeOf(cwd), modeTiers = mode === 'both' ? null : config.teamModes?.[mode];
-  if (modeTiers?.empty) return { requestId: null, original: String(prompt ?? ''), refined: null, tasks: [], brief: { tokens: 0 }, mode, noTiers: true, refiner: { provider: config.terminal?.refiner, model: '', tokens: { input: null, output: null }, ms: 0, usd: null }, error: `This project is set to ${teamTiers.MODE_LABEL[mode]}, but ${mode === 'claude' ? 'Claude Code' : 'OpenCode'} has no tier that can run right now.` };
-  const exe = async () => resolveExe(String((config.agents.find(a => isOpenCode(a)) || { command: 'opencode' }).command).trim().split(/\s+/)[0]);
-  try {
-    const res = await refiner.refine({
-      project: cwd, prompt, settings: config.terminal,
-      deps: {
-        inputs: refinerInputs,
-        tiers: () => modeTiers ? modeTiers.tiers : config.teamTiers || team.tiers,
-        maxTier: () => {
-          if (!modeTiers) return team.maxTier;
-          const order = Object.keys(team.tiers), left = order.filter(n => n in modeTiers.tiers), top = order.indexOf(team.maxTier);
-          return top < 0 ? left[left.length - 1] : left.filter(n => order.indexOf(n) <= top).pop() || left[0];
-        },
-        outcomesStats: outcomeStats,
-        providers: {
-          opencode: async a => refiner.runOpencodeFast({ ...a, command: await exe(), env: await freshEnv() }),
-          local: a => refiner.runLocal(a),
-        },
-        record: entry => outcomes.appendOutcome(OUTCOMES_PATH, entry),
-      },
-    });
-    return { ...res, mode };
-  } catch (e) { logLine(`terminal:refine failed: ${e.message || e}`); return { requestId: null, original: String(prompt ?? ''), refined: null, tasks: [], brief: { tokens: 0 }, refiner: { provider: config.terminal?.refiner, model: '', tokens: { input: null, output: null }, ms: 0, usd: null }, error: String(e.message || e) }; }
-});
 // Health view (health.js): each part of the app with a state, checked from what Operant already knows (no new probes
 // per refresh; CodeGraph's version is remembered for 5 minutes). Cached, re-checked every 5 minutes, and the
 // renderer hears 'health' when a row changes state.
@@ -1762,6 +1724,27 @@ async function usageBreakdown(opts = {}) {
 }
 ipcMain.handle('usage:breakdown', (_e, opts) => usageBreakdown(opts));
 
+// Local model (Ollama): installed and pulled in the background, its state pushed live to Settings.
+const ollamaWhich = async cmd => {
+  const env = await freshEnv();
+  if (process.platform === 'win32') {
+    const r = await run('where.exe', [cmd], { env });
+    const hit = r.stdout.split(/\r?\n/).map(x => x.trim()).find(l => /\.exe$/i.test(l));
+    if (hit) return hit;
+    const known = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Ollama', 'ollama.exe');
+    return fs.existsSync(known) ? known : null;
+  }
+  return (await unix.which(cmd, env)) || null;
+};
+const localModel = localModelLib.createLocalModel({
+  which: ollamaWhich, env: freshEnv,
+  onChange: s => { const was = localReady; localReady = s.status === 'ready'; broadcast('localmodel:state', s); if (was !== localReady) refreshTiers(); },
+});
+ipcMain.handle('localmodel:state', () => localModel.state());
+ipcMain.handle('localmodel:install', (_e, model) => { localModel.install(String(model || config.localModel?.model)); return localModel.state(); });
+ipcMain.handle('localmodel:remove', (_e, model) => { localModel.remove(String(model || config.localModel?.model)); return localModel.state(); });
+ipcMain.handle('localmodel:refresh', () => localModel.refresh(config.localModel?.model));
+
 const opencode = createOpenCode({
   sendTo, primary: agentWindow, config,
   onToolUse: (sessionId, owner, name, input, label, toolId) => noteToolUse(sessionId, owner, name, input, label, toolId),
@@ -1774,6 +1757,15 @@ const opencode = createOpenCode({
     }
   },
   onSubagentCount: (sessionId, owner, count) => checkSubagents(sessionId, owner, count),
+  onFreeFailure: reason => {
+    const d = localFailover.active();
+    if (!localReady || d) return;
+    logLine('Big Pickle unavailable, lowest tier runs the local model: ' + reason);
+    const down = localFailover.fail(reason);
+    refreshTiers();
+    clearTimeout(localTimer);
+    localTimer = setTimeout(refreshTiers, Math.max(1000, down.until - Date.now() + 500));
+  },
 });
 ipcMain.handle('opencode:abort', (_e, { ptyId }) => opencode.abort(ptyId));
 ipcMain.handle('opencode:summarize', (_e, { ptyId }) => opencode.summarize(ptyId));
@@ -1932,7 +1924,6 @@ ipcMain.on('stuck:reset', (_e, { sessionId }) => {
 
 function noteToolUse(sessionId, owner, name, input, label, toolId) {
   noteStuckUse(sessionId, owner, name, input, toolId);
-  sendTo(owner, 'activity', { sessionId, text: toolDisplay(name, input), who: label || null, t: Date.now() }); // the Terminal's live card feed
   if (!config.runawayLoopRepeats || isReadonlyOperantCall(input)) return;
   const list = toolHistory.get(sessionId) || [];
   list.push({ key: stableToolKey(name, input), display: toolDisplay(name, input) });
@@ -2231,6 +2222,7 @@ function createWindow(startDir = null, restore = null) {
     if (config.tokenUsage) usage.start();
     opencode.start();
     scanOpencodeModels();
+    localModel.refresh(config.localModel?.model);
     pollLimits();
   });
   return w;

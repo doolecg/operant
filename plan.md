@@ -273,6 +273,7 @@ check in an isolated profile before release.
 - [x] **72. 2.1 docs, release.**
 
 ## Operant Terminal: one prompt box per project that plans, dispatches and reports (asked 29 Sept)
+**Removed in 2.3.1: items 73-88 (the Operant Terminal, its refiner, and "Operant as the default agent") were removed; kept for history only. Kept from this work: the 8 settings tabs (item 88), team mode, the OpenCode<->Claude link. Replaced by: Big Pickle first with a local-model (Gemma via Ollama) fallback on the lowest tier, long commands moving to the Basement after 5 s, and workers closing once read.**
 The user's words: "a Single Operant Terminal, look and act like Claude but cooler. It takes a prompt from me and
 edits it, cleans it, makes it efficient using either free OpenCode or local Gemma. This then gets processed, sent to
 the relevant agents, then receives the answers back of what the agents did. This is for each project."
@@ -617,7 +618,7 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
       detection (84O); restore that migrates, validates and health-checks (84M/84N); backup metadata (84L); the
       status and health strip with real states (84P); actionable errors (84Q); auto-update opt-in check (55); a UI
       regression pass and live test before release (84S).
-- 2.2 The Operant Terminal (items 73-81) and what it needs to work properly, pulled forward from later milestones:
+- 2.2 The Operant Terminal (items 73-81; removed in 2.3.1) and what it needs to work properly, pulled forward from later milestones:
     - a small provider seam for the refiner and utility calls: OpenCode free model, a local OpenAI-compatible URL,
       later Gemma (5/6/17, item 80 asks first);
     - task classification by type, complexity, risk, likely files and verification need (78/39), so the refiner's

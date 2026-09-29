@@ -93,6 +93,17 @@ function unreportedChange(before, after) {
   return { changed: true, note: `The worker made changes but didn't report; Operant found: ${found}` };
 }
 
-const api = { unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
+// A worker tile whose result the lead has read: its task waits in 'review' (handed back as done), it owns no other
+// open work, and it is neither busy nor waiting on an ask/plan answer. Rejected or reworked tasks are not 'review'.
+// `read` is true once the lead read the tile (operant read) or was handed the note. -> the task, or null.
+function readyToClose(board, w, { busy = false, waiting = false, read = false } = {}) {
+  if (!read || busy || waiting || !w || !w.tier) return null;
+  const mine = (board.tasks || []).filter(t => t.owner === w.id);
+  const review = mine.find(t => t.status === 'review');
+  if (!review || mine.some(t => t !== review && !['done', 'failed', 'cancelled'].includes(t.status))) return null;
+  return review;
+}
+
+const api = { readyToClose, unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
 })();

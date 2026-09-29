@@ -136,12 +136,9 @@ function writeClaudeMcpConfigFile(userDataDir, openCodeServers) {
 
 // Extra CLI args for a Claude tile when the main agent is OpenCode and shareSetup is on.
 // Only kicks in when OpenCode actually has servers to share.
-// The user's main agent: the default one, or with Operant (the Operant Terminal) as the default, the first Claude Code
-// agent (else the first agent), since only a CLI has rules, hooks and MCP servers to share.
+// The user's main agent: the default one.
 function mainAgentId(config) {
-  const agents = config.agents || [];
-  if (config.defaultAgent !== 'operant') return config.defaultAgent;
-  return (agents.find(a => isClaudeCmd(a.command)) || agents[0])?.id || null;
+  return config.defaultAgent;
 }
 
 function claudeExtraArgs({ agent, config, cwd, userDataDir }) {

@@ -117,7 +117,7 @@ test('an unknown enum value is refused', () => {
 test('a default agent or tier agent that does not exist is refused', () => {
   assert.deepStrictEqual(keys(v({ defaultAgent: 'ghost' })), ['defaultAgent']);
   assert.deepStrictEqual(v({ defaultAgent: 'opencode' }), []);
-  assert.deepStrictEqual(v({ defaultAgent: 'operant' }), [], 'Operant itself, the Operant Terminal');
+  assert.deepStrictEqual(keys(v({ defaultAgent: 'operant' })), ['defaultAgent']);
   assert.deepStrictEqual(keys(v({ team: { tiers: { small: { agent: 'ghost' } } } })), ['team']);
   assert.deepStrictEqual(v({ team: { tiers: { small: { agent: 'claude' } }, maxWorkers: 8 } }), []);
   assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agent: 'ghost' } } })), ['projectDefaults']);
@@ -150,4 +150,10 @@ test('a project agent choice must be both, claude or opencode', () => {
   assert.deepStrictEqual(v({ projectDefaults: { '/p': { agents: 'claude' } } }), []);
   assert.deepStrictEqual(v({ projectDefaults: { '/p': { agents: 'both' } } }), []);
   assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agents: 'gemini' } } })), ['projectDefaults']);
+});
+
+test('the Operant Terminal settings are dropped and a default agent of operant is reset', () => {
+  const r = migrate({ configVersion: 1, terminal: { maxTasks: 4 }, defaultAgent: 'operant', projectDefaults: { '/p': { agent: 'operant', agents: 'claude' } }, theme: 'dark' });
+  assert.deepStrictEqual(r.user, { configVersion: CURRENT, projectDefaults: { '/p': { agents: 'claude' } }, theme: 'dark' });
+  assert.deepStrictEqual(migrate({ configVersion: 1, defaultAgent: 'claude' }).user.defaultAgent, 'claude');
 });
