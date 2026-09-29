@@ -260,7 +260,7 @@ check in an isolated profile before release.
       outcomes, memory stats) into userData/backups/<time>/ with a manifest of sha256 per file, read back and
       checked after writing. Daily and before every update; keeps the last 10 plus one a day for a week. Settings ›
       Backups lists them with *Back up now* and *Restore*; a restore takes a safety backup first.
-- [ ] **69. Updates you can undo:** before installing, a backup (item 68); the download is checked against the
+- [x] **69. Updates you can undo:** before installing, a backup (item 68); the download is checked against the
       release asset's size and its sha256 digest from GitHub when the API gives one (recorded either way); an update
       history (from, to, when, result) in userData shown in the About/update panel. The new version marks itself
       healthy once its window has loaded; if it fails to get there twice, Operant offers to reinstall the previous
@@ -268,7 +268,7 @@ check in an isolated profile before release.
 - [x] **70. Config versions and migrations:** `configVersion` in config.json and an ordered list of migrations run
       at load (after a backup), each tested from a fresh install, an old config and an interrupted migration; an
       unknown future version is left untouched and read as far as possible.
-- [ ] **71. Every setting works:** a test walks every Settings control and every DEFAULT_CONFIG key: each one saves,
+- [x] **71. Every setting works:** a test walks every Settings control and every DEFAULT_CONFIG key: each one saves,
       loads back, and is read somewhere outside settings/defaults (a dead setting fails the test); fix what it finds.
 - [ ] **72. 2.1 docs, release.**
 

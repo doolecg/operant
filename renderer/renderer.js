@@ -2748,6 +2748,7 @@
     restoreStateBackup: id => operant.backupsRestore(id),
     openBackupsFolder: () => operant.backupsOpenFolder(),
     update: () => ({ version, status: updateStatus }),
+    updateHistory: () => operant.updateHistory(),
     checkUpdate: () => operant.checkUpdate(),
     installUpdate: () => operant.installUpdate(),
     openReleases: () => operant.openReleases(),
@@ -4187,6 +4188,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   if (snap && await restore(snap)) { if (startDir) newTerminal('ai', startDir); }
   else if (!cfg.onboarded) { tourThen = startFresh; togglePanel('tour'); }
   else startFresh();
+  operant.appReady();
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
   // Settings › CodeGraph: pinned projects with lots of new code (or all of them) are indexed in one tile at startup.
   operant.codegraphStartup().then(dirs => {

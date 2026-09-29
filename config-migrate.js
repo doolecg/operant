@@ -26,4 +26,22 @@ function migrate(user) {
   return { user: next, from, to: CURRENT, changed: from !== CURRENT || user.configVersion !== CURRENT };
 }
 
-module.exports = { CURRENT, MIGRATIONS, migrate };
+// The config:set patch on the stored user config: only known keys, null resets a key to its default.
+function applyPatch(user, patch, defaults) {
+  for (const [k, v] of Object.entries(patch)) {
+    if (!(k in defaults)) continue;
+    if (v === null) delete user[k]; else user[k] = v;
+  }
+  return user;
+}
+
+// Defaults under what the user changed; keybinds and team are nested, so a partial override keeps the rest.
+function mergeUser(defaults, user, keybinds) {
+  return {
+    ...defaults, ...user,
+    keybinds: { ...keybinds, ...(user.keybinds || {}) },
+    team: { ...defaults.team, ...(user.team || {}), tiers: { ...defaults.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...defaults.team.budgets, ...(user.team?.budgets || {}) } },
+  };
+}
+
+module.exports = { CURRENT, MIGRATIONS, migrate, applyPatch, mergeUser };

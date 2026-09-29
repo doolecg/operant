@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const http = require('http');
 const { spawn, execFile } = require('child_process');
 const pty = require('@lydell/node-pty');
-const { createUpdater } = require('./updater');
+const { createUpdater, healthState: updateHealthState } = require('./updater');
 const hub = require('./hub');
 const skillsBackup = require('./backup');
 const stateBackup = require('./state-backup');
@@ -340,10 +340,7 @@ const dropRemoved = u => {
 const dropTileLinks = u => u.linkBrowser === 'tile' ? { ...u, linkBrowser: 'default' } : u;
 // shellSyntax is derived too: the language a shell tile's `run` string is written in (sh or PowerShell).
 const withShell = c => ({ ...c, shellSyntax: unix.usesSh(c.shell) ? 'sh' : 'powershell' });
-const merged = () => withShell(withTiers({ ...DEFAULT_CONFIG, ...dropTileLinks(dropRemoved(user)),
-  keybinds: { ...DEFAULT_KEYBINDS, ...(user.keybinds || {}) },
-  team: { ...DEFAULT_CONFIG.team, ...(user.team || {}), tiers: { ...DEFAULT_CONFIG.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...DEFAULT_CONFIG.team.budgets, ...(user.team?.budgets || {}) } },
-}));
+const merged = () => withShell(withTiers(configMigrate.mergeUser(DEFAULT_CONFIG, dropTileLinks(dropRemoved(user)), DEFAULT_KEYBINDS)));
 const config = merged();
 // Read before the app is ready, so it only changes on a restart.
 if (!config.hardwareAcceleration) app.disableHardwareAcceleration();
@@ -356,10 +353,7 @@ function saveUser() {
 
 // patch: { key: value }; null resets a key to its default.
 ipcMain.handle('config:set', (e, patch) => {
-  for (const [k, v] of Object.entries(patch)) {
-    if (!(k in DEFAULT_CONFIG)) continue;
-    if (v === null) delete user[k]; else user[k] = v;
-  }
+  configMigrate.applyPatch(user, patch, DEFAULT_CONFIG);
   saveUser();
   Object.assign(config, merged());
   if ('explorerContextMenu' in patch && installed && process.platform === 'win32') {
@@ -1342,7 +1336,47 @@ ipcMain.handle('win:focused', e => { const w = winOf(e); return !!w && w.isFocus
 
 // ------------------------------------------------------------------ updates
 
-const updater = createUpdater({ send: broadcast, onInstall: () => { session.restoreNext = true; writeSession(); } });
+const updater = createUpdater({
+  send: broadcast, log: logLine,
+  onInstall: () => { session.restoreNext = true; writeSession(); },
+  beforeInstall: () => createStateBackup('before-update').id,
+});
+ipcMain.handle('update:history', () => updater.history.read());
+
+// After an update: the new version has to reach a healthy start. Each launch counts an attempt; the renderer's
+// 'app:ready' (sent once its init has finished, after the page loaded) marks the install healthy. Two launches
+// without that and the next one offers, on the user's click only, to reinstall the old version and its settings.
+let healthPending = false, rollbackOffer = null;
+function startHealthCheck() {
+  try {
+    const hist = updater.history.read();
+    const st = updateHealthState(hist, app.getVersion());
+    if (st === 'check') { updater.history.updateLast(e => { e.attempts = (e.attempts || 0) + 1; }); healthPending = true; }
+    else if (st === 'offer-rollback') rollbackOffer = hist[hist.length - 1];
+  } catch (e) { logLine(`update health check failed: ${e.message || e}`); }
+}
+ipcMain.on('app:ready', () => {
+  if (!healthPending) return;
+  healthPending = false;
+  try { updater.history.updateLast(e => { if (e.result === 'installing') e.result = 'healthy'; }); } catch (e) { logLine(`update history not saved: ${e.message || e}`); }
+});
+async function offerRollback(win) {
+  const entry = rollbackOffer;
+  rollbackOffer = null;
+  if (!entry) return;
+  const r = await dialog.showMessageBox(win, { type: 'question', title: 'Operant', message: `Operant ${entry.to} didn't start properly twice. Reinstall ${entry.from} and restore your settings from before the update?`,
+    detail: 'Your settings and memory from before the update come back, and Operant restarts on the older version.',
+    buttons: [`Reinstall ${entry.from}`, 'Keep this version'], defaultId: 0, cancelId: 1, noLink: true });
+  if (r.response !== 0) { try { updater.history.updateLast(e => { e.result = 'failed-to-start'; }); } catch {} return; }
+  const dir = app.getPath('userData');
+  const res = await updater.rollback(entry, () => {
+    updater.history.updateLast(e => { e.result = 'failed-to-start'; }); // before the reinstall adds its own entry
+    if (stateBackup.listBackups(dir).some(b => b.ok && b.id === entry.backup)) stateBackup.restoreBackup({ userDataDir: dir, id: entry.backup, version: app.getVersion() });
+    else logLine(`no backup ${entry.backup} to restore, reinstalling ${entry.from} only`);
+  });
+  if (res.ok) app.quit();
+  else dialog.showMessageBox(win, { type: 'error', title: 'Operant', message: `Couldn't reinstall ${entry.from}`, detail: res.error });
+}
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.on('update:check', () => updater.check());
 ipcMain.handle('update:state', () => updater.status);
@@ -1987,6 +2021,7 @@ function createWindow(startDir = null, restore = null) {
     started = true;
     startWatcher();
     if (config.autoUpdate) updater.start();
+    if (rollbackOffer) offerRollback(w);
     setTimeout(hubCheck, 8000);
     setInterval(hubCheck, 3 * 60 * 60 * 1000);
     setInterval(() => backupRun(true), 6 * 60 * 60 * 1000);
@@ -2075,6 +2110,7 @@ if (!app.requestSingleInstanceLock()) {
       if (gone.length) logLine(`removed the skill copies older versions installed: ${gone.join(', ')}`);
     }
     dailyStateBackup();
+    startHealthCheck();
     probeAgents(); // in the background: what the installed CLIs take, before the first tile needs to know
     opencodeTheme.writeTheme(config);
     editorCommand(); // warms the PATH and editor lookups before the first tile needs them

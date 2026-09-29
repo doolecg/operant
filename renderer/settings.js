@@ -240,6 +240,13 @@ const Panels = (() => {
   }
 
   // The Updates tab: this version, the last check and what to do next.
+  let updateHistory = [], updateHistoryAt = 0;
+  const UH_RESULT = { installing: 'installing', healthy: 'started fine', 'failed-to-start': "didn't start" };
+  function updateHistoryList() {
+    const rows = updateHistory.slice().reverse().map(e => `<div class="set-row"><div class="lbl"><span>${esc(e.from)} → ${esc(e.to)}${e.digestChecked ? ' <span title="Installer checked against its published SHA-256">✓</span>' : ''}</span><span class="hint">${esc(e.at ? new Date(e.at).toLocaleString() : '')} · ${esc(UH_RESULT[e.result] || e.result || '')}</span></div></div>`).join('');
+    return `<div data-uh><div class="pane-title">Update history</div>${rows || '<div class="set-row"><div class="lbl">No updates installed yet</div></div>'}</div>`;
+  }
+
   function updatesCard(u) {
     const s = u.status || {};
     const at = s.at ? new Date(s.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -260,7 +267,8 @@ const Panels = (() => {
         ? `<details class="uc-notes" open><summary>What's new in ${esc(s.version)}</summary><div class="md">${md(s.notes)}</div></details>`
         : s.notes && s.state === 'current' ? `<details class="uc-notes"><summary>What's new in this version</summary><div class="md">${md(s.notes)}</div></details>` : '')
       + '<div class="uc-links"><button class="link" data-update="releases">All releases on GitHub ↗</button>'
-      + '<button class="link" data-update="log">Open log folder</button></div>';
+      + '<button class="link" data-update="log">Open log folder</button></div>'
+      + updateHistoryList();
   }
 
   // Release notes are Markdown: headings, lists, bold/italic, `code`, links and --- rules. HTML is escaped first.
@@ -376,7 +384,7 @@ const Panels = (() => {
   }
 
   // Settings › Backups: Operant's own state (config, session, memory) copied into its data folder; Restore asks first.
-  let stateBackups = null, stateBackupMsg = '';
+  let stateBackups = null, stateBackupsAt = 0, stateBackupMsg = '';
   const fmtSize = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
   function stateBackupsEditor() {
     const rows = stateBackups === null ? '<div class="set-row"><div class="lbl">Loading…</div></div>'
@@ -496,7 +504,9 @@ const Panels = (() => {
         if (!repos.some(r => r.path.toLowerCase() === p.toLowerCase())) setBackup({ repos: [...repos, { path: p }] });
         draw();
       });
-      if (stateBackups === null && pane.querySelector('[data-sbk-create]')) ext.listStateBackups().then(l => { stateBackups = l; draw(); });
+      // Re-read whenever the list is older than a couple of seconds, so opening Settings or the tab shows current backups.
+      if (Date.now() - stateBackupsAt > 2000 && pane.querySelector('[data-sbk-create]')) { stateBackupsAt = Date.now(); ext.listStateBackups().then(l => { stateBackups = l; draw(); }); }
+      if (Date.now() - updateHistoryAt > 2000 && pane.querySelector('[data-uh]')) { updateHistoryAt = Date.now(); ext.updateHistory().then(l => { updateHistory = l; draw(); }); }
       pane.querySelectorAll('[data-sbk-create]').forEach(b => b.onclick = async () => {
         b.disabled = true;
         const r = await ext.createStateBackup();

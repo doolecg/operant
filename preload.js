@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('operant', {
   checkUpdate: () => ipcRenderer.send('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
   updateState: () => ipcRenderer.invoke('update:state'),
+  updateHistory: () => ipcRenderer.invoke('update:history'),
+  appReady: () => ipcRenderer.send('app:ready'),
   openReleases: () => ipcRenderer.send('open-releases'),
   openLogFolder: () => ipcRenderer.send('open-log-folder'),
   openLink: (url, second) => ipcRenderer.send('open-link', { url, second }),

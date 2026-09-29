@@ -11,6 +11,8 @@ const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
+const crypto = require('crypto');
+const { writeFileAtomic } = require('./atomic-write');
 
 const REPO = 'doolecg/operant';
 const CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
@@ -125,12 +127,66 @@ function debInstallScript({ pid, deb, exe, log, relaunch }) {
   ].join('\n');
 }
 
-function createUpdater({ send, onInstall, currentVersion = app.getVersion() }) {
+// GitHub's asset JSON may carry `digest: "sha256:<hex>"`. Resolves true when the file matches it, false when there is
+// nothing to check (no digest, or an algorithm other than sha256), and throws when the file differs.
+async function verifyDigest(file, digest) {
+  const m = /^sha256:([0-9a-f]{64})$/i.exec(String(digest || ''));
+  if (!m) return false;
+  const hash = crypto.createHash('sha256');
+  await new Promise((resolve, reject) => fs.createReadStream(file).on('data', d => hash.update(d)).on('error', reject).on('end', resolve));
+  if (hash.digest('hex') !== m[1].toLowerCase()) throw new Error('download digest mismatch');
+  return true;
+}
+
+// userData/update-history.json: one entry per install, {from, to, at, asset, digestChecked, backup, result, attempts},
+// newest last, the last HISTORY_MAX kept. result: 'installing' until the new version has started properly.
+const HISTORY_MAX = 50;
+const trimHistory = list => (Array.isArray(list) ? list : []).slice(-HISTORY_MAX);
+function historyStore(file) {
+  const read = () => { try { return trimHistory(JSON.parse(fs.readFileSync(file, 'utf8'))); } catch { return []; } };
+  const write = list => writeFileAtomic(file, JSON.stringify(trimHistory(list), null, 2));
+  return {
+    read,
+    add(entry) { const list = read(); list.push(entry); write(list); return entry; },
+    // Change the newest entry (the install in flight).
+    updateLast(fn) { const list = read(); if (!list.length) return null; fn(list[list.length - 1]); write(list); return list[list.length - 1]; },
+  };
+}
+
+// What to do at launch: 'none', 'check' (the new version's first tries: it must reach a healthy start), or
+// 'offer-rollback' (it already failed to get there twice).
+function healthState(history, version) {
+  const e = Array.isArray(history) && history[history.length - 1];
+  if (!e || e.result !== 'installing' || e.to !== version) return 'none';
+  return (e.attempts || 0) >= 2 ? 'offer-rollback' : 'check';
+}
+
+function createUpdater({ send, onInstall, beforeInstall, log = () => {}, historyFile, currentVersion = app.getVersion() }) {
+  const history = historyStore(historyFile || path.join(app.getPath('userData'), 'update-history.json'));
   let ready = null;      // { version, file, notes, url, kind }
   let busy = false;
   let installing = false;
   let status = null;     // the last thing reported, for the Settings › Updates tab
   const report = s => { status = { ...s, at: Date.now() }; send('update:status', status); };
+
+  // Downloads an asset to the temp folder (reusing a finished copy of ours), checks its size and, when GitHub
+  // lists one, its sha256; a bad file is deleted.
+  async function fetchAsset(asset, version, kind, onDownload) {
+    const file = path.join(os.tmpdir(), `Operant-${version}.${EXT[kind]}`);
+    if (!downloaded(file, asset.size)) {
+      onDownload?.();
+      const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
+      if (!dl.ok) throw new Error(`download ${dl.status}`);
+      const tmp = file + '.part';
+      await pipeline(Readable.fromWeb(dl.body), fs.createWriteStream(tmp));
+      if (fs.statSync(tmp).size !== asset.size) { try { fs.unlinkSync(tmp); } catch {} throw new Error('download size mismatch'); }
+      fs.renameSync(tmp, file);
+    }
+    try { return { file, digestChecked: await verifyDigest(file, asset.digest) }; } catch (e) {
+      try { fs.unlinkSync(file); } catch {}
+      throw e;
+    }
+  }
 
   async function check() {
     if (busy || installing) return;
@@ -152,17 +208,8 @@ function createUpdater({ send, onInstall, currentVersion = app.getVersion() }) {
       const asset = pickAsset(rel.assets, { platform: process.platform, arch: process.arch, kind });
       if (!asset) { report({ state: 'error', message: `${version} has no installer for this system yet, try again in a few minutes` }); return; }
 
-      const file = path.join(os.tmpdir(), `Operant-${version}.${EXT[kind]}`);
-      if (!downloaded(file, asset.size)) {
-        report({ state: 'downloading', version, notes: rel.body || '' });
-        const dl = await net.fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
-        if (!dl.ok) throw new Error(`download ${dl.status}`);
-        const tmp = file + '.part';
-        await pipeline(Readable.fromWeb(dl.body), fs.createWriteStream(tmp));
-        if (fs.statSync(tmp).size !== asset.size) throw new Error('download size mismatch');
-        fs.renameSync(tmp, file);
-      }
-      ready = { version, file, notes: rel.body || '', url: rel.html_url, kind };
+      const { file, digestChecked } = await fetchAsset(asset, version, kind, () => report({ state: 'downloading', version, notes: rel.body || '' }));
+      ready = { version, file, notes: rel.body || '', url: rel.html_url, kind, asset: asset.name, digestChecked };
       report({ state: 'ready', version, notes: ready.notes, url: rel.html_url });
     } catch (e) {
       report({ state: 'error', message: String(e.message || e) });
@@ -209,8 +256,7 @@ function createUpdater({ send, onInstall, currentVersion = app.getVersion() }) {
   // powershell.exe exits without running anything, and without it the child dies with us.
   // So a short-lived launcher starts the worker via Start-Process (its own console, not our
   // child), and we wait for the launcher before quitting.
-  function install(relaunch) {
-    if (!ready || installing) return false;
+  function installNow(relaunch) {
     if (ready.kind !== 'msi') return installUnix(relaunch);
     const q = s => s.replace(/'/g, "''");
     const exe = process.execPath;
@@ -244,6 +290,46 @@ function createUpdater({ send, onInstall, currentVersion = app.getVersion() }) {
     return true;
   }
 
+  // Every install goes through here: a state backup first (a failed one is logged and recorded but doesn't stop
+  // the update), then the installer, then a history entry the next launch completes.
+  function install(relaunch, { skipBackup = false, from = currentVersion } = {}) {
+    if (!ready || installing) return false;
+    let backup = 'none';
+    if (!skipBackup && beforeInstall) {
+      try { backup = beforeInstall() || 'none'; } catch (e) { backup = `error: ${e.message || e}`; log(`backup before update failed: ${e.message || e}`); }
+    }
+    if (!installNow(relaunch)) return false;
+    try {
+      history.add({ from, to: ready.version, at: new Date().toISOString(), asset: ready.asset || path.basename(ready.file), digestChecked: !!ready.digestChecked, backup, result: 'installing', attempts: 0 });
+    } catch (e) { log(`update history not saved: ${e.message || e}`); }
+    return true;
+  }
+
+  // The user asked to go back: the `from` release's installer is downloaded, restore() puts the settings from before
+  // the update back, and it installs like an update. Nothing changes until the download has passed its checks.
+  async function rollback({ from, to }, restore) {
+    if (busy || installing) return { ok: false, error: 'An update is in progress' };
+    busy = true;
+    try {
+      const kind = installKind();
+      if (!kind) throw new Error(`${from} has to be reinstalled from the releases page`);
+      const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/tags/${from}`, { headers: { 'User-Agent': 'operant', Accept: 'application/vnd.github+json' } });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const rel = await res.json();
+      const asset = pickAsset(rel.assets, { platform: process.platform, arch: process.arch, kind });
+      if (!asset) throw new Error(`${from} has no installer for this system`);
+      const { file, digestChecked } = await fetchAsset(asset, from, kind);
+      ready = { version: from, file, notes: rel.body || '', url: rel.html_url, kind, asset: asset.name, digestChecked };
+      restore?.();
+      if (!install(true, { skipBackup: true, from: to })) throw new Error('could not start the installer');
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
+    } finally {
+      busy = false;
+    }
+  }
+
   function start() {
     if ((!app.isPackaged || process.env.OPERANT_USER_DATA) && !process.env.OPERANT_UPDATE_TEST) return;
     setTimeout(check, 5000);
@@ -253,7 +339,7 @@ function createUpdater({ send, onInstall, currentVersion = app.getVersion() }) {
     app.on('will-quit', () => { if (ready && ready.kind !== 'deb' && !installing && app.isPackaged) install(false); });
   }
 
-  return { start, check, install: () => install(true), get ready() { return ready; }, get status() { return status; } };
+  return { start, check, rollback, history, install: () => install(true), get ready() { return ready; }, get status() { return status; } };
 }
 
-module.exports = { createUpdater, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript };
+module.exports = { createUpdater, verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript };

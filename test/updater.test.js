@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
-const { newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript } = require('../updater.js');
+const { verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript } = require('../updater.js');
 
 const isWin = process.platform === 'win32';
 const findShell = name => (isWin
@@ -368,4 +368,50 @@ test('deb worker: runs pkexec dpkg -i on the download, then starts the app', { s
   assert.equal(s.calls()[0], `pkexec dpkg -i ${posix(deb)}`);
   assert.ok(await until(() => s.calls().includes('operant started')), `${s.calls()}\n${s.log(log)}`);
   assert.match(s.log(log), /installing[\s\S]*dpkg exited with 0/);
+});
+
+test('verifyDigest: true on a match, false when there is nothing to check, throws on a mismatch', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-dg-'));
+  try {
+    const f = path.join(dir, 'a.msi');
+    fs.writeFileSync(f, 'hello');
+    const hex = require('node:crypto').createHash('sha256').update('hello').digest('hex');
+    assert.equal(await verifyDigest(f, `sha256:${hex}`), true);
+    assert.equal(await verifyDigest(f, `sha256:${hex.toUpperCase()}`), true);
+    assert.equal(await verifyDigest(f, undefined), false);
+    assert.equal(await verifyDigest(f, 'md5:abc'), false);
+    await assert.rejects(verifyDigest(f, `sha256:${'0'.repeat(64)}`), /digest mismatch/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('healthState: none, check, then offer-rollback after two unhealthy launches', () => {
+  const e = (o = {}) => ({ from: '1.0.0', to: '1.1.0', result: 'installing', attempts: 0, ...o });
+  assert.equal(healthState([], '1.1.0'), 'none');
+  assert.equal(healthState(undefined, '1.1.0'), 'none');
+  assert.equal(healthState([e()], '1.1.0'), 'check');
+  assert.equal(healthState([e({ attempts: 1 })], '1.1.0'), 'check');
+  assert.equal(healthState([e({ attempts: 2 })], '1.1.0'), 'offer-rollback');
+  assert.equal(healthState([e({ attempts: 2 })], '1.0.0'), 'none'); // the install never happened
+  assert.equal(healthState([e({ result: 'healthy', attempts: 2 })], '1.1.0'), 'none');
+  assert.equal(healthState([e({ result: 'failed-to-start', attempts: 2 })], '1.1.0'), 'none');
+  assert.equal(healthState([e({ attempts: 2, to: '1.0.5' }), e({ result: 'healthy' })], '1.1.0'), 'none'); // only the newest counts
+});
+
+test('update history: written atomically, completed in place, trimmed to the last 50', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-uh-'));
+  try {
+    const h = historyStore(path.join(dir, 'update-history.json'));
+    assert.deepEqual(h.read(), []);
+    assert.equal(h.updateLast(() => {}), null);
+    for (let i = 0; i < HISTORY_MAX + 5; i++) h.add({ from: `1.0.${i}`, to: `1.0.${i + 1}`, result: 'installing', attempts: 0 });
+    const list = h.read();
+    assert.equal(list.length, HISTORY_MAX);
+    assert.equal(list[0].from, '1.0.5');
+    h.updateLast(x => { x.result = 'healthy'; x.attempts++; });
+    assert.deepEqual(h.read().at(-1), { from: `1.0.${HISTORY_MAX + 4}`, to: `1.0.${HISTORY_MAX + 5}`, result: 'healthy', attempts: 1 });
+    assert.deepEqual(fs.readdirSync(dir), ['update-history.json']);
+    fs.writeFileSync(path.join(dir, 'update-history.json'), '{bad');
+    assert.deepEqual(h.read(), []);
+    assert.deepEqual(trimHistory('nope'), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
