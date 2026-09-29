@@ -1,3 +1,16 @@
+# Operant 1.17.5
+
+The task board now shows a one-line summary for each task instead of the worker's whole prompt.
+
+**Install:** download `Operant-1.17.5.msi` and run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+
+## Changed
+- **Task summaries:** each task on the board reads as one short line: the name the agent gave the worker, or the first sentence of its task. Hover a task to see the full text.
+- **Task notifications say which task:** "Task 3 done: <summary>" and "Task 3 ended without a result: <summary>".
+- **`operant board`** lists the summaries too; `operant board --full` prints the whole text.
+
+---
+
 # Operant 1.17.4
 
 Team mode opens fewer terminals: agents only start Operant tiles when Claude Code and OpenCode work together.
