@@ -208,7 +208,7 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
       notify-when-done 33% → pass; fix in the skill/brief wording, confirmed with that eval case only); a rejected
       worker isn't flagged as a runaway for re-running `operant board` (the reject message says exactly what to do
       next, and read-only `operant` status calls don't count toward the loop guard); `evals/results/` ignored.
-- [ ] **57. Task outcomes:** every board task records its outcome in `outcomes.jsonl` (userData): task type (a small
+- [x] **57. Task outcomes:** every board task records its outcome in `outcomes.jsonl` (userData): task type (a small
       deterministic classifier: fix, feature, lookup, test, refactor, docs), tier, agent/model, tokens and $ (from
       item 54), attempts, retries, escalations, final status, duration, files changed. Kept 90 days. This is the
       data routing and the benchmark read; nothing else changes yet.

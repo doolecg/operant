@@ -15,6 +15,8 @@ const hub = require('./hub');
 const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
+const outcomes = require('./outcomes');
+const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
 const shellIntegration = require('./shell-integration');
@@ -1427,6 +1429,18 @@ ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile }) => {
   loadUsageTags()[id] = { tier: tier || null, taskId: taskId ?? null, tile: tile ?? null, at: Date.now() };
   try { fs.writeFileSync(USAGE_TAGS_PATH, JSON.stringify(usageTags)); } catch {}
   return { ok: true };
+});
+// Item 57: one line per finished or escalated board task, kept 90 days.
+const OUTCOMES_PATH = path.join(app.getPath('userData'), 'outcomes.jsonl');
+const OUTCOMES_KEEP = 90 * 86400e3;
+try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch {}
+ipcMain.handle('outcome:record', async (_e, o) => {
+  try {
+    const { cwd, model, ...rest } = o || {};
+    const entry = { t: Date.now(), ...rest, model: model || null, usd: model ? priceOf(model, rest.tokens).usd : null, project: cwd ? path.basename(cwd) : null };
+    outcomes.appendOutcome(OUTCOMES_PATH, entry);
+    return { ok: true };
+  } catch { return { ok: false }; }
 });
 // Claude transcripts plus OpenCode's database, tagged; days/sinceMs pick the window.
 async function usageBreakdown(opts = {}) {

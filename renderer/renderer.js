@@ -1194,15 +1194,27 @@
       worker: true, ws: lead?.alive ? lead.ws : current, near: lead?.alive ? lead : undefined, focus: false,
     });
     w.tier = tier; setTierDot(w);
-    t.owner = w.id;
+    t.owner = w.id; t.agent = conf.agent; t.model = conf.model;
     tagUsage(w, tier, t.id);
     boardChanged();
     return w;
   }
 
+  // Item 57: what became of a task, for routing and benchmarks; main adds the time, price and project.
+  const addTok = (a, b) => ({ input: (a?.input || 0) + (b?.input || 0), output: (a?.output || 0) + (b?.output || 0), cacheWrite: (a?.cacheWrite || 0) + (b?.cacheWrite || 0), cacheRead: (a?.cacheRead || 0) + (b?.cacheRead || 0) });
+  function recordOutcome(t, status, tile) {
+    const w = tile === undefined ? wins.get(t.owner) : tile;
+    operant.recordOutcome({
+      taskId: t.id, type: TaskType.classifyTask(t.text), tier: t.tier || null, agent: t.agent || null, model: t.model || null,
+      attempts: Board.attempts(t), escalations: t.escalations || 0, status, reason: String(t.failure && status === 'escalated' ? t.failure.split('\n')[0] : t.note || '').slice(0, 200),
+      durationMs: t.createdAt ? Date.now() - t.createdAt : null, tokens: addTok(t.tokens, w?.tok), cwd: t.cwd || null,
+    });
+  }
+
   function failTask(t, why) {
     t.status = 'failed';
     t.note = why;
+    recordOutcome(t, 'failed');
     boardChanged();
     tell(t, `Task ${t.id} failed on the ${t.tier} tier: ${taskTldr(t)}`, why);
     toast(`Task ${t.id} failed: ${esc(why)}`);
@@ -1214,6 +1226,9 @@
     if (!next) { failTask(t, `${why} (top tier ${t.tier} reached)`); return; }
     const old = wins.get(t.owner);
     t.failure = Board.failureNote(t, why);
+    t.escalations = (t.escalations || 0) + 1;
+    recordOutcome(t, 'escalated', old);
+    t.tokens = addTok(t.tokens, old?.tok);
     Board.moveUp(t, next);
     if (old?.alive) closeWin(old);
     boardChanged();
@@ -1233,6 +1248,7 @@
     boardChanged();
     if (w?.alive && w.ptyId) { sendLine(w, `${lead}. Redo the task now, without polling the board, then ${reportLine(t.id)}`); return; }
     t.failure = Board.failureNote(t, t.note);
+    t.tokens = addTok(t.tokens, w?.tok);
     t.attempts = Board.attempts(t) + 1; t.retried = false; t.owner = null;
     try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
   }
@@ -4485,7 +4501,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let taskId = null, prompt = args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
-          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
+          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
           board.tasks.push(task);
           boardChanged();
@@ -4650,7 +4666,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (args.sub === 'add') {
           if (!args.text) throw new Error('text required');
           const id = board.nextTaskId++;
-          board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null });
+          board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null, createdAt: Date.now() });
           boardChanged();
           return { id, sub: 'add' };
         }
@@ -4665,10 +4681,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const n = wins.get(t.owner);
           const from = n?.alive ? n : self;
           Board.handback(t, status, args.note);
+          if (status === 'blocked' || (status === 'failed' && !t.tier)) recordOutcome(t, status);
           if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
           else if (from) notify(from, status === 'done' ? `Task ${t.id} ready for review: ${taskTldr(t)}` : `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);
         }
-        else if (args.sub === 'approve') Board.approve(t);
+        else if (args.sub === 'approve') { Board.approve(t); recordOutcome(t, 'done'); }
         else if (args.sub === 'reject') {
           if (!args.note) throw new Error('--note "<why>" required');
           const w = wins.get(t.owner);
