@@ -188,11 +188,11 @@ const DEFAULT_CONFIG = {
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
     tiers: {
-      xsmall: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up, read and summarise files, renames, run tests, docs tweaks' },
-      small: { agent: 'claude', model: 'claude-sonnet-5-5', use: 'smaller tasks: a feature across a few files, a normal bug fix, simple edits' },
-      medium: { agent: 'claude', model: 'claude-opus-5-5', effort: 'medium', use: 'hard tasks: tricky debugging, a multi-file refactor, security-sensitive work' },
-      high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'big tasks: architecture, a large refactor or migration' },
-      max: { agent: 'claude', model: 'claude-opus-5-5', effort: 'max', use: 'the very hardest problems, where getting it right matters more than cost' },
+      xsmall: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up in the code, read and summarise files, renames, run tests, docs tweaks (no web research)' },
+      small: { agent: 'claude', model: 'claude-haiku-4-5', use: 'simple tasks: simple edits, small bug fixes, tests' },
+      medium: { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low', use: 'medium tasks: a feature across a few files, a normal bug fix, research' },
+      high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'hard tasks: tricky debugging, a multi-file refactor' },
+      max: { agent: 'claude', model: 'claude-opus-5-5', effort: 'max', use: 'the hardest problems: architecture, where getting it right matters more than cost' },
     },
     maxWorkers: 4,
     maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
@@ -299,7 +299,9 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
 // teamTiers is derived, never saved: the tiers for the default agent (team-tiers.js), which for
 // OpenCode depend on the models it can reach (ocModels, filled in by scanOpencodeModels).
 let ocModels = null;
-const withTiers = c => ({ ...c, teamTiers: teamTiers.activeTiers({ ...c, isOpenCode, models: ocModels }) });
+// cliInstalled (agent id -> found on PATH) is filled in by scanInstalled; unknown counts as installed.
+let cliInstalled = {};
+const withTiers = c => ({ ...c, teamTiers: teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }) });
 // Codex and Gemini CLI are no longer built in: drop them from a saved agents list.
 const dropRemoved = u => {
   if (!Array.isArray(u.agents)) return u;
@@ -551,13 +553,28 @@ function run(cmd, args, opts = {}) {
 
 // OpenCode's model list (for its team tiers). Only runs while the default agent is OpenCode.
 async function scanOpencodeModels() {
-  const agent = config.agents.find(a => a.id === config.defaultAgent);
-  if (!agent || !isOpenCode(agent)) return;
+  await scanInstalled();
+  const agent = config.agents.find(a => a.id === config.defaultAgent && isOpenCode(a)) || config.agents.find(a => isOpenCode(a) && cliInstalled[a.id]);
+  if (!agent) return;
   const r = await run(await resolveExe(String(agent.command).trim().split(/\s+/)[0]), ['models', '--verbose'], { env: await withFreshPath({ ...process.env }) });
   if (r.code !== 0) { logLine('opencode models failed: ' + (r.stderr || r.code)); return; }
   ocModels = teamTiers.parseModels(r.stdout);
   config.teamTiers = withTiers(config).teamTiers;
   broadcast('team:tiers', config.teamTiers);
+}
+
+// Which agent CLIs are on PATH, for the team tiers' fallbacks; refreshed with each model scan.
+async function scanInstalled() {
+  const env = await freshEnv();
+  const found = {};
+  await Promise.all(config.agents.map(async a => {
+    const exe = String(a.command || '').trim().split(/\s+/)[0];
+    found[a.id] = !exe ? false : path.isAbsolute(exe) ? fs.existsSync(exe)
+      : process.platform === 'win32' ? (await run('where.exe', [exe], { env })).code === 0 : !!(await unix.which(exe, env));
+  }));
+  const changed = JSON.stringify(found) !== JSON.stringify(cliInstalled);
+  cliInstalled = found;
+  if (changed) { config.teamTiers = withTiers(config).teamTiers; broadcast('team:tiers', config.teamTiers); }
 }
 
 // execFile('opencode', ...) with a `cwd` option set fails ENOENT on Windows for PATH-only (shim)
@@ -915,9 +932,13 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   }
   // OpenCode's TUI has no effort flag: a tier's effort becomes the build agent's model variant,
   // which OpenCode applies only while that agent runs its configured model (the same -m model).
-  if (isOc && model && effort) {
+  // With team mode on, each OpenCode tier is also a `tier-<name>` subagent the lead can hand work to.
+  const tierAgents = isOc && config.team?.enabled
+    ? teamTiers.opencodeSubagents(config.teamTiers || {}, id => { const a = config.agents.find(x => x.id === id); return !!a && isOpenCode(a); }) : {};
+  if (isOc && ((model && effort) || Object.keys(tierAgents).length)) {
     let oc = {}; try { oc = JSON.parse(envBase.OPENCODE_CONFIG_CONTENT || '{}'); } catch {}
-    oc.agent = { ...(oc.agent || {}), build: { ...(oc.agent?.build || {}), model: String(model), variant: String(effort) } };
+    oc.agent = teamTiers.mergeSubagents(oc.agent, tierAgents);
+    if (model && effort) oc.agent = { ...oc.agent, build: { ...(oc.agent.build || {}), model: String(model), variant: String(effort) } };
     envBase.OPENCODE_CONFIG_CONTENT = JSON.stringify(oc);
   }
   const env = await withFreshPath(envBase);

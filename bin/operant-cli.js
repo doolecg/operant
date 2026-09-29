@@ -425,12 +425,12 @@ function formatResult(cmd, result) {
     case 'view': case 'edit': case 'diff': return `tile ${result.id}`;
     // A bare "tile 12" was once read as "the tests passed": say it only started, and how to get the outcome.
     case 'run': return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
-    case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}]  task ${result.taskId}` : '');
+    case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', suggested: ' + result.reason : ''}]  task ${result.taskId}` : '');
     case 'summarize': case 'find': return result.text || '(no answer)';
     case 'team': {
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
       const lines = [`team mode: enabled  ·  ${result.workers}/${result.maxWorkers} workers running`];
-      for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}${t.effort ? ` (${t.effort} effort)` : ''}  —  ${t.use}`);
+      for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}${t.effort ? ` (${t.effort} effort)` : ''}${t.fallback ? ` (${t.fallback})` : ''}  —  ${t.use}`);
       return lines.join('\n');
     }
     case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : (result.text || '(no output)');

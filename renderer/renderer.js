@@ -4292,9 +4292,14 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'agent': {
         if (!args.prompt) throw new Error('prompt required');
-        let agentId = args.agent, model = args.model, effort = null, tier = null;
-        if (args.tier) {
-          tier = String(args.tier);
+        let agentId = args.agent, model = args.model, effort = null, tier = null, suggested = null;
+        // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt.
+        if (!args.tier && !args.agent && !args.model && cfg.team?.enabled) {
+          const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
+          suggested = TeamTiers.suggestTier(args.prompt, top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]])));
+        }
+        if (args.tier || suggested) {
+          tier = String(args.tier || suggested.tier);
           const t = activeTiers()[tier];
           if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
           const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
@@ -4322,7 +4327,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
         if (tier) { w.tier = tier; setTierDot(w); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; boardChanged(); } }
-        return { id: w.id, ...(tier ? { tier, taskId } : {}) };
+        return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(suggested ? { reason: suggested.reason } : {}) };
       }
       case 'team':
         return teamInfo();
