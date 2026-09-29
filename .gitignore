@@ -3,3 +3,4 @@ dist/
 config.json
 .idea/
 *.stackdump
+evals/results/

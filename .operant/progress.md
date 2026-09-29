@@ -1,6 +1,6 @@
 # Progress
 
-Working on **1.19** on branch `dev-1.19.0` (main checkout, based on main = 1.18.1). Plan: `plan.md` items 46–55,
+1.19.0 released 29 Sept. Now **2.0** on branch `dev-2.0.0` (plan.md items 56–65). 1.19 was (main checkout, based on main = 1.18.1). Plan: `plan.md` items 46–55,
 full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old attempt kept on the local branch
 `salvage/skill-redesign` (never pushed; delete once 1.19 ships) — take code from it with
 `git show salvage/skill-redesign:<file>`, review before reuse. Salvaged eval harness: `salvage/evals/` on that branch.

@@ -196,5 +196,46 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
 - [x] **55. Evals, docs, release notes:** before/after on Sonnet, 13 cases x 3: pass 74% -> 95%, worker reports
       0% -> 100%, plan approval 0% -> 100%, raw long commands 0.2 -> 0 per run, cost flat; notify-when-done 33%.
 
-Later: 2.0 core (providers, memory confidence/staleness, adaptive routing, benchmarks, optional local model) and
-operations (update rollback, validated backups/restore, config migrations).
+Later: operations (update rollback, validated backups/restore, config migrations) after 2.0.
+
+## 2.0: the core — memory that knows when it's stale, routing from real outcomes (planned 29 Sept, after 1.19)
+
+Branch `dev-2.0.0`. One item per commit, tests with each, a live check where it touches tiles. Sonnet builds from
+a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research and open-source decisions: see
+~/.claude/plans/federated-painting-summit.md (memor-ai, agentmemory, opencode-x: borrow ideas, no dependencies).
+
+- [ ] **56. 1.19 leftovers:** agents reach for `operant notify` when asked to say when long work is done (eval
+      notify-when-done 33% → pass; fix in the skill/brief wording, confirmed with that eval case only); a rejected
+      worker isn't flagged as a runaway for re-running `operant board` (the reject message says exactly what to do
+      next, and read-only `operant` status calls don't count toward the loop guard); `evals/results/` ignored.
+- [ ] **57. Task outcomes:** every board task records its outcome in `outcomes.jsonl` (userData): task type (a small
+      deterministic classifier: fix, feature, lookup, test, refactor, docs), tier, agent/model, tokens and $ (from
+      item 54), attempts, retries, escalations, final status, duration, files changed. Kept 90 days. This is the
+      data routing and the benchmark read; nothing else changes yet.
+- [ ] **58. Memory that knows when it's stale:** Markdown stays the source of truth; frontmatter gains `confidence`
+      (verified / observed / inferred / stale), created/updated/last-used, recalls/uses/rejects, `supersedes`, and
+      `about_sig` (a file hash, or the CodeGraph signature of the symbol). A fact whose code drifted is marked stale
+      at recall, never deleted. Recall ranks by BM25 (pure JS) × usefulness `(uses−rejects+1)/(recalls+2)` × decay
+      (14-day half-life), logs which ids it injected, and `operant memory used|wrong <id>` feeds usefulness.
+      `operant remember --supersedes <id>` chains facts. Existing memories keep working unchanged.
+- [ ] **59. Routing from outcomes:** `operant agent` without a tier picks the cheapest tier whose success rate for
+      that task type is ≥ 80% over at least 5 recent tasks; with fewer, it says `insufficient data` and uses today's
+      keyword suggestion. Every choice is explained in one line ("small: 7/8 fixes passed, $0.03 avg"). One task in
+      ten tries the tier below a proven one so a tier can earn its way back. Never above the top tier allowed.
+      (Opus medium to review the policy before it ships.)
+- [ ] **60. Outcome signals and doom-loop guard:** a worker is escalated a tier on evidence, not only on reject:
+      the same error twice, the same command failing twice with the same output, or no file change after N turns on
+      a code task. Clean passes at a tier count toward trying the cheaper one (item 59). The guard explains itself.
+- [ ] **61. Verification by risk:** before a code task reaches review, Operant runs the project's test/build
+      (detected as `operant test` does) and attaches the result and diff size to the review card; docs/lookup tasks
+      skip it. A failing check goes back to the worker once, like a reject.
+- [ ] **62. Benchmark suite:** the eval harness grows cases for team work (hand-off, escalation, review) and can
+      run the same cases on two providers (Claude tier vs OpenCode tier) and without Operant as a baseline; one
+      summary table per run.
+- [ ] **63. Provider seams, only where two implementations exist:** model launching (Claude Code, OpenCode) and
+      code context (CodeGraph, grep fallback) behind small interfaces, so a third can be added without touching the
+      renderer. (A refactor: ask the user before starting; Opus medium.)
+- [ ] **64. Optional local helper model (ask first, downloads ~3 GB):** llama.cpp `llama-server` + a small open
+      model registered as an OpenCode provider for an offline xsmall tier; or a user-supplied Ollama/LM Studio URL.
+      Nothing downloads without an explicit yes in Settings.
+- [ ] **65. 2.0 docs, evals before/after, release.**
