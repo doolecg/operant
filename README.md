@@ -75,7 +75,7 @@ In **Settings › Agents** you can add any command that runs in a terminal (Aide
 In the project's sidebar menu you can choose **Claude only**, **OpenCode only** or **both**. That applies to the picks, routing, escalation, workers and new agent tiles.
 
 - **Local-model fallback:** the lowest tier runs Big Pickle first. When Big Pickle is busy or out of free use, it falls back to a local model (Gemma via Ollama), installed in the background from Settings › Agents › Team.
-- **Long commands:** tests, builds and installs run inline and move to the Basement after 5 seconds (a setting).
+- **Long commands:** tests, builds and installs run inline and move to the Backrooms after 5 seconds (a setting).
 - **Worker tiles** close automatically once the lead has read their result.
 
 The Operant Terminal (2.2 and 2.3) was removed in 2.3.1; its settings migrate automatically.

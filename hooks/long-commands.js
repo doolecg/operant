@@ -1,8 +1,8 @@
 // Item 37: a Claude Code PreToolUse hook that reroutes long-running shell commands
 // (test/build/install runners) through `operant run --background --inline` instead of the agent's own
-// Bash tool, so the raw output never floods the agent's context. The command runs as a Basement task: one
-// that finishes within Settings > Agents > "Run in the Basement after" (5 s) returns its result at once,
-// a slower one is handed over to the Basement and the same call waits for its errors only. On by default
+// Bash tool, so the raw output never floods the agent's context. The command runs as a Backrooms task: one
+// that finishes within Settings > Agents > "Run in the Backrooms after" (5 s) returns its result at once,
+// a slower one is handed over to the Backrooms and the same call waits for its errors only. On by default
 // (Settings > Agents > "Reroute long commands"). It only rewrites the command and never approves it,
 // so the rewritten command still goes through the user's normal permission prompts; ending a command
 // with `# raw` opts out. Only rewrites when it's actually running inside an Operant tile (env
@@ -69,7 +69,7 @@ function sq(s) { return `'${String(s).replace(/'/g, "''")}'`; }
 
 // The rewritten command, or null if `command` isn't a long-running kind we know about (or is
 // already unsafe/already-operant, via classify). `shell` is 'bash' (default) or 'powershell' (the
-// quoting differs). Tests, builds and installs all go the same way: a Basement task that the app
+// quoting differs). Tests, builds and installs all go the same way: a Backrooms task that the app
 // waits on inline for a few seconds, then hands over and waits for the errors of (bin/operant-cli.js).
 function rewriteCommand(command, shell = 'bash') {
   if (!classify(command)) return null;
@@ -98,7 +98,7 @@ function hookOutput(input, env = {}) {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       updatedInput: { ...toolInput, command: updated, timeout: Math.max(Number(toolInput.timeout) || 0, 600000) },
-      additionalContext: `Operant rerouted \`${command.trim()}\` to \`${updated}\`: it runs in the Basement and returns only the summary and failing lines (a run over a few seconds is waited on for its errors). `
+      additionalContext: `Operant rerouted \`${command.trim()}\` to \`${updated}\`: it runs in the Backrooms and returns only the summary and failing lines (a run over a few seconds is waited on for its errors). `
         + 'To run a command unchanged, end it with `# raw`.',
     },
   };
@@ -118,7 +118,7 @@ function main() {
 
 // Background tasks: a long command started detached, its output collected as it arrives, and only a
 // status (running / passed / failed with its exit code) surfaced. main.js owns one registry and pushes
-// summaries to the renderer's Basement page, which is the only place the retained output is shown.
+// summaries to the renderer's Backrooms page, which is the only place the retained output is shown.
 const KEEP_TASKS = 30;
 function createBackgroundTasks({ spawn, maxBytes = 256 * 1024, now = Date.now, onChange = () => {} } = {}) {
   spawn = spawn || require('child_process').spawn;
@@ -175,7 +175,7 @@ function statusText(t) {
   return t.status === 'passed' ? 'passed' : `failed (exit ${t.exitCode})`;
 }
 
-// What an agent gets back from a Basement task: one status line, then only what matters. A pass is its digest
+// What an agent gets back from a Backrooms task: one status line, then only what matters. A pass is its digest
 // summary (or nothing more); a failure is the digest's failures, else the error lines, else the last few lines.
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g;
 const ERROR_RE = /\b(error|failed|failure|fatal|exception|traceback|panic|warn(ing)?|FAIL)\b|[✗✖]/i;
@@ -188,7 +188,7 @@ function errorLines(text, max = 60) {
 }
 function taskReport(t, { errors = false, digest } = {}) {
   const secs = Math.max(0, Math.round(((t.endedAt || Date.now()) - t.startedAt) / 1000));
-  const head = `${t.title} (bg${t.id}): ${statusText(t)}${t.status === 'running' ? ` after ${secs}s, still in the Basement` : ` in ${secs}s`}`;
+  const head = `${t.title} (bg${t.id}): ${statusText(t)}${t.status === 'running' ? ` after ${secs}s, still in the Backrooms` : ` in ${secs}s`}`;
   const text = String(t.output || '').replace(ANSI, '');
   let d = null;
   try { d = digest ? digest(text) : null; } catch {}
@@ -205,7 +205,7 @@ function taskReport(t, { errors = false, digest } = {}) {
   return `${head}\n${body.join('\n')}`;
 }
 
-// What the Basement page draws: newest first, the running ones first of all, each row with its status
+// What the Backrooms page draws: newest first, the running ones first of all, each row with its status
 // and duration, and the selected task (default: the first row) with its full retained output.
 function basementModel(tasks, selectedId, now = Date.now()) {
   const list = (Array.isArray(tasks) ? tasks : []).slice().sort((a, b) =>
@@ -221,4 +221,4 @@ const api = { classify, rewriteCommand, titleFor, hookOutput, createBackgroundTa
 if (typeof module !== 'undefined') {
   if (require.main === module) main();
   module.exports = { classify, rewriteCommand, titleFor, hookOutput, createBackgroundTasks, statusText, basementModel, taskReport, errorLines };
-} else if (typeof window !== 'undefined') window.OperantLongCommands = api; // loaded by the renderer for the Basement page
+} else if (typeof window !== 'undefined') window.OperantLongCommands = api; // loaded by the renderer for the Backrooms page

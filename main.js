@@ -191,7 +191,7 @@ const DEFAULT_CONFIG = {
   installSkill: true,             // Claude Code & OpenCode tiles get the `operant` skill per session, from the app's own agent-plugin folder (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
   localModel: { model: 'gemma3:4b' }, // Settings > Agents > Team > Local model: the Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use
-  backgroundAfterSeconds: 5,       // a rerouted long command (test/build/install) that is still running after this many seconds moves to the Basement and the agent waits for its errors · 0 = always at once (Settings > Agents)
+  backgroundAfterSeconds: 5,       // a rerouted long command (test/build/install) that is still running after this many seconds moves to the Backrooms and the agent waits for its errors · 0 = always at once (Settings > Agents)
   longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
@@ -539,19 +539,19 @@ function startControlServer() {
         // Item 35: cheap readers run a hidden child process, no tile, no forward to the renderer's
         // command switch (only a couple of small side-calls into it, for the caller's cwd/tile output).
         if (cmd === 'summarize' || cmd === 'find') { const r = await controlSummarize(cmd, args, tile); return reply(r.ok ? 200 : 400, r); }
-        // `operant run "<cmd>" --background`: a long command started detached, its output kept for the Basement page.
+        // `operant run "<cmd>" --background`: a long command started detached, its output kept for the Backrooms page.
         if (cmd === 'run' && args.background && typeof args.command === 'string') {
           const t = bgTasks.start(args.command, { cwd: args.cwd, title: args.title });
           // --inline: wait a few seconds (Settings > Agents) and answer with the result when it finished; else it is handed over
-          // to the Basement and the CLI goes on to `wait` for its errors.
+          // to the Backrooms and the CLI goes on to `wait` for its errors.
           if (args.inline) {
             const done = await bgTasks.settled(t.id, (Number.isFinite(config.backgroundAfterSeconds) ? config.backgroundAfterSeconds : 5) * 1000);
             const id = 'bg' + t.id;
-            return reply(200, { ok: true, result: done ? { id, done: true, text: longCommands.taskReport(done, { digest: digestText }) } : { id, handedOver: true, text: `${id} moved to the Basement` } });
+            return reply(200, { ok: true, result: done ? { id, done: true, text: longCommands.taskReport(done, { digest: digestText }) } : { id, handedOver: true, text: `${id} moved to the Backrooms` } });
           }
-          return reply(200, { ok: true, result: { id: 'bg' + t.id, status: t.status, text: `background task ${t.id} · ${t.status}; output in the Basement page` } });
+          return reply(200, { ok: true, result: { id: 'bg' + t.id, status: t.status, text: `background task ${t.id} · ${t.status}; output in the Backrooms page` } });
         }
-        // `operant wait bg<N>`: a Basement task; blocks until it finishes (or --timeout), answers with its status and only its errors.
+        // `operant wait bg<N>`: a Backrooms task; blocks until it finishes (or --timeout), answers with its status and only its errors.
         if (cmd === 'wait' && /^bg\d+$/i.test(String(args.id))) {
           const t = bgTasks.get(args.id);
           if (!t) return reply(400, { ok: false, error: `no background task ${args.id}` });
@@ -1621,12 +1621,18 @@ const usage = createUsage({
     if (breakdown) addTileTokens(sessionId, owner, breakdown, t, false);
   },
 });
-// Basement: long commands run in the background; the renderer's Basement page lists them and their output.
+// Backrooms: long commands run in the background; the renderer's Backrooms page lists them and their output.
 const longCommands = require('./hooks/long-commands');
 const digestText = require('./renderer/digest');
 const bgTasks = longCommands.createBackgroundTasks({ onChange: () => broadcast('basement:changed') });
 ipcMain.handle('basement:list', () => bgTasks.all());
 ipcMain.handle('basement:start', (_e, { command, cwd, title }) => bgTasks.start(String(command || ''), { cwd, title }));
+// `operant test` / `operant build`: run as a Backrooms task and answer with its status and only its errors.
+ipcMain.handle('basement:run', async (_e, { command, cwd, title, timeoutMs }) => {
+  const t = bgTasks.start(String(command || ''), { cwd, title });
+  await bgTasks.settled(t.id, timeoutMs || 600000);
+  return { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: true, digest: digestText }) };
+});
 ipcMain.handle('usage:summary', () => usage.summary());
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 

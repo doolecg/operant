@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('operant', {
   usageSeries: range => ipcRenderer.invoke('usage:series', range),
   basementList: () => ipcRenderer.invoke('basement:list'),
   basementStart: (command, cwd) => ipcRenderer.invoke('basement:start', { command, cwd }),
+  basementRun: (command, cwd, title, timeoutMs) => ipcRenderer.invoke('basement:run', { command, cwd, title, timeoutMs }),
   usageLimits: force => ipcRenderer.invoke('usage:limits', !!force),
   usageBreakdown: opts => ipcRenderer.invoke('usage:breakdown', opts),
   usageTag: tag => ipcRenderer.invoke('usage:tag', tag),

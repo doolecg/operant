@@ -81,7 +81,7 @@ const Panels = (() => {
         type: 'toggle' },
       { key: 'briefAgents', label: 'Brief agents at launch', hint: 'A short brief in every agent tile\'s first message (master, workers, reopened) so the rules apply from the start, not only once it loads the skill', type: 'toggle' },
       { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Claude Code and OpenCode: a hook rewrites test/build/install commands to operant test/build/run so only the failures reach the agent; the rewritten command still asks for permission like any other, and ending a command with # raw leaves it alone', type: 'toggle' },
-      { key: 'backgroundAfterSeconds', label: 'Run in the Basement after', hint: 'Seconds · a rerouted test, build or install that is still running after this long moves to the Basement page and the agent waits for its errors only · a faster one returns its result at once · 0 = always at once', type: 'number', min: 0, max: 600 },
+      { key: 'backgroundAfterSeconds', label: 'Run in the Backrooms after', hint: 'Seconds · a rerouted test, build or install that is still running after this long moves to the Backrooms page and the agent waits for its errors only · a faster one returns its result at once · 0 = always at once', type: 'number', min: 0, max: 600 },
       { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
         type: 'number', min: 0, max: 100 },
       { key: 'cacheTtlMinutes', label: 'Prompt cache lifetime', hint: 'Minutes an idle tile\'s cache stays warm before its next message pays full price · 60 if your setup uses the 1-hour cache', type: 'number', min: 1, max: 120 },
@@ -371,7 +371,7 @@ const Panels = (() => {
   // Settings › Agents › Team (item 33): enable toggle, one row per tier (agent, model, "use for"), max workers.
   // Settings > Agents > Team > Local model: an Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use.
   const LOCAL_MODELS = ['gemma3:4b', 'gemma3:1b', 'gemma3:12b'];
-  function localModelBlock(cfg) {
+  function localModelBlock(cfg, ext) {
     const s = ext.localModelState();
     const model = (cfg.localModel && cfg.localModel.model) || LOCAL_MODELS[0];
     const models = LOCAL_MODELS.includes(model) ? LOCAL_MODELS : [model, ...LOCAL_MODELS];
@@ -387,7 +387,7 @@ const Panels = (() => {
           <button class="btn primary" data-local-install${busy || s.status === 'ready' ? ' disabled' : ''}>Install</button>
           <button class="btn" data-local-remove${busy || s.status !== 'ready' ? ' disabled' : ''}>Remove</button></div></div>`;
   }
-  function teamEditor(cfg) {
+  function teamEditor(cfg, ext) {
     const team = cfg.team || {};
     const tiers = team.tiers || {};
     const tierBlock = (id, label) => {
@@ -415,7 +415,7 @@ const Panels = (() => {
       <div class="set-row"><div class="lbl">Run checks before review<span class="hint">When a worker finishes a fix, feature, refactor or test task, Operant runs the project's test (else build) command and attaches the result; a failing check sends the task back once</span></div>
         <div class="ctl"><button class="toggle${team.verifyBeforeReview !== false ? ' on' : ''}" data-team-verify></button></div></div>
       ${ocNote}${fbNote}
-      ${localModelBlock(cfg)}
+      ${localModelBlock(cfg, ext)}
       ${tierBlock('xsmall', 'XSmall')}
       ${tierBlock('small', 'Small')}
       ${tierBlock('medium', 'Medium')}
@@ -486,7 +486,7 @@ const Panels = (() => {
     if (it.type === 'projects') return projectsEditor(cfg);
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
-    if (it.type === 'team') return teamEditor(cfg);
+    if (it.type === 'team') return teamEditor(cfg, ext);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
     if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';

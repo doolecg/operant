@@ -39,8 +39,8 @@ const COMMANDS = {
   diff: { group: 'files', usage: 'operant diff [dir] [--focus]', desc: 'open a changes tile', examples: ['operant diff'], flags: ['focus'] },
   open: { group: 'files', usage: 'operant open <target>', desc: 'open a file/folder/URL', examples: ['operant open report.pdf'], flags: [] },
 
-  run: { group: 'terminals', usage: 'operant run <command...> [--title t] [--cwd c] [--focus] [--background [--inline]]', desc: 'run a command in a new tile, stays open (--background: detached, output in the Basement page; --inline: with it, answers at once when it finishes within a few seconds, else waits for its errors)', examples: ['operant run "npm run dev" --title dev', 'operant run "npm test" --background --inline'], flags: ['title', 'cwd', 'focus', 'background', 'inline'] },
-  test: { group: 'terminals', usage: 'operant test [command...] [--cwd c] [--idle s] [--timeout s] [--title t] [--focus] [--json]', desc: 'run tests in a new tile (auto-detected if no command), wait, return a runner/summary/failures digest', examples: ['operant test', 'operant test "pytest -k foo"'], flags: ['cwd', 'idle', 'timeout', 'title', 'focus'] },
+  run: { group: 'terminals', usage: 'operant run <command...> [--title t] [--cwd c] [--focus] [--background [--inline]]', desc: 'run a command in a new tile, stays open (--background: detached, output in the Backrooms page; --inline: with it, answers at once when it finishes within a few seconds, else waits for its errors)', examples: ['operant run "npm run dev" --title dev', 'operant run "npm test" --background --inline'], flags: ['title', 'cwd', 'focus', 'background', 'inline'] },
+  test: { group: 'terminals', usage: 'operant test [command...] [--cwd c] [--idle s] [--timeout s] [--title t] [--focus] [--json]', desc: 'run tests in the Backrooms (auto-detected if no command; --focus: in a tile instead), wait, return the status and only the failures', examples: ['operant test', 'operant test "pytest -k foo"'], flags: ['cwd', 'idle', 'timeout', 'title', 'focus'] },
   build: { group: 'terminals', usage: 'operant build [command...] [--cwd c] [--idle s] [--timeout s] [--title t] [--focus] [--json]', desc: 'like test, for a build/compile command', examples: ['operant build', 'operant build "cargo build --release"'], flags: ['cwd', 'idle', 'timeout', 'title', 'focus'] },
   read: { group: 'terminals', usage: 'operant read <id> [--lines n] [--new] [--errors] [--grep p] [--digest]', desc: "a tile's terminal output", examples: ['operant read 7 --errors', 'operant read 7 --digest'], flags: ['lines', 'new', 'errors', 'grep', 'digest'] },
   send: { group: 'terminals', usage: 'operant send <id> <text...> [--enter]', desc: 'type into a tile', examples: ['operant send 7 "y" --enter'], flags: ['enter'] },
@@ -563,7 +563,7 @@ async function main() {
   let cmd = r.cmd;
   const args = buildArgs(cmd, positionals, flags);
   const asJson = !!flags.json;
-  // A Basement task runs in the folder the agent is in.
+  // A Backrooms task runs in the folder the agent is in.
   if (cmd === 'run' && args.background && args.cwd == null) args.cwd = process.cwd();
 
   // Item 33 guardrail: a tile opened as a team worker (env set in main.js's pty:create) can't start
@@ -590,7 +590,7 @@ async function main() {
 
   let body;
   try { body = JSON.parse(res.text); } catch { body = null; }
-  // --inline: not finished within the threshold, so it now lives in the Basement: wait for its errors only.
+  // --inline: not finished within the threshold, so it now lives in the Backrooms: wait for its errors only.
   if (cmd === 'run' && body && body.ok !== false && body.result && body.result.handedOver) {
     try { res = await post(api, { cmd: 'wait', args: { id: body.result.id, errors: true }, tile: process.env.OPERANT_TILE }); body = JSON.parse(res.text); cmd = 'wait'; } catch { body = null; }
   }

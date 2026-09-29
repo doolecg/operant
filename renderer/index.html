@@ -15,6 +15,7 @@
       <button class="icon-btn" id="btn-sidebar"><svg viewBox="0 0 16 16"><path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9A1.5 1.5 0 0 1 2.5 2zm0 1.3a.2.2 0 0 0-.2.2v9c0 .1.1.2.2.2H6V3.3zm4.8 0v9.4h6.2a.2.2 0 0 0 .2-.2v-9a.2.2 0 0 0-.2-.2z"/></svg></button>
       <button class="brand-btn" id="btn-about" title="About Operant"><span class="logo">◈</span><span class="brand">Operant</span></button>
       <div id="workspaces"></div>
+      <button class="icon-btn" id="btn-basement" title="Backrooms: tests, builds and installs running in the background"><svg viewBox="0 0 16 16"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m4.5 6 2 2-2 2M8 10.2h3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <div id="media" class="hidden">
         <img id="media-art" alt="">
         <div class="media-text"><span id="media-title"><span></span></span><span id="media-artist"></span></div>
@@ -89,7 +90,6 @@
       <div class="card-body qm-body">
         <div class="qm-tiles">
           <button class="qm-tile git hidden" id="git-pill"></button>
-          <button class="qm-tile" id="btn-basement" title="Basement: long commands running in the background"><span class="qm-ico">▁</span><span class="qm-lbl">Basement</span></button>
           <button class="qm-tile" id="btn-keys" title="Keybinds (Alt+K)"><span class="qm-ico">⌨</span><span class="qm-lbl">Shortcuts</span></button>
           <button class="qm-tile" id="btn-save-quit" title="Save and quit (Alt+Shift+Q): everything reopens next time"><span class="qm-ico"><svg viewBox="0 0 16 16"><path d="M8 1v7" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M4.2 3.4a5.5 5.5 0 1 0 7.6 0" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg></span><span class="qm-lbl">Save &amp; quit</span></button>
         </div>
@@ -128,7 +128,7 @@
 
   <div id="basement" class="overlay anchor hidden">
     <div class="card qm-card notif-card board-card basement-card">
-      <div class="card-head notif-head"><h2>Basement</h2></div>
+      <div class="card-head notif-head"><h2>Backrooms</h2></div>
       <div class="card-body" id="basement-body"></div>
     </div>
   </div>

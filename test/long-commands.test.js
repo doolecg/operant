@@ -97,7 +97,7 @@ test('the hook tells the agent about both commands, and how to opt out', () => {
   const bash = hookOutput(call('Bash', { command: 'npm test' }), IN_TILE).hookSpecificOutput.additionalContext;
   assert.ok(bash.includes('`npm test`'));
   assert.ok(bash.includes('`operant run "npm test" --background --inline --title "npm-test"`'));
-  assert.ok(bash.includes('Basement'));
+  assert.ok(bash.includes('Backrooms'));
   assert.ok(bash.includes('`# raw`'));
   const ps = hookOutput(call('PowerShell', { command: 'npm install' }), IN_TILE).hookSpecificOutput;
   assert.ok(ps.additionalContext.includes('`npm install`'));
@@ -235,5 +235,5 @@ test('a report keeps only the failing lines', () => {
   assert.ok(lines.some(l => /AssertionError/.test(l)));
   const r = taskReport({ id: 2, title: 't', status: 'failed', exitCode: 1, startedAt: 0, endedAt: 3000, output }, { errors: true });
   assert.ok(r.split('\n').length < 10);
-  assert.match(taskReport({ id: 3, title: 't', status: 'running', startedAt: Date.now(), output: '' }), /still in the Basement/);
+  assert.match(taskReport({ id: 3, title: 't', status: 'running', startedAt: Date.now(), output: '' }), /still in the Backrooms/);
 });

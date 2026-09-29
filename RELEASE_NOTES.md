@@ -1,3 +1,21 @@
+# Operant 2.3.2
+
+Settings › Agents shows again, and tests and builds from agents now run out of sight in the Backrooms (the Basement renamed) instead of opening a tile.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.3.2-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.3.2-mac-arm64.dmg` (Apple Silicon) or `Operant-2.3.2-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.3.2-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.3.2-linux-amd64.deb` (`sudo apt install ./Operant-2.3.2-linux-amd64.deb`).
+
+## Changed
+- **The Basement is now the Backrooms:** same page, new name, and its button moved from the quick menu to the top bar, right next to the workspace switcher. The panel opens under the button.
+- **`operant test` and `operant build` run in the Backrooms:** no tile opens; the agent gets the status and only the failures. Add `--focus` to watch one in a tile instead.
+
+## Fixed
+- **Settings › Agents was blank:** the tab (with the Team tiers and the local model) failed to draw. It shows again.
+
+---
+
 # Operant 2.3.1
 
 The Operant Terminal is gone, and the lowest tier now has a local fallback. Long commands no longer block you, and finished workers tidy themselves up.

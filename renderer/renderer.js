@@ -1157,7 +1157,7 @@
   // One line for a task: its --title, else the first sentence of its first line (headings, bullets
   // and a leading "Task:" dropped). The full text stays on hover and in `operant board --full`.
   const taskTldr = t => t.title || clip((String(t.text).split('\n').map(l => l.replace(/^[\s#>*-]+/, '').replace(/^task:\s*/i, '').trim()).find(Boolean) || '').split(/(?<=[^\d\s]{2}[.!?])\s/)[0], 70);
-  // Basement: background (long-command) tasks with their status; output shown only for the selected one.
+  // Backrooms: background (long-command) tasks with their status; output shown only for the selected one.
   let basementSel = null, basementTimer = null;
   async function renderBasement() {
     const tasks = await operant.basementList().catch(() => []);
@@ -2537,7 +2537,7 @@
     else if (name === 'quickmenu') { drawGitButton(); drawTeamSliders(); }
     else if (name === 'notifications') { renderNotifications(); markAllNotifsRead(); }
     else if (name === 'board') { $('#board').classList.remove('hidden'); renderBoard(); }
-    else if (name === 'basement') renderBasement();
+    else if (name === 'basement') { $('#basement').style.paddingLeft = $('#btn-basement').getBoundingClientRect().left + 'px'; renderBasement(); }
     else if (name === 'hub') scanHub();
     else if (name === 'health') healthRefresh(true);
     else if (name === 'tour') { tourStep = 0; renderTour(); }
@@ -4655,6 +4655,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const cwd = args.cwd || self?.cwd || lastCwd;
         const command = args.command || await detectProjectCommand(cwd, cmd);
         if (!command) throw new Error(`couldn't spot a ${cmd} command in ${cwd} — pass one, e.g. operant ${cmd} "npm run ${cmd}"`);
+        // Runs in the Backrooms (no tile); --focus opens it in a tile to watch instead.
+        if (!args.focus) {
+          const r = await operant.basementRun(command, cwd, args.title || command.slice(0, 40), (args.timeout ?? 600) * 1000);
+          return { id: r.id, command, digest: null, text: r.text };
+        }
         const w = await newTerminal('shell', cwd, {
           run: command, title: args.title || command.slice(0, 40), ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
