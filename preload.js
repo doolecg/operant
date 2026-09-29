@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('operant', {
   terminalAppend: (project, entry) => ipcRenderer.invoke('terminal:append', { project, entry }),
   terminalRefine: (project, prompt) => ipcRenderer.invoke('terminal:refine', { project, prompt }),
   terminalClear: project => ipcRenderer.invoke('terminal:clear', { project }),
+  priceTokens: (model, tokens) => ipcRenderer.invoke('pricing:tokens', { model, tokens }),
   memory: (op, args) => ipcRenderer.invoke('memory', { op, args }),
   stuckReset: sessionId => ipcRenderer.send('stuck:reset', { sessionId }),
   abortOpenCode: ptyId => ipcRenderer.invoke('opencode:abort', { ptyId }),

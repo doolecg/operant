@@ -136,7 +136,7 @@ test('refine: success shape, accounting and the orchestration event', async () =
   assert.equal(typeof r.brief.tokens, 'number');
   assert.deepEqual(r.refiner.tokens, { input: 100, output: 50 }); assert.equal(r.refiner.usd, 0); assert.equal(r.refiner.provider, 'opencode');
   assert.equal(events.length, 1);
-  assert.deepEqual({ ...events[0], t: 0, ms: 0 }, { t: 0, kind: 'orchestration', requestId: 'req-1', what: 'refine', provider: 'opencode', model: 'opencode/big-pickle', tokens: { input: 100, output: 50 }, usd: 0, ms: 0 });
+  assert.deepEqual({ ...events[0], t: 0, ms: 0 }, { t: 0, kind: 'orchestration', requestId: 'req-1', what: 'refine', provider: 'opencode', model: 'opencode/big-pickle', tokens: { input: 100, output: 50 }, free: { input: 100, output: 50, total: 150 }, paid: { input: 0, output: 0, total: 0 }, usd: 0, ms: 0 });
 });
 
 test('refine: a question is passed through with no tasks', async () => {
@@ -218,4 +218,95 @@ test('terminal settings are validated', () => {
   assert.equal(n({ refiner: 'local', localUrl: 'http://localhost:11434', maxTasks: 8 }), 0);
   assert.equal(n({ refiner: 'gpt' }), 1); assert.equal(n({ maxTasks: 0 }), 1); assert.equal(n({ maxTasks: 9 }), 1);
   assert.equal(n({ localUrl: 'not a url' }), 1); assert.equal(n({ autoSend: { '/p': 'yes' } }), 1);
+});
+
+test('splitTokens: free and local calls on the free side, cache counts as input', () => {
+  const t = { input: 10, output: 5, cacheRead: 100, cacheWrite: 1 };
+  assert.deepEqual(R.splitTokens('opencode/big-pickle', t), { free: { input: 111, output: 5, total: 116 }, paid: { input: 0, output: 0, total: 0 } });
+  assert.deepEqual(R.splitTokens('claude-haiku-4-5', t).paid, { input: 111, output: 5, total: 116 });
+  assert.equal(R.splitTokens('llama3', t, { local: true }).paid.total, 0);
+  assert.equal(R.splitTokens('opencode/big-pickle', null).free.total, 0);
+});
+
+test('refine: free and paid tokens are reported apart', async () => {
+  const d = deps({ providers: { opencode: async () => ({ text: answer(), tokens: { input: 10, output: 5, cacheRead: 90, cacheWrite: 0 } }) } });
+  const free = await R.refine({ project: '/p', prompt: 'add x', settings: {}, deps: d.d });
+  assert.deepEqual(free.refiner.free, { input: 100, output: 5, total: 105 }); assert.equal(free.refiner.paid.total, 0);
+  const paid = await R.refine({ project: '/p', prompt: 'add x', settings: { refinerModel: 'claude-haiku-4-5' }, deps: d.d });
+  assert.equal(paid.refiner.free.total, 0); assert.equal(paid.refiner.paid.total, 105);
+});
+
+test('lean OpenCode config keeps bash and read listed and asks instead of denying', () => {
+  const c = JSON.parse(R.leanConfig());
+  assert.equal(c.tools.task, false); assert.equal(c.tools.webfetch, false); assert.equal(c.tools.bash, undefined); assert.equal(c.tools.read, undefined);
+  assert.deepEqual(c.permission, { bash: 'ask', read: 'ask' });
+});
+
+test('runOpencode: the lean config goes in the environment unless turned off', async () => {
+  const { EventEmitter } = require('node:events');
+  const envs = [];
+  const spawnImpl = (cmd, args, o) => {
+    envs.push(o.env);
+    const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stderr = new EventEmitter(); c.stdin = { on() {}, end() {} };
+    setImmediate(() => { c.stdout.emit('data', '{"type":"text","part":{"text":"hi"}}\n'); c.emit('close', 0); });
+    return c;
+  };
+  await R.runOpencode({ prompt: 'p', env: { A: '1' }, spawnImpl });
+  await R.runOpencode({ prompt: 'p', env: { A: '1' }, lean: false, spawnImpl });
+  assert.equal(envs[0].A, '1'); assert.equal(envs[0].OPENCODE_CONFIG_CONTENT, R.leanConfig()); assert.equal(envs[1].OPENCODE_CONFIG_CONTENT, undefined);
+});
+
+test('opencode server: one session per call, deleted afterwards; a dead server is serverDown', async () => {
+  const { EventEmitter } = require('node:events');
+  let spawned = 0, args = null;
+  const spawnImpl = (cmd, a, o) => {
+    spawned++; args = { a, env: o.env };
+    const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stderr = new EventEmitter(); c.pid = 4242;
+    setImmediate(() => c.stdout.emit('data', 'opencode server listening on http://127.0.0.1:1\n'));
+    return c;
+  };
+  const calls = []; let n = 0;
+  const fetchImpl = async (url, o) => {
+    calls.push(`${o.method} ${url.replace(/^http:\/\/127\.0\.0\.1:\d+/, '')}`);
+    assert.match(o.headers.authorization, /^Basic /);
+    const body = url.endsWith('/session') && o.method === 'POST' ? { id: 'ses_' + ++n } : url.endsWith('/message') ? { info: { tokens: { input: 4, output: 2, reasoning: 1, cache: { read: 30, write: 0 } }, cost: 0 }, parts: [{ type: 'text', text: 'ans' }] } : {};
+    return { ok: true, json: async () => body };
+  };
+  const s = R.createOpencodeServer({ spawnImpl, fetchImpl, env: { A: '1' } });
+  const r1 = await s.run({ prompt: 'q', model: 'opencode/big-pickle' });
+  await s.run({ prompt: 'q2' });
+  assert.equal(spawned, 1); assert.equal(args.a[0], 'serve'); assert.ok(args.env.OPENCODE_SERVER_PASSWORD); assert.equal(args.env.OPENCODE_CONFIG_CONTENT, R.leanConfig());
+  assert.deepEqual(r1, { text: 'ans', tokens: { input: 4, output: 3, cacheRead: 30, cacheWrite: 0 }, cost: 0 });
+  assert.equal(calls.filter(c => c === 'POST /session').length, 2); assert.ok(calls.includes('DELETE /session/ses_1'));
+  s.stop();
+  const bad = R.createOpencodeServer({ spawnImpl, fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
+  await assert.rejects(bad.run({ prompt: 'q' }), e => e.serverDown === true);
+  bad.stop();
+  const err = R.createOpencodeServer({ spawnImpl, fetchImpl: async url => ({ ok: true, json: async () => (url.endsWith('/message') ? { info: { error: { name: 'APIError', data: { message: 'no key' } } }, parts: [] } : { id: 's' }) }) });
+  await assert.rejects(err.run({ prompt: 'q' }), e => /no key/.test(e.message) && !e.serverDown);
+  err.stop();
+});
+
+test('refiner eval grading', async () => {
+  const G = await import('../evals/refiner/grade.mjs');
+  const v = (o = {}) => ({ ok: true, value: { summary: 's', cleaned: 'Return 0 for an empty array in src/avg.js', tasks: [{ title: 'Fix avg', prompt: 'edit src/avg.js', risk: 'low', tier: 'xsmall', agent: 'opencode', model: 'opencode/big-pickle' }], ...o } });
+  assert.deepEqual(G.gradeKeep(v().value, [['src/avg.js'], ['empty array'], ['test/avg.test.js', 'tests']]), { ok: false, missing: ['test/avg.test.js'] });
+  const good = G.gradeCase({ keep: [['src/avg.js']], tasks: [1, 2], cheap: 'xsmall' }, v());
+  assert.equal(G.passed(good), true);
+  assert.equal(G.passed(G.gradeCase({ tasks: [2, 3] }, v())), false);
+  assert.equal(G.passed(G.gradeCase({ question: true }, v())), false);
+  assert.equal(G.passed(G.gradeCase({ question: true }, v({ question: 'which?' }))), true);
+  assert.equal(G.passed(G.gradeCase({}, v({ question: 'which?' }))), false);
+  assert.equal(G.passed(G.gradeCase({ minTier: 'small' }, v())), false);
+  assert.equal(G.passed(G.gradeCase({ highRisk: true }, v())), false);
+  const off = v({ tasks: [{ title: 't', prompt: 'p', risk: 'low', tier: 'high', agent: 'claude', model: 'claude-opus-5-5' }] });
+  assert.equal(G.gradeCase({}, off).picks.pass, false);
+  assert.equal(G.passed(G.gradeCase({}, { ok: false, error: 'x' })), false);
+});
+
+test('checkPicks raises a high-risk task off the cheapest tier', () => {
+  const tiers = { xsmall: { agent: 'opencode', model: 'opencode/big-pickle' }, small: { agent: 'claude', model: 'claude-haiku-4-5' }, medium: { agent: 'claude', model: 'claude-sonnet-5-5' } };
+  const out = R.checkPicks({ tasks: [{ prompt: 'migrate the auth tables', tier: 'xsmall', agent: 'opencode', model: 'opencode/big-pickle', risk: 'high' }] }, { tiers, maxTier: 'medium' });
+  assert.equal(out.tasks[0].tier, 'small');
+  assert.match(out.tasks[0].pickReason, /high-risk/);
 });

@@ -993,6 +993,11 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 .ot-reject { display: flex; gap: 6px; }
 .ot-reject input { flex: 1; min-width: 0; padding: 4px 8px; border-radius: 8px; border: 1px solid rgba(var(--ink-rgb), .15); background: rgba(var(--bar-rgb), .7); color: var(--text); font: inherit; outline: none; }
 .ot-reject input:focus { border-color: var(--accent); }
+.ot-target { flex: none; padding: 0 12px 4px; }
+.ot-target.hidden { display: none; }
+.ot-target select { max-width: 100%; padding: 2px 6px; border-radius: 8px; border: 1px solid rgba(var(--ink-rgb), .15); background: rgba(var(--bar-rgb), .7); color: var(--text); font: inherit; font-size: 12px; }
+.ot-foot { padding: 0 4px; font-size: 12px; }
+.ot-review:focus { outline: none; }
 .ot-status { flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 14px; color: var(--accent-soft); font-size: 12px; }
 .ot-status.hidden { display: none; }
 .ot-spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent-tint); border-top-color: var(--accent); animation: spin .8s linear infinite; }

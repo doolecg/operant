@@ -313,7 +313,8 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
       one-line "what Operant decided and why" under each step. The conversation is saved per project
       (userData/terminal/<project>.jsonl, atomic, included in backups) and comes back after a restart.
 - [~] **74. Prompt refiner:** (built: `opencode run -m opencode/big-pickle --format json --pure` in an empty temp dir, ~17 s,
-      ~14k input tokens of OpenCode's own prompt per call, all free; savings must be shown as paid vs free tokens) your prompt plus a small project brief (from prime: branch, recent changes, project
+      ~14k input tokens of OpenCode's own prompt per call, all free; savings must be shown as paid vs free tokens). Now a lazy `opencode serve` with a lean config: ~4 s, ~3.5k input
+      tokens; refiner eval 7/8 (the miss: a high-risk task on the cheapest tier, now always raised a tier). your prompt plus a small project brief (from prime: branch, recent changes, project
       memory, known commands) goes to a refiner model that returns a cleaned, efficient prompt, split into
       independent tasks, and for each task picks the agent (Claude Code or OpenCode), the model and the effort,
       aiming for the cheapest that can do it well (free OpenCode models and Haiku first, low effort by default), plus
@@ -325,20 +326,20 @@ What it needs from later milestones is pulled into 2.2: see "Release order (fina
 - [~] **75. Review before sending:** the refined prompt is shown against your original (what changed and why, the
       task split with each task's agent, model and effort, estimated tokens and cost before/after); Enter sends it, E edits it, O sends your original instead. An
       "auto-send" setting skips the review for trusted projects.
-- [ ] **76. Dispatch:** the refiner's pick (agent, model, effort) is checked against the outcome history before it
+- [~] **76. Dispatch:** the refiner's pick (agent, model, effort) is checked against the outcome history before it
       runs: routing keeps it unless the record shows that choice failing for this kind of task (then the cheapest
       proven one), never above the top tier allowed, and never a model that isn't available; the review (75) shows
       the pick and why, and you can change it. Each task then goes to a worker tile on the board,
       or to the project's lead agent when it's one conversational job; independent tasks run in parallel up to the
       worker limit; Claude or OpenCode per the tier. Nothing new about how workers run: board, budgets, stuck
       detection, checks before review all apply.
-- [ ] **77. Results back:** each task reports into the terminal as a card: status, the worker's hand-back note,
+- [~] **77. Results back:** each task reports into the terminal as a card: status, the worker's hand-back note,
       files changed, checks and diff size, tokens and cost; approve / reject (with a note) / open the tile /
       message the worker, right in the card. When everything is in, a short summary of what was done and what's
       left, and a notification if you're away.
-- [ ] **78. Follow-ups in context:** replying in the terminal continues the same job (a follow-up goes to the worker
+- [~] **78. Follow-ups in context:** replying in the terminal continues the same job (a follow-up goes to the worker
       that did the task, or becomes a new task), without resending the whole history to anyone.
-- [ ] **79. Settings (Settings › Terminal):** refiner provider and model, auto-send, max workers per request,
+- [~] **79. Settings (Settings › Terminal):** refiner provider and model, auto-send, max workers per request,
       show savings, where it opens. All real, saved, validated (84B-84E).
 - [ ] **80. Local Gemma (was item 64; ask first, ~3 GB):** one-click install of llama.cpp `llama-server` + a
       small Gemma build as the refiner, only after an explicit yes; until then OpenCode's free model or a URL the

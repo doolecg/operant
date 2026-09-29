@@ -6,7 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const net = require('net');
+const { spawn, spawnSync } = require('child_process');
 const { redactText } = require('./redact');
 const pricing = require('./pricing');
 const { route } = require('./routing');
@@ -207,6 +208,10 @@ function checkPicks(value, { tiers, maxTier, available, outcomesStats, counter }
       const { r } = routed();
       return pick(r.tier, `${tiers[tier].model} is not available; routing picked ${r.tier} (${r.reason})`, 'routing');
     }
+    // 3b. High-risk work never runs on the cheapest tier: a wrong result there costs more than the saving.
+    if (t.risk === 'high' && usable.length > 1 && tier === usable[0]) {
+      return pick(usable[1], `high-risk task; raised from ${tier} to ${usable[1]}`, 'routing');
+    }
     // 4. The record shows this tier failing for this kind of task.
     const type = classifyTask(t.prompt), c = outcomesStats?.[type]?.[tier];
     const n = c ? c.passed + c.failed + c.escalated : 0;
@@ -232,10 +237,9 @@ function parseOpencodeEvents(stdout) {
     if (e.type === 'text' && typeof e.part?.text === 'string') text += e.part.text;
     else if (e.type === 'error') error = e.error?.data?.message || e.error?.message || e.error?.name || 'OpenCode reported an error';
     else if (e.type === 'step_finish' && e.part?.tokens) {
-      const t = e.part.tokens;
+      const t = normTokens(e.part.tokens);
       seen = true;
-      tokens.input += t.input || 0; tokens.output += (t.output || 0) + (t.reasoning || 0);
-      tokens.cacheRead += t.cache?.read || 0; tokens.cacheWrite += t.cache?.write || 0;
+      for (const k of Object.keys(tokens)) tokens[k] += t[k];
       cost += e.part.cost || 0;
     }
   }
@@ -248,9 +252,30 @@ function killTree(child) {
   else { try { child.kill('SIGKILL'); } catch {} }
 }
 
+// OpenCode sends ~15k tokens of tools and system prompt with every call. The refiner needs none of it, so a lean config
+// (OPENCODE_CONFIG_CONTENT) drops the tools it can and swaps the system prompt: ~3k tokens, and faster. bash and read
+// must stay listed (OpenCode's free tier answers 403 "can only be used from within OpenCode" without them) and cannot be
+// denied outright (a denied tool is unlisted, same 403), so they are set to ask, which nothing answers: an attempt to use one stalls
+// until the timeout and fails, it never runs.
+const LEAN_OFF = ['webfetch', 'task', 'todowrite', 'todoread', 'skill', 'websearch', 'codesearch', 'edit', 'write', 'patch', 'grep', 'glob', 'list', 'lsp', 'apply_patch', 'multiedit'];
+function leanConfig() {
+  return JSON.stringify({
+    autoupdate: false, share: 'disabled',
+    tools: Object.fromEntries(LEAN_OFF.map(t => [t, false])),
+    permission: { bash: 'ask', read: 'ask' },
+    agent: { build: { prompt: 'You are opencode. Answer with the JSON asked for and nothing else. Use no tools.' } },
+  });
+}
+const leanEnv = (env, lean) => (lean === false ? env || process.env : { ...(env || process.env), OPENCODE_CONFIG_CONTENT: leanConfig() });
+
+// One reading of OpenCode's token counts for both the event stream and the server's message info.
+function normTokens(t) {
+  return { input: t.input || 0, output: (t.output || 0) + (t.reasoning || 0), cacheRead: t.cache?.read || 0, cacheWrite: t.cache?.write || 0 };
+}
+
 // `opencode run -m <model> --format json --pure` in a fresh empty folder, the prompt on stdin (no quoting to get wrong).
 // -> { text, tokens: { input, output, cacheRead, cacheWrite } | null, cost }
-function runOpencode({ prompt, model = 'opencode/big-pickle', timeoutMs = 60000, command = 'opencode', env, spawnImpl = spawn } = {}) {
+function runOpencode({ prompt, model = 'opencode/big-pickle', timeoutMs = 60000, command = 'opencode', env, lean = true, spawnImpl = spawn } = {}) {
   return new Promise((resolve, reject) => {
     let dir;
     try { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-refine-')); } catch (e) { return reject(e); }
@@ -262,7 +287,7 @@ function runOpencode({ prompt, model = 'opencode/big-pickle', timeoutMs = 60000,
       fn(v);
     };
     try {
-      child = spawnImpl(command, ['run', '-m', model, '--format', 'json', '--pure'], { cwd: dir, env: env || process.env, windowsHide: true, shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(command), stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawnImpl(command, ['run', '-m', model, '--format', 'json', '--pure'], { cwd: dir, env: leanEnv(env, lean), windowsHide: true, shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(command), stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) { return finish(reject, e); }
     timer = setTimeout(() => { killTree(child); finish(reject, new Error(`OpenCode did not answer within ${Math.round(timeoutMs / 1000)} s`)); }, timeoutMs);
     child.stdout.on('data', d => { out += d; });
@@ -277,6 +302,102 @@ function runOpencode({ prompt, model = 'opencode/big-pickle', timeoutMs = 60000,
     });
     try { child.stdin.on('error', () => {}); child.stdin.end(prompt); } catch {}
   });
+}
+
+// A long-lived `opencode serve` in an empty folder, started on the first refine and reused: no process start and no
+// plugin/config load per call (about 2 s each), and one session per refine keeps every call's context clean.
+// -> { run({ prompt, model, timeoutMs }), stop(), pid() }. Errors from starting or reaching it carry serverDown = true.
+const freePort = () => new Promise((resolve, reject) => {
+  const s = net.createServer();
+  s.on('error', reject);
+  s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+});
+const down = (msg, cause) => Object.assign(new Error(msg), { serverDown: true, cause });
+
+function createOpencodeServer({ command = 'opencode', env, spawnImpl = spawn, fetchImpl = globalThis.fetch, startTimeoutMs = 20000, lean = true } = {}) {
+  let child = null, starting = null, base = '', auth = '', dir = null;
+  const cleanup = () => { if (dir) { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {} dir = null; } };
+  const reset = () => { child = null; starting = null; cleanup(); };
+  const stop = () => { const c = child; if (c) killTree(c); reset(); };
+  const start = async () => {
+    const port = await freePort();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-refine-srv-'));
+    const password = crypto.randomBytes(16).toString('hex');
+    base = `http://127.0.0.1:${port}`; auth = 'Basic ' + Buffer.from(`opencode:${password}`).toString('base64');
+    const c = spawnImpl(command, ['serve', '--pure', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: dir, env: { ...leanEnv(env, lean), OPENCODE_SERVER_PASSWORD: password }, windowsHide: true, shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(command), stdio: ['ignore', 'pipe', 'pipe'] });
+    child = c;
+    c.on('exit', () => { if (child === c) reset(); });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(down('OpenCode server did not start')), startTimeoutMs);
+      let out = '';
+      c.stdout.on('data', d => { out += d; if (/listening/.test(out)) { clearTimeout(timer); resolve(); } });
+      c.stderr.on('data', () => {});
+      c.on('error', e => { clearTimeout(timer); reject(down(e.code === 'ENOENT' ? 'OpenCode is not installed' : e.message, e)); });
+      c.on('exit', code => { clearTimeout(timer); reject(down(`OpenCode server exited with code ${code}`)); });
+    });
+  };
+  const ensure = () => {
+    if (!starting) starting = start().catch(e => { stop(); throw e; });
+    return starting;
+  };
+  const call = async (method, url, body, signal) => {
+    let res;
+    try { res = await fetchImpl(base + url, { method, signal, headers: { 'content-type': 'application/json', authorization: auth }, body: body ? JSON.stringify(body) : undefined }); }
+    catch (e) { if (signal?.aborted) throw e; throw down(`OpenCode server is not reachable: ${e.message}`, e); }
+    if (!res.ok) throw new Error(`OpenCode server answered HTTP ${res.status}`);
+    return res.json();
+  };
+  async function run({ prompt, model = 'opencode/big-pickle', timeoutMs = 60000 } = {}) {
+    await ensure();
+    const [providerID, ...rest] = String(model).split('/');
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), timeoutMs);
+    let sid = null;
+    try {
+      const s = await call('POST', '/session', {}, ctl.signal);
+      sid = s.id;
+      const r = await call('POST', `/session/${sid}/message`, { model: { providerID, modelID: rest.join('/') }, parts: [{ type: 'text', text: prompt }] }, ctl.signal);
+      const info = r.info || {};
+      if (info.error) throw new Error(info.error.data?.message || info.error.name || 'OpenCode reported an error');
+      const text = (r.parts || []).filter(p => p.type === 'text' && typeof p.text === 'string').map(p => p.text).join('').trim();
+      if (!text) throw new Error('OpenCode answered with nothing');
+      return { text, tokens: info.tokens ? normTokens(info.tokens) : null, cost: info.cost || 0 };
+    } catch (e) {
+      if (ctl.signal.aborted) {
+        if (sid) call('POST', `/session/${sid}/abort`).catch(() => {});
+        throw new Error(`OpenCode did not answer within ${Math.round(timeoutMs / 1000)} s`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      if (sid) call('DELETE', `/session/${sid}`).catch(() => {});
+    }
+  }
+  return { run, stop, pid: () => child?.pid ?? null };
+}
+
+// The one shared server, and the provider main.js hands to refine(): the server when it works, `opencode run` when it
+// can't start or be reached (then not tried again for 5 minutes). A model error or a timeout is the answer, not a reason to fall back.
+let shared = null, sharedKey = '', brokenUntil = 0, exitHooked = false;
+function stopOpencodeServer() {
+  const s = shared; shared = null;
+  if (!s) return;
+  const pid = s.pid();
+  if (pid && process.platform === 'win32') { try { spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {} }
+  s.stop();
+}
+async function runOpencodeFast(args = {}) {
+  const key = args.command || 'opencode';
+  if (Date.now() >= brokenUntil) {
+    if (shared && sharedKey !== key) stopOpencodeServer();
+    if (!shared) {
+      shared = createOpencodeServer({ command: key, env: args.env, lean: args.lean });
+      sharedKey = key;
+      if (!exitHooked) { exitHooked = true; process.on('exit', stopOpencodeServer); }
+    }
+    try { return await shared.run(args); }
+    catch (e) { if (!e.serverDown) throw e; stopOpencodeServer(); brokenUntil = Date.now() + 5 * 60000; }
+  }
+  return runOpencode(args);
 }
 
 function chatUrl(url) {
@@ -307,6 +428,17 @@ async function runLocal({ url, model, prompt, timeoutMs = 60000, fetchImpl = glo
 }
 
 // ---------------------------------------------------------------- refine
+
+// Tokens a call processed, put on the free or the paid side: a free model (pricing.isFreeModel) or a local one costs nothing.
+// Input counts cache reads and writes too (they are still tokens the model was sent). -> { free, paid }, each { input, output, total }.
+const zeroUse = () => ({ input: 0, output: 0, total: 0 });
+function splitTokens(model, tokens, { local = false, prices = pricing } = {}) {
+  const free = local || prices.isFreeModel(model);
+  const use = zeroUse();
+  if (tokens) { use.input = (tokens.input || 0) + (tokens.cacheRead || 0) + (tokens.cacheWrite || 0); use.output = tokens.output || 0; use.total = use.input + use.output; }
+  return free ? { free: use, paid: zeroUse() } : { free: zeroUse(), paid: use };
+}
+const addUse = (a, b) => ({ input: a.input + b.input, output: a.output + b.output, total: a.total + b.total });
 
 // The original prompt as one task on the tier routing picks; used when the refiner is off or failed.
 function passThrough(prompt, { tiers, maxTier, outcomesStats, available, counter }) {
@@ -340,7 +472,7 @@ async function refine({ project, prompt, settings = {}, deps = {} } = {}) {
 
   const inputs = (await deps.inputs?.(project)) || { cwd: typeof project === 'string' ? project : project?.cwd };
   const brief = buildBrief(inputs);
-  const base = { requestId, original, refined: null, tasks: [], brief: { tokens: brief.tokens, estimated: true }, refiner: { provider, model, tokens: { input: null, output: null }, ms: 0, usd: null } };
+  const base = { requestId, original, refined: null, tasks: [], brief: { tokens: brief.tokens, estimated: true }, refiner: { provider, model, tokens: { input: null, output: null }, free: zeroUse(), paid: zeroUse(), ms: 0, usd: null } };
   const fallback = error => ({ ...base, tasks: passThrough(original, ctx), ...(error ? { error } : {}) });
 
   if (provider === 'off') return fallback();
@@ -351,8 +483,8 @@ async function refine({ project, prompt, settings = {}, deps = {} } = {}) {
   const askText = refinerPrompt({ prompt: redactText(original), brief, options, maxTasks });
   const started = now();
   const total = { input: null, output: null }, add = t => { if (t) for (const k of ['input', 'output']) total[k] = (total[k] || 0) + (t[k] || 0); };
-  let usdSum = null, lastError = 'no answer';
-  const account = r => { add(r.tokens); if (r.tokens || r.cost) { const p = pricing.priceOf(model, r.tokens, r.cost); if (p.usd != null) usdSum = (usdSum || 0) + p.usd; } };
+  let usdSum = null, lastError = 'no answer', freeUse = zeroUse(), paidUse = zeroUse();
+  const account = r => { add(r.tokens); const sp = splitTokens(model, r.tokens, { local: provider === 'local', prices: deps.prices }); freeUse = addUse(freeUse, sp.free); paidUse = addUse(paidUse, sp.paid); if (r.tokens || r.cost) { const p = pricing.priceOf(model, r.tokens, r.cost); if (p.usd != null) usdSum = (usdSum || 0) + p.usd; } };
   let parsed = null, text = askText;
   for (let attempt = 0; attempt < 2 && !parsed?.ok; attempt++) {
     let r;
@@ -362,9 +494,9 @@ async function refine({ project, prompt, settings = {}, deps = {} } = {}) {
     if (!parsed.ok) { lastError = parsed.error; text = `${askText}\n\nYour previous answer was not usable (${parsed.error}). Answer again with the JSON object only.`; }
   }
   const ms = now() - started;
-  const refiner = { provider, model, tokens: total, ms, usd: usdSum };
+  const refiner = { provider, model, tokens: total, free: freeUse, paid: paidUse, ms, usd: usdSum };
   if (total.input != null || total.output != null || usdSum != null || ms) {
-    try { deps.record?.({ t: now(), kind: 'orchestration', requestId, what: 'refine', provider, model, tokens: total, usd: usdSum, ms }); } catch {}
+    try { deps.record?.({ t: now(), kind: 'orchestration', requestId, what: 'refine', provider, model, tokens: total, free: freeUse, paid: paidUse, usd: usdSum, ms }); } catch {}
   }
   if (!parsed?.ok) {
     const why = parsed ? `the refiner's answer could not be read twice (${lastError})` : `the refiner failed: ${lastError}`;
@@ -376,4 +508,4 @@ async function refine({ project, prompt, settings = {}, deps = {} } = {}) {
   return { ...base, refined: { summary: v.summary, cleaned: v.cleaned }, tasks: capTasks(checked.tasks, maxTasks), refiner };
 }
 
-module.exports = { buildBrief, buildOptions, refinerPrompt, parseRefinerOutput, checkPicks, runOpencode, runLocal, refine, parseOpencodeEvents, rateOf, capTasks, chatUrl };
+module.exports = { createOpencodeServer, runOpencodeFast, stopOpencodeServer, leanConfig, splitTokens, buildBrief, buildOptions, refinerPrompt, parseRefinerOutput, checkPicks, runOpencode, runLocal, refine, parseOpencodeEvents, rateOf, capTasks, chatUrl };

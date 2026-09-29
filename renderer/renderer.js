@@ -1135,6 +1135,7 @@
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">◆</span><span class="title"></span><span class="badge"></span>
       <span class="view-acts"><button data-v="auto" title="">Auto-send</button><button data-v="clear" title="Clear this conversation">Clear</button></span><button class="x" title="Close">✕</button></div>
       <div class="ot-wrap"><div class="ot-log" tabindex="-1"></div><div class="ot-status hidden"></div>
+      <div class="ot-target hidden"><select title="Where your next message goes"></select></div>
       <div class="ot-box"><span class="ot-prompt">❯</span><textarea rows="1" spellcheck="true" placeholder="Ask Operant to do something…"></textarea></div>
       <div class="ot-hint"><kbd>Enter</kbd> send <kbd>Shift+Enter</kbd> new line <kbd>↑</kbd><kbd>↓</kbd> earlier prompts <kbd>Esc</kbd> cancel</div></div></div>`;
     const w = { id, kind: 'operant', el, term: null, title: `Operant · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
@@ -1148,6 +1149,11 @@
       focusTile: tid => { const t = wins.get(Number(tid)); if (t?.alive) { if (t.ws !== current) switchWorkspace(t.ws); focusWin(t); } },
       autoSend: () => !!cfg.terminal?.autoSend?.[key],
       setAutoSend: on => setSetting('terminal', { ...cfg.terminal, autoSend: { ...cfg.terminal?.autoSend, [key]: on } }),
+      allowedTiers: allowedTierNames,
+      freeWorkers: () => Math.max(0, (cfg.team?.maxWorkers || 4) - [...wins.values()].filter(x => x.alive && x.tier).length),
+      usageOf: t => { const tok = wins.get(t.owner)?.tok; return { tokens: addTok(t.tokens, tok), free: !!tok?.free, model: t.model || null, escalated: (t.escalations || 0) > 0 }; },
+      message: async (tid, text) => cfg.messaging ? runControl('msg', { id: tid, text }, w) : runControl('send', { id: tid, text, enter: true }, null),
+      notifyAway: async (title, body) => { if (!(await operant.windowFocused().catch(() => false))) notify(w, title, body, null, true); },
       refinerLabel: () => { const m = [cfg.terminal?.refiner, cfg.terminal?.refinerModel].filter(x => typeof x === 'string' && x && x !== 'off').join(' '); return m ? `Cleaning your prompt with ${m}…` : 'Cleaning your prompt…'; },
     });
     wins.set(id, w);
@@ -1238,7 +1244,7 @@
   function recordOutcome(t, status, tile) {
     const w = tile === undefined ? wins.get(t.owner) : tile;
     operant.recordOutcome({
-      taskId: t.id, type: TaskType.classifyTask(t.text), tier: t.tier || null, agent: t.agent || null, model: t.model || null,
+      taskId: t.id, requestId: t.requestId || null, requestTask: t.requestTask ?? null, source: t.source || null, type: TaskType.classifyTask(t.text), tier: t.tier || null, agent: t.agent || null, model: t.model || null,
       attempts: Board.attempts(t), escalations: t.escalations || 0, status, reason: String(t.failure && status === 'escalated' ? t.failure.split('\n')[0] : t.note || '').slice(0, 200),
       durationMs: t.createdAt ? Date.now() - t.createdAt : null, tokens: addTok(t.tokens, w?.tok), cwd: t.cwd || null,
     });
@@ -4633,7 +4639,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'agent': {
         if (!args.prompt) throw new Error('prompt required');
-        let agentId = args.agent, model = args.model, effort = null, tier = null, suggested = null;
+        let agentId = args.agent, model = args.model, effort = args.effort ? String(args.effort) : null, tier = null, suggested = null;
+        const fromTerminal = args.source === 'terminal';
         // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt.
         if (!args.tier && !args.agent && !args.model && cfg.team?.enabled) {
           const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
@@ -4645,8 +4652,15 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           suggested = Routing.route({ prompt: args.prompt, tiers: Object.keys(capped), stats: await operant.outcomeStats().catch(() => ({})), counter, fallback });
           try { localStorage.setItem(key, String(counter + 1)); } catch {}
         }
-        if (args.tier || suggested) {
-          tier = String(args.tier || suggested.tier);
+        // The Operant Terminal's tasks always get a tier (the cards need the board task): the one matching its agent and model, else the cheapest allowed.
+        let wantTier = args.tier || suggested?.tier;
+        if (!wantTier && fromTerminal) {
+          const all = activeTiers(), names = allowedTierNames();
+          wantTier = names.find(n => all[n].agent === args.agent && (!args.model || all[n].model === args.model)) || names[0];
+          if (!wantTier) throw new Error('no worker tiers are set up - set them up in Settings › Agents › Team');
+        }
+        if (wantTier) {
+          tier = String(wantTier);
           const t = activeTiers()[tier];
           if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team`);
           const names = Object.keys(activeTiers()), top = names.indexOf(cfg.team.maxTier);
@@ -4654,9 +4668,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const maxWorkers = cfg.team?.maxWorkers || 4;
           const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
           if (workers >= maxWorkers) throw new Error(`max workers already running (${maxWorkers}) - wait for one to finish`);
-          agentId = t.agent;
+          agentId = fromTerminal && args.agent ? args.agent : t.agent;
           model = model || t.model;
-          if (!args.model) effort = t.effort || null;
+          if (!args.model && !args.effort) effort = t.effort || null;
         }
         if (agentId && !cfg.agents.some(a => a.id === agentId)) throw new Error(`unknown agent "${agentId}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
         // Item 33: with --tier, a board task is added automatically, owned by the new worker tile,
@@ -4664,7 +4678,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let taskId = null, prompt = args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
-          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd, ...(args.requestId ? { requestId: String(args.requestId) } : {}) };
+          const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd, ...(args.requestId ? { requestId: String(args.requestId) } : {}), ...(fromTerminal ? { source: 'terminal', requestTask: Number.isInteger(args.taskId) ? args.taskId : null, agent: agentId, model } : {}) };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
           board.tasks.push(task);
           boardChanged();

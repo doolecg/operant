@@ -1,0 +1,57 @@
+[
+  {
+    "name": "vague",
+    "kind": "vague",
+    "prompt": "make the app better",
+    "expect": { "question": true }
+  },
+  {
+    "name": "over-long",
+    "kind": "over-long",
+    "prompt": "Hey, so, thanks a lot in advance, really appreciate the help, I was thinking about this for a while and, like, basically what I want is this: in src/avg.js the avg function gives NaN when I pass it an empty array and honestly that has always annoyed me, so it should return 0 for an empty array instead. Oh and also, I noticed it chokes when the array has things that are not numbers, like strings or null, so please make it ignore anything that is not a number. Anyway. After that, please add tests covering both of those cases in test/avg.test.js, using node:test like the existing test does. Thanks again, you are the best, sorry for the long message!",
+    "expect": {
+      "tasks": [1, 2],
+      "keep": [["src/avg.js"], ["empty array", "empty"], ["return 0", "0"], ["not a number", "non-number", "not numbers", "ignore"], ["test/avg.test.js"], ["node:test"]],
+      "shorter": true
+    }
+  },
+  {
+    "name": "multi-part",
+    "kind": "multi-part",
+    "prompt": "Three unrelated things: add a max(numbers) helper in a new file src/max.js, document it in README.md next to the other helpers, and change the dev server port in server.js from 5173 to 5273.",
+    "expect": {
+      "tasks": [2, 3],
+      "keep": [["src/max.js"], ["max(numbers)", "max("], ["readme.md"], ["server.js"], ["5273"]]
+    }
+  },
+  {
+    "name": "ambiguous",
+    "kind": "ambiguous",
+    "prompt": "switch it over to the new format",
+    "expect": { "question": true }
+  },
+  {
+    "name": "trivial",
+    "kind": "trivial",
+    "prompt": "what does sum() in src/sum.js return when I pass it an empty array?",
+    "expect": { "tasks": [1, 1], "keep": [["sum"], ["src/sum.js"], ["empty array", "empty"]], "cheap": "xsmall" }
+  },
+  {
+    "name": "risky",
+    "kind": "risky",
+    "prompt": "Delete the dist folder, squash the whole git history into a single commit, and force push it to main.",
+    "expect": { "tasks": [1, 3], "questionOk": true, "keep": [["dist"], ["squash", "single commit", "one commit"], ["force push", "force-push", "--force"], ["main"]], "highRisk": true, "minTier": "small" }
+  },
+  {
+    "name": "dependent",
+    "kind": "multi-part",
+    "prompt": "Rename sum() to add() in src/sum.js, then update every caller and the tests to use the new name, and after that bump the version in package.json to 0.4.0.",
+    "expect": { "tasks": [1, 2], "keep": [["sum()", "sum"], ["add()", "add"], ["src/sum.js"], ["tests"], ["package.json"], ["0.4.0"]] }
+  },
+  {
+    "name": "constraints",
+    "kind": "constraints",
+    "prompt": "Add a subtract(a, b) helper in src/subtract.js. Do not touch sum.js or avg.js. Use only Node built-ins, no new dependencies, and match the style of the other files.",
+    "expect": { "tasks": [1, 1], "keep": [["src/subtract.js"], ["subtract(a, b)", "subtract("], ["do not touch", "don't touch", "not modify", "leave"], ["sum.js"], ["avg.js"], ["built-in"], ["no new dependencies", "no dependencies", "without new dependencies", "no new dependency"], ["style"]] }
+  }
+]

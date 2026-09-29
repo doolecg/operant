@@ -64,6 +64,9 @@ const Panels = (() => {
       { key: 'hardwareAcceleration', label: 'Hardware acceleration', hint: 'Use the graphics card for the whole window · turn off if Operant flickers or draws wrongly · ' + RESTART, type: 'toggle' },
       { key: 'copyOnSelect', label: 'Copy text when you select it', hint: 'In terminals, viewers and diffs · a small Copied note shows', type: 'toggle' },
     ]],
+    ['Operant Terminal', [
+      { key: 'terminal', label: 'Operant Terminal', type: 'operantTerminal' },
+    ]],
     ['Layout', [
       { key: 'defaultLayout', label: 'Default layout', hint: 'For empty workspaces; Alt+M switches the current one',
         type: 'select', options: [['master', 'Master + stack'], ['dwindle', 'Dwindle']] },
@@ -202,7 +205,7 @@ const Panels = (() => {
     ]],
   // Rows flagged `win` exist only on Windows; a tab left with none goes too.
   ].map(([t, items]) => [t, items.filter(it => IS_WIN || !it.win)]).filter(([, items]) => items.length);
-  const TAB_ICONS = { Appearance: '◐', Terminal: '❯', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
+  const TAB_ICONS = { Appearance: '◐', Terminal: '❯', 'Operant Terminal': '◆', Layout: '▦', Agents: '✻', Notifications: '◔', 'Tiles & subagents': '◆',
     Sidebar: '▌', 'Top bar': '▔', Files: '▤', Projects: '◈', Media: '♫', Usage: '▥', Startup: '⏻', Keybinds: '⌨', Memory: '✎', CodeGraph: '◇', 'Skills backup': '⤒', Backups: '⛁', Updates: '↻' };
 
   function control(it, v, cfg) {
@@ -248,6 +251,25 @@ const Panels = (() => {
         <button class="rm" data-agent-rm="${i}" title="Remove">✕</button></div>`).join('')
       + `</div><div class="set-row"><div class="lbl"><span class="hint">Any command that runs in a terminal works. Claude Code and OpenCode tiles also get their subagents as tiles. ${NEW_TILES}.</span></div>
         <div class="ctl"><button class="btn" data-agent-add>+ Add agent</button></div></div>`;
+  }
+
+  // Settings › Operant Terminal: the prompt refiner (refiner.js), how many tasks a request splits into, and the projects that skip the review.
+  function operantTerminalEditor(cfg, ext) {
+    const t = { refiner: 'opencode', refinerModel: '', localUrl: '', localModel: '', autoSend: {}, maxTasks: 4, ...(cfg.terminal || {}) };
+    const err = ext.errors && ext.errors.terminal;
+    const row = (label, hint, ctl) => `<div class="set-row"><div class="lbl">${label}${hint ? `<span class="hint">${hint}</span>` : ''}</div><div class="ctl">${ctl}</div></div>`;
+    const local = t.refiner === 'local', oc = t.refiner === 'opencode';
+    const auto = Object.entries(t.autoSend || {}).filter(([, on]) => on);
+    return (err ? `<div class="set-row"><div class="lbl"><span class="hint uc-status error">Not saved: ${esc(err)}</span></div></div>` : '')
+      + row('Prompt refiner', 'Cleans your prompt and splits it into tasks · OpenCode uses its free model · Local uses an OpenAI-compatible server (Ollama, LM Studio, llama.cpp) · Off sends your prompt as written',
+        `<select data-ot="refiner">${[['opencode', 'OpenCode (free model)'], ['local', 'Local model'], ['off', 'Off']].map(([v, n]) => `<option value="${v}"${v === t.refiner ? ' selected' : ''}>${n}</option>`).join('')}</select>`)
+      + (oc ? row('Refiner model', 'An OpenCode model id, e.g. opencode/big-pickle', `<input type="text" data-ot="refinerModel" value="${esc(t.refinerModel)}" spellcheck="false">`) : '')
+      + (local ? row('Local URL', 'The server address, e.g. http://localhost:11434', `<input type="text" data-ot="localUrl" value="${esc(t.localUrl)}" placeholder="http://localhost:11434" spellcheck="false">`)
+        + row('Local model', 'The model name that server knows', `<input type="text" data-ot="localModel" value="${esc(t.localModel)}" spellcheck="false">`) : '')
+      + row('Most tasks per request', 'A request is split into at most this many tasks (1-8)', `<input type="number" data-ot-num="maxTasks" min="1" max="8" value="${t.maxTasks}">`)
+      + `<div class="pane-title">Send without review</div>`
+      + (auto.length ? auto.map(([k]) => row(esc(k), '', `<button class="btn" data-ot-rm="${esc(k)}">Remove</button>`)).join('')
+        : row('No projects', 'Turn on Auto-send in an Operant Terminal and it shows here', ''));
   }
 
   // The Updates tab: this version, the last check and what to do next.
@@ -435,6 +457,7 @@ const Panels = (() => {
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
     if (it.type === 'team') return teamEditor(cfg);
+    if (it.type === 'operantTerminal') return operantTerminalEditor(cfg, ext);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
     if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';
@@ -605,6 +628,13 @@ const Panels = (() => {
       pane.querySelectorAll('[data-backup-run]').forEach(b => b.onclick = () => { b.disabled = true; ext.backupRun(); });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
       pane.querySelectorAll('[data-messaging]').forEach(b => b.onclick = () => { set('messaging', !cfg.messaging); draw(); });
+      const setTerm = patch => set('terminal', { ...(cfg.terminal || {}), ...patch });
+      pane.querySelectorAll('[data-ot]').forEach(el => el.onchange = () => { setTerm({ [el.dataset.ot]: el.value.trim() }); draw(); });
+      pane.querySelectorAll('[data-ot-num]').forEach(el => el.onchange = () => {
+        const n = Math.min(8, Math.max(1, Math.round(+el.value || 4)));
+        el.value = n; setTerm({ [el.dataset.otNum]: n });
+      });
+      pane.querySelectorAll('[data-ot-rm]').forEach(b => b.onclick = () => { const a = { ...(cfg.terminal?.autoSend || {}) }; delete a[b.dataset.otRm]; setTerm({ autoSend: a }); draw(); });
       pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
       pane.querySelectorAll('[data-team-verify]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), verifyBeforeReview: cfg.team?.verifyBeforeReview === false }); draw(); });
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {

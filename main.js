@@ -1619,6 +1619,8 @@ ipcMain.handle('outcome:record', async (_e, o) => {
     return { ok: true };
   } catch { return { ok: false }; }
 });
+// The Operant Terminal's result cards: what these tokens cost on this model (usd null = no price for it, never a guess).
+ipcMain.handle('pricing:tokens', (_e, { model, tokens } = {}) => { try { return { usd: priceOf(model, tokens).usd }; } catch { return { usd: null }; } });
 // Item 59: summary of the last 30 days, at most the 20 most recent entries per type and tier.
 function outcomeStats() {
   try {
@@ -1663,7 +1665,7 @@ ipcMain.handle('terminal:refine', async (_e, { project, prompt } = {}) => {
         maxTier: () => team.maxTier,
         outcomesStats: outcomeStats,
         providers: {
-          opencode: async a => refiner.runOpencode({ ...a, command: await exe(), env: await freshEnv() }),
+          opencode: async a => refiner.runOpencodeFast({ ...a, command: await exe(), env: await freshEnv() }),
           local: a => refiner.runLocal(a),
         },
         record: entry => outcomes.appendOutcome(OUTCOMES_PATH, entry),
