@@ -201,6 +201,14 @@ const OperantTerminal = (() => {
     }
     return out;
   }
+  // A shell tile's output without the shell's prompt waiting at the end (PowerShell's can wrap over two lines).
+  function shellOutput(text) {
+    const lines = String(text || '').replace(/\s+$/, '').split('\n');
+    const at = lines.findLastIndex(l => /^PS [A-Za-z]:\\/.test(l));
+    if (at >= 0 && /> ?$/.test(lines[lines.length - 1])) lines.length = at;
+    else if (/^\S*[$#%>] ?$/.test(lines[lines.length - 1] || '')) lines.pop();
+    return lines.join('\n').trim();
+  }
   // What a line typed in the box is: a slash command, a shell command (!), a memory (# then a non-digit), or a prompt.
   function inputKind(text) {
     const t = String(text || '').trim();
@@ -310,7 +318,8 @@ const OperantTerminal = (() => {
     }
 
     // ---- result cards (item 77): a card per task, keyed by requestId + task index, following the board
-    const taskOf = e => e.boardId != null ? host.tasks().find(t => t.id === e.boardId) : null;
+    // Matched on the request too: board numbers start again at 1 after a restart, and an old card must not take a new task.
+    const taskOf = e => e.boardId != null ? host.tasks().find(t => t.id === e.boardId && (!t.requestId || t.requestId === e.requestId)) : null;
     const tileOf = c => {
       const t = taskOf(c.entry);
       return t?.owner != null && host.tileAlive(t.owner) ? t.owner : c.entry.tile != null && host.tileAlive(c.entry.tile) ? c.entry.tile : null;
@@ -478,7 +487,7 @@ const OperantTerminal = (() => {
     function dropStaleAsks() { for (const c of cards.values()) if (c.ask && !host.tileAlive(c.ask.tile)) answerAsk(c, null); }
     // `operant ask` from one of this Terminal's workers: its card shows the question; resolves with your answer (null = dismissed).
     function ask({ taskId, tile, question, detail, options }) {
-      const c = [...cards.values()].find(x => x.entry.boardId === taskId);
+      const c = [...cards.values()].find(x => taskOf(x.entry)?.id === taskId);
       if (!c) return Promise.resolve(null);
       if (c.ask) c.ask.resolve(null);
       return new Promise(resolve => {
@@ -780,8 +789,8 @@ const OperantTerminal = (() => {
       const node = line(save({ role: 'operant', kind: 'info', text: `Running \`${clip(command, 120)}\` in tile ${r.id}...` }));
       try {
         const out = await host.control('wait', { id: r.id, lines: 60 });
-        const text = String(out?.text || '').trim();
-        info(`\`${clip(command, 120)}\`${out?.exited ? ' finished' : ' is still running (tile ' + r.id + ')'}:\n\`\`\`\n${text || '(no output)'}\n\`\`\``);
+        const text = shellOutput(out?.text);
+        info(`Output of \`${clip(command, 120)}\` (tile ${r.id}):\n\`\`\`\n${text || '(no output)'}\n\`\`\``);
       } catch (err) { info(`Could not read tile ${r.id}: ${String(err.message || err)}`); }
       void node;
     }
@@ -922,7 +931,7 @@ const OperantTerminal = (() => {
     return { refresh: refreshCards, focus: () => box.focus({ preventScroll: true }), drawAuto, ask };
   }
 
-  const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, bundleTasks, masterPrompt, SLASH, parseSlash, slashMatches, atToken, fileMatches, histMatches, inputKind, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
+  const api = { mount, modeNote, assertTierAllowed, dispatchArgs, planDispatch, bundleTasks, masterPrompt, SLASH, parseSlash, slashMatches, atToken, fileMatches, histMatches, inputKind, shellOutput, handoffText, isLive, isSettled, defaultTarget, tokenLine, requestFooter, summaryText, flatText, followUpPlan, sumSegmentUsd, diffOps, diffHtml, renderText, reviewKey, historyStep, normalizeResult, estTokens, statusOf, STATUS };
   return api;
 })();
 

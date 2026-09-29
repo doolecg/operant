@@ -234,3 +234,10 @@ test('@ completes project files, file names first; Ctrl+R finds earlier prompts 
   assert.deepEqual(T.fileMatches(files, 'renderer/'), ['renderer/terminal.js']);
   assert.deepEqual(T.histMatches(['fix a', 'add b', 'fix c', 'fix a'], 'fix'), ['fix a', 'fix c']);
 });
+
+test('a shell tile\'s output loses the prompt waiting at its end', () => {
+  assert.equal(T.shellOutput('hello\nPS C:\\Users\\me\\a very long\npath\\proj> '), 'hello');
+  assert.equal(T.shellOutput('hello\nPS C:\\proj>'), 'hello');
+  assert.equal(T.shellOutput('ok\nuser@box:~/p$ '), 'ok');
+  assert.equal(T.shellOutput('a > b'), 'a > b');
+});
