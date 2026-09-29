@@ -1,3 +1,29 @@
+# Operant 2.3.0
+
+The Operant Terminal now works much more like Claude Code: workers can ask you questions in it, you can stop or close any task, and it has slash commands, `!` shell commands, `#` memories and `@` files. Operant can also be your default agent, and Settings is down from 21 tabs to 8.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.3.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.3.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.3.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.3.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.3.0-linux-amd64.deb` (`sudo apt install ./Operant-2.3.0-linux-amd64.deb`).
+
+## New
+- **Workers ask you in the Terminal:** when a worker needs a decision (`operant ask`), the question shows on its task card with the options as buttons, or you type the answer. A blocked task has a *Reply* button.
+- **Stop and close tasks:** every card has *Stop* (interrupts the current step, like `Esc`; the task stays open), *Close* and *Close with reason* (the reason is saved on the task, and a closed task is never retried). A request with several tasks running gets *Stop all*. Agents can do the same with `operant task cancel <id> --note "<why>"`.
+- **Slash commands:** type `/` for a menu (arrows move, `Tab` completes): /help, /stop, /close, /retry, /approve, /reject, /tasks, /cost, /status, /tier, /original, /auto, /diff, /settings and /clear. Add `#n` to pick a task, e.g. `/close #2 not needed`.
+- **Claude-style input:** `!command` runs it in a shell tile and shows the output, `#fact` saves a project memory, `@` completes file paths, `Ctrl+R` searches earlier prompts, `Esc` twice clears the box, and pasted images go to the workers as files.
+- **Live worker activity:** each running card has a feed of what its worker is doing, including its subagents' steps.
+- **Operant as your default agent:** Settings › Agents › Default agent now offers Operant. New agents, the master tile and Explorer's "Open in Operant" then open that folder's Operant Terminal. The agent launcher offers it too.
+
+## Changed
+- **Simpler settings:** 21 tabs are now 8: General, Look, Agents, Tiles, Projects, Usage, Data and Keybinds. Each shows its everyday settings first; the rest are under *Advanced* at the bottom of the tab. Nothing was removed, and search still finds everything.
+- **One master worker per agent:** when work is handed out, all the tasks for Claude Code go to one worker, and all the tasks for OpenCode to another. Each runs its tasks side by side as its own subagents, instead of opening a tile per task. Workers start their reports with a one-line TL;DR.
+
+## Fixed
+- **After a restart, an old card could show a new task's result or question.** Cards now only follow their own request.
+
+---
+
 # Operant 2.2.0
 
 Every project now has an Operant Terminal: type what you want, and Operant cleans up the prompt, splits it into tasks and sends each one to the cheapest agent and model that will do the job.
