@@ -167,7 +167,7 @@ test('opencodeSkillPaths does not go past the project\'s git root, and skips wha
 test('opencodeConfigContent carries the plugin and skill paths only when there are any', () => {
   assert.equal(brief.opencodeConfigContent(null), '{}');
   assert.equal(brief.opencodeConfigContent(null, { skillPaths: [] }), '{}');
-  assert.deepEqual(JSON.parse(brief.opencodeConfigContent('brief.md', { pluginPath: 'a.mjs', skillPaths: ['x', 'y'] })),
+  assert.deepEqual(JSON.parse(brief.opencodeConfigContent('brief.md', { plugins: ['a.mjs'], skillPaths: ['x', 'y'] })),
     { instructions: ['brief.md'], plugin: ['a.mjs'], skills: { paths: ['x', 'y'] } });
   assert.deepEqual(JSON.parse(brief.opencodeConfigContent(null, { skillPaths: ['x'] })), { skills: { paths: ['x'] } });
 });
@@ -175,7 +175,7 @@ test('opencodeConfigContent carries the plugin and skill paths only when there a
 // With the main agent's setup shared, main.js runs buildOpencodeConfigContent over that same JSON:
 // it may add MCP servers and a plugin, but must not drop what is already in it.
 test('buildOpencodeConfigContent keeps the skill paths and the plugins it is given', () => {
-  const base = brief.opencodeConfigContent('brief.md', { pluginPath: 'reroute.mjs', skillPaths: ['mine', OURS] });
+  const base = brief.opencodeConfigContent('brief.md', { plugins: ['reroute.mjs'], skillPaths: ['mine', OURS] });
   const config = { shareSetup: true, defaultAgent: 'opencode', agents: [{ id: 'opencode', command: 'opencode' }] };
   const merged = JSON.parse(setup.buildOpencodeConfigContent({ base, cwd: root, userDataDir: root, config }));
   assert.deepEqual(merged, { instructions: ['brief.md'], plugin: ['reroute.mjs'], skills: { paths: ['mine', OURS] } });
@@ -213,4 +213,16 @@ test('probeOpencodeSkillPaths runs `debug config` with an empty skills.paths, an
 test('probeOpencodeSkillPaths is false when the CLI rejects it, and for a command that is not there', async () => {
   assert.equal(await setup.probeOpencodeSkillPaths(FAKE, { env: env({ FAKE_FAIL: '1' }) }), false);
   assert.equal(await setup.probeOpencodeSkillPaths('operant-no-such-agent'), false);
+});
+
+test('hookSettingsContent: the reroute, a worker Stop hook, both, or nothing', () => {
+  const opts = { rerouteCmd: 'C:\app\hooks\long-commands.cmd', operantCmd: 'C:\app\bin\operant.cmd' };
+  assert.equal(setup.hookSettingsContent({ ...opts, reroute: false, worker: false }), null);
+  const r = setup.hookSettingsContent({ ...opts, reroute: true, worker: false });
+  assert.deepEqual(Object.keys(r.hooks), ['PreToolUse']);
+  assert.equal(r.hooks.PreToolUse[0].matcher, 'Bash|PowerShell');
+  const w = setup.hookSettingsContent({ ...opts, reroute: false, worker: true });
+  assert.deepEqual(Object.keys(w.hooks), ['Stop']);
+  assert.equal(w.hooks.Stop[0].hooks[0].command, '"C:\app\bin\operant.cmd" hook stop');
+  assert.deepEqual(Object.keys(setup.hookSettingsContent({ ...opts, reroute: true, worker: true }).hooks), ['PreToolUse', 'Stop']);
 });

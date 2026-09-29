@@ -364,6 +364,18 @@ const probeClaudePluginDir = (command, { env } = {}) =>
 const probeOpencodeSkillPaths = (command, { env } = {}) =>
   runProbe(command, ['debug', 'config'], { env: { ...(env || process.env), OPENCODE_CONFIG_CONTENT: '{"skills":{"paths":[]}}' }, timeout: 15000 }).then(r => r.ok);
 
+// The --settings file for a Claude Code tile's own hooks, never the user's settings.json: the long-command
+// reroute (`rerouteCmd`, a script) and, for a team worker, the Stop hook that asks for the board report
+// (`operantCmd`, the operant wrapper). null when there is nothing to register.
+function hookSettingsContent({ reroute, worker, rerouteCmd, operantCmd }) {
+  const hooks = {};
+  // "Bash" on macOS/Linux, "PowerShell" on Windows — Claude Code's shell tool is named
+  // differently per platform, and a matcher that misses one never even calls the hook script.
+  if (reroute) hooks.PreToolUse = [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `"${rerouteCmd}"` }] }];
+  if (worker) hooks.Stop = [{ hooks: [{ type: 'command', command: `"${operantCmd}" hook stop`, timeout: 8 }] }];
+  return Object.keys(hooks).length ? { hooks } : null;
+}
+
 // -------------------------------------------------------------------- desire paths
 // `operant _desire`: the CLI reports what an agent tried that isn't there (a command, a flag) and what it
 // was pointed to instead, so the commands agents keep reaching for can be seen. One JSON line each, in the
@@ -396,5 +408,5 @@ module.exports = {
   buildOpencodeConfigContent,
   isOperantSkillFile, removeLegacySkillCopies, pluginDirsEnv, opencodeSkillPaths,
   probeClaudePluginDir, probeOpencodeSkillPaths,
-  desirePathLine, appendDesirePath,
+  desirePathLine, appendDesirePath, hookSettingsContent,
 };

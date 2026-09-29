@@ -1,27 +1,33 @@
-// Item 43: the short brief every agent tile gets from its first message (master, `operant agent`
-// workers, reopened/resumed agents), so Operant's rules don't depend on the model deciding to load
-// the skill. Kept short, and identical every launch, so it stays cheap and cache-friendly.
+// Item 43: the brief every agent tile gets in its system prompt (master, `operant agent` workers,
+// reopened/resumed agents), so Operant's rules don't depend on the model deciding to load the skill.
+// Only the pointer lives here: the live part (role, team tiers while team mode is on, board task,
+// progress note, memory, CodeGraph) comes from `operant prime`, injected at every start and compact
+// (bin/operant-prime.js). So this stays identical every launch, short and cache-friendly.
 const fs = require('fs');
 const path = require('path');
 
-const BRIEF = [
-  "You're running inside Operant. Use the `operant` skill/CLI (`operant help`) for its commands.",
-  'If `.codegraph/` exists in this project, your first step for any question about the code is CodeGraph (`codegraph explore "<symbols or question>"`, or its MCP tool): not grep, glob or reading files. Fall back to those only for what CodeGraph did not answer.',
-  'If `.operant/progress.md` exists, read it first and continue from it.',
-  'Run long commands (tests, builds, installs, dev servers) with `operant run`, then `operant wait <id> --errors`.',
-  'At start, run `operant team`. If team mode is on, hand each task that fits a tier\'s "use" to that tier, always the cheapest tier that fits and never above the top tier it lists (the user sets that slider); do only what fits no tier yourself. When the tier runs the same CLI you are (Claude Code on a claude tier, OpenCode on an opencode tier), use your own subagents with the tier\'s model (Claude Code: the Agent tool with `model` set to the tier model\'s alias, e.g. sonnet or opus), not an Operant tile. Use Operant tiles only for teamwork across Claude Code and OpenCode: `operant agent "<self-contained task>" --tier <name> --title "<short summary>"`, ONE call per tier holding all that tier\'s tasks as a single numbered prompt, telling it to use its own subagents for them. Once a worker tile\'s task is done and you have checked its work, close it with `operant close <id>`. If you were started as a worker (you have a board task), do the task yourself, using your own subagents where they help.',
-  'At start, run `operant recall` for this project\'s memory; save durable facts you learn (user preferences, decisions, gotchas) with `operant remember`.',
-].join('\n');
+// The skill's name as each agent sees it: Claude Code namespaces plugin skills.
+const SKILL_NAME = { claude: 'operant:operant', opencode: 'operant' };
+function briefFor(agent) {
+  return [
+    "You're running inside Operant, a terminal for coding agents; the `operant` CLI is on PATH (`operant help`).",
+    'Your live Operant context (tile, role, team mode, board task, progress note, memory) is given to you in an <operant-context> block, refreshed after every compact; if you have none, run `operant prime`.',
+    'Run tests, builds, installs and dev servers through `operant test`, `operant build` or `operant run "<cmd>"` then `operant wait <id> --errors`, so only the failures come back.',
+    `For parallel work, plan approval, asking or notifying the user, and context or memory, use the \`${SKILL_NAME[agent] || 'operant'}\` skill.`,
+  ].join('\n');
+}
+const BRIEF = briefFor('claude');
 
-// Written once into Operant's userData, never touching the user's own files. Claude Code gets this
-// text directly via --append-system-prompt; OpenCode reads it as an `instructions` file through its
-// own per-process OPENCODE_CONFIG_CONTENT env var (see opencodeConfigContent below).
+// Written once into Operant's userData, never touching the user's own files. Claude Code gets its
+// brief directly via --append-system-prompt; OpenCode reads this file as an `instructions` entry
+// through its own per-process OPENCODE_CONFIG_CONTENT env var (see opencodeConfigContent below).
 function briefPath(userDataDir) {
   const p = path.join(userDataDir, 'agent-brief.md');
+  const text = briefFor('opencode');
   try {
     let existing = null;
     try { existing = fs.readFileSync(p, 'utf8'); } catch {}
-    if (existing !== BRIEF) { fs.mkdirSync(userDataDir, { recursive: true }); fs.writeFileSync(p, BRIEF); }
+    if (existing !== text) { fs.mkdirSync(userDataDir, { recursive: true }); fs.writeFileSync(p, text); }
   } catch (e) { console.error('agent brief write failed', e.message); }
   return p;
 }
@@ -57,13 +63,13 @@ function mainRulesText(mainAgent, launching) {
 // `pluginPath`, when given, is the long-command reroute (hooks/opencode-long-commands.mjs), in the
 // same object so everything merges into one config. `skillPaths` are folders of skill folders (the agent
 // plugin's skills/); OpenCode replaces `skills.paths` instead of merging, so the caller passes the user's own too.
-const opencodeConfigContent = (filePath, { mainAgent, pluginPath, skillPaths = [] } = {}) => {
+const opencodeConfigContent = (filePath, { mainAgent, plugins = [], skillPaths = [] } = {}) => {
   const content = {};
   const instructions = [filePath, mainRules(mainAgent, 'opencode')].filter(Boolean);
   if (instructions.length) content.instructions = instructions;
-  if (pluginPath) content.plugin = [pluginPath];
+  if (plugins.length) content.plugin = plugins;
   if (skillPaths.length) content.skills = { paths: skillPaths };
   return JSON.stringify(content);
 };
 
-module.exports = { BRIEF, briefPath, setHubDir, opencodeConfigContent, mainRulesText };
+module.exports = { BRIEF, briefFor, briefPath, setHubDir, opencodeConfigContent, mainRulesText };

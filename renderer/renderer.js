@@ -4216,6 +4216,16 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     return null;
   }
 
+  // `operant team` and the team part of `operant prime`: the tiers up to the slider's top tier.
+  function teamInfo() {
+    const team = cfg.team || {};
+    if (!team.enabled) return { enabled: false };
+    const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
+    const names = Object.keys(activeTiers()), top = names.indexOf(team.maxTier);
+    const tiers = top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]]));
+    return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers };
+  }
+
   async function runControl(cmd, args, self) {
     switch (cmd) {
       case 'tiles':
@@ -4314,13 +4324,40 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (tier) { w.tier = tier; setTierDot(w); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; boardChanged(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}) };
       }
-      case 'team': {
-        const team = cfg.team || {};
-        if (!team.enabled) return { enabled: false };
-        const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
-        const names = Object.keys(activeTiers()), top = names.indexOf(team.maxTier);
-        const tiers = top < 0 ? activeTiers() : Object.fromEntries(names.slice(0, top + 1).map(n => [n, activeTiers()[n]]));
-        return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers };
+      case 'team':
+        return teamInfo();
+      // The live context bin/operant-prime.js formats: sent by the SessionStart hook at every start
+      // and compact (args.hook), and by `operant prime`. The hook path follows "Brief agents at launch".
+      case 'prime': {
+        if (!self) throw new Error('unknown tile');
+        if (args.hook && !cfg.briefAgents) return { off: true };
+        const project = projectDir(self.cwd || lastCwd);
+        const openTask = w => board.tasks.find(t => t.owner === w.id && t.status !== 'done');
+        const task = self.tier ? openTask(self) : null;
+        const mem = await operant.memory('recall', { cwd: project, tokenCap: 350 }).catch(() => null);
+        return {
+          v: version,
+          tile: { id: self.id, kind: self.kind, title: self.title, cwd: self.cwd, project, branch: gitState.get(project)?.status?.branch, agent: self.agentId || null },
+          role: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell',
+          task: task ? { id: task.id, text: task.text, tier: self.tier } : null,
+          team: self.tier ? null : teamInfo(),
+          tiles: [...wins.values()].filter(w => w.alive && w.id !== self.id).map(w => ({
+            id: w.id, kind: w.kind, title: w.title, busy: isWorking(w), tier: w.tier || null, taskId: w.tier ? openTask(w)?.id ?? null : null })),
+          ports: scanPorts(),
+          memory: mem && mem.ok ? mem.result : null,
+        };
+      }
+      // Asked by bin/operant-hook.js. stop: a worker ending its turn with its board task still open is
+      // asked once to report (and the idle nudge then stays quiet); subagent-start: whether subagents
+      // get the short brief.
+      case 'hook': {
+        if (!self) throw new Error('unknown tile');
+        if (args.event === 'subagent-start') return cfg.briefAgents ? {} : { off: true };
+        if (args.event !== 'stop') return {};
+        const open = self.tier ? board.tasks.find(t => t.owner === self.id && t.status !== 'done') : null;
+        if (!open || self.nudged) return {};
+        self.nudged = true;
+        return { block: `Before you stop, report your result: \`operant task done ${open.id} --note "<what changed, files>"\`, or \`operant task note ${open.id} "<why>"\` if you couldn't finish.` };
       }
       case 'read': {
         const w = needTile(args.id);

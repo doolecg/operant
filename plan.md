@@ -182,7 +182,7 @@ commit, each tested and checked before the next. Full plan with research: ~/.cla
       errors, `operant help <topic>`.
 - [x] **48. Skill per session:** an `agent-plugin/` loaded with `--plugin-dir` (Claude) and `skills.paths`
       (OpenCode); nothing written to the user's home, old copies removed.
-- [ ] **49. Live context:** `operant prime` injected at session start and after every compact (SessionStart hook,
+- [x] **49. Live context:** `operant prime` injected at session start and after every compact (SessionStart hook,
       OpenCode plugin), a short brief for subagents, a ~600-byte launch brief.
 - [ ] **50. Skill body and worker discipline:** a lean skill; workers hand back `task done --status
       done|blocked|failed --note` (files, one line each; open issues; ≤100 words).

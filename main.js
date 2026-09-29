@@ -97,23 +97,28 @@ const HOOK_CMD_PATH = path.join(__dirname, 'hooks', process.platform === 'win32'
 const PLUGIN_DIR = path.join(__dirname, 'agent-plugin').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 // A fresh dev checkout or a broken build may lack it; a flag pointing at a missing folder would upset the agent.
 const pluginReady = () => fs.existsSync(path.join(PLUGIN_DIR, '.claude-plugin', 'plugin.json'));
-const HOOK_SETTINGS_PATH = path.join(app.getPath('userData'), 'hook-settings.json');
 // Same setting, for OpenCode: a plugin (tool.execute.before) rather than a --settings hook, wired up
 // below next to OPENCODE_CONFIG_CONTENT.
 const OC_HOOK_PATH = path.join(__dirname, 'hooks', 'opencode-long-commands.mjs').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-function writeHookSettings() {
+// OpenCode's side of "Brief agents at launch": the live context (`operant prime`) in each session's system
+// prompt. Claude Code gets it from the agent plugin's SessionStart hook.
+const OC_OPERANT_PATH = path.join(__dirname, 'hooks', 'opencode-operant.mjs').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+const OPERANT_CMD_PATH = path.join(__dirname, 'bin', process.platform === 'win32' ? 'operant.cmd' : 'operant').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+// The --settings file for a Claude Code tile's own hooks (agent-setup.hookSettingsContent): the long-command
+// reroute, and a worker's Stop hook. One small file per combination in userData, rewritten only when it
+// changes, so turning a setting on doesn't need a restart. null when there's nothing to register.
+function hookSettingsFile({ reroute, worker }) {
+  const settings = agentSetup.hookSettingsContent({ reroute, worker, rerouteCmd: HOOK_CMD_PATH, operantCmd: OPERANT_CMD_PATH });
+  if (!settings) return null;
+  const file = path.join(app.getPath('userData'), `hook-settings${worker ? '-worker' : ''}${reroute ? '' : '-noreroute'}.json`);
   try {
-    const content = JSON.stringify({
-      // "Bash" on macOS/Linux, "PowerShell" on Windows — Claude Code's shell tool is named
-      // differently per platform, and a matcher that misses one never even calls the hook script.
-      hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `"${HOOK_CMD_PATH}"` }] }] },
-    });
+    const content = JSON.stringify(settings);
     let existing = null;
-    try { existing = fs.readFileSync(HOOK_SETTINGS_PATH, 'utf8'); } catch {}
-    if (existing !== content) fs.writeFileSync(HOOK_SETTINGS_PATH, content);
-  } catch (e) { console.error('hook settings write failed', e.message); }
+    try { existing = fs.readFileSync(file, 'utf8'); } catch {}
+    if (existing !== content) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content); }
+    return file;
+  } catch (e) { console.error('hook settings write failed', e.message); return null; }
 }
-writeHookSettings();
 // Where agent-setup.js keeps generated, per-process-only files (a mirrored skills folder, a
 // --mcp-config file for Claude tiles) — never ~/.claude or ~/.config/opencode.
 const AGENT_SETUP_DIR = path.join(app.getPath('userData'), 'agent-setup');
@@ -833,11 +838,13 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // own env below; other agents have no equivalent flag, so they're skipped.
     // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
     const rules = config.shareSetup ? agentBrief.mainRulesText(config.defaultAgent, 'claude') : '';
-    const briefText = [config.briefAgents && agentBrief.BRIEF, rules].filter(Boolean).join('\n\n');
+    const briefText = [config.briefAgents && agentBrief.briefFor('claude'), rules].filter(Boolean).join('\n\n');
     const briefArgs = briefText && isClaude(agent) ? ['--append-system-prompt', briefText] : [];
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
-    const hookArgs = config.longCommandHook && isClaude(agent) ? ['--settings', HOOK_SETTINGS_PATH] : [];
+    // A team worker's file also has its Stop hook. Claude Code takes one --settings flag, so it's one file.
+    const hookFile = isClaude(agent) ? hookSettingsFile({ reroute: config.longCommandHook, worker: !!worker }) : null;
+    const hookArgs = hookFile ? ['--settings', hookFile] : [];
     // The operant skill, for this session only.
     const pluginArgs = isClaude(agent) && config.installSkill && pluginReady() && await agentCan(agent, 'pluginDir') ? ['--plugin-dir', PLUGIN_DIR] : [];
     // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
@@ -894,7 +901,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
       ? agentSetup.opencodeSkillPaths(dir, path.join(PLUGIN_DIR, 'skills')) : [];
     envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(config.briefAgents ? BRIEF_PATH : null, {
       mainAgent: config.shareSetup ? config.defaultAgent : null,
-      pluginPath: config.longCommandHook ? OC_HOOK_PATH : null,
+      plugins: [config.longCommandHook && OC_HOOK_PATH, config.briefAgents && OC_OPERANT_PATH].filter(Boolean),
       skillPaths,
     });
   }
