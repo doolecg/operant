@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('operant', {
   backupState: () => ipcRenderer.invoke('backup:state'),
   backupCheckRepo: dir => ipcRenderer.invoke('backup:check-repo', dir),
   memory: (op, args) => ipcRenderer.invoke('memory', { op, args }),
+  stuckReset: sessionId => ipcRenderer.send('stuck:reset', { sessionId }),
   abortOpenCode: ptyId => ipcRenderer.invoke('opencode:abort', { ptyId }),
   summarizeOpenCode: ptyId => ipcRenderer.invoke('opencode:summarize', { ptyId }),
   promptOpenCode: (ptyId, text) => ipcRenderer.invoke('opencode:prompt', { ptyId, text }),

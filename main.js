@@ -15,6 +15,7 @@ const hub = require('./hub');
 const skillsBackup = require('./backup');
 const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
+const { createStuckTracker } = require('./stuck');
 const outcomes = require('./outcomes');
 const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
@@ -280,6 +281,7 @@ const DEFAULT_CONFIG = {
   notifyOnlyUnfocused: true,      // skip it when you're already looking at that tile
   // Runaway guard: flags a tile whose agent may be stuck.
   runawayGuard: 'warn',           // 'warn' (badge + notification) | 'stop' (also interrupts) | 'off'
+  stuckTurns: 30,                 // a worker on a code task: this many tool calls with no file edit = stuck; 0 = off
   runawayLoopRepeats: 5,          // same tool + same input this many times in a tile's last 20 tool calls
   runawayTokens: 3000000,         // tokens (in+out+cache) one tile's session used in 10 minutes · 0 = off
   runawayMinutes: 60,             // busy without a break this long (checked by the renderer) · 0 = off
@@ -1398,9 +1400,13 @@ const usage = createUsage({
   },
   // A subagent's tool calls/tokens count toward its parent tile (usage.js already resolves the
   // session id to the parent for subagent transcripts, and gates out pre-startup history).
-  onToolUse: (sessionId, name, input, agentId) => {
+  onToolUse: (sessionId, name, input, agentId, toolId) => {
     const owner = sessionOwner.get(sessionId);
-    if (owner) noteToolUse(sessionId, owner, name, input, agentId ? (agents.get(agentId)?.description || null) : null);
+    if (owner) noteToolUse(sessionId, owner, name, input, agentId ? (agents.get(agentId)?.description || null) : null, toolId);
+  },
+  onToolResult: (sessionId, toolId, text, isError) => {
+    const owner = sessionOwner.get(sessionId);
+    if (owner) noteToolResult(sessionId, owner, toolId, text, isError);
   },
   onTokens: (sessionId, tokens, breakdown, t) => {
     const owner = sessionOwner.get(sessionId);
@@ -1447,7 +1453,7 @@ ipcMain.handle('outcome:stats', async () => {
   try {
     const recent = outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 }).sort((a, b) => b.t - a.t);
     const seen = {}, kept = [];
-    for (const e of recent) { const k = (e.type || 'other') + ' ' + (e.tier || 'none'); if ((seen[k] = (seen[k] || 0) + 1) <= 20) kept.push(e); }
+    for (const e of recent) { const k = (e.type || 'other') + '|' + (e.tier || 'none'); if ((seen[k] = (seen[k] || 0) + 1) <= 20) kept.push(e); }
     return outcomes.summarize(kept);
   } catch { return {}; }
 });
@@ -1463,7 +1469,8 @@ ipcMain.handle('usage:breakdown', (_e, opts) => usageBreakdown(opts));
 
 const opencode = createOpenCode({
   sendTo, primary: agentWindow, config,
-  onToolUse: (sessionId, owner, name, input, label) => noteToolUse(sessionId, owner, name, input, label),
+  onToolUse: (sessionId, owner, name, input, label, toolId) => noteToolUse(sessionId, owner, name, input, label, toolId),
+  onToolResult: (sessionId, owner, toolId, text, isError) => noteToolResult(sessionId, owner, toolId, text, isError),
   onTokens: (sessionId, owner, tokens, breakdown, free, project) => {
     noteTokens(sessionId, owner, tokens);
     if (breakdown) {
@@ -1591,7 +1598,45 @@ function isReadonlyOperantCall(input) {
   return typeof c === 'string' && READONLY_OPERANT.test(c);
 }
 
-function noteToolUse(sessionId, owner, name, input, label) {
+// Stuck evidence (plan item 60): stuck.js per session, fed each tool call, its result, and file edits.
+// A signal goes to the renderer as `stuck { sessionId, reason, kind }`, once per reason per session.
+const stuckTrackers = new Map(); // sessionId -> { tracker, calls: Map<toolId, command|null>, sent: Set<reason> }
+const EDIT_TOOLS = /^(edit|multiedit|write|notebookedit|patch|apply_patch)$/i;
+function stuckOf(sessionId) {
+  let st = stuckTrackers.get(sessionId);
+  if (!st) stuckTrackers.set(sessionId, st = { tracker: createStuckTracker({ stuckTurns: config.stuckTurns }), calls: new Map(), sent: new Set() });
+  return st;
+}
+function flagStuck(sessionId, owner, st, sig) {
+  if (!sig || config.runawayGuard === 'off' || st.sent.has(sig.reason) || !alive(owner)) return;
+  st.sent.add(sig.reason);
+  sendTo(owner, 'stuck', { sessionId, reason: sig.reason, kind: sig.kind });
+}
+function noteToolResult(sessionId, owner, toolId, text, isError) {
+  const st = stuckOf(sessionId);
+  const command = st.calls.get(toolId) || null;
+  st.calls.delete(toolId);
+  flagStuck(sessionId, owner, st, st.tracker.onToolResult({ command, text, isError }));
+}
+function noteStuckUse(sessionId, owner, name, input, toolId) {
+  const st = stuckOf(sessionId);
+  if (toolId != null) {
+    if (st.calls.has(toolId)) return;
+    const c = input && typeof input === 'object' ? (input.command ?? input.cmd) : null;
+    st.calls.set(toolId, /^(bash|shell|powershell)$/i.test(name) && typeof c === 'string' ? c : null);
+    if (st.calls.size > 200) st.calls.delete(st.calls.keys().next().value);
+  }
+  if (EDIT_TOOLS.test(name)) st.tracker.onFileEdit();
+  else if (!isReadonlyOperantCall(input)) flagStuck(sessionId, owner, st, st.tracker.onTurn());
+}
+
+ipcMain.on('stuck:reset', (_e, { sessionId }) => {
+  const st = stuckTrackers.get(sessionId);
+  if (st) { st.tracker.reset(); st.calls.clear(); st.sent.clear(); }
+});
+
+function noteToolUse(sessionId, owner, name, input, label, toolId) {
+  noteStuckUse(sessionId, owner, name, input, toolId);
   if (!config.runawayLoopRepeats || isReadonlyOperantCall(input)) return;
   const list = toolHistory.get(sessionId) || [];
   list.push({ key: stableToolKey(name, input), display: toolDisplay(name, input) });

@@ -223,7 +223,7 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
       keyword suggestion. Every choice is explained in one line ("small: 7/8 fixes passed, $0.03 avg"). One task in
       ten tries the tier below a proven one so a tier can earn its way back. Never above the top tier allowed.
       (Opus medium to review the policy before it ships.)
-- [ ] **60. Outcome signals and doom-loop guard:** a worker is escalated a tier on evidence, not only on reject:
+- [x] **60. Outcome signals and doom-loop guard:** a worker is escalated a tier on evidence, not only on reject:
       the same error twice, the same command failing twice with the same output, or no file change after N turns on
       a code task. Clean passes at a tier count toward trying the cheaper one (item 59). The guard explains itself.
 - [ ] **61. Verification by risk:** before a code task reaches review, Operant runs the project's test/build

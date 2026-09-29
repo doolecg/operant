@@ -1246,6 +1246,7 @@
   // Back to 'doing' in the same tile; with no live tile left, a new worker on the same tier.
   async function retryTask(t, w, lead) {
     boardChanged();
+    if (w?.sessionId) operant.stuckReset(w.sessionId);
     if (w?.alive && w.ptyId) { sendLine(w, `${lead}. Redo the task now, without polling the board, then ${reportLine(t.id)}`); return; }
     t.failure = Board.failureNote(t, t.note);
     t.tokens = addTok(t.tokens, w?.tok);
@@ -1966,7 +1967,7 @@
   // Main watches Claude/OpenCode transcripts for a tile looping, burning tokens or piling up
   // subagents and sends 'runaway'; 'time' (busy too long with no break) is checked here.
 
-  const RUNAWAY_TEXT = { loop: '⚠ looping', tokens: '⚠ tokens', subagents: '⚠ subagents' };
+  const RUNAWAY_TEXT = { loop: '⚠ looping', tokens: '⚠ tokens', subagents: '⚠ subagents', stuck: '⚠ stuck' };
   function setRunawayBadge(w) {
     const el = w.el.querySelector('.runaway');
     if (!el) return;
@@ -2006,6 +2007,19 @@
     const t = w.tier ? openTaskOf(w) : null;
     if (t) taskFailed(t, `runaway: ${detail}`);
   }
+
+  // Item 60: main saw evidence a tile is stuck (same failing command or error twice, turns with no file
+  // edit). A worker with an open task moves up a tier; any other agent tile gets the runaway warning.
+  const CODE_TASKS = ['fix', 'feature', 'refactor', 'test'];
+  operant.on('stuck', ({ sessionId, reason, kind }) => {
+    if (cfg.runawayGuard === 'off') return;
+    const w = sessionWin.get(sessionId);
+    if (!w || !w.alive) return;
+    const t = w.tier ? openTaskOf(w) : null;
+    if (kind === 'progress' && !(t && CODE_TASKS.includes(TaskType.classifyTask(t.text)))) return;
+    if (t) escalateTask(t, `stuck: ${reason}`);
+    else if (kind === 'command') flagRunaway(w, 'stuck', `Stuck: ${reason}`);
+  });
 
   operant.on('runaway', ({ sessionId, reason, detail }) => {
     if (cfg.runawayGuard === 'off') return;
@@ -4687,6 +4701,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const n = wins.get(t.owner);
           const from = n?.alive ? n : self;
           Board.handback(t, status, args.note);
+          if (n?.sessionId) operant.stuckReset(n.sessionId);
           if (status === 'blocked' || (status === 'failed' && !t.tier)) recordOutcome(t, status);
           if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
           else if (from) notify(from, status === 'done' ? `Task ${t.id} ready for review: ${taskTldr(t)}` : `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);

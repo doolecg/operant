@@ -11,7 +11,7 @@ const CHUNK = 4 << 20;
 // range -> [span, bucket] in ms. Hour and day buckets start on local hours and midnights.
 const RANGES = { '5h': [5 * 3600e3, 10 * 60e3], '24h': [24 * 3600e3, 30 * 60e3], '7d': [7 * 86400e3, 4 * 3600e3], '30d': [30 * 86400e3, 86400e3] };
 
-function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
+function createUsage({ projectsDir, send, onContext, onToolUse, onToolResult, onTokens }) {
   const files = new Map(); // path -> { offset, partial, size }
   const seen = new Set();  // message id + request id: each content block repeats its message's usage
   let events = [];         // [time, input, output, cacheWrite, cacheRead, project]
@@ -35,7 +35,20 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
   // sessionId/isSubagent: the transcript's own session id and whether it's a subagent
   // file (<session>/subagents/<id>.jsonl) — subagents don't count toward the tile's context, but
   // their tool calls and tokens count toward the runaway guard on their PARENT session (owner).
+  // A user entry's tool_result blocks, live only, for the stuck detector (paired with their tool_use by id).
+  function takeResults(line, sessionId, isSubagent, parentSessionId) {
+    let o;
+    try { o = JSON.parse(line); } catch { return; }
+    if (o.type !== 'user' || !(Date.parse(o.timestamp) >= START) || !Array.isArray(o.message?.content)) return;
+    for (const b of o.message.content) {
+      if (b.type !== 'tool_result') continue;
+      const text = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(c => c.text || '').join('\n') : '';
+      onToolResult(isSubagent ? parentSessionId : sessionId, b.tool_use_id, text, !!b.is_error);
+    }
+  }
+
   function take(line, fallbackProject, sessionId, isSubagent, parentSessionId, agentId) {
+    if (onToolResult && line.includes('"tool_result"')) return takeResults(line, sessionId, isSubagent, parentSessionId);
     if (!line.includes('"assistant"')) return;
     let o;
     try { o = JSON.parse(line); } catch { return; }
@@ -45,7 +58,7 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onTokens }) {
     const runawaySession = isSubagent ? parentSessionId : sessionId;
     // Live only: history read back on startup (before this process existed) never flags a loop.
     if (onToolUse && t >= START && Array.isArray(m.content)) {
-      for (const b of m.content) if (b.type === 'tool_use') onToolUse(runawaySession, b.name, b.input, isSubagent ? agentId : null);
+      for (const b of m.content) if (b.type === 'tool_use') onToolUse(runawaySession, b.name, b.input, isSubagent ? agentId : null, b.id);
     }
     const u = m.usage;
     if (!u || m.model === '<synthetic>') return;

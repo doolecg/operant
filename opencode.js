@@ -19,7 +19,7 @@ const freePort = () => new Promise((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
 });
 
-function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubagentCount }) {
+function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTokens, onSubagentCount }) {
   const tiles = new Map();   // pty id -> { port, owner, alive, abort, roots: Set, subs: Map, ctx }
   const external = new Map(); // child session id -> sub read from the database
   const ownedRoots = new Set(); // root sessions of Operant's own OpenCode tiles
@@ -54,6 +54,12 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
       agentType: info.agent || 'subagent', description: String(info.title || info.id).replace(/\s*\(@[\w-]+ subagent\)\s*$/, ''),
       spawnDepth: 1,
     });
+  }
+
+  // A finished tool part -> the stuck detector (an error part's text is its error, else its output).
+  function toolResult(key, owner, part) {
+    const st = part.state || {}, isError = st.status === 'error';
+    onToolResult?.(key, owner, part.callID, String(isError ? st.error || 'failed' : st.output || ''), isError);
   }
 
   // An OpenCode message part -> transcript entries in the shape the subagent tiles draw (see main's slimEntry).
@@ -133,7 +139,8 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
       return;
     }
     if (e.type === 'message.part.updated' && t.roots.has(p.sessionID)) {
-      if (p.part?.type === 'tool' && p.part.state?.status === 'running') onToolUse?.(key, t.owner, p.part.tool, p.part.state.input, null);
+      if (p.part?.type === 'tool' && p.part.state?.status === 'running') onToolUse?.(key, t.owner, p.part.tool, p.part.state.input, null, p.part.callID);
+      if (p.part?.type === 'tool' && (p.part.state?.status === 'completed' || p.part.state?.status === 'error')) toolResult(key, t.owner, p.part);
       return;
     }
     const sub = t.subs.get(p.sessionID);
@@ -146,7 +153,8 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
         if (tokenSum(d)) onTokens?.(sub.key, t.owner, tokenSum(d), tokenBreakdown(d), free, t.directory && path.basename(t.directory));
       }
     } else if (e.type === 'message.part.updated' && p.part) {
-      if (p.part.type === 'tool' && p.part.state?.status === 'running') onToolUse?.(sub.key, t.owner, p.part.tool, p.part.state.input, null);
+      if (p.part.type === 'tool' && p.part.state?.status === 'running') onToolUse?.(sub.key, t.owner, p.part.tool, p.part.state.input, null, p.part.callID);
+      if (p.part.type === 'tool' && (p.part.state?.status === 'completed' || p.part.state?.status === 'error')) toolResult(sub.key, t.owner, p.part);
       send(sub, partEntries(sub, p.part));
     } else if (e.type === 'session.idle') { const out = []; finish(sub, out); send(sub, out); }
   }

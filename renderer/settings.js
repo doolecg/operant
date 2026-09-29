@@ -100,6 +100,7 @@ const Panels = (() => {
       { key: 'agentLookbackSeconds', label: 'Pick up agents started before launch', hint: 'Seconds · ' + RESTART, type: 'number', min: 0, max: 3600 },
       { key: 'runawayGuard', label: 'Runaway guard', hint: 'A tile stuck in a loop, burning tokens or piling up subagents', type: 'select',
         options: [['warn', 'Warn me'], ['stop', 'Stop it'], ['off', 'Off']] },
+      { key: 'stuckTurns', label: 'Tool calls without a file edit', hint: 'A team worker on a code task this stuck moves up a tier, as does the same command failing again unchanged (or three times); 0 = off', type: 'number', min: 0, max: 200 },
       { key: 'runawayLoopRepeats', label: 'Same tool call repeated', hint: 'Times, within its last 20 tool calls', type: 'number', min: 3, max: 50 },
       { key: 'runawayTokens', label: 'Tokens in 10 minutes', hint: '0 = off', type: 'tokens' },
       { key: 'runawayMinutes', label: 'Working without a break, minutes', hint: '0 = off', type: 'number', min: 0, max: 600 },
