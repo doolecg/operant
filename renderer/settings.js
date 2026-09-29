@@ -333,6 +333,8 @@ const Panels = (() => {
     const fbNote = fb.length ? `<div class="set-row"><div class="lbl">Fallbacks in use<span class="hint">${esc(fb.map(([n, t]) => `${n}: ${t.agent} ${t.model}${t.effort ? ' · ' + t.effort : ''} (${t.fallback})`).join('; '))}</span></div></div>` : '';
     return `<div class="set-row"><div class="lbl">Team mode<span class="hint">A lead agent hands small tasks to cheaper workers, in their own tiles</span></div>
         <div class="ctl"><button class="toggle${team.enabled ? ' on' : ''}" data-team-enabled></button></div></div>
+      <div class="set-row"><div class="lbl">Let agents message each other<span class="hint">Adds operant msg and operant inbox: an agent can send another tile a short message, delivered when that tile is between steps · off by default · a Claude Code tile started before you turned this on only gets messages when it is idle</span></div>
+        <div class="ctl"><button class="toggle${cfg.messaging ? ' on' : ''}" data-messaging></button></div></div>
       ${ocNote}${fbNote}
       ${tierBlock('xsmall', 'XSmall')}
       ${tierBlock('small', 'Small')}
@@ -477,6 +479,7 @@ const Panels = (() => {
       });
       pane.querySelectorAll('[data-backup-run]').forEach(b => b.onclick = () => { b.disabled = true; ext.backupRun(); });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
+      pane.querySelectorAll('[data-messaging]').forEach(b => b.onclick = () => { set('messaging', !cfg.messaging); draw(); });
       pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {
         const n = Math.min(16, Math.max(1, Math.round(+el.value || 4)));

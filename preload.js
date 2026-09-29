@@ -67,4 +67,5 @@ contextBridge.exposeInMainWorld('operant', {
   memory: (op, args) => ipcRenderer.invoke('memory', { op, args }),
   abortOpenCode: ptyId => ipcRenderer.invoke('opencode:abort', { ptyId }),
   summarizeOpenCode: ptyId => ipcRenderer.invoke('opencode:summarize', { ptyId }),
+  promptOpenCode: (ptyId, text) => ipcRenderer.invoke('opencode:prompt', { ptyId, text }),
 });

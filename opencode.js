@@ -203,6 +203,21 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
+  // Agent messages (plan item 53): a new prompt on the tile's root session, through the async endpoint
+  // (204, returns at once). Never throws; { ok: false } tells the caller to type it into the terminal.
+  async function prompt(ptyId, text) {
+    const t = tiles.get(ptyId);
+    const root = t && [...t.roots][0];
+    if (!root) return { ok: false, error: 'no session yet' };
+    try {
+      const r = await fetch(`http://127.0.0.1:${t.port}/session/${root}/prompt_async`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parts: [{ type: 'text', text }] }),
+      });
+      return { ok: r.ok };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
   // ---------------------------------------------------------------- OpenCode started elsewhere
 
   let db = null, pollT = null, lastPart = 0;
@@ -242,7 +257,7 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onTokens, onSubage
   }
   function start() { if (!pollT) pollT = setInterval(poll, 2000); }
 
-  return { freePort, watch, unwatch, start, abort, summarize };
+  return { freePort, watch, unwatch, start, abort, summarize, prompt };
 }
 
 // The OpenCode CLI, however its command is written.

@@ -330,7 +330,7 @@ test('help lists the topics; help <topic> prints one; a command still wins', asy
   const list = await runCli(['help']);
   assert.equal(list.code, 0);
   assert.ok(list.out.includes('operant help <topic> for a short guide: workflows, fan-out, worker, team, gotchas.'));
-  assert.ok(list.out.includes('agents & tasks: agent, ask, notify, plan, task, board, team, summarize, find'));
+  assert.ok(list.out.includes('agents & tasks: agent, ask, notify, plan, task, board, team, summarize, find, msg, inbox'));
   assert.doesNotMatch(list.out, /version|hook|_desire/, 'hidden commands are not listed');
 
   for (const [name, text] of Object.entries(TOPICS)) {

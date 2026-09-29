@@ -1,6 +1,6 @@
 // `operant hook <event>`: what Operant's Claude Code hooks run. SessionStart and SubagentStart come
-// from the agent plugin (agent-plugin/hooks/hooks.json), Stop from a worker tile's --settings file
-// (main.js). Reads the hook's JSON on stdin and prints the hook's JSON answer. It must never get in
+// from the agent plugin (agent-plugin/hooks/hooks.json), Stop and PostToolUse from a tile's --settings
+// file (main.js). Reads the hook's JSON on stdin and prints the hook's JSON answer. It must never get in
 // the agent's way: outside a tile, with Operant closed or slow, or on any error it prints nothing
 // and exits 0.
 'use strict';
@@ -49,12 +49,17 @@ const HANDLERS = {
     if (!r || r.off) return null;
     return { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: prime.subagentBrief(prime.readLocal(input.cwd || process.cwd())) } };
   },
-  // Workers only (their --settings file): asks once for the board report before the turn ends.
-  // stop_hook_active means Claude is already continuing because of a Stop hook, so never block then.
+  // Before the turn ends: agent messages waiting for this tile keep it going, and a worker with its
+  // board task open is asked once for the report. The app decides which; stop_hook_active tells it
+  // Claude is already continuing because of a Stop hook (a worker is never asked twice, messages drain).
   async stop(input) {
-    if (process.env.OPERANT_WORKER !== '1' || input.stop_hook_active) return null;
-    const r = await call('hook', { event: 'stop' });
+    const r = await call('hook', { event: 'stop', active: !!input.stop_hook_active });
     return r && r.block ? { decision: 'block', reason: r.block } : null;
+  },
+  // Messaging on: agent messages waiting for this tile, handed over after each tool call.
+  async 'post-tool-use'() {
+    const r = await call('hook', { event: 'post-tool-use' });
+    return r && r.context ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: r.context } } : null;
   },
 };
 

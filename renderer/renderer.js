@@ -1466,8 +1466,45 @@
 
   function shortPath(p) { const parts = p.split(/[\\/]/).filter(Boolean); return parts.slice(-2).join(SEP); }
 
+  // ------------------------------------------------------------- agent messages (plan item 53)
+  // Queued per recipient (messaging.js). Claude tiles get theirs from the PostToolUse and Stop hooks
+  // (runControl 'hook'); an idle tile is typed to, an OpenCode tile is prompted through its server.
+  // Other tiles read theirs with `operant inbox`.
+  const msgState = Messaging.newState();
+  const flatLine = s => s.replace(/\s*\n\s*/g, ' ');
+  async function deliver(w) {
+    if (!cfg.messaging || !w.alive || !w.ptyId || w.delivering || !Messaging.pending(msgState, w.id)) return false;
+    const oc = String(w.sessionId || '').startsWith('oc:');
+    if (!oc && !isClaudeTile(w)) return false;
+    if (oc ? w.ocBusy : isWorking(w)) return false;
+    // Never typed onto a permission prompt: the text plus Enter could answer it.
+    if (w.waitingPrompt || (!oc && claudePromptInLast(w))) return false;
+    const quiet = !w.draft && Date.now() - (w.lastActivity || 0) >= 3000;
+    w.delivering = true;
+    try {
+      const msgs = Messaging.take(msgState, w.id), text = Messaging.frameAll(msgs);
+      if (oc && (await operant.promptOpenCode(w.ptyId, text).catch(() => null))?.ok) return true;
+      if (quiet && w.alive) {
+        w.typed = true; w.lastInput = Date.now();
+        sendLine(w, flatLine(text));
+        return true;
+      }
+      msgState.queues[w.id] = [...msgs, ...(msgState.queues[w.id] || [])];
+      return false;
+    } finally { w.delivering = false; }
+  }
+  // A tile addressed by id, or by its exact title when that is unique.
+  function messageTarget(ref) {
+    if (/^\d+$/.test(String(ref))) return needTile(ref);
+    const want = String(ref).trim().toLowerCase();
+    const hits = [...wins.values()].filter(w => w.alive && String(w.title).toLowerCase() === want);
+    if (hits.length !== 1) throw new Error(hits.length ? `${hits.length} tiles are titled "${ref}": use the id` : `no tile "${ref}"`);
+    return hits[0];
+  }
+
   function closeWin(w) {
     if (!w.alive) return;
+    Messaging.drop(msgState, w.id);
     // A worker that ends without `operant task done` still reports back: the master is told it never did.
     for (const t of w.tier ? board.tasks.filter(x => x.owner === w.id && Board.isOpen(x)) : []) {
       t.note = 'Worker closed without reporting a result';
@@ -1646,6 +1683,7 @@
   setInterval(() => {
     const now = Date.now();
     for (const w of wins.values()) {
+      if (Messaging.pending(msgState, w.id)) deliver(w);
       if (w.ocBusy) w.lastOut = now;
       if (!w.busySince || now - w.lastOut < cfg.notifyWhenIdleSeconds * 1000) continue;
       const worked = w.lastOut - w.busySince;
@@ -1674,7 +1712,7 @@
     const w = ptyWins.get(ptyId);
     if (!w) return;
     if (busy) { w.typed = true; w.ocBusy = true; w.busySince ??= Date.now(); w.lastOut = Date.now(); }
-    else w.ocBusy = false;
+    else { w.ocBusy = false; deliver(w); }
   });
 
   // ------------------------------------------------------------- subagents
@@ -4305,6 +4343,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers };
   }
 
+  const MESSAGING_OFF = 'messaging is off - turn it on in Settings › Agents › Team (Let agents message each other)';
   async function runControl(cmd, args, self) {
     switch (cmd) {
       case 'tiles':
@@ -4432,15 +4471,18 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           memory: mem && mem.ok ? mem.result : null,
         };
       }
-      // Asked by bin/operant-hook.js. stop: a worker ending its turn with its board task still open is
-      // asked once to report (and the idle nudge then stays quiet); subagent-start: whether subagents
-      // get the short brief.
+      // Asked by bin/operant-hook.js. stop: agent messages waiting, else a worker ending its turn with its
+      // board task still open is asked once to report (and the idle nudge then stays quiet); post-tool-use:
+      // waiting agent messages; subagent-start: whether subagents get the short brief.
       case 'hook': {
         if (!self) throw new Error('unknown tile');
         if (args.event === 'subagent-start') return cfg.briefAgents ? {} : { off: true };
+        if (args.event === 'post-tool-use') return cfg.messaging && Messaging.pending(msgState, self.id) ? { context: Messaging.frameAll(Messaging.take(msgState, self.id)) } : {};
         if (args.event !== 'stop') return {};
+        // Waiting messages keep the turn going, even when a Stop hook already did: the queue drains.
+        if (cfg.messaging && Messaging.pending(msgState, self.id)) return { block: Messaging.frameAll(Messaging.take(msgState, self.id)) };
         const open = self.tier ? openTaskOf(self) : null;
-        if (!open || self.nudged) return {};
+        if (args.active || !open || self.nudged) return {};
         self.nudged = true;
         return { block: `Before you stop, report in at most 100 words: \`operant task done ${open.id} --status done|blocked|failed --note "<files changed, one line each; open issues>"\`.` };
       }
@@ -4457,6 +4499,21 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!w.ptyId) throw new Error('tile has no terminal to type into');
         operant.writePty(w.ptyId, String(args.text ?? '') + (args.enter ? '\r' : ''));
         return { id: w.id };
+      }
+      case 'msg': {
+        if (!self) throw new Error('unknown tile');
+        if (!cfg.messaging) throw new Error(MESSAGING_OFF);
+        const w = messageTarget(args.id);
+        const r = Messaging.enqueue(msgState, { from: self.id, to: w.id, text: args.text, fromAgent: self.agentName, fromRole: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell' });
+        if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${Messaging.REASONS[r.reason]}`);
+        const delivered = await deliver(w);
+        return { to: w.id, delivered, queued: Messaging.pending(msgState, w.id) };
+      }
+      case 'inbox': {
+        if (!self) throw new Error('unknown tile');
+        if (!cfg.messaging) throw new Error(MESSAGING_OFF);
+        const msgs = Messaging.take(msgState, self.id);
+        return { count: msgs.length, text: msgs.length ? Messaging.frameAll(msgs) : '' };
       }
       case 'wait': {
         const w = needTile(args.id);

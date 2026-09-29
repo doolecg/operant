@@ -15,10 +15,11 @@ const POSITIONAL = {
   plan: ['path'], board: [], team: [], prime: [],
   summarize: ['target', 'question'], find: ['question'],
   remember: ['text'], recall: ['query'],
+  msg: ['id', 'text'], inbox: [],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', test: 'command', build: 'command',
-  summarize: 'question', find: 'question', remember: 'text', recall: 'query' };
+  summarize: 'question', find: 'question', remember: 'text', recall: 'query', msg: 'text' };
 
 // Single source of truth for command help: group (for the grouped list) plus
 // usage/description/examples (for `operant help <cmd>`), and flags: the flags the command really reads
@@ -57,6 +58,8 @@ const COMMANDS = {
   team: { group: 'agents & tasks', usage: 'operant team', desc: 'team mode: enabled/disabled, each tier (agent, model, use), running workers', examples: ['operant team'], flags: [] },
   summarize: { group: 'agents & tasks', usage: 'operant summarize <file|tile-id|url> ["question"]', desc: 'an xsmall-tier worker reads it and answers, so you never load it yourself', examples: ['operant summarize RELEASE_NOTES.md "what shipped in 1.10.0, 3 bullets"', 'operant summarize 7 "why did it fail"'], flags: [] },
   find: { group: 'agents & tasks', usage: 'operant find "<question>"', desc: 'an xsmall-tier worker searches the project and answers with file:line references', examples: ['operant find "where is the auto compact threshold checked"'], flags: [] },
+  msg: { group: 'agents & tasks', usage: 'operant msg <tile id or title> "<text>"', desc: 'message another agent tile (needs Settings › Agents › Team › Let agents message each other); it arrives between its steps, framed as from you, never as the user', examples: ['operant msg 7 "the API returns 404 for /users, can you check the route?"'], flags: [] },
+  inbox: { group: 'agents & tasks', usage: 'operant inbox', desc: 'read and clear the messages other agents sent you (only for tiles that are not handed them automatically)', examples: ['operant inbox'], flags: [] },
 
   remember: { group: 'memory', usage: 'operant remember "<fact>" [--type user|feedback|project|reference] [--global] [--about "<file|symbol>[,<more>]"]', desc: 'save (or update) one fact in this project\'s shared memory; --type user/--global for user-wide facts; --about links it to code (resolved through CodeGraph when indexed)', examples: ['operant remember "Ship on dev-<version>, fast-forward main at release" --type project', 'operant remember "Prefers plain commit messages" --type user', 'operant remember "recall() caps output around 2k tokens" --about memory.js,recall'], flags: ['type', 'global', 'about'] },
   recall: { group: 'memory', usage: 'operant recall ["query"] [--about "<file|symbol>"]', desc: 'the memory index, matching facts for a query, or facts linked to a file/symbol', examples: ['operant recall', 'operant recall "release process"', 'operant recall --about main.js'], flags: ['about'] },
@@ -432,6 +435,8 @@ function formatResult(cmd, result) {
     case 'run': return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
     case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', suggested: ' + result.reason : ''}]  task ${result.taskId}` : '');
     case 'summarize': case 'find': return result.text || '(no answer)';
+    case 'msg': return result.delivered ? `delivered to tile ${result.to}` : `queued for tile ${result.to} (${result.queued} waiting); it gets it when it is between steps`;
+    case 'inbox': return result.text || '(no messages)';
     case 'team': {
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
       const lines = [`team mode: enabled  ·  ${result.workers}/${result.maxWorkers} workers running`];

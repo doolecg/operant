@@ -367,12 +367,14 @@ const probeOpencodeSkillPaths = (command, { env } = {}) =>
 // The --settings file for a Claude Code tile's own hooks, never the user's settings.json: the long-command
 // reroute (`rerouteCmd`, a script) and, for a team worker, the Stop hook that asks for the board report
 // (`operantCmd`, the operant wrapper). null when there is nothing to register.
-function hookSettingsContent({ reroute, worker, rerouteCmd, operantCmd }) {
+function hookSettingsContent({ reroute, worker, messaging, rerouteCmd, operantCmd }) {
   const hooks = {};
   // "Bash" on macOS/Linux, "PowerShell" on Windows — Claude Code's shell tool is named
   // differently per platform, and a matcher that misses one never even calls the hook script.
   if (reroute) hooks.PreToolUse = [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `"${rerouteCmd}"` }] }];
-  if (worker) hooks.Stop = [{ hooks: [{ type: 'command', command: `"${operantCmd}" hook stop`, timeout: 8 }] }];
+  // Messaging: pending agent messages arrive between tool calls, and a turn can't end with some waiting.
+  if (messaging) hooks.PostToolUse = [{ hooks: [{ type: 'command', command: `"${operantCmd}" hook post-tool-use`, timeout: 5 }] }];
+  if (worker || messaging) hooks.Stop = [{ hooks: [{ type: 'command', command: `"${operantCmd}" hook stop`, timeout: 8 }] }];
   return Object.keys(hooks).length ? { hooks } : null;
 }
 

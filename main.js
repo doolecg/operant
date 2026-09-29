@@ -106,11 +106,12 @@ const OC_OPERANT_PATH = path.join(__dirname, 'hooks', 'opencode-operant.mjs').re
 const OPERANT_CMD_PATH = path.join(__dirname, 'bin', process.platform === 'win32' ? 'operant.cmd' : 'operant').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 // The --settings file for a Claude Code tile's own hooks (agent-setup.hookSettingsContent): the long-command
 // reroute, and a worker's Stop hook. One small file per combination in userData, rewritten only when it
-// changes, so turning a setting on doesn't need a restart. null when there's nothing to register.
-function hookSettingsFile({ reroute, worker }) {
-  const settings = agentSetup.hookSettingsContent({ reroute, worker, rerouteCmd: HOOK_CMD_PATH, operantCmd: OPERANT_CMD_PATH });
+// changes, so turning a setting on doesn't need a restart. With messaging on, every Claude tile also
+// gets the hooks that hand it agent messages between tool calls and at the end of a turn. null when there's nothing to register.
+function hookSettingsFile({ reroute, worker, messaging }) {
+  const settings = agentSetup.hookSettingsContent({ reroute, worker, messaging, rerouteCmd: HOOK_CMD_PATH, operantCmd: OPERANT_CMD_PATH });
   if (!settings) return null;
-  const file = path.join(app.getPath('userData'), `hook-settings${worker ? '-worker' : ''}${reroute ? '' : '-noreroute'}.json`);
+  const file = path.join(app.getPath('userData'), `hook-settings${worker ? '-worker' : ''}${messaging ? '-msg' : ''}${reroute ? '' : '-noreroute'}.json`);
   try {
     const content = JSON.stringify(settings);
     let existing = null;
@@ -185,6 +186,7 @@ const DEFAULT_CONFIG = {
   cacheTtlMinutes: 5,              // Claude's prompt cache lifetime; 60 if your setup uses the 1-hour cache (Settings > Agents)
   skillsBackup: { enabled: false, repos: [], auto: false }, // back up skills and rules to private git repos (Settings > Skills backup)
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
+  messaging: false,               // agents can message each other with operant msg / inbox (Settings > Agents > Team)
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
     tiers: {
@@ -861,7 +863,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
     // A team worker's file also has its Stop hook. Claude Code takes one --settings flag, so it's one file.
-    const hookFile = isClaude(agent) ? hookSettingsFile({ reroute: config.longCommandHook, worker: !!worker }) : null;
+    const hookFile = isClaude(agent) ? hookSettingsFile({ reroute: config.longCommandHook, worker: !!worker, messaging: !!config.messaging }) : null;
     const hookArgs = hookFile ? ['--settings', hookFile] : [];
     // The operant skill, for this session only.
     const pluginArgs = isClaude(agent) && config.installSkill && pluginReady() && await agentCan(agent, 'pluginDir') ? ['--plugin-dir', PLUGIN_DIR] : [];
@@ -1412,6 +1414,7 @@ const opencode = createOpenCode({
 });
 ipcMain.handle('opencode:abort', (_e, { ptyId }) => opencode.abort(ptyId));
 ipcMain.handle('opencode:summarize', (_e, { ptyId }) => opencode.summarize(ptyId));
+ipcMain.handle('opencode:prompt', (_e, { ptyId, text }) => opencode.prompt(ptyId, text));
 
 // Claude plan limits (the 5-hour session and the week), as Claude Code's /usage shows them: asked of
 // Anthropic with the login Claude Code keeps in ~/.claude/.credentials.json, every 10 minutes, or

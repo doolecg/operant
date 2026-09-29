@@ -20,9 +20,15 @@ full plan with research at `~/.claude/plans/federated-painting-summit.md`. Old a
 - 52 review/escalation/budgets: board.js (review, approve/reject, one retry then one tier up), per-tier token budgets
   in Settings > Team and `--budget`, lead prime lists tasks waiting for review. Not live-tested yet.
 
+- 53 messaging (opt-in setting `messaging`): messaging.js (dedupe 10 min, 6/min per pair, cap 20), `operant msg`/`inbox`;
+  OpenCode via POST /session/{root}/prompt_async (verified from /doc, not live), Claude via PostToolUse context,
+  Stop block, or typed when idle (never onto a permission prompt). Not live-tested.
+
 ## Next
-- 53 messaging bus (opt-in): `operant msg <tile> "<text>"`, `operant inbox`; OpenCode via its HTTP API,
-  Claude via PostToolUse additionalContext / Stop block / idle typing; loop limits.
+- 54 findings (29 Sept): opencode.db `message.data` JSON has tokens.{input,output,reasoning,cache.read,cache.write},
+  cost, modelID, providerID, time.created; sum assistant messages only (step-finish parts repeat the same numbers).
+  24 h message sums matched `opencode stats --days 1` exactly. `session` has project_id (-> project.id), directory,
+  and its own token/cost totals.
 - 54 token and cost tracking: opencode.db via node:sqlite, tags model/tier/task, pricing table with source
   (unknown stays unknown), cache hit rate; cross-check with `opencode stats --days 1`.
 - 55 evals (move salvage harness to `evals/`, back-to-back before/after when weekly usage allows), docs,

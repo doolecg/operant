@@ -225,4 +225,10 @@ test('hookSettingsContent: the reroute, a worker Stop hook, both, or nothing', (
   assert.deepEqual(Object.keys(w.hooks), ['Stop']);
   assert.equal(w.hooks.Stop[0].hooks[0].command, '"C:\app\bin\operant.cmd" hook stop');
   assert.deepEqual(Object.keys(setup.hookSettingsContent({ ...opts, reroute: true, worker: true }).hooks), ['PreToolUse', 'Stop']);
+  const m = setup.hookSettingsContent({ ...opts, reroute: false, worker: false, messaging: true });
+  assert.deepEqual(Object.keys(m.hooks), ['PostToolUse', 'Stop'], 'messaging adds both hooks for everyone');
+  assert.equal(m.hooks.PostToolUse[0].matcher, undefined);
+  assert.equal(m.hooks.PostToolUse[0].hooks[0].command, `"${opts.operantCmd}" hook post-tool-use`);
+  assert.equal(m.hooks.PostToolUse[0].hooks[0].timeout, 5);
+  assert.deepEqual(Object.keys(setup.hookSettingsContent({ ...opts, reroute: true, worker: true, messaging: true }).hooks), ['PreToolUse', 'PostToolUse', 'Stop']);
 });

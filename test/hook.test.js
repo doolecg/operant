@@ -61,7 +61,7 @@ test('session-start prints nothing when the brief is switched off', async () => 
 });
 
 test('outside a tile, or with Operant gone, every hook exits 0 quietly and fast', async () => {
-  for (const event of ['session-start', 'subagent-start', 'stop']) {
+  for (const event of ['session-start', 'subagent-start', 'stop', 'post-tool-use']) {
     const none = await runHook(event, { env: { OPERANT_WORKER: '1' } });
     assert.deepEqual([none.code, none.out], [0, ''], `${event} outside a tile`);
     const dead = await runHook(event, { env: { OPERANT: '1', OPERANT_API: 'http://127.0.0.1:9', OPERANT_TILE: '7', OPERANT_WORKER: '1' } });
@@ -95,8 +95,21 @@ test('stop blocks a worker once with the reason, and never while a stop hook is 
     const worker = { ...env, OPERANT_WORKER: '1' };
     const out = JSON.parse((await runHook('stop', { env: worker, input: { stop_hook_active: false } })).out);
     assert.deepEqual(out, { decision: 'block', reason: block });
-    assert.equal((await runHook('stop', { env: worker, input: { stop_hook_active: true } })).out, '');
-    assert.equal((await runHook('stop', { env, input: {} })).out, '', 'a lead is never blocked');
-    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, { event: 'stop', active: false });
+    // the app decides whether an active stop hook still blocks (waiting messages do, a report does not)
+    await runHook('stop', { env: worker, input: { stop_hook_active: true } });
+    assert.deepEqual(calls[1].args, { event: 'stop', active: true });
   });
+  await withApi({ hook: {} }, async env => {
+    assert.equal((await runHook('stop', { env, input: {} })).out, '', 'nothing to say, nothing printed');
+  });
+});
+
+test('post-tool-use hands waiting agent messages over as additionalContext', async () => {
+  await withApi({ hook: args => (args.event === 'post-tool-use' ? { context: 'Message from tile 3 (Claude Code, lead): hi' } : {}) }, async (env, calls) => {
+    const out = JSON.parse((await runHook('post-tool-use', { env })).out);
+    assert.deepEqual(out, { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Message from tile 3 (Claude Code, lead): hi' } });
+    assert.deepEqual(calls.map(c => c.args), [{ event: 'post-tool-use' }]);
+  });
+  await withApi({ hook: {} }, async env => assert.equal((await runHook('post-tool-use', { env })).out, ''));
 });
