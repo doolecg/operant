@@ -1,6 +1,6 @@
 # Operant
 
-A Hyprland-style tiling window manager for terminal AI agents on Windows. Run **Claude Code**, **OpenCode** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a Windows notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
+A Hyprland-style tiling window manager for terminal AI agents on Windows, macOS and Linux. Run **Claude Code**, **OpenCode** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a desktop notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
 
 ## Saving tokens
 Operant is built so agents don't have to read their own noise. A few things do that work:
@@ -23,7 +23,19 @@ operant wait 7 --errors
 ```
 
 ## Install
-Download `Operant-<version>.msi` from the [latest release](https://github.com/doolecg/operant/releases/latest) and run it. It installs per-user, so there's no admin prompt, and adds Start menu and desktop shortcuts. Windows SmartScreen may warn because the installer isn't code-signed: choose *More info → Run anyway*.
+Download the file for your system from the [latest release](https://github.com/doolecg/operant/releases/latest):
+
+| System | File | How to install |
+|---|---|---|
+| Windows | `Operant-<version>-windows-x64.msi` | Run it. It installs per-user, so there's no admin prompt, and adds Start menu and desktop shortcuts. |
+| macOS, Apple Silicon | `Operant-<version>-mac-arm64.dmg` | Open it and drag Operant to Applications. |
+| macOS, Intel | `Operant-<version>-mac-x64.dmg` | The same. |
+| Linux, any distro | `Operant-<version>-linux-x86_64.AppImage` | `chmod +x Operant-<version>-linux-x86_64.AppImage`, then run it. AppImages need FUSE 2, which Ubuntu 22.04 and later leave out: `sudo apt install libfuse2t64` (`libfuse2` on 22.04). |
+| Linux, Debian and Ubuntu | `Operant-<version>-linux-amd64.deb` | `sudo apt install ./Operant-<version>-linux-amd64.deb` |
+
+The builds aren't code-signed or notarized, so Windows and macOS warn the first time you open one:
+- **Windows:** SmartScreen may warn. Choose *More info → Run anyway*.
+- **macOS:** Gatekeeper blocks the first launch. Open Operant once, then choose *Open Anyway* in System Settings › Privacy & Security. Or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once, before opening it.
 
 You need the agent CLIs themselves installed and on your `PATH`, for example:
 
@@ -32,16 +44,18 @@ You need the agent CLIs themselves installed and on your `PATH`, for example:
 | Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` |
 | OpenCode | `opencode` | `npm i -g opencode-ai` |
 
-**Explorer integration:** right-click any folder, the empty space inside one, or a drive, and choose **Open in Operant**. It opens your default agent in that folder. If Operant is already running, the folder opens as a new tile in that window. You can turn this off in Settings.
+**Explorer integration (Windows):** right-click any folder, the empty space inside one, or a drive, and choose **Open in Operant**. It opens your default agent in that folder. If Operant is already running, the folder opens as a new tile in that window. You can turn this off in Settings. On macOS, a folder dropped on the Dock icon, or opened with Operant from Finder's *Open With*, opens the same way.
 
-**Auto-updates:** the app checks this repo's latest release at startup and every 3 hours, then downloads the new MSI in the background. When it's ready, an *Update* pill appears in the top bar. Click it to install and restart, or it installs when you quit. You can turn this off in Settings.
+**Auto-updates:** the app checks this repo's latest release at startup and every 3 hours, then downloads the new installer for your system in the background. When it's ready, an *Update* pill appears in the top bar. Click it to install and restart, or it installs when you quit. You can turn this off in Settings.
+- **macOS:** the new app replaces the old one in place, so Operant has to be in a folder you can write to, like Applications, not run from the DMG. If macOS says Operant was prevented from modifying apps, allow it under System Settings › Privacy & Security › App Management.
+- **Linux:** an AppImage replaces itself, in a folder you can write to. A `.deb` install downloads the new `.deb` and installs it through a password prompt when you click *Update*, never on quit.
 
 ## Agents
 The first time Operant starts, it asks which agent you'd like to use. That agent opens right away and becomes your default.
 
 `Alt+Enter` opens your default agent. `Alt+N` (or the ＋ in the top bar) opens the launcher: press `1`–`9` to pick an agent, or hold `Shift` to choose a folder first.
 
-In **Settings › Agents** you can add any command that runs in a terminal (Aider, Goose, Amp, a local model wrapper), give it a name, icon and arguments, and choose the default. Each agent runs through the shell set in Settings (PowerShell by default). If it exits with an error, the tile stays open so you can read it.
+In **Settings › Agents** you can add any command that runs in a terminal (Aider, Goose, Amp, a local model wrapper), give it a name, icon and arguments, and choose the default. Each agent runs through the shell set in Settings: PowerShell on Windows, your login shell on macOS and Linux (zsh or bash; fish and others work too). If it exits with an error, the tile stays open so you can read it. The `operant` command works the same in every shell.
 
 ## Notifications
 Operant sends a Windows notification when:
@@ -72,24 +86,26 @@ Nothing closes while it's still working: a subagent stays open until it says it'
 Set any of them to `0` to disable it.
 
 ## More than one window
-Start Operant again (Start menu, desktop shortcut, or *New window* when you right-click its taskbar icon) and you get another Operant window, with its own workspaces and tiles. You can also press `Alt+Shift+N` or use *New Operant window* in the agent picker. A Claude subagent opens in the window whose tile started it. Settings changed in one window apply to all of them. Explorer's *Open in Operant* adds a tile to the window you used last, or opens a new window: pick which in Settings › Startup.
+Start Operant again (Start menu, desktop shortcut, or *New window* when you right-click its taskbar icon; on macOS, *New Window* in the Dock icon's menu) and you get another Operant window, with its own workspaces and tiles. You can also press `Alt+Shift+N` or use *New Operant window* in the agent picker. A Claude subagent opens in the window whose tile started it. Settings changed in one window apply to all of them. Explorer's *Open in Operant* (on macOS, a folder dropped on the Dock icon or opened from Finder) adds a tile to the window you used last, or opens a new window: pick which in Settings › Startup. A click or touch anywhere in an Operant window brings it to the front.
 
 ## Projects sidebar
 The left side shows your **projects**, each with a folder tree you can expand, plus the folders your open tiles are running in. `Alt+B` or the sidebar button at the far left of the top bar hides and shows it. Drag its right edge to resize it.
 
 - **Add a project** with **＋** in its header, or right-click any folder and choose *Pin as project*.
 - **Click a folder** to expand it. It also becomes the folder new tiles open in. Double-click a file to open it in its default app.
-- **Hover a folder** for quick buttons that start your default agent or a shell there. **Right-click** for more: pick an agent here, open in Explorer, copy the path, pin or unpin.
+- **Hover a folder** for quick buttons that start your default agent or a shell there. **Right-click** for more: pick an agent here, open in your file manager (Explorer, Finder), copy the path, pin or unpin.
 - A project shows how many tiles are open in it, and the one your focused tile is in is highlighted.
 - Settings › Sidebar has the on/off toggle, the width and *Show hidden files*.
 
 ## Media controls
-The top bar shows whatever Windows is playing, whether that's Spotify, a browser tab or any other player that shows up in Windows' volume flyout. You get the cover, the track and artist, and **shuffle**, **previous**, **play/pause** and **next** buttons. There's also a **volume** slider: drag it or scroll over it, and click the speaker to mute. The slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Turn it off in Settings › Media. Play/pause, next, previous and shuffle can each get a key in the keybinds popup.
+Windows only for now. The top bar shows whatever Windows is playing, whether that's Spotify, a browser tab or any other player that shows up in Windows' volume flyout. You get the cover, the track and artist, and **shuffle**, **previous**, **play/pause** and **next** buttons. There's also a **volume** slider: drag it or scroll over it, and click the speaker to mute. The slider sets that app's own volume in the Windows mixer, or the system volume when the app has no audio of its own. Turn it off in Settings › Media. Play/pause, next, previous and shuffle can each get a key in the keybinds popup.
 
 ## Token usage
 The top bar shows how many tokens Claude Code has used today, across every session (Operant's tiles, other terminals, your IDE and subagents). Hover it for the breakdown and the last hour. Click it, or press `Alt+U`, for a graph over the last 5 hours, 24 hours, 7 days or 30 days, with totals by type and by project. Hover a bar for its numbers.
 
 The numbers come from Claude Code's own transcripts in `~/.claude/projects`, so they cover what those still hold (Claude Code clears out old ones after 30 days by default). By default the bar counts input, output and cache-write tokens. Cache reads are usually far bigger than the rest, so they're left out. Click a type on the graph, or use Settings › Usage, to count it or leave it out. Turn the pill off in Settings › Usage.
+
+Plan limits use Claude Code's login. On macOS that login is in the Keychain, so macOS asks once whether Operant may read it: choose *Always Allow* and it stops asking.
 
 ## Settings and themes
 `Alt+,` (or the ⚙ in the top bar) opens **Settings**, with a tab for each area down the left and a search box that finds any setting. It reopens on the tab you used last. Changes apply straight away and are saved. You can change:
@@ -108,7 +124,7 @@ The numbers come from Claude Code's own transcripts in `~/.claude/projects`, so 
 |---|---|
 | `Alt+Enter` / `Alt+Shift+Enter` | new default agent / new agent in a folder |
 | `Alt+N` | pick an agent |
-| `Alt+Shift+T` | new PowerShell |
+| `Alt+Shift+T` | new shell |
 | `Alt+Q` | close tile |
 | `Alt+M` / `Alt+Shift+M` | master ⇄ dwindle layout / make focused tile the master |
 | `Alt+K` / `Alt+,` | keybinds / settings |
@@ -123,14 +139,23 @@ The numbers come from Claude Code's own transcripts in `~/.claude/projects`, so 
 | `Alt+Shift+N` | new Operant window |
 | `Alt+drag`, `Alt+right-drag`, `Alt+wheel` | swap, resize, switch workspace |
 
-Settings live in `%APPDATA%\Operant\config.json`, which stores only what you've changed. Settings has an *Open config.json* button.
+On macOS, terminals copy and paste with `Cmd+C` and `Cmd+V` (`Ctrl+C` and `Ctrl+V` go to the terminal, where `Ctrl+V` is Claude Code's image paste), quick open is `Cmd+P`, the command palette `Cmd+Shift+P`, find in a viewer `Cmd+F` and devtools `Cmd+Alt+I`. Every other key keeps `Alt`, which is the Option key.
+
+Settings live in `config.json` in Operant's data folder (`%APPDATA%\Operant` on Windows, `~/Library/Application Support/Operant` on macOS, `~/.config/Operant` on Linux), which stores only what you've changed. Settings has an *Open config.json* button.
 
 ## Develop
 ```
 npm install
-npm start          # run from source
-npm run dist       # build dist/Operant-<version>.msi
+npm start            # run from source
+npm run dist         # Windows: dist/Operant-<version>-windows-x64.msi
+npm run dist:mac     # on a Mac: both DMGs, Apple Silicon and Intel
+npm run dist:linux   # on Linux: the AppImage and the .deb
+node test/smoke.mjs node_modules/electron/dist/electron.exe .   # launch from a checkout and check the shell, CLI and agents
 ```
-To ship a release: bump the version in `package.json`, add its section to the top of `RELEASE_NOTES.md`, then push a plain version tag (`git tag 1.0.1 && git push origin refs/tags/1.0.1`). The `release` workflow builds the MSI and publishes it with those notes, and installed copies update themselves.
+`node test/smoke.mjs <app executable> [args]` starts any built app on a throwaway profile and checks a shell tile, the `operant` CLI, `operant run` and agent launches. From a checkout the executable is `node_modules/electron/dist/electron.exe` on Windows, `node_modules/electron/dist/Electron.app/Contents/MacOS/Electron` on macOS and `node_modules/electron/dist/electron` on Linux. `SMOKE_SHELL=<path to bash>` runs the tiles in bash, so Git Bash on Windows exercises the macOS and Linux shell code.
+
+`dist:mac` builds both chips, but npm installs the terminal library (`@lydell/node-pty-darwin-*`) only for your own Mac's chip, so the other app needs the other one installed first: see the `mac` job in `.github/workflows/release.yml`.
+
+To ship a release: bump the version in `package.json`, add its section to the top of `RELEASE_NOTES.md`, then push a plain version tag (`git tag 1.0.1 && git push origin refs/tags/1.0.1`). The `release` workflow builds and tests the Windows, macOS and Linux installers in parallel and, only when all of them pass, publishes the five files as one GitHub release with those notes, so installed copies update themselves (run it by hand from the Actions tab to build and test everything without publishing).
 
 Operant started as a generic version of [Claude Agent Viewer](https://github.com/doolecg/claude-agent-viewer).

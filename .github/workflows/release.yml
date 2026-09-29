@@ -93,6 +93,12 @@ jobs:
       - run: sudo apt-get install -y ./dist/*.deb
       - name: Smoke test
         run: xvfb-run -a node test/smoke.mjs /opt/Operant/operant
+      # The AppImage too, with the FUSE 2 library it needs (Ubuntu leaves it out).
+      - name: Smoke test the AppImage
+        run: |
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+          chmod +x dist/*.AppImage
+          xvfb-run -a node test/smoke.mjs dist/*.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: linux

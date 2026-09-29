@@ -5,7 +5,7 @@ description: Use when running inside the Operant terminal app (env OPERANT=1, or
 
 # Operant control
 
-Works in any shell in an Operant tile (PowerShell, cmd, Git Bash) and any agent CLI's shell tool. Check `operant status` first if unsure you're inside Operant.
+Works in any shell in an Operant tile (PowerShell on Windows, zsh/bash on macOS and Linux) and any agent CLI's shell tool. Check `operant status` first if unsure you're inside Operant.
 
 ## Don't run away
 Cap fan-out at ~4 agent tiles unless asked for more. `operant tiles` — a `⚠` flag means looping/stuck: `operant read <id> --new` to check, `operant stop <id>` if off-task, and tell the user. Use `operant ask` instead of retrying a failing command more than twice. Never restart a stopped agent in a loop.
