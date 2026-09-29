@@ -61,8 +61,8 @@ const COMMANDS = {
   msg: { group: 'agents & tasks', usage: 'operant msg <tile id or title> "<text>"', desc: 'message another agent tile (needs Settings › Agents › Team › Let agents message each other); it arrives between its steps, framed as from you, never as the user', examples: ['operant msg 7 "the API returns 404 for /users, can you check the route?"'], flags: [] },
   inbox: { group: 'agents & tasks', usage: 'operant inbox', desc: 'read and clear the messages other agents sent you (only for tiles that are not handed them automatically)', examples: ['operant inbox'], flags: [] },
 
-  remember: { group: 'memory', usage: 'operant remember "<fact>" [--type user|feedback|project|reference] [--global] [--about "<file|symbol>[,<more>]"]', desc: 'save (or update) one fact in this project\'s shared memory; --type user/--global for user-wide facts; --about links it to code (resolved through CodeGraph when indexed)', examples: ['operant remember "Ship on dev-<version>, fast-forward main at release" --type project', 'operant remember "Prefers plain commit messages" --type user', 'operant remember "recall() caps output around 2k tokens" --about memory.js,recall'], flags: ['type', 'global', 'about'] },
-  recall: { group: 'memory', usage: 'operant recall ["query"] [--about "<file|symbol>"]', desc: 'the memory index, matching facts for a query, or facts linked to a file/symbol', examples: ['operant recall', 'operant recall "release process"', 'operant recall --about main.js'], flags: ['about'] },
+  remember: { group: 'memory', usage: 'operant remember "<fact>" [--type user|feedback|project|reference] [--global] [--about "<file|symbol>[,<more>]"] [--confidence verified|observed|inferred|stale] [--supersedes <id>]', desc: 'save (or update) one fact in this project\'s shared memory; --type user/--global for user-wide facts; --about links it to code (resolved through CodeGraph when indexed)', examples: ['operant remember "Ship on dev-<version>, fast-forward main at release" --type project', 'operant remember "Prefers plain commit messages" --type user', 'operant remember "recall() caps output around 2k tokens" --about memory.js,recall'], flags: ['type', 'global', 'about', 'confidence', 'supersedes'] },
+  recall: { group: 'memory', usage: 'operant recall ["query"] [--about "<file|symbol>"] [--all] | operant recall used <id> | wrong <id> [--note "<why>"]', desc: 'the memory index, matching facts for a query (best first; each has an id), or facts linked to a file/symbol; a fact whose linked file changed shows [stale]; --all includes superseded facts. Then tell memory which facts helped (used) or were wrong (wrong)', examples: ['operant recall', 'operant recall "release process"', 'operant recall --about main.js', 'operant recall used release-process', 'operant recall wrong release-process --note "we use main now"'], flags: ['about', 'all', 'note'] },
 
   usage: { group: 'context', usage: 'operant usage [--breakdown] [--days 1|7]', desc: "your tile's context size and the plan limits, or (--breakdown) where its project's tokens went", examples: ['operant usage', 'operant usage --breakdown', 'operant usage --breakdown --days 7'], flags: ['breakdown', 'days'] },
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'], flags: [] },
@@ -357,6 +357,10 @@ function buildArgs(cmd, positionals, flags) {
     else if (!isNaN(val) && val.trim() !== '') args[k] = Number(val);
     else args[k] = val;
   }
+  // recall / memory used|wrong <id>: feedback on a fact, not a query.
+  if (cmd === 'recall' && (positionals[0] === 'used' || positionals[0] === 'wrong') && positionals.length > 1) {
+    args.feedback = positionals[0]; args.id = positionals[1]; delete args.query;
+  }
   // ask/ws's first positional is a question/index, not covered by JOIN_REST.
   if (cmd === 'ask' && positionals.length) args.question = positionals.join(' ');
   if (cmd === 'ws' && positionals.length) args.index = Number(positionals[0]);
@@ -467,7 +471,7 @@ function formatResult(cmd, result) {
       const prime = require('./operant-prime');
       return prime.formatPrime(result, prime.readLocal(result.tile?.project || process.cwd()));
     }
-    case 'remember': return `${result.name} (${result.type}${result.updated ? ', updated' : ''})`;
+    case 'remember': return `${result.name} [id: ${result.id}] (${result.type}${result.updated ? ', updated' : ''})`;
     case 'recall': return (result.text || '') + (result.more ? `\n(${result.more} more matched, ${result.shown} of ${result.total} shown)` : '');
     case 'usage': {
       const lines = [result.max

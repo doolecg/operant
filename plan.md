@@ -212,7 +212,7 @@ a spec; Haiku runs checks and docs; Opus (medium) only where marked. Research an
       deterministic classifier: fix, feature, lookup, test, refactor, docs), tier, agent/model, tokens and $ (from
       item 54), attempts, retries, escalations, final status, duration, files changed. Kept 90 days. This is the
       data routing and the benchmark read; nothing else changes yet.
-- [ ] **58. Memory that knows when it's stale:** Markdown stays the source of truth; frontmatter gains `confidence`
+- [x] **58. Memory that knows when it's stale:** Markdown stays the source of truth; frontmatter gains `confidence`
       (verified / observed / inferred / stale), created/updated/last-used, recalls/uses/rejects, `supersedes`, and
       `about_sig` (a file hash, or the CodeGraph signature of the symbol). A fact whose code drifted is marked stale
       at recall, never deleted. Recall ranks by BM25 (pure JS) × usefulness `(uses−rejects+1)/(recalls+2)` × decay

@@ -145,3 +145,129 @@ test('deleteFact removes the file and rebuilds the index', () => {
   const index = fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8');
   assert.equal(index.trim(), '');
 });
+
+// Item 58: confidence, staleness, ranking, supersedes, feedback.
+const facts = (cwd, u) => memory.listFacts(memory.projectMemoryDir(cwd), u);
+function patch(cwd, id, edit) {
+  const f = path.join(memory.projectMemoryDir(cwd), `${id}.md`);
+  fs.writeFileSync(f, edit(fs.readFileSync(f, 'utf8')));
+}
+
+test('a fact written before item 58 (no new fields) is still recalled', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const dir = memory.projectMemoryDir(cwd);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'old.md'), '---\nname: "Old fact"\ndescription: "the deploy uses rsync"\ntype: "project"\n---\n\nthe deploy uses rsync\n');
+  const r = memory.recall({ cwd, userDataDir, query: 'rsync' });
+  assert.equal(r.total, 1);
+  assert.match(r.text, /the deploy uses rsync/);
+  assert.match(r.text, /id: old/);
+});
+
+test('remember writes confidence, dates, counters and aboutSig', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  fs.writeFileSync(path.join(cwd, 'a.js'), 'one');
+  memory.remember({ cwd, userDataDir, text: 'a.js does one thing', about: ['a.js'], confidence: 'verified' });
+  const [f] = facts(cwd, userDataDir);
+  assert.equal(f.confidence, 'verified');
+  assert.ok(f.created && f.updated);
+  assert.equal(f.aboutSig.length, 1);
+  assert.match(f.aboutSig[0], /^[0-9a-f]{40}$/);
+});
+
+test('BM25 ranks the relevant fact first', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  memory.remember({ cwd, userDataDir, text: 'The build server caches nothing' });
+  memory.remember({ cwd, userDataDir, text: 'Database migrations run through flyway migrations only, flyway is required' });
+  memory.remember({ cwd, userDataDir, text: 'Logs rotate daily' });
+  const r = memory.recall({ cwd, userDataDir, query: 'flyway migrations' });
+  assert.match(r.text.split('\n')[0], /Database migrations/);
+});
+
+test('usefulness and decay change the order', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const a = memory.remember({ cwd, userDataDir, text: 'Cache layer uses redis alpha' });
+  const b = memory.remember({ cwd, userDataDir, text: 'Cache layer uses redis beta' });
+  const first = () => memory.recall({ cwd, userDataDir, query: 'cache redis' }).text.split('\n')[0];
+  const setMeta = (id, kv) => patch(cwd, id, raw => raw.replace(/^---\n/, '---\n' + Object.entries(kv).map(([k, v]) => `${k}: "${v}"\n`).join('')));
+  // b has proven useful; a has been rejected.
+  setMeta(b.id, { uses: 5 }); setMeta(a.id, { rejects: 3 });
+  assert.match(first(), /beta/);
+  // Now b is old and unused for a long time while a is fresh: decay flips it back only once weights cross.
+  const old = new Date(Date.now() - 60 * 86400000).toISOString();
+  const fa = facts(cwd, userDataDir).find(f => f.id === a.id), fb = facts(cwd, userDataDir).find(f => f.id === b.id);
+  assert.ok(memory.weight({ ...fb, lastUsed: old }) < memory.weight(fb));
+  assert.equal(memory.weight({ ...fb, lastUsed: old, uses: 0, recalls: 0 }), 0.5 * 0.2);
+  assert.ok(memory.weight({ ...fa, rejects: 0, lastUsed: new Date().toISOString() }) > memory.weight({ ...fb, uses: 0, lastUsed: old }));
+});
+
+test('an about file that changed or vanished shows a stale marker and ranks lower', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  fs.writeFileSync(path.join(cwd, 'a.js'), 'one');
+  memory.remember({ cwd, userDataDir, text: 'Widget rendering goes through a.js', about: ['a.js'] });
+  memory.remember({ cwd, userDataDir, text: 'Widget rendering is cached elsewhere' });
+  assert.doesNotMatch(memory.recall({ cwd, userDataDir, query: 'widget rendering' }).text, /stale/);
+  fs.writeFileSync(path.join(cwd, 'a.js'), 'two');
+  const r = memory.recall({ cwd, userDataDir, query: 'widget rendering' });
+  assert.match(r.text, /\[stale: a\.js changed\]/);
+  assert.match(r.text.split('\n')[0], /cached elsewhere/);
+  fs.rmSync(path.join(cwd, 'a.js'));
+  assert.match(memory.recall({ cwd, userDataDir, query: 'widget rendering' }).text, /\[stale: a\.js changed\]/);
+  assert.equal(facts(cwd, userDataDir).length, 2); // never deleted
+});
+
+test('a superseded fact is hidden unless --all', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const old = memory.remember({ cwd, userDataDir, text: 'Deploys go out through ftp' });
+  memory.remember({ cwd, userDataDir, text: 'Deploys go out through rsync', supersedes: old.id });
+  const r = memory.recall({ cwd, userDataDir, query: 'deploys' });
+  assert.equal(r.total, 1);
+  assert.match(r.text, /rsync/);
+  assert.equal(memory.recall({ cwd, userDataDir, query: 'deploys', all: true }).total, 2);
+  assert.throws(() => memory.remember({ cwd, userDataDir, text: 'x y z', supersedes: 'nope' }), /no fact/);
+});
+
+test('used and wrong update counters; repeated wrong marks the fact stale', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const { id } = memory.remember({ cwd, userDataDir, text: 'Tabs are four wide' });
+  memory.recall({ cwd, userDataDir, query: 'tabs', feedback: 'used', id });
+  assert.equal(facts(cwd, userDataDir)[0].uses, 1);
+  memory.recall({ cwd, userDataDir, feedback: 'wrong', id, note: 'it is two' });
+  assert.equal(facts(cwd, userDataDir)[0].rejects, 1);
+  assert.equal(facts(cwd, userDataDir)[0].confidence, 'observed');
+  memory.recall({ cwd, userDataDir, feedback: 'wrong', id });
+  assert.equal(facts(cwd, userDataDir)[0].confidence, 'stale');
+  assert.throws(() => memory.recall({ cwd, userDataDir, feedback: 'used', id: 'nope' }), /no fact/);
+});
+
+test('recall increments recalls and lastUsed, and logs the injected ids', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const { id } = memory.remember({ cwd, userDataDir, text: 'Ports start at 4100' });
+  memory.recall({ cwd, userDataDir, query: 'ports' });
+  memory.recall({ cwd, userDataDir, query: 'ports' });
+  const f = facts(cwd, userDataDir)[0];
+  assert.equal(f.recalls, 2);
+  assert.ok(f.lastUsed);
+  assert.equal(f.body, 'Ports start at 4100');
+  const lines = fs.readFileSync(path.join(userDataDir, 'memory-recalls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(lines[0].ids, [id]);
+  assert.equal(lines[0].query, 'ports');
+  // The index does not count as a recall.
+  memory.recall({ cwd, userDataDir });
+  assert.equal(facts(cwd, userDataDir)[0].recalls, 2);
+});
+
+test('recall and used leave fact files byte-identical; counters live in the sidecar', () => {
+  const cwd = tmpDir('proj'), userDataDir = tmpDir('user');
+  const { id, file, dir } = memory.remember({ cwd, userDataDir, text: 'Lint runs before tests' });
+  const before = fs.readFileSync(path.join(dir, file));
+  memory.recall({ cwd, userDataDir, query: 'lint' });
+  memory.recall({ cwd, userDataDir, feedback: 'used', id });
+  memory.recall({ cwd, userDataDir, feedback: 'wrong', id });
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, file))));
+  const f = facts(cwd, userDataDir)[0];
+  assert.deepEqual([f.recalls, f.uses, f.rejects], [1, 1, 1]);
+  // A corrupt sidecar is tolerated.
+  fs.writeFileSync(path.join(userDataDir, 'memory-stats.json'), '{nope');
+  assert.equal(memory.recall({ cwd, userDataDir, query: 'lint' }).total, 1);
+});

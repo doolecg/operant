@@ -7,9 +7,12 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const TYPES = ['user', 'feedback', 'project', 'reference'];
+const CONFIDENCE = ['verified', 'observed', 'inferred', 'stale'];
+const RECALL_LOG_MAX = 2 * 1024 * 1024;
 
 function slugify(s) {
   return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'fact';
@@ -59,22 +62,61 @@ function readFact(dir, file) {
   let raw;
   try { raw = fs.readFileSync(path.join(dir, file), 'utf8'); } catch { return null; }
   const { meta, body } = parseFrontmatter(raw);
+  const int = v => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : 0; };
   return {
-    file, dir, path: path.join(dir, file),
+    file, dir, path: path.join(dir, file), meta,
+    id: file.replace(/\.md$/i, ''),
     name: meta.name || file.replace(/\.md$/, ''),
     description: meta.description || '',
     type: meta.type || 'project',
     about: Array.isArray(meta.about) ? meta.about : (meta.about ? [meta.about] : []),
+    aboutSig: Array.isArray(meta.aboutSig) ? meta.aboutSig : (meta.aboutSig ? [meta.aboutSig] : []),
+    confidence: CONFIDENCE.includes(meta.confidence) ? meta.confidence : 'observed',
+    created: meta.created || '', updated: meta.updated || '', lastUsed: meta.lastUsed || '',
+    recalls: int(meta.recalls), uses: int(meta.uses), rejects: int(meta.rejects),
+    supersedes: meta.supersedes || '',
     body: body.trim(),
   };
 }
 
-// Every fact file in a memory dir (not its MEMORY.md index).
-function listFacts(dir) {
+// Rewrites one fact's frontmatter with a patch (counters, confidence), keeping its body and any keys we don't know.
+function patchFact(f, patch) {
+  const meta = { ...f.meta, ...patch };
+  try { fs.writeFileSync(f.path, toFrontmatter(meta) + '\n' + f.body + '\n'); } catch { /* best effort */ }
+}
+
+// Usage telemetry (recalls, uses, rejects, lastUsed) lives in userData memory-stats.json, keyed by the
+// fact file's absolute path, so recalling never edits fact files that a project keeps in git.
+const statsKey = p => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+function loadStats(userDataDir) {
+  if (!userDataDir) return {};
+  try {
+    const o = JSON.parse(fs.readFileSync(path.join(userDataDir, 'memory-stats.json'), 'utf8'));
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+  } catch { return {}; }
+}
+function updateStats(userDataDir, edits) { // edits: [[fact, patch]]
+  if (!userDataDir) return;
+  const all = loadStats(userDataDir);
+  for (const [f, patch] of edits) {
+    const k = statsKey(f.path);
+    all[k] = { recalls: f.recalls, uses: f.uses, rejects: f.rejects, lastUsed: f.lastUsed, ...all[k], ...patch };
+  }
+  try { fs.mkdirSync(userDataDir, { recursive: true }); fs.writeFileSync(path.join(userDataDir, 'memory-stats.json'), JSON.stringify(all)); } catch { /* best effort */ }
+}
+
+// Every fact file in a memory dir (not its MEMORY.md index). With userDataDir, usage stats are overlaid
+// on whatever counters an older fact file still carries in its frontmatter.
+function listFacts(dir, userDataDir) {
   let files;
   try { files = fs.readdirSync(dir); } catch { return []; }
+  const stats = userDataDir ? loadStats(userDataDir) : {};
   return files.filter(f => f.toLowerCase().endsWith('.md') && f.toUpperCase() !== 'MEMORY.MD')
-    .map(f => readFact(dir, f)).filter(Boolean);
+    .map(f => readFact(dir, f)).filter(Boolean)
+    .map(f => {
+      const st = stats[statsKey(f.path)];
+      return st ? Object.assign(f, { recalls: Number(st.recalls) || 0, uses: Number(st.uses) || 0, rejects: Number(st.rejects) || 0, lastUsed: st.lastUsed || f.lastUsed }) : f;
+    });
 }
 
 function indexLine(f) {
@@ -111,13 +153,41 @@ function resolveAbout(cwd, item) {
   return raw;
 }
 
+// The file an `about` entry points at ("<name>@<file>:<line>", "<file>:<line>" or a plain path), or null
+// when it isn't a file (a bare symbol name CodeGraph couldn't resolve).
+function aboutRel(entry) {
+  const s = String(entry);
+  return (s.includes('@') ? s.slice(s.indexOf('@') + 1) : s).replace(/:\d+$/, '');
+}
+// sha1 of the whole file: CodeGraph gives a symbol's start line but no end line, so a symbol link is
+// hashed by its file too. "-" = nothing to check.
+function hashAbout(cwd, entry) {
+  if (!cwd) return '-';
+  try {
+    const abs = path.resolve(cwd, aboutRel(entry));
+    if (!fs.statSync(abs).isFile()) return '-';
+    return crypto.createHash('sha1').update(fs.readFileSync(abs)).digest('hex');
+  } catch { return '-'; }
+}
+// The first `about` file that changed or vanished since the fact was saved, or null.
+function staleAbout(cwd, fact) {
+  if (!cwd) return null;
+  for (let i = 0; i < fact.about.length; i++) {
+    const sig = fact.aboutSig[i];
+    if (!sig || sig === '-') continue;
+    const now = hashAbout(cwd, fact.about[i]);
+    if (now === '-' || now !== sig) return aboutRel(fact.about[i]);
+  }
+  return null;
+}
+
 function targetDir(cwd, userDataDir, type, global) {
   return (global || type === 'user') ? globalMemoryDir(userDataDir) : projectMemoryDir(cwd);
 }
 
 // Saves one fact, updating an existing one instead of adding a duplicate when its name or
 // description (normalized) matches a fact already in the same memory dir.
-function remember({ cwd, userDataDir, text, type = 'project', global = false, about = [] }) {
+function remember({ cwd, userDataDir, text, type = 'project', global = false, about = [], confidence, supersedes }) {
   const fact = String(text || '').trim();
   if (!fact) throw new Error('text required');
   const kind = TYPES.includes(type) ? type : 'project';
@@ -129,17 +199,33 @@ function remember({ cwd, userDataDir, text, type = 'project', global = false, ab
 
   const name = shortName(fact);
   const slug = slugify(name);
-  const existing = listFacts(dir).find(f => slugify(f.name) === slug || norm(f.description) === norm(fact));
+  const existing = listFacts(dir, userDataDir).find(f => slugify(f.name) === slug || norm(f.description) === norm(fact));
   const file = existing ? existing.file : (() => {
     let n = `${slug}.md`, i = 2;
     while (fs.existsSync(path.join(dir, n))) n = `${slug}-${i++}.md`;
     return n;
   })();
 
-  const meta = { name, description: fact, type: kind, about: aboutList };
+  const now = new Date().toISOString();
+  let supId = '';
+  if (supersedes) {
+    const want = String(supersedes).trim().replace(/\.md$/i, '');
+    const target = [dir, projectMemoryDir(cwd), globalMemoryDir(userDataDir)].flatMap(d => listFacts(d))
+      .find(f => f.id === want || slugify(f.name) === slugify(want));
+    if (!target) throw new Error(`no fact "${want}" to supersede`);
+    supId = target.id;
+  }
+  const conf = CONFIDENCE.includes(confidence) ? confidence : (existing ? existing.confidence : 'observed');
+  const meta = {
+    name, description: fact, type: kind, about: aboutList, aboutSig: aboutList.map(a => hashAbout(cwd, a)),
+    confidence: conf, created: (existing && existing.created) || now, updated: now,
+    supersedes: supId || (existing ? existing.supersedes : ''),
+  };
   fs.writeFileSync(path.join(dir, file), toFrontmatter(meta) + '\n' + fact + '\n');
+  // An older fact's frontmatter counters move to the sidecar, since remember no longer writes them.
+  if (existing && (existing.recalls || existing.uses || existing.rejects || existing.lastUsed)) updateStats(userDataDir, [[existing, {}]]);
   rebuildIndex(dir);
-  return { name, type: kind, file, dir, updated: !!existing };
+  return { name, id: file.replace(/\.md$/i, ''), type: kind, file, dir, updated: !!existing };
 }
 
 // Rough token cap (~4 chars/token). Cuts at a whole entry boundary and reports how many were left out.
@@ -155,9 +241,11 @@ function capOutput(entries, tokenCap = 2000) {
   return { text: out, shown, total: entries.length, more };
 }
 
-function formatFact(f, sourceLabel) {
+function formatFact(f, sourceLabel, stale) {
   const about = f.about.length ? `\nabout: ${f.about.join(', ')}` : '';
-  return `## ${f.name} [${f.type}]${sourceLabel ? ` (${sourceLabel})` : ''}${about}\n${f.body || f.description}`;
+  const tags = (f.confidence !== 'observed' ? ` [${f.confidence}]` : '') + (stale ? ` [stale: ${stale} changed]` : '');
+  const where = [`id: ${f.id}`, sourceLabel].filter(Boolean).join(', ');
+  return `## ${f.name} [${f.type}]${tags} (${where})${about}\n${f.body || f.description}`;
 }
 
 function aboutMatches(fact, target, resolvedTargetFile) {
@@ -185,7 +273,7 @@ function readOnlyIndexText(dir) {
 }
 
 // No query/about: the index (this project's facts, then global, then the main agent's own memory).
-function recallIndex({ cwd, userDataDir, tokenCap, homeDir }) {
+function recallIndex({ cwd, userDataDir, tokenCap, homeDir, all }) {
   const sections = [];
   for (const { dir, label, readOnly } of allSources(cwd, userDataDir, homeDir)) {
     if (readOnly) {
@@ -193,7 +281,9 @@ function recallIndex({ cwd, userDataDir, tokenCap, homeDir }) {
       if (text) sections.push(`### Main agent's memory (read-only)\n${text}`);
       continue;
     }
-    const facts = rebuildIndex(dir);
+    const every = rebuildIndex(dir);
+    const hide = all ? new Set() : supersededIds(every);
+    const facts = every.filter(f => !isSuperseded(f, hide));
     if (facts.length) sections.push(`### ${label ? label[0].toUpperCase() + label.slice(1) : 'Project'} memory\n${facts.map(indexLine).join('\n')}`);
   }
   if (!sections.length) return { text: '(no memory yet)', shown: 0, total: 0, more: 0 };
@@ -201,48 +291,150 @@ function recallIndex({ cwd, userDataDir, tokenCap, homeDir }) {
   return { text, shown, total, more };
 }
 
-// query: substring match (case-insensitive) over name/description/body/about, across every source.
-function recallQuery({ cwd, userDataDir, query, tokenCap, homeDir }) {
+// Facts another fact names in `supersedes` are replaced: hidden from recall unless `all`.
+function supersededIds(facts) {
+  const ids = new Set();
+  for (const f of facts) if (f.supersedes) { ids.add(String(f.supersedes)); ids.add(slugify(f.supersedes)); }
+  return ids;
+}
+const isSuperseded = (f, ids) => ids.has(f.id) || ids.has(slugify(f.name));
+
+function tokens(text) { return String(text).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean); }
+
+// BM25 (k1 1.2, b 0.75) of each doc (a token array) against the query tokens.
+function bm25(docs, qTokens, k1 = 1.2, b = 0.75) {
+  const N = docs.length;
+  const avg = docs.reduce((n, d) => n + d.length, 0) / (N || 1) || 1;
+  const terms = [...new Set(qTokens)];
+  const df = new Map(terms.map(t => [t, docs.filter(d => d.includes(t)).length]));
+  return docs.map(d => {
+    let score = 0;
+    for (const t of terms) {
+      const n = df.get(t);
+      const tf = d.filter(x => x === t).length;
+      if (!n || !tf) continue;
+      const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
+      score += idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * d.length / avg));
+    }
+    return score;
+  });
+}
+
+// How much a fact has earned its place: feedback ratio, and a 14-day half-life since it was last
+// used or updated (floor 0.2). Facts with no dates (written before item 58) don't decay.
+function weight(f, now = Date.now()) {
+  const useful = Math.max(0.05, (f.uses - f.rejects + 1) / (f.recalls + 2));
+  const t = Date.parse(f.lastUsed || f.updated || f.created || '');
+  const decay = Number.isFinite(t) ? Math.max(0.2, Math.pow(0.5, Math.max(0, now - t) / 86400000 / 14)) : 1;
+  return useful * decay;
+}
+
+// Appends to userData memory-recalls.jsonl, trimming the oldest lines past ~2 MB.
+function logRecall(userDataDir, rec) {
+  if (!userDataDir) return;
+  const file = path.join(userDataDir, 'memory-recalls.jsonl');
+  try {
+    fs.mkdirSync(userDataDir, { recursive: true });
+    fs.appendFileSync(file, JSON.stringify({ t: new Date().toISOString(), ...rec }) + '\n');
+    if (fs.statSync(file).size > RECALL_LOG_MAX) {
+      const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+      fs.writeFileSync(file, lines.slice(Math.floor(lines.length / 2)).join('\n') + '\n');
+    }
+  } catch { /* best effort */ }
+}
+
+// items: [{ text, fact? }]. Caps by tokens, then counts a recall on the facts that fit (project/global
+// only) and logs their ids. Recall's only writes are the stats sidecar and the log.
+function finish(items, tokenCap, userDataDir, query) {
+  if (!items.length) return null;
+  const capped = capOutput(items.map(i => i.text), tokenCap);
+  const shown = items.slice(0, capped.shown).map(i => i.fact).filter(Boolean);
+  const now = new Date().toISOString();
+  updateStats(userDataDir, shown.map(f => [f, { recalls: f.recalls + 1, lastUsed: now }]));
+  if (shown.length) logRecall(userDataDir, { query: query || '', ids: shown.map(f => f.id) });
+  return { ...capped, total: items.length };
+}
+
+// query: BM25 over name/description/body, weighted by usefulness and recency, stale facts halved.
+// Anything the old plain substring match found (about text included) still counts, ranked last.
+function recallQuery({ cwd, userDataDir, query, tokenCap, homeDir, all }) {
   const q = norm(query);
-  const entries = [];
+  const cands = [];
+  const writable = [];
   for (const { dir, label, readOnly } of allSources(cwd, userDataDir, homeDir)) {
     if (readOnly) {
       let files = [];
       try { files = fs.readdirSync(dir); } catch {}
       for (const f of files.filter(f => f.toLowerCase().endsWith('.md') && f.toUpperCase() !== 'MEMORY.MD')) {
         let raw = ''; try { raw = fs.readFileSync(path.join(dir, f), 'utf8'); } catch {}
-        if (raw.toLowerCase().includes(q)) entries.push(`## ${f.replace(/\.md$/, '')} (main agent, read-only)\n${raw.trim()}`);
+        const { meta, body } = parseFrontmatter(raw);
+        cands.push({ hay: raw.toLowerCase(), toks: tokens(`${meta.name || ''} ${meta.description || ''} ${body}`), text: `## ${f.replace(/\.md$/, '')} (main agent, read-only)\n${raw.trim()}` });
       }
       continue;
     }
-    for (const fact of listFacts(dir)) {
-      const hay = `${fact.name} ${fact.description} ${fact.body} ${fact.about.join(' ')}`.toLowerCase();
-      if (hay.includes(q)) entries.push(formatFact(fact, label));
+    for (const fact of listFacts(dir, userDataDir)) {
+      writable.push(fact);
+      cands.push({ fact, label, hay: `${fact.name} ${fact.description} ${fact.body} ${fact.about.join(' ')}`.toLowerCase(), toks: tokens(`${fact.name} ${fact.description} ${fact.body}`) });
     }
   }
-  if (!entries.length) return { text: '(no facts match)', shown: 0, total: 0, more: 0 };
-  return { ...capOutput(entries, tokenCap), total: entries.length };
+  const hidden = all ? new Set() : supersededIds(writable);
+  const scores = bm25(cands.map(c => c.toks), tokens(query));
+  const now = Date.now();
+  const ranked = [];
+  cands.forEach((c, i) => {
+    if (c.fact && isSuperseded(c.fact, hidden)) return;
+    if (!(scores[i] > 0) && !c.hay.includes(q)) return;
+    let stale = null, w = 1;
+    if (c.fact) {
+      stale = staleAbout(cwd, c.fact);
+      w = weight(c.fact, now) * (stale || c.fact.confidence === 'stale' ? 0.5 : 1);
+    }
+    ranked.push({ score: (scores[i] > 0 ? scores[i] : 0.01) * w, fact: c.fact, text: c.text || formatFact(c.fact, c.label, stale) });
+  });
+  ranked.sort((a, b) => b.score - a.score);
+  return finish(ranked, tokenCap, userDataDir, query) || { text: '(no facts match)', shown: 0, total: 0, more: 0 };
 }
 
 // --about <file|symbol>: facts linked to it, or to any symbol CodeGraph resolved into that file.
-function recallAbout({ cwd, userDataDir, about, tokenCap, homeDir }) {
+function recallAbout({ cwd, userDataDir, about, tokenCap, homeDir, all }) {
   const target = String(about).trim();
   const resolved = resolveAbout(cwd, target);
   const resolvedFile = resolved && resolved.includes('@') ? resolved.split('@')[1].split(':')[0] : null;
-  const entries = [];
-  for (const { dir, label } of allSources(cwd, userDataDir, homeDir).filter(s => !s.readOnly)) {
-    for (const fact of listFacts(dir)) {
-      if (fact.about.length && aboutMatches(fact, target, resolvedFile || target)) entries.push(formatFact(fact, label));
+  const srcs = allSources(cwd, userDataDir, homeDir).filter(s => !s.readOnly);
+  const hidden = all ? new Set() : supersededIds(srcs.flatMap(s => listFacts(s.dir, userDataDir)));
+  const items = [];
+  for (const { dir, label } of srcs) {
+    for (const fact of listFacts(dir, userDataDir)) {
+      if (isSuperseded(fact, hidden)) continue;
+      if (fact.about.length && aboutMatches(fact, target, resolvedFile || target)) items.push({ fact, text: formatFact(fact, label, staleAbout(cwd, fact)) });
     }
   }
-  if (!entries.length) return { text: '(no facts linked to that)', shown: 0, total: 0, more: 0 };
-  return { ...capOutput(entries, tokenCap), total: entries.length };
+  return finish(items, tokenCap, userDataDir, `about:${target}`) || { text: '(no facts linked to that)', shown: 0, total: 0, more: 0 };
 }
 
-function recall({ cwd, userDataDir, query, about, tokenCap = 2000, homeDir }) {
-  if (about) return recallAbout({ cwd, userDataDir, about, tokenCap, homeDir });
-  if (query) return recallQuery({ cwd, userDataDir, query, tokenCap, homeDir });
-  return recallIndex({ cwd, userDataDir, tokenCap, homeDir });
+// `operant memory used|wrong <id>`: an agent's verdict on a fact it was handed. Two rejects that
+// outnumber the uses mark it stale (never deleted).
+function feedback({ cwd, userDataDir, id, kind, note }) {
+  const want = String(id || '').trim().replace(/\.md$/i, '');
+  if (!want) throw new Error('id required');
+  const fact = [projectMemoryDir(cwd), globalMemoryDir(userDataDir)].flatMap(d => listFacts(d, userDataDir)).find(f => f.id === want);
+  if (!fact) throw new Error(`no fact "${want}"`);
+  if (kind === 'used') updateStats(userDataDir, [[fact, { uses: fact.uses + 1 }]]);
+  else if (kind === 'wrong') {
+    const rejects = fact.rejects + 1;
+    updateStats(userDataDir, [[fact, { rejects }]]);
+    if (rejects >= 2 && rejects > fact.uses) patchFact(fact, { confidence: 'stale' });
+  } else throw new Error('feedback is "used" or "wrong"');
+  logRecall(userDataDir, { id: fact.id, [kind]: true, ...(note ? { note: String(note) } : {}) });
+  return { text: `${fact.id}: ${kind}`, shown: 0, total: 0, more: 0 };
+}
+
+function recall(args) {
+  const { cwd, userDataDir, query, about, tokenCap = 2000, homeDir, all } = args;
+  if (args.feedback) return feedback({ cwd, userDataDir, id: args.id, kind: args.feedback, note: args.note });
+  if (about) return recallAbout({ cwd, userDataDir, about, tokenCap, homeDir, all });
+  if (query) return recallQuery({ cwd, userDataDir, query, tokenCap, homeDir, all });
+  return recallIndex({ cwd, userDataDir, tokenCap, homeDir, all });
 }
 
 function listAll({ cwd, userDataDir }) {
@@ -260,5 +452,5 @@ module.exports = {
   TYPES, remember, recall, listAll, deleteFact,
   projectMemoryDir, globalMemoryDir, claudeMemoryDir,
   // exported for tests
-  slugify, shortName, parseFrontmatter, toFrontmatter, listFacts, rebuildIndex, resolveAbout,
+  slugify, shortName, weight, bm25, parseFrontmatter, toFrontmatter, listFacts, rebuildIndex, resolveAbout,
 };
