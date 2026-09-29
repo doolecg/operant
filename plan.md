@@ -504,7 +504,9 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
       conflict record.
 
 **Order with all three documents**
-- 2.1: operations (84A-84S, 54-57, 64), plus secrets out of logs/backups/prompts (65) and the auto-update opt-in check.
+- 2.1: operations (84A-84S full edition, 54-57, 64), plus secrets out of logs/backups/prompts (65) and the auto-update
+      opt-in check; the 84D-84S list above (validation, effective values, restart notice, first-run detection, health
+      states, restore with health check, backup metadata, error pass, UI regression pass).
 - 2.2 Measure: versioned local database with correlation ids (26), token/cost/latency/cache events and Operant's own
       overhead (1.2/12/38/52), failure classification (42), decision trace (83), provider health with decay (87),
       model profiles with uncertainty (88), `operant doctor` / `stats` / `route explain` (33/34/90), dashboard +
@@ -522,3 +524,32 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
       degradation chains (30), MCP, prompt-injection resistance (66), tool permissions (67), sandboxing (68),
       collaboration roles (11), benchmarks by category with replay (35-37), architecture map and dependency
       inventory (61/62), optional local model (ask first), docs.
+
+**UI and operations, full edition (84A-84S of `docs/operant-2.0-spec.md`, uploaded 29 Sept) - what it adds for 2.1**
+- [~] 84D Settings show the current effective value, apply at the right time, and never look live when they need a
+      restart. Known gap: `autoUpdate` only takes effect after a restart and doesn't say so. Also: one observable
+      precedence (defaults, config file, env, user settings, runtime overrides, provider config).
+- [ ] 84E Settings validation: missing, out-of-range, bad paths/URLs/provider or model ids, conflicting settings;
+      the error says what, where and what's expected; a failed save keeps the last valid config.
+- [~] 84F Persistence both ways: UI change -> runtime config, and config change -> reload -> UI shows it (item 71
+      covers save/reload/used; the UI round trip isn't tested).
+- [~] 84G/84H/84I Updates: automatic download and automatic install as separate choices; migrations and a health
+      check after install; rollback status and last update result shown in the UI (history exists).
+- [~] 84J/84K Backups: say which data is required, optional or rebuildable cache; backup before restore
+      (done), before update and migration (in progress); never uploaded.
+- [~] 84L Backup metadata: add backup-format version, schema versions and an installation id to the manifest;
+      check schema compatibility on restore.
+- [~] 84M Restore flow: validate, safety backup, restore, run migrations, validate restored state, start, health
+      check, confirm (today: validate, safety backup, restore, relaunch).
+- [~] 84N Migrations for backup formats and future databases too, tested from fresh, old, several versions back,
+      interrupted, failed, rollback.
+- [ ] 84O First install vs existing vs upgrade vs reinstall vs recovery detected explicitly; defaults only fill
+      missing values.
+- [ ] 84P Status and health with real states: healthy / available / degraded / unavailable / not configured /
+      unknown, for version, update, backup, database, providers, models, local model, memory, CodeGraph, MCP.
+- [~] 84Q Actionable errors: operation, cause, component, current state, whether data changed, next step, whether
+      a retry is safe; a pass over existing error messages.
+- [~] 84R Tests: invalid release metadata, installation and migration failure, health-check failure, incompatible
+      backup, post-restore health check, UI reload/restart round trips.
+- [ ] 84S A UI regression pass before release: launch, navigation, settings, providers, models, analytics, memory,
+      integrations, error / loading / empty states.
