@@ -274,7 +274,7 @@ check in an isolated profile before release.
 
 ## Operant 2.0 master spec: everything, and where it stands (mapped 29 Sept)
 Two versions: `docs/operant-2.0-spec.md` (first, with UI/operations 84A-84S) and `docs/operant-2.0-master-prompt.md`
-(revised). The first spec is `docs/operant-2.0-spec.md` (pasted 28 Sept; 2.0.0 was built from a short outline of it, so most
+(the full 100-section edition). The first spec is `docs/operant-2.0-spec.md` (pasted 28 Sept; 2.0.0 was built from a short outline of it, so most
 of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers are the spec's sections.
 
 **Model orchestration**
@@ -374,7 +374,7 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
   second model (40), collaboration and parallel measurement (16/43), replay benchmarks (47), stop conditions (91),
   optional local model (17, item 64, ask first), docs (93).
 
-**Added by the revised master prompt (`docs/operant-2.0-master-prompt.md`, uploaded 29 Sept; its section numbers)**
+**Sections 1-59 of the full master prompt (`docs/operant-2.0-master-prompt.md`, 100-section edition, uploaded 29 Sept)**
 - [ ] 8 Routing by expected utility: P(success) x value minus model, context, orchestration, verification,
       expected-retry and latency costs (today: pass-rate threshold only).
 - [~] 9 Learning from history with EMAs / time decay / rolling windows / confidence intervals, per task type and
@@ -430,7 +430,7 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
 - Note: section 1 says "Do not build a dashboard around Claude/OpenCode. Build the system that coordinates them",
   so the dashboard (first spec, 84) is a window onto the analytics, not the product.
 
-**Order, revised with both specs**
+**Order, revised with both specs (superseded by the order with all three documents below)**
 - 2.1 (in progress): operations, plus secure handling of credentials in config and backups, auto-update opt-in check.
 - 2.2 Measure everything: the versioned local database (26), token/cost/latency/cache events incl. Operant's own
       overhead (12/38/52), failure classification (42), stored routing decisions with evidence (27), provider and
@@ -443,3 +443,82 @@ of it is still to do). Status: [x] done, [~] partly, [ ] not started. Numbers ar
 - 2.5 Providers and collaboration: provider interfaces and capability routing (5/6), component registry (29),
       degradation chains (30), MCP, security for tools and tool output (31), collaboration roles (11), benchmarks
       by category with replay (35-37), optional local model (ask first), docs.
+
+**Sections 60-100 of the full 100-section master prompt (`docs/operant-2.0-master-prompt.md`)**
+- [~] 60 Repository reconnaissance (done informally each milestone; no kept map).
+- [ ] 61 Architecture boundary map (UI, orchestration, providers, persistence, analytics, memory, context, external).
+- [ ] 62 Dependency inventory: direct and transitive, required vs optional, duplicates.
+- [x] 63 Runtime compatibility: Windows, macOS, Linux, PowerShell/zsh/bash, missing CLIs fall back.
+- [x] 64 Configuration compatibility: config versions and migrations (item 70).
+- [ ] 65 Secrets management: keep keys and tokens out of logs, analytics, prompts, backups and model-visible
+      context; redact at telemetry boundaries. (Check config.json, session.json, logs and backups now, in 2.1.)
+- [~] 66 Prompt-injection resistance: agent messages are framed "not the user, can't approve". Missing: tool output,
+      retrieved docs, MCP responses and repository content treated as data that can't override policy.
+- [~] 67 Tool permission model: worker allowlist for read-only commands. Missing: explicit per-tool permissions shown
+      and controllable; installed != allowed.
+- [ ] 68 Execution sandboxing: limit filesystem, process, network and credential access per task and policy.
+- [~] 69 Cancellation: stop a tile, OpenCode abort, budget stop. Missing: cancelling a task stops its downstream
+      work (verification, escalation) and keeps useful state.
+- [~] 70 Resumability: tiles and Claude sessions come back after a restart. Missing: task checkpoints so an
+      interrupted task resumes without replaying context.
+- [~] 71 Task state machine: board statuses todo/doing/verifying/review/done/failed/blocked. Missing: planning,
+      waiting, recovery and cancelled states, and transitions enforced in one place.
+- [ ] 72 Idempotency: retries and resumes never repeat destructive actions.
+- [~] 73 Concurrency control: max workers. Missing: limits per model, provider, tool and project.
+- [ ] 74 Rate-limit awareness: back off, switch provider or model, queue; no retries against a known-down route
+      (today: plan-limit alerts only).
+- [ ] 75 Cost guardrails: estimate cost before an expensive step and ask when it would exceed the budget.
+- [ ] 76 Latency guardrails: latency budgets in routing.
+- [~] 77 Quality guardrails: checks before review. Missing: configurable quality thresholds, escalate verification
+      when the result is uncertain or high-risk.
+- [~] 78 Task classification: type only. Missing: complexity, risk, capabilities, likely context size, verification
+      need; deterministic or local-model.
+- [~] 79 Task decomposition: skill guidance to hand off independent parts. Missing: decompose only when it lowers
+      risk, context pressure or time, measured.
+- [~] 80 Plan validation: `operant plan` asks the user. Missing: automatic checks for missing constraints,
+      contradictions, excess scope before implementation.
+- [ ] 81 Execution strategy selection: direct, staged, parallel, collaboration, retrieval-first or clarify, by
+      expected benefit.
+- [~] 82 Clarification gate: `operant ask`. Missing: a rule for when to ask (material to correctness, cost, or a
+      destructive action) enforced in the brief/skill.
+- [~] 83 Decision trace: outcomes.jsonl records results. Missing: inputs, alternatives considered and the chosen
+      strategy per decision, without prompt contents.
+- [~] 84 Routing policy engine: routing.js is pure and tested. Missing: policies configurable without code changes.
+- [ ] 85 Routing overrides with explicit scope (temporary / persistent, project / global).
+- [ ] 86 Model capability registry: normalised capabilities per discovered model plus provider metadata.
+- [ ] 87 Provider health scoring that decays, so an old outage doesn't poison routing.
+- [~] 88 Model performance profiles: per task type, min 5 samples. Missing: per project, uncertainty-aware estimates.
+- [x] 89 Cold-start routing: "insufficient data" falls back to the keyword suggestion.
+- [~] 90 Routing explanation API: one-line reason in the CLI. Missing: structured explanation in the UI and CLI.
+- [ ] 91 Context budgeting: allocate before retrieval, keep headroom for output and tool results.
+- [ ] 92 Context deduplication: repeated file content, duplicated tool output, overlapping retrieval, summaries.
+- [ ] 93 Context provenance: where each piece came from, traceable after compression.
+- [~] 94 Context freshness: memory marked stale when its file changes. Missing: the same for any cached context.
+- [ ] 95 Retrieval evaluation: precision, recall proxies, tokens, latency, downstream usefulness.
+- [ ] 96 Compression evaluation: compressed vs uncompressed on representative tasks, net saving without loss.
+- [~] 97 Memory lifecycle: create, verify (used/wrong), decay in ranking, supersede. Missing: promotion, archival and
+      deletion rules.
+- [~] 98 Memory provenance: created date, about links. Missing: source (which session/agent/evidence).
+- [x] 99 Memory isolation: project vs personal memory, nothing written outside a project (2.1).
+- [~] 100 Memory conflicts: supersedes chain. Missing: detect conflicts, prefer newer verified evidence, keep the
+      conflict record.
+
+**Order with all three documents**
+- 2.1: operations (84A-84S, 54-57, 64), plus secrets out of logs/backups/prompts (65) and the auto-update opt-in check.
+- 2.2 Measure: versioned local database with correlation ids (26), token/cost/latency/cache events and Operant's own
+      overhead (1.2/12/38/52), failure classification (42), decision trace (83), provider health with decay (87),
+      model profiles with uncertainty (88), `operant doctor` / `stats` / `route explain` (33/34/90), dashboard +
+      health strip (first spec 84/84M).
+- 2.3 Decide and run: task classification (78), expected-utility routing (8/9) as a configurable policy engine
+      (84) with scoped overrides (85), bounded exploration (10), retries that change something (43), escalation
+      signals (44), verification by risk (22/77), budgets and guardrails for cost, latency, retries, time (23/75/76),
+      rate-limit awareness (74), concurrency limits (73), task state machine with cancellation, checkpoints and
+      idempotent retries (69-72), plan validation and clarification gate (80/82), strategy selection (79/81).
+- 2.4 Context: context engine with budgets, dedup, provenance, freshness (13/40/91-94), git awareness (39),
+      overflow recovery (20), tool-output compression with a worth check (12/19), retrieval and compression
+      evaluation (95/96), structured handoffs (41), memory linked to symbols/commits, lifecycle, provenance and
+      conflicts (45/97/98/100).
+- 2.5 Providers and safety: provider interfaces (5/6), model capability registry (86), component registry (29),
+      degradation chains (30), MCP, prompt-injection resistance (66), tool permissions (67), sandboxing (68),
+      collaboration roles (11), benchmarks by category with replay (35-37), architecture map and dependency
+      inventory (61/62), optional local model (ask first), docs.
