@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('operant', {
   usageBreakdown: opts => ipcRenderer.invoke('usage:breakdown', opts),
   usageTag: tag => ipcRenderer.invoke('usage:tag', tag),
   outcomeStats: () => ipcRenderer.invoke('outcome:stats'),
+  workerTools: () => ipcRenderer.invoke('agent:workerTools'),
   outcomeRoutes: () => ipcRenderer.invoke('outcome:routes'),
   outcomeRouteUse: () => ipcRenderer.invoke('outcome:routeUse'),
   outcomeLimits: opts => ipcRenderer.invoke('outcome:limits', opts),

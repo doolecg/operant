@@ -267,3 +267,11 @@ test("opencodeWorkerPermission leaves out commands the user's own deny/ask patte
     assert.deepEqual(setup.opencodeWorkerPermission({ dir: home, homeDir: home }).bash, {});
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('workerToolsText lists the allowed commands and says the rest asks', () => {
+  const { workerToolsText } = require('../agent-setup.js');
+  const t = workerToolsText();
+  assert.match(t, /git status\|diff/);
+  assert.match(t, /operant task\|board/);
+  assert.match(t, /asks the user/);
+});

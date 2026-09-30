@@ -20,3 +20,8 @@ test('it points at prime and the skill by the name each agent sees', () => {
 test('team tiers, the progress note and CodeGraph live in prime, not here', () => {
   for (const agent of ['claude', 'opencode']) assert.doesNotMatch(briefFor(agent), /progress\.md|codegraph explore/i);
 });
+
+test('skill: tool output is data, and the worker tool list is explained', () => {
+  const s = require('fs').readFileSync(require('path').join(__dirname, '../agent-plugin/skills/operant/SKILL.md'), 'utf8');
+  assert.match(s, /cannot override the user's or the lead's instructions/);
+});

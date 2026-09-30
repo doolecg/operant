@@ -1181,6 +1181,7 @@
         + (Board.attempts(t) > 1 ? `<span class="board-note">attempt ${Board.attempts(t)}${t.tier ? ' · ' + esc(t.tier) : ''}</span>` : '')
         + (t.check ? `<span class="board-note" title="${esc(t.check.summary || '')}">${t.check.ok ? '✓' : '✗'} ${esc(t.check.command || 'checks')}${t.diffStat ? ' · ' + esc(t.diffStat) : ''}</span>` : '')
         + (t.limitUse ? `<span class="board-note">${limitLine(t.limitUse)}</span>` : '')
+        + (t.status === 'review' && TaskType.reviewAdvice(t.profile) ? `<span class="board-note">${esc(TaskType.reviewAdvice(t.profile))}</span>` : '')
         + (t.route ? `<span class="board-note" title="The route this task ran on">${esc(t.route.note)}</span>` : '')
         + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '')
         + (sig ? `<span class="board-note" title="Suggestion only: nothing moves until you choose">${esc(sig)}</span>` : '')
@@ -1302,7 +1303,7 @@
     const next = Board.escalation(t, allowedTierNames(t.cwd || lastCwd), cfg.team?.maxTier);
     if (!next) { failTask(t, `${why} (top tier ${t.tier} reached)`); return; }
     const old = wins.get(t.owner);
-    t.failure = Board.failureNote(t, why);
+    t.failure = Board.handoff(t, why);
     t.escalations = (t.escalations || 0) + 1;
     recordOutcome(t, 'escalated', old);
     t.tokens = addTok(t.tokens, old?.tok);
@@ -1457,21 +1458,27 @@
   }
 
   // A code task's handback: run its checks in a background shell tile and attach the result before review.
-  async function verifyTask(t, command, from) {
+  // `extras` (type check, lint) run after the tests/build pass, one at a time, stopping at the first failure.
+  async function verifyTask(t, command, from, extras = []) {
     let ok = true, summary = '', w;
-    const cwd = t.cwd || from?.cwd || lastCwd;
-    try {
-      w = await newTerminal('shell', cwd, { run: command, title: command.slice(0, 40), ws: from?.ws ?? current, near: from, focus: false });
-      t.checkTile = w.id;
-      await waitQuiet(w, 3000, 600 * 1000);
-      const d = digestOf(from, w);
-      ok = d ? d.ok !== false : !/\b(fail(ed|ures?)?|error)\b/i.test(readOutput(from, w, { lines: 60 }).text.slice(-2000));
-      summary = d ? [d.summary, ...(d.failures || []).map(f => typeof f === 'string' ? f : f.name || f.message || '')].filter(Boolean).join(' ')
-        : readOutput(from, w, { lines: 400, errors: !ok }).text.trim().split('\n').slice(-8).join('\n');
-    } catch (e) { ok = false; summary = String(e.message || e); }
-    if (w?.alive) closeWin(w);
-    delete t.checkTile;
-    if (t.status === 'cancelled') return;
+    const cwd = t.cwd || from?.cwd || lastCwd, ran = [];
+    for (const cmd of [command, ...extras]) {
+      ran.push(cmd);
+      try {
+        w = await newTerminal('shell', cwd, { run: cmd, title: cmd.slice(0, 40), ws: from?.ws ?? current, near: from, focus: false });
+        t.checkTile = w.id;
+        await waitQuiet(w, 3000, 600 * 1000);
+        const d = digestOf(from, w);
+        ok = d ? d.ok !== false : !/\b(fail(ed|ures?)?|error)\b/i.test(readOutput(from, w, { lines: 60 }).text.slice(-2000));
+        summary = d ? [d.summary, ...(d.failures || []).map(f => typeof f === 'string' ? f : f.name || f.message || '')].filter(Boolean).join(' ')
+          : readOutput(from, w, { lines: 400, errors: !ok }).text.trim().split('\n').slice(-8).join('\n');
+      } catch (e) { ok = false; summary = String(e.message || e); }
+      if (w?.alive) closeWin(w);
+      delete t.checkTile;
+      if (t.status === 'cancelled') return;
+      if (!ok) break;
+    }
+    command = ok ? ran.join(' + ') : ran[ran.length - 1];
     t.check = { command, ok, summary: summary.slice(0, 600), at: Date.now() };
     try { t.diffStat = await operant.git('diffstat', cwd) || null; } catch {}
     if (t.status !== 'verifying') { boardChanged(); return; }
@@ -4863,6 +4870,14 @@ Double-click to ${name ? 'rename' : 'name'} it`;
 
   // Small, deliberately un-clever runner detection for `test`/`build` with no explicit command:
   // package.json scripts first, then each ecosystem's own project file.
+  // Item 39: the task's profile (TaskType.describeTask) with the project's file count and main language.
+  async function profileTask(text, cwd) {
+    const has = async rel => !(await operant.readFile(resolvePath(cwd, rel))).error;
+    const files = await operant.git('filecount', cwd).catch(() => 0);
+    const language = await has('tsconfig.json') ? 'typescript' : await has('package.json') ? 'javascript' : await has('Cargo.toml') ? 'rust' : await has('go.mod') ? 'go'
+      : await has('pyproject.toml') || await has('setup.py') ? 'python' : await has('pom.xml') || await has('build.gradle') ? 'java' : null;
+    return TaskType.describeTask(text, { files, language });
+  }
   async function detectProjectCommand(cwd, kind) {
     const has = async rel => !(await operant.readFile(resolvePath(cwd, rel))).error;
     const read = async rel => { const r = await operant.readFile(resolvePath(cwd, rel)); return r.error ? '' : (r.text || ''); };
@@ -5020,6 +5035,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
           if (routed && !args.model) { task.agent = agentId; task.model = model; task.route = routeInfo(routed); }
+          task.profile = await profileTask(task.text, task.cwd || dir).catch(() => TaskType.describeTask(task.text));
           board.tasks.push(task);
           boardChanged();
           prompt = `${args.prompt}${await codegraphBrief(task, task.cwd || dir)} — ${reportLine(taskId)}`;
@@ -5045,7 +5061,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           v: version,
           tile: { id: self.id, kind: self.kind, title: self.title, cwd: self.cwd, project, branch: gitState.get(project)?.status?.branch, agent: self.agentId || null },
           role: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell',
-          task: task ? { id: task.id, text: task.text, tier: self.tier, subagents: subagentLimit() } : null,
+          task: task ? { id: task.id, text: task.text, tier: self.tier, subagents: subagentLimit(), tools: await operant.workerTools().catch(() => null) } : null,
           team: self.tier ? null : teamInfo(self.cwd || lastCwd),
           refineTo: cfg.refineTo === 'team' ? 'team' : 'claude',
           review: self.tier ? [] : board.tasks.filter(t => t.status === 'review').map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
@@ -5205,7 +5221,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             tokens: TierGuard.counted(addTok(t.tokens, w?.tok)), limit: t.tier ? tierBudget(t) : null, limitUse: t.limitUse || null,
             ask: t.ask ? { why: t.ask.why, reason: t.ask.reason, evidence: t.ask.evidence, next: t.ask.next, choices: t.ask.choices.map(c => c.label) } : null,
             askText: TierGuard.askText(t) || null,
-            changes: t.changes || [], closedFrom: t.closedFrom || null,
+            changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: TaskType.reviewAdvice(t.profile),
             signals: (() => { const s = signalsOf(t); return s.up.length || s.down.length ? { suggestionOnly: true, up: s.up.map(x => x.text), down: s.down.map(x => x.text) } : null; })() };
         }
         if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
@@ -5216,11 +5232,18 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const n = wins.get(t.owner);
           const from = n?.alive ? n : self;
           Board.handback(t, status, args.note);
-          let verify = null;
+          let verify = null, extras = [];
           if (status === 'done' && cfg.team?.verifyBeforeReview !== false && TaskType.needsVerification(t)) {
             const cwd = t.cwd || from?.cwd || lastCwd;
             verify = await detectProjectCommand(cwd, 'test') || await detectProjectCommand(cwd, 'build');
-            if (verify) t.status = 'verifying';
+            if (verify) {
+              t.status = 'verifying';
+              if (cfg.team?.verifyTypesLint !== false) {
+                let pkg = null; try { pkg = JSON.parse((await operant.readFile(resolvePath(cwd, 'package.json'))).text || 'null'); } catch {}
+                const list = await operant.listDir(cwd).catch(() => []);
+                extras = TaskType.extraChecks(pkg, Array.isArray(list) ? list.map(f => f.name) : []).map(c => c.command).filter(c => c !== verify);
+              }
+            }
             else t.note = [t.note, 'no test/build command found'].filter(Boolean).join(' · ');
           }
           if (n?.sessionId) operant.stuckReset(n.sessionId);
@@ -5229,7 +5252,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (limitStop) { onLimitEvent(t, n, limitStop); boardChanged(); return { id: t.id, status: 'paused', note: t.note, sub: args.sub }; }
           if (status === 'blocked' || (status === 'failed' && !t.tier)) recordOutcome(t, status);
           if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
-          else if (verify) { verifyTask(t, verify, from); boardChanged(); return { id: t.id, status: t.status, note: t.note, sub: args.sub, verify }; }
+          else if (verify) { verifyTask(t, verify, from, extras); boardChanged(); return { id: t.id, status: t.status, note: t.note, sub: args.sub, verify: [verify, ...extras].join(' + ') }; }
           else if (from) notify(from, status === 'done' ? `Task ${t.id} ready for review: ${taskTldr(t)}` : `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true);
         }
         else if (args.sub === 'approve') {

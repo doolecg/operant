@@ -71,6 +71,8 @@ const META = [
     when: 'Always on in this release', dev: 'TierGuard.ASK_BEFORE_MOVE_UP' },
   { id: 'verifyBeforeReview', path: 'verifyBeforeReview', group: GROUPS[3], label: 'Run checks before review', does: 'When a worker finishes a code task, Operant runs your test or build and attaches the result; a failing check sends it back once.',
     when: 'The next finished worker', dev: 'team.verifyBeforeReview' },
+  { id: 'verifyTypesLint', path: 'verifyTypesLint', group: GROUPS[3], label: 'Run type check and lint too', does: 'After the tests or build pass, Operant also runs the type check and lint the project has (from package.json, tsconfig, Cargo.toml and so on). A failure sends the task back once.',
+    when: 'The next finished worker', dev: 'team.verifyTypesLint' },
   { id: 'messaging', group: GROUPS[3], label: 'Let agents message each other', does: 'Adds operant msg and operant inbox so agents can pass each other short notes. Off by default.',
     when: 'New tiles; a Claude Code tile already open only gets notes when idle', dev: 'messaging' },
   { id: 'localModel', group: GROUPS[4], label: 'Local model', does: 'A model on your computer the free tier falls back to when Big Pickle is busy or out of free use.',
@@ -92,6 +94,7 @@ function effective(cfg, id) {
     case 'savingProgress': return t.savingProgress === 'inside' ? 'Inside the limit' : 'On top of the limit';
     case 'dailyCap': return t.dailyCap ? `${kTok(t.dailyCap)} tokens a day` : 'No cap';
     case 'verifyBeforeReview': return t.verifyBeforeReview === false ? 'Off' : 'On';
+    case 'verifyTypesLint': return t.verifyTypesLint === false ? 'Off' : 'On';
     case 'messaging': return cfg.messaging ? 'On' : 'Off';
     case 'refineTo': return cfg.refineTo === 'team' ? 'Team work' + (t.enabled ? '' : ' (team mode is off, so a send is refused)') : 'A Claude tile';
     case 'askBeforeMoveUp': return 'On';
@@ -192,7 +195,7 @@ function matches(m, q) {
 // Team settings that differ from the defaults (defaults: cfg.team of the shipped config), as paths.
 function changedFrom(team, defaults) {
   const out = [];
-  for (const f of ['enabled', 'maxWorkers', 'maxTier', 'savingProgress', 'dailyCap', 'verifyBeforeReview', ...TIERS.map(x => 'budgets.' + x), ...TIERS.map(x => 'minutes.' + x), ...TIERS.map(x => 'calls.' + x)]) {
+  for (const f of ['enabled', 'maxWorkers', 'maxTier', 'savingProgress', 'dailyCap', 'verifyBeforeReview', 'verifyTypesLint', ...TIERS.map(x => 'budgets.' + x), ...TIERS.map(x => 'minutes.' + x), ...TIERS.map(x => 'calls.' + x)]) {
     if (!same(get(team, f), get(defaults, f))) out.push(f);
   }
   return out;

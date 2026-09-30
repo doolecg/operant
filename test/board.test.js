@@ -137,3 +137,18 @@ test('cancelling clears a pending ask and keeps where the task stood', () => {
   assert.equal(t.note, 'Closed: dropped (was paused, attempt 2; last note: tests still fail)');
   assert.equal(t.retried, true);
 });
+
+test('handoff: structured state on a tier change, only when not longer than the failure note', () => {
+  const plain = mk({ attempts: 2 });
+  assert.equal(b.handoff(plain, 'budget reached'), b.failureNote(plain, 'budget reached'));
+  const t = mk({ attempts: 2, changes: [{ kind: 'tool', text: 'use npm test' }], profile: { risk: 'high', verification: 'full' } });
+  const h = b.handoff(t, 'checks failed');
+  assert.match(h, /^Handoff: attempt 2 failed \(checks failed\)/);
+  for (const part of ['decisions: tool: use npm test', 'risk high']) assert.ok(h.includes(part), part);
+  assert.ok(h.length <= b.failureNote(t, 'checks failed').length);
+  const checked = mk({ attempts: 2, profile: { risk: 'low' }, check: { ok: true, command: 'npm test' } });
+  assert.match(b.handoff(checked, 'x'), /checks passed: npm test/);
+  // too much state: falls back to the plain failure note
+  const big = mk({ attempts: 2, changes: [{ kind: 'strategy', text: 'x'.repeat(200) }, { kind: 'tool', text: 'y'.repeat(200) }], diffStat: 'z'.repeat(200), check: { ok: true, command: 'npm test' } });
+  assert.equal(b.handoff(big, 'nope'), b.failureNote(big, 'nope'));
+});

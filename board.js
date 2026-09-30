@@ -111,6 +111,23 @@ function failureNote(task, why) {
   return `Attempt ${attempts(task)} on the ${task.tier || 'previous'} tier did not work: ${clean(why)}\nThe repo may hold its partial changes: check them, do not repeat the same approach.`;
 }
 
+// Item 41/11: the task's state for the next worker on a tier change, built from what the board knows:
+// decisions (the stated retry changes), constraints (the profile's risk), files (diff stat) and
+// verification (the last check). One line. It replaces the failure note, unless it has nothing to add or is longer.
+function handoff(task, why) {
+  const cut = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const parts = [];
+  const decisions = (task.changes || []).slice(-2).map(c => `${c.kind}: ${cut(c.text, 40)}`);
+  if (decisions.length) parts.push(`decisions: ${decisions.join('; ')}`);
+  if (task.profile) parts.push(`risk ${task.profile.risk}`);
+  if (task.diffStat) parts.push(`files: ${cut(task.diffStat, 40)}`);
+  if (task.check) parts.push(`checks ${task.check.ok ? 'passed' : 'failed'}: ${cut(task.check.command, 30)}`);
+  const note = failureNote(task, why);
+  if (!parts.length) return note;
+  const text = `Handoff: attempt ${attempts(task)} failed (${cut(why || 'no reason given', 50)}); ${parts.join('; ')}. Repo may hold partial work; change approach.`;
+  return text.length <= note.length ? text : note;
+}
+
 // A worker went idle without reporting: did it change its folder? before/after: { head, status, stat } from git:snapshot.
 // -> { changed, note } ; note is the handback text when changed. Nothing to compare (no snapshot) counts as unchanged.
 function unreportedChange(before, after) {
@@ -133,6 +150,6 @@ function readyToClose(board, w, { busy = false, waiting = false, read = false } 
   return review;
 }
 
-const api = { retryChange, noteChange, readyToClose, unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
+const api = { retryChange, noteChange, readyToClose, unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, handoff, attempts };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
 })();

@@ -502,6 +502,7 @@ const Panels = (() => {
         '<span class="hint">From at least 5 passed tasks per tier: the 90th percentile of tokens used, plus 25%.</span>');
       case 'askBeforeMoveUp': return shell('<button class="toggle on" disabled title="Always on in this release"></button>');
       case 'verifyBeforeReview': return shell(tog('data-team-verify', team.verifyBeforeReview !== false));
+      case 'verifyTypesLint': return shell(tog('data-team-typelint', team.verifyTypesLint !== false));
       case 'messaging': return shell(tog('data-messaging', cfg.messaging));
       case 'refineTo': return shell(`<select data-refine-to><option value="claude"${cfg.refineTo !== 'team' ? ' selected' : ''}>A Claude tile</option><option value="team"${cfg.refineTo === 'team' ? ' selected' : ''}>Team work</option></select>`);
       case 'localModel': return `<div data-sid="localModel">${localModelBlock(cfg, ext)}</div>`;
@@ -812,6 +813,7 @@ const Panels = (() => {
       });
       pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
       pane.querySelectorAll('[data-team-verify]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), verifyBeforeReview: cfg.team?.verifyBeforeReview === false }); draw(); });
+      pane.querySelectorAll('[data-team-typelint]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), verifyTypesLint: cfg.team?.verifyTypesLint === false }); draw(); });
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {
         const n = Math.min(16, Math.max(1, Math.round(+el.value || 4)));
         el.value = n; set('team', { ...(cfg.team || {}), maxWorkers: n });

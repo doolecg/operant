@@ -226,6 +226,7 @@ const DEFAULT_CONFIG = {
     maxWorkers: 4,
     maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
     verifyBeforeReview: true,   // run the project's test/build command on a code task's handback, before review
+    verifyTypesLint: true,      // and, when the project has them, its type check and lint after the tests pass
   },
   masterOnStartup: true,          // ask which folder to work in when Operant starts, then open a "master" agent there
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
@@ -1234,6 +1235,11 @@ ipcMain.handle('git:diffstat', async (_e, dir) => {
   const r = await run('git', ['-C', dir, 'diff', 'HEAD', '--stat']);
   return r.code === 0 ? (r.stdout.trim().split('\n').pop() || '').trim() : '';
 });
+// How many files git tracks in a folder (0 when unknown), for a task's repo-size class.
+ipcMain.handle('git:filecount', async (_e, dir) => {
+  const r = await run('git', ['-C', dir, 'ls-files', '-z']);
+  return r.code === 0 ? r.stdout.split('\0').filter(Boolean).length : 0;
+});
 // A folder's git state for "did the worker change anything": HEAD, the porcelain status, and the diffstat since `base` (default HEAD).
 ipcMain.handle('git:snapshot', async (_e, { dir, base } = {}) => {
   const head = await run('git', ['-C', dir, 'rev-parse', 'HEAD']);
@@ -1696,6 +1702,7 @@ function outcomeStats() {
   } catch { return {}; }
 }
 ipcMain.handle('outcome:stats', async () => outcomeStats());
+ipcMain.handle('agent:workerTools', () => agentSetup.workerToolsText());
 // Item 92: suggested limits per tier (and task type, when given) from the outcomes file; never applied here.
 ipcMain.handle('outcome:limits', async (_e, { tiers, tier, type, current, fallback } = {}) => {
   try {

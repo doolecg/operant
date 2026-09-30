@@ -405,6 +405,12 @@ function workerAllowRules() {
   ];
 }
 
+// Item 67: what a worker tier may run without asking, as one line for `operant task show` and `operant prime`.
+// Installed is not allowed: every other command, file edit and MCP tool follows the user's own permission rules. Same for every tier.
+function workerToolsText() {
+  return `allowed without asking: git ${WORKER_GIT.join('|')}; operant ${WORKER_OPERANT.join('|')}; ls, pwd. Everything else (other commands, file edits, MCP tools) asks the user, whatever its tier.`;
+}
+
 // The same list as OpenCode `permission.bash` patterns (wildcard -> "allow"). A bare command is listed too,
 // since OpenCode's `git status *` needs the trailing text. Ours are merged after the user's and a later pattern
 // wins there, so a command one of the user's own "deny"/"ask" patterns covers is left out (and none at all when
@@ -455,7 +461,7 @@ module.exports = {
   claudeExtraArgs, writeClaudeMcpConfigFile, mainAgentId,
   findPluginSkillDirs, syncPluginSkillsMirror,
   findCodegraphPromptHookCommand, codegraphPluginEntry,
-  buildOpencodeConfigContent, workerAllowRules, opencodeWorkerPermission, opencodeConfigFiles,
+  buildOpencodeConfigContent, workerAllowRules, workerToolsText, opencodeWorkerPermission, opencodeConfigFiles,
   isOperantSkillFile, removeLegacySkillCopies, pluginDirsEnv, opencodeSkillPaths,
   probeClaudePluginDir, probeOpencodeSkillPaths,
   desirePathLine, appendDesirePath, hookSettingsContent, readJson,
