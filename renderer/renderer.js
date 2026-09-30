@@ -1175,6 +1175,7 @@
     const groups = [['paused', 'Waiting for you'], ['todo', 'To do'], ['doing', 'Doing'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['cancelled', 'Closed'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
+      const sig = ['review', 'failed', 'blocked'].includes(t.status) ? Routing.signalLine(signalsOf(t)) : '';
       return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text" title="${esc(t.text)}">${esc(taskTldr(t))}</span>`
         + (owner ? `<button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : '<span class="board-owner unassigned">unassigned</span>')
         + (Board.attempts(t) > 1 ? `<span class="board-note">attempt ${Board.attempts(t)}${t.tier ? ' · ' + esc(t.tier) : ''}</span>` : '')
@@ -1182,6 +1183,7 @@
         + (t.limitUse ? `<span class="board-note">${limitLine(t.limitUse)}</span>` : '')
         + (t.route ? `<span class="board-note" title="The route this task ran on">${esc(t.route.note)}</span>` : '')
         + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '')
+        + (sig ? `<span class="board-note" title="Suggestion only: nothing moves until you choose">${esc(sig)}</span>` : '')
         + (t.status === 'paused' && t.ask ? askCard(t) : '') + '</div>';
     };
     $('#board-body').innerHTML = groups.map(([k, label]) => {
@@ -1190,6 +1192,13 @@
     }).join('');
   }
   function boardChanged() { renderBoard(); saveSession(); }
+  // Escalation and downgrade signals (routing.js): suggestions only, shown on the review card and in `operant task show`.
+  function signalsOf(t) {
+    const w = wins.get(t.owner), ctx = w?.ctx?.tokens ?? null;
+    const deps = board.tasks.filter(x => x !== t && x.lead === t.lead && !['done', 'cancelled'].includes(x.status)).length;
+    const conf = /\b(not sure|unsure|guess(ed)?|uncertain|couldn't verify)\b/i.test(t.note || '') ? 0.3 : null;
+    return Routing.signals(t, { confidence: conf, deps, contextTokens: ctx, contextPct: w ? pctOf(w) * 100 : 0, missingContext: /\b(no context|missing context|couldn't find|cannot find)\b/i.test(t.note || '') });
+  }
 
   // Workers, review and escalation (board.js has the rules). A worker's `done` waits in review; a
   // failure or a rejection gets one retry at the same tier. After that, and whenever the stuck guard fires or a
@@ -1303,6 +1312,7 @@
     Board.moveUp(t, next);
     if (old?.alive) closeWin(old);
     boardChanged();
+    if (t.status === 'cancelled') return;
     try { await startWorker(t, next); tell(t, `Task ${t.id} moved up to ${next}`, why); }
     catch (e) { failTask(t, `could not start a ${next} worker: ${e.message || e}`); }
   }
@@ -1311,7 +1321,7 @@
   function taskFailed(t, why, opts) {
     const w = wins.get(t.owner);
     if (Board.failure(t, why, opts) === 'retry') retryTask(t, w, `Your attempt did not work: ${oneLine(why)}. Try once more, differently`);
-    else askUser(t, 'failed', why);
+    else askUser(t, 'failed', !t.retried && !opts?.noRetry ? `${why} (a retry would change nothing, so asking you)` : why);
   }
 
   // ---- Items 91/92: ask before moving up, and hard token limits (tier-guard.js has the rules).
@@ -1362,6 +1372,7 @@
       await escalateTask(t, ask.reason || ask.why);
     } else if (r.do === 'retry') {
       t.note = `Your hint: ${r.hint}`;
+      Board.noteChange(t, { kind: 'context', text: oneLine(r.hint).slice(0, 240) });
       await retryTask(t, w, `The user looked at where this stopped (${oneLine(ask.reason || ask.why)}) and says: ${oneLine(r.hint)}. Use that`);
     } else if (r.do === 'raise') {
       await continueTask(t, w);
@@ -1451,6 +1462,7 @@
     const cwd = t.cwd || from?.cwd || lastCwd;
     try {
       w = await newTerminal('shell', cwd, { run: command, title: command.slice(0, 40), ws: from?.ws ?? current, near: from, focus: false });
+      t.checkTile = w.id;
       await waitQuiet(w, 3000, 600 * 1000);
       const d = digestOf(from, w);
       ok = d ? d.ok !== false : !/\b(fail(ed|ures?)?|error)\b/i.test(readOutput(from, w, { lines: 60 }).text.slice(-2000));
@@ -1458,6 +1470,8 @@
         : readOutput(from, w, { lines: 400, errors: !ok }).text.trim().split('\n').slice(-8).join('\n');
     } catch (e) { ok = false; summary = String(e.message || e); }
     if (w?.alive) closeWin(w);
+    delete t.checkTile;
+    if (t.status === 'cancelled') return;
     t.check = { command, ok, summary: summary.slice(0, 600), at: Date.now() };
     try { t.diffStat = await operant.git('diffstat', cwd) || null; } catch {}
     if (t.status !== 'verifying') { boardChanged(); return; }
@@ -1470,6 +1484,7 @@
 
   // Back to 'doing' in the same tile; with no live tile left, a new worker on the same tier.
   async function retryTask(t, w, lead) {
+    if (t.status === 'cancelled') return;
     boardChanged();
     if (w?.sessionId) operant.stuckReset(w.sessionId);
     // The tier's model changed since this worker started (Big Pickle down, the local model up, or back): retry on the tier's current one.
@@ -5189,7 +5204,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           return { sub: 'show', id: t.id, status: t.status, tier: t.tier || null, attempts: Board.attempts(t), text: t.text, note: t.note, owner: fmtOwner(t.owner),
             tokens: TierGuard.counted(addTok(t.tokens, w?.tok)), limit: t.tier ? tierBudget(t) : null, limitUse: t.limitUse || null,
             ask: t.ask ? { why: t.ask.why, reason: t.ask.reason, evidence: t.ask.evidence, next: t.ask.next, choices: t.ask.choices.map(c => c.label) } : null,
-            askText: TierGuard.askText(t) || null };
+            askText: TierGuard.askText(t) || null,
+            changes: t.changes || [], closedFrom: t.closedFrom || null,
+            signals: (() => { const s = signalsOf(t); return s.up.length || s.down.length ? { suggestionOnly: true, up: s.up.map(x => x.text), down: s.down.map(x => x.text) } : null; })() };
         }
         if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
         else if (args.sub === 'done') {
@@ -5231,12 +5248,15 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (!args.note) throw new Error('--note "<why>" required');
           const w = wins.get(t.owner);
           if (Board.reject(t, args.note) === 'retry') retryTask(t, w, `The lead rejected your result: ${oneLine(args.note)}. Fix it`);
-          else askUser(t, 'rejected', `rejected twice: ${oneLine(args.note)}`);
+          else askUser(t, 'rejected', t.retried ? `rejected twice: ${oneLine(args.note)}` : `rejected, and a retry would change nothing (${oneLine(args.note)})`);
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else if (args.sub === 'cancel') {
           // Closed by you, with or without a reason: its worker stops and its tile closes; never retried, not an outcome.
           Board.cancel(t, args.note);
+          const vt = wins.get(t.checkTile); // a running verification stops with it
+          if (vt?.alive) closeWin(vt);
+          delete t.checkTile;
           const w = wins.get(t.owner);
           if (w?.alive && w.tier && !board.tasks.some(x => x !== t && x.owner === w.id && Board.isOpen(x))) { t.free = !!w.tok?.free; closeWin(w); }
         }

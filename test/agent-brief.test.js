@@ -5,7 +5,7 @@ const { BRIEF, briefFor } = require('../agent-brief.js');
 
 test('the brief is short and identical every launch', () => {
   for (const agent of ['claude', 'opencode']) {
-    assert.ok(Buffer.byteLength(briefFor(agent)) <= 640, `${agent}: ${Buffer.byteLength(briefFor(agent))} bytes`);
+    assert.ok(Buffer.byteLength(briefFor(agent)) <= 760, `${agent}: ${Buffer.byteLength(briefFor(agent))} bytes`);
     assert.equal(briefFor(agent), briefFor(agent));
   }
   assert.equal(BRIEF, briefFor('claude'));

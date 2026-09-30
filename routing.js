@@ -30,6 +30,31 @@ function route({ prompt, tiers, stats, counter, fallback }) {
   return { tier: fallback?.tier ?? tiers[0], basis: 'insufficient data', reason: `insufficient data for ${type} tasks (${k} recorded); ${fallback?.reason ?? 'no keyword match'}` };
 }
 
-const api = { route };
+// Escalation and downgrade signals for one task. They only suggest: nothing here moves a task, and moving up always
+// asks the user (tier-guard.js). facts: { confidence 0..1 | null, deps, contextPct, contextTokens, missingContext }.
+// -> { up: [{ id, text }], down: [{ id, text }] }, either list empty when no signal fires.
+const HIGH_RISK = /\b(delete|drop|migrat\w*|security|auth\w*|password|secret|payment|billing|production|deploy|force[- ]push|schema|encrypt\w*)\b/i;
+const AMBIGUOUS = /\b(maybe|somehow|not sure|either|or something|whatever|i guess|figure out|etc)\b|\?/i;
+const risk = text => (HIGH_RISK.test(String(text || '')) ? 'high' : 'low');
+function signals(task, facts = {}) {
+  const text = String(task?.text || ''), up = [], down = [];
+  const add = (list, id, why) => list.push({ id, text: why });
+  if (facts.confidence != null && facts.confidence < 0.5) add(up, 'low-confidence', `low confidence (${Math.round(facts.confidence * 100)}%)`);
+  if (risk(text) === 'high') add(up, 'high-risk', 'high risk: touches something hard to undo or security-sensitive');
+  if ((facts.deps || 0) >= 6) add(up, 'big-graph', `big dependency graph (${facts.deps} linked tasks)`);
+  if (AMBIGUOUS.test(text)) add(up, 'ambiguity', 'the request is ambiguous');
+  if (task?.check && task.check.ok === false) add(up, 'failed-verification', `verification failed: ${task.check.command || 'checks'}`);
+  if (facts.missingContext || (facts.contextPct || 0) >= 85) add(up, 'insufficient-context', 'the worker lacks context or is near its context limit');
+  if (!up.length && !(task?.changes || []).length) {
+    if (text.length && text.length <= 120) add(down, 'simple', 'simple task');
+    if (risk(text) === 'low' && !up.length) add(down, 'low-risk', 'low risk');
+    if (facts.contextTokens != null && facts.contextTokens <= 8000) add(down, 'small-context', `small context (${facts.contextTokens} tokens)`);
+    if (down.length < 2) down.length = 0; // one weak hint is not a downgrade signal
+  }
+  return { up, down };
+}
+const signalLine = s => [s.up.length ? `consider a higher tier: ${s.up.map(x => x.text).join('; ')}` : '', s.down.length ? `could run on a lower tier: ${s.down.map(x => x.text).join('; ')}` : ''].filter(Boolean).join(' · ');
+
+const api = { route, signals, signalLine, risk };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Routing = api;
 })();

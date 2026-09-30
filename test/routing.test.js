@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { route } = require('../routing');
+const { route, signals, signalLine } = require('../routing');
 
 const tiers = ['xsmall', 'small', 'medium', 'high'];
 const fallback = { tier: 'small', reason: 'short prompt' };
@@ -50,4 +50,22 @@ test('too little data falls back to the keyword suggestion', () => {
 test('never returns a tier outside the given ones', () => {
   const r = route({ prompt: 'fix it', tiers: ['xsmall', 'small'], stats: { fix: { medium: cell(9), small: cell(0, 5) } }, counter: 0, fallback });
   assert.equal(r.tier, 'small');
+});
+
+test('signals suggest a higher tier for risk, ambiguity, failed checks and weak context; they change nothing', () => {
+  const task = { id: 1, text: 'maybe drop the old users table', check: { ok: false, command: 'npm test' } };
+  const copy = JSON.stringify(task);
+  const s = signals(task, { confidence: 0.3, deps: 7, contextPct: 90 });
+  assert.deepEqual(s.up.map(x => x.id), ['low-confidence', 'high-risk', 'big-graph', 'ambiguity', 'failed-verification', 'insufficient-context']);
+  assert.deepEqual(s.down, []);
+  assert.equal(JSON.stringify(task), copy);
+  assert.match(signalLine(s), /^consider a higher tier: low confidence/);
+});
+
+test('signals suggest a lower tier only for simple, low-risk, small tasks', () => {
+  const s = signals({ id: 2, text: 'rename foo to bar' }, { contextTokens: 2000 });
+  assert.deepEqual(s.up, []);
+  assert.deepEqual(s.down.map(x => x.id), ['simple', 'low-risk', 'small-context']);
+  assert.deepEqual(signals({ id: 3, text: 'rename foo', changes: [{}] }, {}).down, []);
+  assert.equal(signalLine({ up: [], down: [] }), '');
 });

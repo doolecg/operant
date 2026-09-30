@@ -23,30 +23,57 @@ function approve(task) {
 
 // You closed the task (the Terminal's Close / Close with reason): it ends here, is never retried or moved up, and is not
 // a model failure. Anything not already finished can be closed.
+// Its pending ask, retry, escalation and check stop with it; the note keeps where it stood (task.closedFrom) for whoever picks it up.
 function cancel(task, reason) {
   if (task.status === 'done' || task.status === 'cancelled') throw new Error(`task ${task.id} is already ${task.status}`);
+  const was = task.status, last = String(task.note || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  task.closedFrom = { status: was, attempt: attempts(task), note: last || null };
   task.status = 'cancelled';
-  task.note = reason ? `Closed: ${String(reason).trim()}` : 'Closed';
+  task.retried = true; // nothing retries it
+  delete task.ask;
+  const why = reason ? `Closed: ${String(reason).trim()}` : 'Closed';
+  task.note = was === 'todo' ? why : `${why} (was ${was}, attempt ${attempts(task)}${last ? `; last note: ${last}` : ''})`;
   return task;
 }
 
-// First strike on a tier: back to 'doing' with the note. Second: 'ask' (the user decides; never a move up by itself).
-function strike(task) {
-  if (!task.retried) { task.retried = true; task.status = 'doing'; return 'retry'; }
-  return 'ask';
+// A retry must change something: the prompt (the lead's note), context, strategy, tool or verification.
+// -> { kind, text } naming the change, or null when there is none (an empty or generic reason, or the very
+// change the last retry already had), and then the user is asked instead of retrying.
+const KINDS = ['context', 'prompt', 'strategy', 'tool', 'verification'];
+const GENERIC = /^(rejected|failed|checks failed|no reason given|it failed|did not work)?\.?$/i;
+function retryChange(task, kind, text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!KINDS.includes(kind) || !t || GENERIC.test(t)) return null;
+  const last = (task.changes || []).slice(-1)[0];
+  return last && last.text === t.slice(0, 240) ? null : { kind, text: t.slice(0, 240) };
+}
+// Records a change on the task (every retry, including one the user answers with a hint).
+function noteChange(task, change) {
+  (task.changes = task.changes || []).push({ ...change, attempt: attempts(task) });
+  return task;
+}
+
+// First strike on a tier: back to 'doing' with the stated change recorded. Second, or nothing changed: 'ask' (the user
+// decides; never a move up by itself).
+function strike(task, change) {
+  if (!change || task.retried) return 'ask';
+  task.retried = true; task.status = 'doing';
+  noteChange(task, change);
+  return 'retry';
 }
 
 function reject(task, note) {
   if (task.status !== 'review') throw new Error(`task ${task.id} is ${task.status}, not waiting for review`);
   task.note = String(note || 'rejected');
-  return strike(task);
+  return strike(task, retryChange(task, 'prompt', note));
 }
 
 // A failed attempt: retry once (unless noRetry), then 'ask'.
-function failure(task, note, { noRetry } = {}) {
+// A retry needs a stated change: `change` is { kind, text }, else the failure itself is the new context for a different strategy.
+function failure(task, note, { noRetry, change } = {}) {
   task.note = String(note || 'failed');
   if (noRetry) return 'ask';
-  return strike(task);
+  return strike(task, change || retryChange(task, 'strategy', note));
 }
 
 // The checks failed on a task in 'verifying': the first time it goes back like a reject, then the lead sees it in review.
@@ -54,7 +81,8 @@ function verifyFailed(task, note) {
   task.status = 'review';
   if (task.verifyRetried) { task.note = String(note || 'checks failed'); return 'review'; }
   task.verifyRetried = true;
-  return reject(task, note);
+  task.note = String(note || 'checks failed');
+  return strike(task, retryChange(task, 'verification', note)) === 'retry' ? 'retry' : 'review';
 }
 
 // The next tier above the task's, up to maxTier; null at the top. `tiers` is an ordered list of names.
@@ -105,6 +133,6 @@ function readyToClose(board, w, { busy = false, waiting = false, read = false } 
   return review;
 }
 
-const api = { readyToClose, unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
+const api = { retryChange, noteChange, readyToClose, unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, attempts };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
 })();

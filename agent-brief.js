@@ -16,6 +16,7 @@ function briefFor(agent) {
     'Ping user: `operant notify "<text>"`.',
     "Cheapest subagent tier that fits (free, xsmall, small, medium), independents in parallel; other CLI's parts go to one master worker: `operant agent --tier <t> \"<numbered parts>\"`.",
     'Review a worker: `operant read <tile>`, `operant test`, then `operant task approve <id>` or `reject <id> --note "<why>"`.',
+    '`operant ask` only if the answer changes correctness, cost or a destructive step; else decide and note it.',
     'With .codegraph: first code action is a CodeGraph query. Keep replies short.',
     `More: the \`${SKILL_NAME[agent] || 'operant'}\` skill.`,
   ].join('\n');

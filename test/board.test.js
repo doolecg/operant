@@ -90,9 +90,11 @@ test('escalation only reaches tiers the project mode allows', () => {
 test('closing a task ends it with your reason, never retried or open again', () => {
   const t = b.cancel(mk(), 'not needed any more');
   assert.equal(t.status, 'cancelled');
-  assert.equal(t.note, 'Closed: not needed any more');
+  assert.match(t.note, /^Closed: not needed any more \(was doing, attempt 1\)$/);
+  assert.deepEqual(t.closedFrom, { status: 'doing', attempt: 1, note: null });
   assert.equal(b.isOpen(t), false);
-  assert.equal(b.cancel(mk({ status: 'review' })).note, 'Closed');
+  assert.equal(b.cancel(mk({ status: 'review' })).note, 'Closed (was review, attempt 1)');
+  assert.equal(b.cancel(mk({ status: 'todo' })).note, 'Closed');
   assert.throws(() => b.cancel(mk({ status: 'done' })), /already done/);
   assert.throws(() => b.cancel(t), /already cancelled/);
 });
@@ -110,4 +112,28 @@ test('readyToClose: only a read, idle worker whose task waits in review', () => 
   const two = { tasks: [b.handback(mk({ owner: 7 }), 'done'), mk({ id: 2, owner: 7, status: 'doing' })] };
   assert.equal(b.readyToClose(two, w, { read: true }), null, 'other open task');
   assert.equal(b.readyToClose({ tasks: [b.handback(mk({ owner: 7 }), 'blocked')] }, w, { read: true }), null);
+});
+
+test('a retry must carry a stated change, recorded on the task; nothing changed means ask', () => {
+  const t = mk({ status: 'review' });
+  assert.equal(b.reject(t, 'use the existing helper, not a new one'), 'retry');
+  assert.deepEqual(t.changes, [{ kind: 'prompt', text: 'use the existing helper, not a new one', attempt: 1 }]);
+  const u = mk({ status: 'review' });
+  assert.equal(b.reject(u, ''), 'ask');
+  assert.equal(u.retried, undefined);
+  assert.equal(b.failure(mk(), 'failed'), 'ask');
+  assert.equal(b.failure(mk(), 'x', { change: { kind: 'tool', text: 'use the repo script' } }), 'retry');
+  const v = mk({ status: 'verifying' });
+  assert.equal(b.verifyFailed(v, 'checks failed: npm test - 2 failing'), 'retry');
+  assert.equal(v.changes[0].kind, 'verification');
+  const same = mk({ changes: [{ kind: 'prompt', text: 'same', attempt: 1 }] });
+  assert.equal(b.retryChange(same, 'prompt', 'same'), null);
+  assert.equal(b.retryChange(same, 'nonsense', 'x'), null);
+});
+
+test('cancelling clears a pending ask and keeps where the task stood', () => {
+  const t = b.cancel(mk({ status: 'paused', ask: { why: 'x' }, attempts: 2, note: 'tests still fail' }), 'dropped');
+  assert.equal(t.ask, undefined);
+  assert.equal(t.note, 'Closed: dropped (was paused, attempt 2; last note: tests still fail)');
+  assert.equal(t.retried, true);
 });
