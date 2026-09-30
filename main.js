@@ -29,6 +29,7 @@ const failureClass = require('./failure-class');
 const routeHealthLib = require('./route-health');
 const analytics = require('./analytics');
 const ops = require('./ops');
+const seatsLib = require('./seats');
 const registry = require('./registry');
 const routingLib = require('./routing');
 const tierGuard = require('./tier-guard');
@@ -595,7 +596,7 @@ function startControlServer() {
           const done = await bgTasks.settled(t.id, (Number(args.timeout) || 600) * 1000);
           return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
         }
-        if (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history'].includes(cmd)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
+        if (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat'].includes(cmd)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -1679,6 +1680,25 @@ ipcMain.handle('basement:run', async (_e, { command, cwd, title, timeoutMs }) =>
 });
 ipcMain.handle('usage:summary', () => usage.summary());
 // Item 92: a project's counted tokens today (input + output + cache writes), for its daily cap.
+// Seat binding for the renderer (renderer/renderer.js): op 'take' | 'release' | 'keep' | 'boost' | 'plan' on the project's seats file.
+ipcMain.handle('seats:op', (_e, { dir, op, seat, ...o }) => {
+  try {
+    const root = memory.memoryProjectDir(dir) || dir;
+    if (!root) return { ok: false, error: 'no project folder' };
+    if (op === 'plan') { // may this seat be filled, at which tier, with which brief? nothing is changed
+      const st = seatsLib.load(root), s = seatsLib.need(st, seat);
+      const can = seatsLib.canFill(s, { userAsked: true, tierUpApproved: !!o.tierUpApproved });
+      return { ok: true, result: { tier: seatsLib.tierFor(s, { tier: o.tier }), brief: seatsLib.brief(s), kind: s.kind, ...can } };
+    }
+    return { ok: true, result: seatsLib.update(root, st => {
+      if (op === 'take') return seatsLib.take(st, seat, { tileId: o.tileId, podId: o.podId });
+      if (op === 'release') return seatsLib.release(st, seat, { task: o.task, reason: o.reason, empty: !!o.empty, extra: o.extra, tileId: o.tileId });
+      if (op === 'keep') return seatsLib.keep(st, seat, { task: o.task, reason: o.reason, extra: o.extra });
+      if (op === 'boost') return seatsLib.boost(st, seat, o.tier, o.taskId);
+      throw new Error(`unknown seat op "${op}"`);
+    }) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle('usage:projectToday', (_e, cwd) => usage.todayFor(cwd ? path.basename(cwd) : ''));
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 
@@ -1768,6 +1788,26 @@ async function opsCommand(cmd, args = {}) {
       versions: { Operant: app.getVersion(), Electron: process.versions.electron, Node: process.versions.node, CodeGraph: await codegraphVersion().catch(() => null) },
       contextProviders: { codegraph: okc('codegraph'), memory: !health.some(c => c.id === 'memory' && c.state === 'unavailable'), git, ripgrep: rg } });
     return { ok: true, result: { rows, text: ops.formatDoctor(rows) } };
+  }
+  if (cmd === 'seats' || cmd === 'seat') {
+    const dir = memory.memoryProjectDir(args.cwd) || args.cwd;
+    if (!dir) return { ok: false, error: 'no project folder' };
+    try {
+      if (cmd === 'seats') { const store = seatsLib.load(dir); return { ok: true, result: { seats: store.seats, text: seatsLib.formatTable(store) } }; }
+      if (args.sub === 'set') {
+        if (!args.id) return { ok: false, error: 'usage: operant seat set <id> [--tier t] [--guidance "text"]' };
+        if (args.tier == null && args.guidance == null) return { ok: false, error: 'give --tier or --guidance' };
+        const seat = seatsLib.update(dir, st => {
+          if (args.tier != null) seatsLib.setTier(st, String(args.id), String(args.tier));
+          if (args.guidance != null) seatsLib.setGuidance(st, String(args.id), String(args.guidance));
+          return seatsLib.need(st, String(args.id));
+        });
+        return { ok: true, result: { seat, text: seatsLib.formatSeat(seat) } };
+      }
+      if (!args.id) return { ok: false, error: 'usage: operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]' };
+      const seat = seatsLib.need(seatsLib.load(dir), String(args.id));
+      return { ok: true, result: { seat, text: seatsLib.formatSeat(seat) } };
+    } catch (e) { return { ok: false, error: e.message }; }
   }
   if (cmd === 'providers') {
     const list = ops.providersList({ agents: config.agents, installed: cliInstalled, credentials: ops.collectCredentials() });

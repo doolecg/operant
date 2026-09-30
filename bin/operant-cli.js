@@ -16,7 +16,7 @@ const POSITIONAL = {
   summarize: ['target', 'question'], find: ['question'],
   remember: ['text'], recall: ['query'],
   msg: ['id', 'text'], inbox: [],
-  doctor: [], providers: [], models: [], components: ['sub', 'id'], history: ['sub'], stats: [], route: ['sub', 'id'],
+  doctor: [], providers: [], models: [], components: ['sub', 'id'], history: ['sub'], stats: [], route: ['sub', 'id'], seats: [], seat: ['sub', 'id'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', test: 'command', build: 'command',
@@ -50,11 +50,11 @@ const COMMANDS = {
 
   browse: { group: 'browser', usage: 'operant browse <url>', desc: 'open a URL in the default browser (follows Settings › General › Open links in)', examples: ['operant browse localhost:3000'], flags: [] },
 
-  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier free|xsmall|small|medium|high|max] [--budget tokens] [--model id] [--cwd c] [--title t] [--focus]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task, and prints its token limit with the suggested limit from past tasks; --budget overrides the tier\'s hard token limit for that task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier xsmall'], flags: ['agent', 'tier', 'budget', 'model', 'cwd', 'title', 'focus'] },
+  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier free|xsmall|small|medium|high|max] [--budget tokens] [--model id] [--seat id] [--cwd c] [--title t] [--focus]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task, and prints its token limit with the suggested limit from past tasks; --budget overrides the tier\'s hard token limit for that task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier xsmall'], flags: ['agent', 'tier', 'budget', 'model', 'seat', 'cwd', 'title', 'focus'] },
   ask: { group: 'agents & tasks', usage: 'operant ask <question...> [--options "A,B,C"] [--detail d]', desc: 'blocking dialog, returns the choice (comma-separated options; a | works in bash but PowerShell hands it to cmd.exe as a pipe)', examples: ['operant ask "Delete old migrations?" --options "Delete,Keep"'], flags: ['options', 'detail'] },
   notify: { group: 'agents & tasks', usage: 'operant notify <text...> [--title t]', desc: 'Windows notification', examples: ['operant notify "Tests pass, ready for review"'], flags: ['title'] },
   plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'], flags: [] },
-  task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | show <id> | done <id> [--status done|blocked|failed] [--note n] | approve <id> | reject <id> --note "<why>" | note <id> "<text>" | cancel <id> [--note "<reason>"]', desc: 'add/claim/show/finish/note/close a board task (cancel stops its worker, never retried); a worker reports with done --status and a short note (files changed, one line each; open issues); done waits in review until the lead runs approve, or reject with the reason (one retry, then the task is paused and the user decides; show prints why and the choices)', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --status done --note "login.js: null check on refresh; open: none"', 'operant task done 3 --status blocked --note "needs the API key from the user"', 'operant task approve 3', 'operant task reject 3 --note "the null check is missing on refresh"'], flags: ['for', 'note', 'status'] },
+  task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] [--seat id] | claim <id> | show <id> | done <id> [--status done|blocked|failed] [--note n] | approve <id> | reject <id> --note "<why>" | note <id> "<text>" | cancel <id> [--note "<reason>"]', desc: 'add/claim/show/finish/note/close a board task (cancel stops its worker, never retried); a worker reports with done --status and a short note (files changed, one line each; open issues); done waits in review until the lead runs approve, or reject with the reason (one retry, then the task is paused and the user decides; show prints why and the choices)', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --status done --note "login.js: null check on refresh; open: none"', 'operant task done 3 --status blocked --note "needs the API key from the user"', 'operant task approve 3', 'operant task reject 3 --note "the null check is missing on refresh"'], flags: ['for', 'note', 'status', 'seat'] },
   board: { group: 'agents & tasks', usage: 'operant board [--full]', desc: 'list every task: id, status (todo, doing, review, done, failed, blocked), tier and attempt, owner, one-line summary (--full: whole text), last note', examples: ['operant board', 'operant board --full'], flags: ['full'] },
   team: { group: 'agents & tasks', usage: 'operant team', desc: 'team mode: enabled/disabled, each tier (agent, model, use), running workers', examples: ['operant team'], flags: [] },
   summarize: { group: 'agents & tasks', usage: 'operant summarize <file|tile-id|url> ["question"]', desc: 'an xsmall-tier worker reads it and answers, so you never load it yourself', examples: ['operant summarize RELEASE_NOTES.md "what shipped in 1.10.0, 3 bullets"', 'operant summarize 7 "why did it fail"'], flags: [] },
@@ -69,6 +69,8 @@ const COMMANDS = {
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'], flags: [] },
   prime: { group: 'context', usage: 'operant prime', desc: 'your live Operant context: role and task, team tiers (while team mode is on), other tiles, dev servers, progress note, memory. Agents get it at session start and after each compact', examples: ['operant prime'], flags: [] },
 
+  seats: { group: 'operations', usage: 'operant seats', desc: 'the seats (named roles that outlive their worker): id, role, kind, default tier, state, tile', examples: ['operant seats'], flags: [] },
+  seat: { group: 'operations', usage: 'operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]', desc: "one seat's details and history; set changes its default tier or standing guidance", examples: ['operant seat planner', 'operant seat set explorer --tier free'], flags: ['tier', 'guidance'] },
   doctor: { group: 'operations', usage: 'operant doctor', desc: 'health of providers, credentials (present or not, never printed), versions, MCP, local model, the local store and context providers: healthy, degraded, unavailable, not configured or unknown', examples: ['operant doctor'], flags: [] },
   providers: { group: 'operations', usage: 'operant providers', desc: 'the configured agent CLIs: installed, credentials present, state', examples: ['operant providers'], flags: [] },
   models: { group: 'operations', usage: 'operant models', desc: 'each team tier with its model, recorded availability and latency, and state, then every known model with provider, cost tier, context window, tools and reasoning', examples: ['operant models'], flags: [] },
@@ -412,13 +414,15 @@ function buildArgs(cmd, positionals, flags) {
     else if (args.sub === 'note') { args.id = Number(positionals[1]); args.text = positionals.slice(2).join(' '); }
     else args.id = Number(positionals[1]);
   }
+  // seat <id> shows one seat; seat set <id> changes it.
+  if (cmd === 'seat' && args.sub !== 'set') { if (args.sub != null) args.id = args.sub; delete args.sub; }
   // Relative paths mean the shell's current folder, not the folder the tile started in.
   const path = require('path');
   for (const k of ['path', 'dir']) if (typeof args[k] === 'string' && args[k]) args[k] = path.resolve(args[k]);
   if (cmd === 'open' && typeof args.target === 'string' && require('fs').existsSync(args.target)) args.target = path.resolve(args.target);
   // So does where a new tile starts: after a cd into a subproject, or through the long-command reroute
   // hook, the tile's own starting folder would be the wrong one to test, build or work in.
-  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route', 'components'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
+  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route', 'components', 'seats', 'seat'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
   return args;
 }
 
@@ -579,7 +583,7 @@ function formatResult(cmd, result, opts) {
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }
-    case 'doctor': case 'providers': case 'models': case 'components': case 'history': case 'stats': case 'route': return result.text || 'ok';
+    case 'doctor': case 'seats': case 'seat': case 'providers': case 'models': case 'components': case 'history': case 'stats': case 'route': return result.text || 'ok';
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0
       ? 'ok' : JSON.stringify(result);
   }

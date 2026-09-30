@@ -643,6 +643,7 @@
 
   function queueCompact(w) {
     if (!w.alive || !w.ptyId || compacting.has(w.id)) return;
+    if (w.seatId) { const st = board.tasks.find(x => x.owner === w.id && x.seat === w.seatId); operant.seatOp({ dir: seatDirOf(st, w), op: 'keep', seat: w.seatId, task: seatTask(st), reason: 'compacted' }).catch(() => {}); }
     compacting.set(w.id, { stage: 'wait', idleSince: null });
   }
 
@@ -1220,6 +1221,21 @@
     }).join('');
   }
   function boardChanged() { renderBoard(); saveSession(); }
+  // Seats (seats.js): a task that names a seat keeps that seat's state across workers. Plain data over IPC, no model calls.
+  const seatTask = t => t && ({ status: t.status, note: t.note, failure: t.failure, check: t.check, checkpoint: t.checkpoint, constraints: t.constraints });
+  const seatDirOf = (t, w) => t?.cwd || w?.cwd || lastCwd;
+  async function seatTake(t, w) {
+    if (!t?.seat || !w) return;
+    w.seatId = t.seat;
+    await operant.seatOp({ dir: seatDirOf(t, w), op: 'take', seat: t.seat, tileId: w.id }).catch(() => {});
+  }
+  // The worker ended (closed, finished, token stop): the seat keeps its state and goes idle-closed.
+  function seatRelease(t, w, reason, extra) {
+    const id = w?.seatId || t?.seat;
+    if (!id) return;
+    if (w) w.seatId = null;
+    operant.seatOp({ dir: seatDirOf(t, w), op: 'release', seat: id, task: seatTask(t), reason, extra, tileId: w?.id }).catch(() => {});
+  }
   // Escalation and downgrade signals (routing.js): suggestions only, shown on the review card and in `operant task show`.
   function signalsOf(t) {
     const w = wins.get(t.owner), ctx = w?.ctx?.tokens ?? null;
@@ -1304,13 +1320,15 @@ async function contextBrief(t) {
     if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (agentMode(t.cwd || lastCwd) === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[agentMode(t.cwd || lastCwd)]})`));
     // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
     // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
-    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${Board.resumeBrief(t) ? ' — ' + Board.resumeBrief(t) : ''}${await codegraphBrief(t, t.cwd || lastCwd)}${await contextBrief(t)} — ${reportLine(t.id)}`;
+    const seatPlan = t.seat ? await operant.seatOp({ dir: t.cwd || lastCwd, op: 'plan', seat: t.seat, tier }).catch(() => null) : null;
+    const prompt = `${seatPlan?.ok ? oneLine(seatPlan.result.brief) + ' — ' : ''}${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${Board.resumeBrief(t) ? ' — ' + Board.resumeBrief(t) : ''}${await codegraphBrief(t, t.cwd || lastCwd)}${await contextBrief(t)} — ${reportLine(t.id)}`;
     const lead = wins.get(t.lead);
     const w = await newTerminal('ai', t.cwd, {
       agentId: conf.agent, prompt, title: t.title || undefined, model: conf.model, effort: conf.effort || null,
       worker: true, ws: lead?.alive ? lead.ws : current, near: lead?.alive ? lead : undefined, focus: false,
     });
     w.tier = tier; setTierDot(w);
+    await seatTake(t, w);
     t.owner = w.id; t.agent = conf.agent; t.model = conf.model;
     noteRoute(w, t, conf);
     traceDecision(t, w, conf, t.decision);
@@ -1485,6 +1503,7 @@ async function contextBrief(t) {
   }
   setInterval(() => { for (const w of wins.values()) if (w.alive && w.tier && w.limit) checkBudget(w); }, 15000);
   async function onLimitEvent(t, w, ev) {
+    seatRelease(t, w?.seatId ? w : null, 'token-stop');
     const st = w.limit.tracker.state();
     if (ev.type !== 'stop') {
       Messaging.enqueue(msgState, { from: 'operant', to: w.id, text: TierGuard.limitMessage(ev, { id: t.id, plan: st.plan, used: st.used }) });
@@ -1527,6 +1546,7 @@ async function contextBrief(t) {
     }
     command = ok ? ran.join(' + ') : ran[ran.length - 1];
     t.check = { command, ok, summary: summary.slice(0, 600), at: Date.now() };
+    if (ok) seatRelease(t, wins.get(t.owner)?.alive ? wins.get(t.owner) : null, 'finished');
     try { t.diffStat = await operant.git('diffstat', cwd) || null; } catch {}
     if (t.status !== 'verifying') { boardChanged(); return; }
     if (ok) { t.status = 'review'; boardChanged(); if (from) notify(from, `Task ${t.id} ready for review: ${taskTldr(t)}`, `checks passed: ${command}`, null, true); return; }
@@ -1886,6 +1906,7 @@ async function contextBrief(t) {
       t.note = 'Worker closed without reporting a result';
       notify(w, `Task ${t.id} ended without a result`, t.text, null, true);
     }
+    if (w.seatId) seatRelease(board.tasks.find(x => x.owner === w.id && x.seat === w.seatId), w, 'closed');
     if (w.tier) boardChanged();
     w.alive = false;
     if (w.planQueue?.length) { w.planQueue.forEach(r => r({ approved: false, note: '(closed without an answer)' })); w.planQueue = []; }
@@ -5066,6 +5087,15 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let agentId = args.agent, model = args.model, effort = args.effort ? String(args.effort) : null, tier = null, suggested = null, limitInfo = null, routed = null;
         // Item 82: the project's agent choice. An explicit --agent/--model/--tier for the other CLI is an error.
         const dir = args.cwd || self?.cwd || lastCwd, mode = agentMode(dir), mtiers = tiersIn(dir);
+        // --seat: the seat's default tier (or the tier you named) and a short brief from what its last worker left. A hard seat named here counts as your word.
+        let seatBrief = '';
+        if (args.seat) {
+          const sp = await operant.seatOp({ dir, op: 'plan', seat: String(args.seat), tier: args.tier ? String(args.tier) : undefined });
+          if (!sp.ok) throw new Error(sp.error);
+          if (!sp.result.ok) throw new Error(sp.result.reason);
+          if (!args.tier && !args.model && !args.agent) args.tier = sp.result.tier;
+          seatBrief = sp.result.brief;
+        }
         if (mode !== 'both') {
           const conflict = (args.agent && TeamTiers.modeConflict(mode, `agent "${args.agent}"`, agentKind(args.agent)))
             || (args.model && TeamTiers.modeConflict(mode, `model "${args.model}"`, /^claude/i.test(args.model) ? 'claude' : /\//.test(args.model) ? 'opencode' : 'other'))
@@ -5115,22 +5145,23 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (agentId && !cfg.agents.some(a => a.id === agentId)) throw new Error(`unknown agent "${agentId}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
         // Item 33: with --tier, a board task is added automatically, owned by the new worker tile,
         // with a final line telling it how to hand the result back.
-        let taskId = null, prompt = args.prompt;
+        let taskId = null, prompt = seatBrief ? `${oneLine(seatBrief)} — ${args.prompt}` : args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
           const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
+          if (args.seat) task.seat = String(args.seat);
           if (routed && !args.model) { task.agent = agentId; task.model = model; task.route = routeInfo(routed); }
           if (suggested) task.decision = { basis: suggested.basis, reason: suggested.reason, alternatives: suggested.alternatives, skipped: suggested.skipped, structured: suggested.detail, rejected: suggested.rejected };
           task.profile = await profileTask(task.text, task.cwd || dir).catch(() => TaskType.describeTask(task.text));
           board.tasks.push(task);
           boardChanged();
-          prompt = `${args.prompt}${await codegraphBrief(task, task.cwd || dir)} — ${reportLine(taskId)}`;
+          prompt = `${prompt}${await codegraphBrief(task, task.cwd || dir)} — ${reportLine(taskId)}`;
         }
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
-        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; traceDecision(t, w, routed, t.decision); if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
+        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { await seatTake(t, w); t.owner = w.id; traceDecision(t, w, routed, t.decision); if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(tier && routed?.route ? { route: routed.route.note } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}), ...(limitInfo || {}) };
       }
       case 'team':
@@ -5303,7 +5334,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (args.sub === 'add') {
           if (!args.text) throw new Error('text required');
           const id = board.nextTaskId++;
-          board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null, createdAt: Date.now() });
+          const seat = args.seat ? String(args.seat) : null;
+          if (seat) { const sp = await operant.seatOp({ dir: self?.cwd || lastCwd, op: 'plan', seat }); if (!sp.ok) { board.nextTaskId--; throw new Error(sp.error); } if (!sp.result.ok) { board.nextTaskId--; throw new Error(sp.result.reason); } }
+          board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null, createdAt: Date.now(), ...(seat ? { seat } : {}) });
           boardChanged();
           return { id, sub: 'add' };
         }
@@ -5322,7 +5355,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: TaskType.reviewAdvice(t.profile),
             signals: (() => { const s = signalsOf(t); return s.up.length || s.down.length ? { suggestionOnly: true, up: s.up.map(x => x.text), down: s.down.map(x => x.text) } : null; })() };
         }
-        if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
+        if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; await seatTake(t, self); }
         else if (args.sub === 'done') {
           // A worker's handback: done, or blocked/failed with why in the note.
           const status = args.status == null ? 'done' : String(args.status);
@@ -5348,6 +5381,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           // Item 92: a worker that saved after the 90% call (or past its limit) is stopped here and the user asked.
           const limitStop = status === 'blocked' && n?.limit?.taskId === t.id ? n.limit.tracker.onSaved() : null;
           if (limitStop) { onLimitEvent(t, n, limitStop); boardChanged(); return { id: t.id, status: 'paused', note: t.note, sub: args.sub }; }
+          if (!verify) seatRelease(t, n?.alive ? n : null, status === 'done' ? 'finished' : status);
           if (status === 'blocked' || (status === 'failed' && !t.tier)) recordOutcome(t, status);
           if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
           else if (verify) { verifyTask(t, verify, from, extras); boardChanged(); return { id: t.id, status: t.status, note: t.note, sub: args.sub, verify: [verify, ...extras].join(' + ') }; }
@@ -5369,7 +5403,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (!args.note) throw new Error('--note "<why>" required');
           const w = wins.get(t.owner);
           if (Board.reject(t, args.note) === 'retry') retryTask(t, w, `The lead rejected your result: ${oneLine(args.note)}. Fix it`);
-          else askUser(t, 'rejected', t.retried ? `rejected twice: ${oneLine(args.note)}` : `rejected, and a retry would change nothing (${oneLine(args.note)})`);
+          else { seatRelease(t, w?.alive ? w : null, 'rejected', { rejectNote: oneLine(args.note) }); askUser(t, 'rejected', t.retried ? `rejected twice: ${oneLine(args.note)}` : `rejected, and a retry would change nothing (${oneLine(args.note)})`); }
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else if (args.sub === 'checkpoint') {

@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('operant', {
   storeDecision: d => ipcRenderer.invoke('store:decision', d),
   outcomeRouteUse: () => ipcRenderer.invoke('outcome:routeUse'),
   outcomeLimits: opts => ipcRenderer.invoke('outcome:limits', opts),
+  seatOp: o => ipcRenderer.invoke('seats:op', o),
   projectToday: cwd => ipcRenderer.invoke('usage:projectToday', cwd),
   stuckRecent: sessionId => ipcRenderer.invoke('stuck:recent', { sessionId }),
   outcomeCodegraph: () => ipcRenderer.invoke('outcome:codegraph'),
