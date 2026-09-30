@@ -29,7 +29,17 @@ release/
 .gemini/
 .opencode/
 .operant/
+
+# Specs and plans
 docs/superpowers/
+docs/specs/
+docs/plans/
+/specs/
+/plans/
+/SPEC*.md
+/PLAN*.md
+*.spec.md
+*.plan.md
 
 # Environment and secrets
 .env
