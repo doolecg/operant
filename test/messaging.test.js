@@ -54,3 +54,9 @@ test('take empties the queue in order; drop discards it', () => {
   M.drop(s, 2);
   assert.equal(M.pending(s, 2), 0);
 });
+
+test("Operant's own notices are framed as Operant, not as another agent", () => {
+  const s = M.newState();
+  assert.equal(M.enqueue(s, { from: 'operant', to: 4, text: 'Query CodeGraph first.' }).ok, true);
+  assert.equal(M.frameAll(M.take(s, 4)), 'Operant: Query CodeGraph first.');
+});

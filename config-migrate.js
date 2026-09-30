@@ -14,6 +14,12 @@ const MIGRATIONS = [
   } },
   // Gemma 3 can't call tools in Ollama, so it can't run a tier: a saved gemma3 local model goes back to the default.
   { to: 3, run(user) { if (/^gemma3(:|$)/.test(user.localModel?.model || '')) delete user.localModel.model; } },
+  // Big Pickle (free) is used first (item 96): an xsmall tier saved on a paid model is only OFFERED "Use Big Pickle"
+  // (Settings > Agents > Team, one click); nothing is switched here. The new free tier comes from the defaults.
+  { to: 4, run(user) {
+    const x = user.team?.tiers?.xsmall;
+    if (isPlain(x) && x.model && !/(^|\/)big-pickle$|-free$|^ollama\//i.test(x.model)) user.tierOffers = [...new Set([...(Array.isArray(user.tierOffers) ? user.tierOffers : []), 'use-big-pickle'])];
+  } },
 ];
 const CURRENT = MIGRATIONS[MIGRATIONS.length - 1].to;
 
@@ -136,6 +142,7 @@ function validatePatch(patch, defaults, opts = {}) {
       if (new Set(v.map(a => a.id)).size !== v.length) { bad(key, 'agents with different ids'); continue; }
     }
     if (key === 'localModel' && !(isPlain(v) && (v.model === undefined || (typeof v.model === 'string' && /^[A-Za-z0-9._\/-]+(:[A-Za-z0-9._-]+)?$/.test(v.model))))) { bad(key, 'an Ollama model name like gemma4:e4b'); continue; }
+    if (key === 'tierOffers' && v.some(o => typeof o !== 'string')) { bad(key, 'a list of offer names'); continue; }
     if (key === 'team') teamErrors(v, current.team || {}, agentIds, (expected, sub) => bad('team', expected, sub));
     if (key === 'projectDefaults') {
       for (const [p, d] of Object.entries(v)) {
@@ -161,6 +168,11 @@ function teamErrors(team, cur, agentIds, bad) {
   for (const [name, t] of Object.entries(team.tiers || {})) {
     if (!isPlain(t)) return bad('each tier an object', name);
     if (t.agent && t.agent !== cur.tiers?.[name]?.agent && !agentIds.has(t.agent)) return bad('a tier agent that exists', `${name}: "${t.agent}" is not an agent`);
+    if (t.fallbacks !== undefined) {
+      if (!Array.isArray(t.fallbacks) || t.fallbacks.some(r => !isPlain(r) || !(r.local === true || (typeof r.model === 'string' && r.model)))) return bad('fallbacks as a list of routes with a model, or local', name);
+      const badAgent = t.fallbacks.find(r => r.agent && !agentIds.has(r.agent));
+      if (badAgent) return bad('a fallback agent that exists', `${name}: "${badAgent.agent}" is not an agent`);
+    }
   }
   for (const [name, n] of Object.entries(team.budgets || {})) if (!Number.isInteger(n) || n < 0) return bad('budgets as whole numbers of 0 or more', name);
   const tiers = team.tiers === undefined ? cur.tiers : team.tiers;

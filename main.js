@@ -22,7 +22,9 @@ const configMigrate = require('./config-migrate');
 const installState = require('./install-state');
 const { redactText } = require('./redact');
 const { createStuckTracker } = require('./stuck');
+const cgFirst = require('./codegraph-first');
 const outcomes = require('./outcomes');
+const tierGuard = require('./tier-guard');
 const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
@@ -32,6 +34,7 @@ const opencodeTheme = require('./opencode-theme');
 const teamTiers = require('./team-tiers');
 const agentBrief = require('./agent-brief');
 const localModelLib = require('./local-model');
+const tierRoutes = require('./tier-routes');
 const agentSetup = require('./agent-setup');
 const memory = require('./memory');
 // macOS and Linux: tiles run zsh/bash (platform/unix.js), and each OS keeps its own browser and IDE
@@ -190,7 +193,8 @@ const DEFAULT_CONFIG = {
   agentLookbackSeconds: 20,       // on startup, also open agents that started this recently
   installSkill: true,             // Claude Code & OpenCode tiles get the `operant` skill per session, from the app's own agent-plugin folder (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
-  localModel: { model: 'gemma4:e4b' }, // Settings > Agents > Team > Local model: the Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use
+  localModel: { model: 'gemma4:e4b' }, // Settings > Agents > Team > Local model: the Ollama model the free tier falls back to when Big Pickle is busy or out of free use
+  tierOffers: [],                 // one-click changes offered after a config migration, e.g. 'use-big-pickle' (Settings > Agents > Team)
   backgroundAfterSeconds: 5,       // a rerouted long command (test/build/install) that is still running after this many seconds moves to the Backrooms and the agent waits for its errors · 0 = always at once (Settings > Agents)
   longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
@@ -201,17 +205,22 @@ const DEFAULT_CONFIG = {
   // Operant's own state backups (Settings > Data > Backups; state-backup.js). location '' is userData/backups; keepDays keeps the newest of each of that many days.
   backups: { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true },
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
+  refineTo: 'claude',             // where a refined prompt goes on "send it": 'claude' (a Claude tile) or 'team' (team work; item 97, Settings > Agents)
   messaging: false,               // agents can message each other with operant msg / inbox (Settings > Agents > Team)
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
     tiers: {
-      xsmall: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up in the code, read and summarise files, renames, run tests, docs tweaks (no web research)' },
+      // Cheapest first. Each tier is a model; `fallbacks` are more routes it goes to when the first is busy, out of free use, or failed this kind of task before (tier-routes.js).
+      free: { agent: 'opencode', model: 'opencode/big-pickle', fallbacks: [{ local: true }], use: 'the easiest jobs: look things up in the code, read and summarise files, run tests and builds, docs tweaks (no web research)' },
+      xsmall: { agent: 'opencode', model: 'opencode/big-pickle', fallbacks: [{ agent: 'claude', model: 'claude-haiku-4-5' }], use: 'small isolated edits: renames, screenshots, wording, a one-line fix (no web research)' },
       small: { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', use: 'smaller tasks: a feature across a few files, a normal bug fix, simple edits' },
-      medium: { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', use: 'medium tasks: a feature across a few files, a normal bug fix, research' },
+      medium: { agent: 'claude', model: 'claude-opus-5-5', effort: 'medium', use: 'medium tasks: harder features across several files, research' },
       high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'hard tasks: tricky debugging, a multi-file refactor' },
       max: { agent: 'claude', model: 'claude-opus-5-5', effort: 'max', use: 'the hardest problems: architecture, where getting it right matters more than cost' },
     },
-    budgets: { xsmall: 150000, small: 300000, medium: 600000, high: 1200000, max: 2000000 }, // tokens per task (input + output + cache writes); 0 = no limit
+    budgets: { free: 100000, xsmall: 150000, small: 300000, medium: 600000, high: 1200000, max: 2000000 }, // hard token limit per task (input + output + cache writes); 0 = no limit
+    savingProgress: 'over',     // the save allowance at a limit: 'over' (on top of it) or 'inside' (taken out of it)
+    dailyCap: 0,                // hard token cap per project per day; past it, the next task asks first · 0 = off
     maxWorkers: 4,
     maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
     verifyBeforeReview: true,   // run the project's test/build command on a code task's handback, before review
@@ -347,14 +356,18 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
 let ocModels = null;
 // cliInstalled (agent id -> found on PATH) is filled in by scanInstalled; unknown counts as installed.
 let cliInstalled = {};
-// The lowest tier runs Big Pickle; while that is rate limited or out of free use and the local Ollama model is
-// ready, it runs the local model instead (local-model.js), and goes back after a cooldown.
-const localFailover = localModelLib.createFailover();
+// Tiers list routes (tier-routes.js): the first is used until it is busy or out of free use (`routeHealth`, remembered
+// for a cooldown), then the next; the free tier's last route is the local Ollama model, once it is ready. The active route
+// and the reason for any skipped one ride on each tier (`route`, `routes`, `skipped`), which Settings and the tiles show.
+const routeHealth = tierRoutes.createHealth();
 let localReady = false, localTimer = null;
-const localOverlay = c => ({ ready: localReady, model: c.localModel?.model || localModelLib.DEFAULT_MODEL, down: localFailover.active() });
-const withTiers = c => ({ ...c, teamTiers: localModelLib.overlay(teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), localOverlay(c)),
+const routeCtx = c => ({
+  health: routeHealth, localModel: c.localModel?.model || localModelLib.DEFAULT_MODEL,
+  ready: r => (r.local ? localReady : cliInstalled[r.agent] !== false),
+});
+const withTiers = c => ({ ...c, teamTiers: tierRoutes.overlay(teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), routeCtx(c)),
   // Per-project agent choice: the tiers left when a project is Claude only or OpenCode only (team-tiers.js tiersForMode).
-  teamModes: localModelLib.overlayModes(teamTiers.tiersByMode({ base: c.team?.tiers || {}, agents: c.agents, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), localOverlay(c)) });
+  teamModes: tierRoutes.overlayModes(teamTiers.tiersByMode({ base: c.team?.tiers || {}, agents: c.agents, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), routeCtx(c)) });
 const refreshTiers = () => { const t = withTiers(config); config.teamTiers = t.teamTiers; config.teamModes = t.teamModes; broadcast('team:tiers', t.teamTiers); broadcast('team:modes', t.teamModes); };
 // Codex and Gemini CLI are no longer built in: drop them from a saved agents list.
 const dropRemoved = u => {
@@ -1634,6 +1647,8 @@ ipcMain.handle('basement:run', async (_e, { command, cwd, title, timeoutMs }) =>
   return { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: true, digest: digestText }) };
 });
 ipcMain.handle('usage:summary', () => usage.summary());
+// Item 92: a project's counted tokens today (input + output + cache writes), for its daily cap.
+ipcMain.handle('usage:projectToday', (_e, cwd) => usage.todayFor(cwd ? path.basename(cwd) : ''));
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 
 
@@ -1648,9 +1663,10 @@ function loadUsageTags() {
   for (const [k, v] of Object.entries(usageTags)) if (!(v && v.at > Date.now() - USAGE_TAGS_KEEP)) delete usageTags[k];
   return usageTags;
 }
-ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile }) => {
+ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile, cwd }) => {
   const id = sessionId || (ptyId && opencode.rootSession(ptyId));
   if (!id) return { ok: false };
+  if (tier) cgArm(id, cwd);
   loadUsageTags()[id] = { tier: tier || null, taskId: taskId ?? null, tile: tile ?? null, at: Date.now() };
   try { writeFileAtomic(USAGE_TAGS_PATH, JSON.stringify(usageTags)); } catch {}
   return { ok: true };
@@ -1661,8 +1677,9 @@ const OUTCOMES_KEEP = 90 * 86400e3;
 try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch {}
 ipcMain.handle('outcome:record', async (_e, o) => {
   try {
-    const { cwd, model, ...rest } = o || {};
-    const entry = { t: Date.now(), ...rest, model: model || null, usd: model ? priceOf(model, rest.tokens).usd : null, project: cwd ? path.basename(cwd) : null };
+    const { cwd, model, sessionId, ptyId, codegraphIndex, ...rest } = o || {};
+    const cg = cgStatsFor(sessionId, ptyId);
+    const entry = { t: Date.now(), ...rest, ...(cg ? { codegraph: { ...cg, index: codegraphIndex || 'off' } } : {}), model: model || null, usd: model ? priceOf(model, rest.tokens).usd : null, project: cwd ? path.basename(cwd) : null };
     outcomes.appendOutcome(OUTCOMES_PATH, entry);
     return { ok: true };
   } catch { return { ok: false }; }
@@ -1677,6 +1694,46 @@ function outcomeStats() {
   } catch { return {}; }
 }
 ipcMain.handle('outcome:stats', async () => outcomeStats());
+// Item 92: suggested limits per tier (and task type, when given) from the outcomes file; never applied here.
+ipcMain.handle('outcome:limits', async (_e, { tiers, tier, type, current, fallback } = {}) => {
+  try {
+    const entries = outcomes.readOutcomes(OUTCOMES_PATH);
+    if (tier) return tierGuard.suggestLimit(entries, { tier, type, current, fallback });
+    return tierGuard.suggestAll(entries, tiers || Object.keys(config.team?.budgets || {}), config.team?.budgets || {}, DEFAULT_CONFIG.team.budgets);
+  } catch { return null; }
+});
+// Item 96: how each task type went per route (last 20 of each in 30 days), so a route that keeps failing a type stops getting it.
+ipcMain.handle('outcome:routes', async () => {
+  try {
+    const recent = outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 }).filter(e => e.kind !== 'orchestration' && e.model).sort((a, b) => b.t - a.t);
+    const seen = {}, kept = [];
+    for (const e of recent) { const k = (e.type || 'other') + '|' + e.model; if ((seen[k] = (seen[k] || 0) + 1) <= 20) kept.push(e); }
+    return outcomes.summarizeRoutes(kept);
+  } catch { return {}; }
+});
+// Item 96: this week's tasks per tier and route, tokens, cost saved against the tier's paid route, and why a task went to a fallback.
+ipcMain.handle('outcome:routeUse', async () => {
+  try {
+    const tiers = config.team?.tiers || {}, order = Object.keys(tiers);
+    const paidOf = t => tierRoutes.routesOf(t, '').find(r => !tierRoutes.isFreeRoute(r));
+    const paid = {};
+    order.forEach((name, i) => { const r = order.slice(i).map(n => paidOf(tiers[n])).find(Boolean); if (r) paid[name] = r.model; });
+    return { order, use: outcomes.summarizeRouteUse(outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 7 * 86400e3 }), priceOf, paid), paid };
+  } catch { return { order: [], use: {}, paid: {} }; }
+});
+// Item 90: the CodeGraph measurements of the last 30 days, for `operant usage`.
+ipcMain.handle('outcome:codegraph', async () => {
+  try { return outcomes.summarizeCodegraph(outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 })); } catch { return null; }
+});
+// Item 90: before a worker starts on a code task, Operant checks the index (syncing it when stale) and runs
+// `codegraph explore` for the symbols the task names; the renderer adds the capped result to the worker's brief.
+ipcMain.handle('codegraph:prepare', async (_e, { cwd, task, isCode }) => {
+  try {
+    const env = await freshEnv();
+    const exec = (args, o = {}) => run('codegraph', args, { shell: true, env, cwd, timeout: o.timeout || 30000 });
+    return await cgFirst.prepareBrief({ cwd, task, isCode: isCode !== false, exists: fs.existsSync, exec });
+  } catch (e) { return { state: 'degraded', reason: 'the check failed', text: cgFirst.DEGRADED_TEXT('the check failed'), explored: false }; }
+});
 // Health view (health.js): each part of the app with a state, checked from what Operant already knows (no new probes
 // per refresh; CodeGraph's version is remembered for 5 minutes). Cached, re-checked every 5 minutes, and the
 // renderer hears 'health' when a row changes state.
@@ -1710,6 +1767,7 @@ const healthCheck = health.createHealth({
     },
     codegraph: async ({ cwd }) => ({ cwd, cli: await codegraphVersion(), indexed: !!cwd && isDir(path.join(cwd, '.codegraph')) }),
     mcp: ({ cwd }) => ({ servers: Object.keys(agentSetup.getClaudeMcpServers(cwd || '') || {}) }),
+    localmodel: () => localModel.state(),
     analytics: () => ({ usage: fileInfo(PROJECTS_DIR), outcomes: fileInfo(OUTCOMES_PATH) }),
   },
 });
@@ -1742,12 +1800,40 @@ const ollamaWhich = async cmd => {
   }
   return (await unix.which(cmd, env)) || null;
 };
+// The server answering on localhost:11434, the free space where Ollama keeps models, and the memory: the card's checks before a download.
+const ollamaAnswering = () => new Promise(resolve => {
+  const req = http.get('http://127.0.0.1:11434/api/version', { timeout: 1500 }, res => { res.resume(); resolve(res.statusCode === 200); });
+  req.on('timeout', () => { req.destroy(); resolve(false); });
+  req.on('error', () => resolve(false));
+});
+const modelsFreeBytes = () => {
+  for (const dir of [process.env.OLLAMA_MODELS, path.join(os.homedir(), '.ollama'), os.homedir()].filter(Boolean)) {
+    try { const st = fs.statfsSync(dir); return st.bavail * st.bsize; } catch {}
+  }
+  return null;
+};
+// Progress arrives many times a second; the renderer hears at most four a second, and every change of step at once.
+let localPushAt = null, localPushTimer = null, localPushKey = '';
+const sendLocal = () => { localPushTimer = null; localPushAt = Date.now(); broadcast('localmodel:state', localModel.state()); };
 const localModel = localModelLib.createLocalModel({
-  which: ollamaWhich, env: freshEnv,
-  onChange: s => { const was = localReady; localReady = s.status === 'ready'; broadcast('localmodel:state', s); if (was !== localReady) refreshTiers(); },
+  which: ollamaWhich, env: freshEnv, probe: ollamaAnswering, freeDisk: modelsFreeBytes, totalMem: () => os.totalmem(),
+  connected: m => { try { return !!JSON.parse(localModelLib.withProvider('', m)).provider?.ollama?.models?.[m]; } catch { return false; } },
+  onChange: s => {
+    const was = localReady; localReady = s.status === 'ready';
+    const key = s.status + '|' + Object.values(s.parts || {}).map(p => p.state).join(',') + '|' + (s.failed ? s.failed.part : '');
+    if (key !== localPushKey || Date.now() - (localPushAt || 0) >= 250) { localPushKey = key; clearTimeout(localPushTimer); sendLocal(); }
+    else if (!localPushTimer) localPushTimer = setTimeout(sendLocal, 250);
+    if (was !== localReady) refreshTiers();
+    if (s.status !== 'installing') healthCheck.get({ force: true, cwd: healthCwd }).catch(() => {});
+  },
 });
 ipcMain.handle('localmodel:state', () => localModel.state());
-ipcMain.handle('localmodel:install', (_e, model) => { localModel.install(String(model || config.localModel?.model)); return localModel.state(); });
+ipcMain.handle('localmodel:plan', (_e, model) => localModel.plan(String(model || config.localModel?.model)));
+// Without `confirmed` the card only looks and asks (status 'confirm'); the download starts on the user's go-ahead.
+ipcMain.handle('localmodel:install', (_e, model, opts) => { localModel.install(String(model || config.localModel?.model), { ask: !opts?.confirmed }); return localModel.state(); });
+ipcMain.handle('localmodel:cancel', () => localModel.cancel());
+ipcMain.handle('localmodel:test', () => { localModel.test(config.localModel?.model); return localModel.state(); });
+ipcMain.handle('localmodel:dismiss', () => localModel.dismiss());
 ipcMain.handle('localmodel:remove', (_e, model) => { localModel.remove(String(model || config.localModel?.model)); return localModel.state(); });
 ipcMain.handle('localmodel:refresh', () => localModel.refresh(config.localModel?.model));
 
@@ -1764,10 +1850,10 @@ const opencode = createOpenCode({
   },
   onSubagentCount: (sessionId, owner, count) => checkSubagents(sessionId, owner, count),
   onFreeFailure: reason => {
-    const d = localFailover.active();
-    if (!localReady || d) return;
-    logLine('Big Pickle unavailable, lowest tier runs the local model: ' + reason);
-    const down = localFailover.fail(reason);
+    const key = tierRoutes.FREE_MODEL;
+    if (routeHealth.down(key)) return;
+    logLine('Big Pickle unavailable, its tiers move to their next route: ' + reason);
+    const down = routeHealth.fail(key, reason);
     refreshTiers();
     clearTimeout(localTimer);
     localTimer = setTimeout(refreshTiers, Math.max(1000, down.until - Date.now() + 500));
@@ -1893,22 +1979,26 @@ function isReadonlyOperantCall(input) {
 
 // Stuck evidence (plan item 60): stuck.js per session, fed each tool call, its result, and file edits.
 // A signal goes to the renderer as `stuck { sessionId, reason, kind }`, once per reason per session.
-const stuckTrackers = new Map(); // sessionId -> { tracker, calls: Map<toolId, command|null>, sent: Set<reason> }
+// Item 91: it also keeps the evidence the ask shows (last failing command, tool calls) and, for item 92's handback
+// when a worker is stopped before it saved, its last steps and the files it edited.
+const stuckTrackers = new Map(); // sessionId -> { tracker, calls: Map<toolId, command|null>, sent: Set<reason>, count, lastFail, recent, edits }
 const EDIT_TOOLS = /^(edit|multiedit|write|notebookedit|patch|apply_patch)$/i;
 function stuckOf(sessionId) {
   let st = stuckTrackers.get(sessionId);
-  if (!st) stuckTrackers.set(sessionId, st = { tracker: createStuckTracker({ stuckTurns: config.stuckTurns }), calls: new Map(), sent: new Set() });
+  if (!st) stuckTrackers.set(sessionId, st = { tracker: createStuckTracker({ stuckTurns: config.stuckTurns }), calls: new Map(), sent: new Set(), count: 0, lastFail: null, recent: [], edits: [] });
   return st;
 }
+const stuckEvidence = st => ({ command: st.lastFail?.command || null, error: st.lastFail?.text || null, calls: st.count });
 function flagStuck(sessionId, owner, st, sig) {
   if (!sig || config.runawayGuard === 'off' || st.sent.has(sig.reason) || !alive(owner)) return;
   st.sent.add(sig.reason);
-  sendTo(owner, 'stuck', { sessionId, reason: sig.reason, kind: sig.kind });
+  sendTo(owner, 'stuck', { sessionId, reason: sig.reason, kind: sig.kind, evidence: stuckEvidence(st) });
 }
 function noteToolResult(sessionId, owner, toolId, text, isError) {
   const st = stuckOf(sessionId);
   const command = st.calls.get(toolId) || null;
   st.calls.delete(toolId);
+  if (isError) st.lastFail = { command, text: String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200) };
   flagStuck(sessionId, owner, st, st.tracker.onToolResult({ command, text, isError }));
 }
 function noteStuckUse(sessionId, owner, name, input, toolId) {
@@ -1918,7 +2008,12 @@ function noteStuckUse(sessionId, owner, name, input, toolId) {
     const c = input && typeof input === 'object' ? (input.command ?? input.cmd) : null;
     st.calls.set(toolId, /^(bash|shell|powershell)$/i.test(name) && typeof c === 'string' ? c : null);
     if (st.calls.size > 200) st.calls.delete(st.calls.keys().next().value);
+    st.count++;
+    st.recent.push(toolDisplay(name, input));
+    if (st.recent.length > 8) st.recent.shift();
   }
+  const file = input && typeof input === 'object' ? (input.file_path ?? input.filePath ?? input.path) : null;
+  if (EDIT_TOOLS.test(name) && typeof file === 'string') { st.edits.push(file); if (st.edits.length > 20) st.edits.shift(); }
   if (EDIT_TOOLS.test(name)) st.tracker.onFileEdit();
   else if (!isReadonlyOperantCall(input)) flagStuck(sessionId, owner, st, st.tracker.onTurn());
 }
@@ -1927,8 +2022,39 @@ ipcMain.on('stuck:reset', (_e, { sessionId }) => {
   const st = stuckTrackers.get(sessionId);
   if (st) { st.tracker.reset(); st.calls.clear(); st.sent.clear(); }
 });
+// Item 92: what the tile did last, for the handback Operant writes when a worker is stopped before it saved.
+ipcMain.handle('stuck:recent', (_e, { sessionId }) => {
+  const st = stuckTrackers.get(sessionId);
+  return st ? { ...stuckEvidence(st), recent: [...st.recent], edits: [...st.edits] } : { calls: 0, recent: [], edits: [] };
+});
+
+// Item 90: per session, was the first code action a CodeGraph query, how many files were read before and after,
+// and a one-time nudge (same 'stuck' channel, kind 'codegraph') for a worker reading or grepping without it.
+const cgTrackers = new Map(); // sessionId -> { tracker, seen: Set<toolId>, index: 'fresh'|'stale'|'degraded'|'off' }
+function cgOf(sessionId) {
+  let c = cgTrackers.get(sessionId);
+  if (!c) cgTrackers.set(sessionId, c = { tracker: cgFirst.createCgTracker({ enabled: false }), seen: new Set(), enabled: false });
+  return c;
+}
+// Called when a worker's session is tagged: the nudge only makes sense where a usable index exists.
+function cgArm(sessionId, cwd) {
+  const on = !!cwd && isDir(path.join(cwd, '.codegraph'));
+  const c = cgOf(sessionId);
+  if (on !== c.enabled) { c.enabled = on; const st = c.tracker.stats(); if (!st.firstAction) c.tracker = cgFirst.createCgTracker({ enabled: on }); }
+}
+function noteCodegraph(sessionId, owner, name, input, toolId) {
+  const c = cgOf(sessionId);
+  if (toolId != null) { if (c.seen.has(toolId)) return; c.seen.add(toolId); if (c.seen.size > 400) c.seen.delete(c.seen.values().next().value); }
+  const sig = c.tracker.onToolUse(name, input);
+  if (sig && c.enabled && config.runawayGuard !== 'off' && alive(owner)) sendTo(owner, 'stuck', { sessionId, reason: sig.reason, kind: sig.kind, nudge: cgFirst.NUDGE_TEXT });
+}
+function cgStatsFor(sessionId, ptyId) {
+  const c = cgTrackers.get(sessionId) || (ptyId && cgTrackers.get(opencode.rootSession(ptyId)));
+  return c ? { ...c.tracker.stats() } : null;
+}
 
 function noteToolUse(sessionId, owner, name, input, label, toolId) {
+  noteCodegraph(sessionId, owner, name, input, toolId);
   noteStuckUse(sessionId, owner, name, input, toolId);
   if (!config.runawayLoopRepeats || isReadonlyOperantCall(input)) return;
   const list = toolHistory.get(sessionId) || [];

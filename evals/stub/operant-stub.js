@@ -11,9 +11,20 @@ const path = require('path');
 
 const argv = process.argv.slice(2);
 const logFile = process.env.OPERANT_EVAL_LOG;
+// A brief handed over by `send --file <path>` or `send --brief "<text>"` is logged with the call, so a case can grade its text.
+function briefOf() {
+  if (argv[0] !== 'send') return undefined;
+  try {
+    const f = argv.indexOf('--file');
+    if (f > 0 && argv[f + 1]) return fs.readFileSync(argv[f + 1], 'utf8');
+    const words = argv.slice(1).filter(a => !a.startsWith('--'));
+    return ['--brief', '--new', '--team'].some(f => argv.includes(f)) && words.length ? words.join(' ') : undefined;
+  } catch { return undefined; }
+}
 if (logFile) {
   try {
-    fs.appendFileSync(logFile, JSON.stringify({ t: new Date().toISOString(), argv, cwd: process.cwd(), worker: process.env.OPERANT_WORKER || null }) + '\n');
+    const brief = briefOf();
+    fs.appendFileSync(logFile, JSON.stringify({ t: new Date().toISOString(), argv, cwd: process.cwd(), worker: process.env.OPERANT_WORKER || null, ...(brief !== undefined ? { brief } : {}) }) + '\n');
   } catch { /* logging must never change what the agent sees */ }
 }
 
@@ -86,6 +97,17 @@ function buildArgs(cmd, positionals, flags) {
     else if (!isNaN(val) && val.trim() !== '') args[k] = Number(val);
     else args[k] = val;
   }
+  // Copied from the CLI: with --file / --brief / --new / --team, send hands over a brief and the tile is optional.
+  if (cmd === 'send' && (flags.file || flags.brief || flags.new || flags.team)) {
+    const words = [...positionals];
+    for (const k of ['brief', 'new', 'team', 'enter']) if (typeof flags[k] === 'string') { words.push(flags[k]); args[k] = true; }
+    delete args.id; delete args.text;
+    args.brief = true;
+    if (typeof flags.file === 'string') { args.file = path.resolve(flags.file); if (words.length) args.id = words[0]; }
+    else if (words.length > 1) { args.id = words[0]; args.text = words.slice(1).join(' '); }
+    else if (words.length) args.text = words[0];
+    if (args.id !== undefined && !isNaN(args.id) && String(args.id).trim() !== '') args.id = Number(args.id);
+  }
   if (cmd === 'ask' && positionals.length) args.question = positionals.join(' ');
   if (cmd === 'ws' && positionals.length) args.index = Number(positionals[0]);
   if (cmd === 'task') {
@@ -150,6 +172,7 @@ function formatResult(cmd, result) {
     case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}${result.tokens ? '  ' + result.tokens + ' tokens' : ''}`;
     case 'view': case 'edit': case 'diff': case 'run': return `tile ${result.id}`;
     case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}]  task ${result.taskId}` : '');
+    case 'send': return result && result.brief ? result.text : '';
     case 'summarize': case 'find': return result.text || '(no answer)';
     case 'team': {
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
@@ -171,7 +194,9 @@ function formatResult(cmd, result) {
         : '(no watches)';
       return result.off ? `stopped watching tile ${result.id}` : `watching tile ${result.id}`;
     case 'plan': return result.approved ? 'approved' : `change: ${result.note || ''}`;
-    case 'task': return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}`;
+    case 'task': if (result.sub === 'show') return [`${result.id}  ${result.status}${result.tier ? '  ' + result.tier : ''}`, result.text, ...(result.note ? [`note: ${result.note}`] : []),
+      ...(result.askText ? [result.askText, 'Only the user answers this, on the board. Do not move the task up or restart it yourself.'] : [])].join('\n');
+      return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}`;
     case 'board': {
       const owner = o => o ? `${o.id} ${o.title}` : '-';
       return (result.tasks || []).length ? result.tasks.map(t => `${t.id}  ${t.status}  ${owner(t.owner)}  ${t.text}${t.note ? `  · ${t.note}` : ''}`).join('\n') : '(no tasks)';
@@ -471,7 +496,24 @@ const HANDLERS = {
     const r = readOutput(t, { lines, isNew: !!a.new, errors: !!a.errors, grep: a.grep });
     return { id: t.id, title: t.title, busy: t.run === 'dev', ...r };
   },
-  send: (a, st) => ({ id: needTile(st, a.id).id }),
+  send: (a, st) => {
+    if (!a.brief) return { id: needTile(st, a.id).id };
+    let text = a.text;
+    if (a.file !== undefined) {
+      try { text = fs.readFileSync(a.file, 'utf8'); } catch (e) { throw new Error(`can't read the brief file: ${e.message}`); }
+    }
+    if (!String(text || '').trim()) throw new Error('the brief is empty: give --file <path> or --brief "<text>"');
+    if (a.team && scenario.team !== 'on') throw new Error('team mode is off, so nothing was sent: turn on team mode (Settings › Agents › Team), then send again');
+    const lead = scenario.claudeTile || 'idle';
+    if (a.new || (a.id === undefined && lead === 'none')) {
+      const t = newTile(st, { kind: 'ai', title: 'Claude Code', prompt: text });
+      return { to: t.id, brief: true, opened: true, delivered: true, text: `started Claude Code tile ${t.id} with the brief${a.team ? ' as team work' : ''}; it is running now` };
+    }
+    const to = a.id !== undefined ? needTile(st, a.id).id : 12;
+    return lead === 'busy'
+      ? { to, brief: true, opened: false, delivered: false, waiting: true, text: `tile ${to} is busy: the brief is queued and goes in when it is idle (not interrupted)` }
+      : { to, brief: true, opened: false, delivered: true, text: `sent to Claude Code tile ${to}${a.team ? ' as team work' : ''}` };
+  },
   wait: (a, st) => {
     const t = needTile(st, a.id);
     finishWorker(st, t);
@@ -573,8 +615,9 @@ const HANDLERS = {
     }
     const t = st.tasks.find(x => x.id === Number(a.id));
     if (!t) throw new Error(`no task ${Number(a.id)}`);
+    if (a.sub === 'show') return { sub: 'show', id: t.id, status: t.status, tier: t.tier || null, text: t.text, note: t.note, askText: t.askText || null };
     if (a.sub === 'claim') { t.owner = SELF; t.status = 'doing'; }
-    else if (a.sub === 'done') { t.status = 'done'; if (a.note != null) t.note = String(a.note); }
+    else if (a.sub === 'done') { t.status = a.status === 'blocked' || a.status === 'failed' ? String(a.status) : 'done'; if (a.note != null) t.note = String(a.note); }
     else if (a.sub === 'approve') { if (t.status !== 'review') throw new Error(`task ${t.id} is not in review`); t.status = 'done'; }
     else if (a.sub === 'reject') {
       if (t.status !== 'review') throw new Error(`task ${t.id} is not in review`);

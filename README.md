@@ -30,6 +30,7 @@ operant wait 7 --errors
 - **Checks before review.** When a code task comes back, Operant runs the project's tests (else build) and shows the result and diff size on the review card. A failure goes back to the worker once. Toggle: Settings › Agents › Team.
 - **Memory that knows when it's stale.** `operant remember` and `operant recall` keep facts with confidence, dates and the code they describe; a fact whose code changed shows as stale. Recall ranks by relevance, usefulness and age, and `operant recall used|wrong <id>` feeds that back.
 - **Messaging, opt-in.** With it on (Settings › Agents › Team), agents can send each other short messages with `operant msg <tile> "<text>"` and read them with `operant inbox`, Claude Code and OpenCode included. Repeats are dropped and each pair is rate limited.
+- **Refine, then hand off.** Say "refine this" to the agent you are talking to (OpenCode on a free model, say): the `refine` skill turns your words into a short brief with the files from CodeGraph, shows it, and after your yes sends it with `operant send --file <brief>` to a Claude Code tile (`--new` for a fresh one, `--team` as team work). A busy tile is never interrupted; the brief waits until it is idle. Settings › Agents › *Refined prompts go to* sets the default.
 
 ## Install
 Download the file for your system from the [latest release](https://github.com/doolecg/operant/releases/latest):

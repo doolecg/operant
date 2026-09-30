@@ -73,23 +73,21 @@ const Panels = (() => {
     ]],
     ['Agents', [
       { key: 'agents', type: 'agents' },
-      { key: 'defaultAgent', label: 'Default agent', hint: IS_WIN ? 'Alt+Enter, the master tile and Explorer\'s entry open this' : 'Alt+Enter and the master tile open this', type: 'select',
+      { key: 'defaultAgent', label: 'Default agent', hint: IS_WIN ? 'Alt+Enter, the master tile and Explorer\'s entry open this one.' : 'Alt+Enter and the master tile open this one.', when: 'New tiles', type: 'select',
         options: cfg => cfg.agents.map(a => [a.id, a.name]) },
-      { key: 'opencodeTheme', label: 'OpenCode uses Operant’s theme', hint: 'OpenCode tiles get the current theme and accent, with a see-through background · your own OpenCode settings stay as they are · applies to new OpenCode tiles', type: 'toggle' },
+      { key: 'opencodeTheme', label: 'OpenCode uses Operant’s theme', hint: 'OpenCode tiles get your theme and accent; your own OpenCode settings stay as they are.', when: 'New OpenCode tiles', type: 'toggle' },
       { key: 'installSkill', label: 'Operant skill for agents',
-        hint: 'Gives Claude Code and OpenCode tiles the Operant skill for each session, straight from the app, so it always matches this version. Nothing is written to your agents’ own folders, and copies older versions put there are removed. Applies to new tiles',
-        type: 'toggle' },
-      { key: 'briefAgents', label: 'Brief agents at launch', hint: 'A short brief in every agent tile\'s first message (master, workers, reopened) so the rules apply from the start, not only once it loads the skill', type: 'toggle' },
-      { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Claude Code and OpenCode: a hook rewrites test/build/install commands to operant test/build/run so only the failures reach the agent; the rewritten command still asks for permission like any other, and ending a command with # raw leaves it alone', type: 'toggle' },
-      { key: 'backgroundAfterSeconds', label: 'Run in the Backrooms after', hint: 'Seconds · a rerouted test, build or install that is still running after this long moves to the Backrooms page and the agent waits for its errors only · a faster one returns its result at once · 0 = always at once', type: 'number', min: 0, max: 600 },
+        hint: 'Gives Claude Code and OpenCode tiles the Operant skill each session; nothing is written to their own folders.', when: 'New tiles', type: 'toggle' },
+      { key: 'briefAgents', label: 'Brief agents at launch', hint: 'A short first message in every agent tile so the rules apply from the start.', when: 'New tiles', type: 'toggle' },
+      { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Tests, builds and installs run through Operant so only the failures reach the agent; end a command with # raw to skip it.', when: 'New tiles', type: 'toggle' },
+      { key: 'backgroundAfterSeconds', label: 'Run in the Backrooms after', hint: 'A rerouted command still running after this many seconds moves to the Backrooms page and the agent waits for its errors only. 0 = always at once.', when: 'The next rerouted command', type: 'number', min: 0, max: 600 },
       { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
         type: 'number', min: 0, max: 100 },
       { key: 'cacheTtlMinutes', label: 'Prompt cache lifetime', hint: 'Minutes an idle tile\'s cache stays warm before its next message pays full price · 60 if your setup uses the 1-hour cache', type: 'number', min: 1, max: 120 },
       { key: 'compactBeforeCold', label: 'Compact before the cache goes cold', hint: 'Compact big idle agents just before their prompt cache expires, instead of paying to rebuild it', type: 'toggle' },
-      { key: 'team', type: 'team' },
+      ...AgentSettings.META.map(m => ({ key: 'team.' + m.id, type: 'tset', sid: m.id, label: m.label, hint: m.does, group: m.group, adv: !!m.adv })),
       { key: 'shareSetup', label: 'Share your main agent\'s setup',
-        hint: 'Rules, MCP servers and skills from your default agent (above) reach every agent you launch, for that process only · never edits your agents\' own config files',
-        type: 'toggle' },
+        hint: 'Rules, MCP servers and skills from your default agent reach every agent you launch, for that process only.', when: 'New tiles', type: 'toggle' },
     ]],
     ['Notifications', [
       { key: 'notifications', label: IS_WIN ? 'Windows notifications' : 'Notifications', type: 'toggle' },
@@ -109,7 +107,7 @@ const Panels = (() => {
       { key: 'agentLookbackSeconds', label: 'Pick up agents started before launch', hint: 'Seconds · ' + RESTART, type: 'number', min: 0, max: 3600 },
       { key: 'runawayGuard', label: 'Runaway guard', hint: 'A tile stuck in a loop, burning tokens or piling up subagents', type: 'select',
         options: [['warn', 'Warn me'], ['stop', 'Stop it'], ['off', 'Off']] },
-      { key: 'stuckTurns', label: 'Tool calls without a file edit', hint: 'A team worker on a code task this stuck moves up a tier, as does the same command failing again unchanged (or three times); 0 = off', type: 'number', min: 0, max: 200 },
+      { key: 'stuckTurns', label: 'Tool calls without a file edit', hint: 'How many tool calls a team worker on a code task may make without editing a file before the task pauses and asks you (so does the same command failing again). 0 = off.', when: 'Workers started after the change', type: 'number', min: 0, max: 200 },
       { key: 'runawayLoopRepeats', label: 'Same tool call repeated', hint: 'Times, within its last 20 tool calls', type: 'number', min: 3, max: 50 },
       { key: 'runawayTokens', label: 'Tokens in 10 minutes', hint: '0 = off', type: 'tokens' },
       { key: 'runawayMinutes', label: 'Working without a break, minutes', hint: '0 = off', type: 'number', min: 0, max: 600 },
@@ -209,7 +207,7 @@ const Panels = (() => {
   const TABS = [
     ['General', ['Startup', 'Notifications', 'Updates']],
     ['Look', ['Appearance', 'Terminal', 'Top bar', 'Media']],
-    ['Agents', ['Agents']],
+    ['Agents', AgentSettings.GROUPS],
     ['Tiles', ['Layout', 'Tiles & subagents']],
     ['Projects', ['Projects', 'Sidebar', 'Files', 'CodeGraph']],
     ['Usage', ['Usage', 'Context and cache']],
@@ -217,7 +215,10 @@ const Panels = (() => {
     ['Keybinds', ['Keybinds']],
   ];
   // Rows that move to another group than the one they were written in.
-  const MOVED = { autoCompact: 'Context and cache', cacheTtlMinutes: 'Context and cache', compactBeforeCold: 'Context and cache' };
+  const MOVED = { autoCompact: 'Context and cache', cacheTtlMinutes: 'Context and cache', compactBeforeCold: 'Context and cache',
+    agents: 'Who does the work', defaultAgent: 'Who does the work', stuckTurns: 'When they get stuck',
+    opencodeTheme: 'What they use', installSkill: 'What they use', briefAgents: 'What they use', longCommandHook: 'What they use',
+    backgroundAfterSeconds: 'What they use', shareSetup: 'What they use' };
   const ADVANCED = new Set(['borderAnimationSeconds', 'animations', 'blur', 'rounding', 'borderSize', 'gapsIn', 'gapsOut',
     'lineHeight', 'cursorStyle', 'cursorBlink', 'scrollback', 'gpuTerminals', 'hardwareAcceleration', 'clockSeconds', 'clockDate', 'barTitle', 'mediaSize',
     'shell', 'explorerOpensIn', 'linkBrowserCommand', 'secondBrowser', 'secondBrowserCommand', 'notifySubagents', 'notifyOnlyUnfocused',
@@ -226,8 +227,8 @@ const Panels = (() => {
     'idleCloseTerminalMinutes', 'agentLookbackSeconds', 'stuckTurns', 'runawayLoopRepeats', 'runawayTokens', 'runawayMinutes', 'runawaySubagents',
     'sidebarWidth', 'sidebarHiddenFiles', 'ideCommand', 'configOpensIn', 'editorCommand', 'codegraphChangedFiles', 'codegraphButtons',
     'usageSeries', 'planLimitAlerts', 'contextBadge', 'tileTokens', 'cacheTtlMinutes', 'compactBeforeCold']);
-  const rowsOf = g => GROUPS_ALL.flatMap(([name, items]) => items.map(it => ({ ...it, sub: MOVED[it.key] || name })))
-    .filter(it => it.sub === g).map(it => ({ ...it, adv: ADVANCED.has(it.key) }));
+  const rowsOf = g => GROUPS_ALL.flatMap(([name, items]) => items.map(it => ({ ...it, sub: MOVED[it.key] || it.group || name })))
+    .filter(it => it.sub === g).map(it => ({ ...it, adv: !!it.adv || ADVANCED.has(it.key) }));
   const SECTIONS = TABS.map(([t, groups]) => [t, groups.flatMap(rowsOf)]).filter(([, items]) => items.length);
   // An old tab name (links, health actions, hints) -> [tab, group to scroll to].
   const tabFor = name => {
@@ -369,60 +370,178 @@ const Panels = (() => {
   }
 
   // Settings › Agents › Team (item 33): enable toggle, one row per tier (agent, model, "use for"), max workers.
-  // Settings > Agents > Team > Local model: an Ollama model the lowest tier falls back to when Big Pickle is busy or out of free use.
+  // Settings > Agents > Team > Local model (item 95): a guided card, one row per part of the setup with its own state
+  // (local-setup.js words them), the go-ahead question before anything downloads, Cancel/Resume/Retry while it runs,
+  // and Test it / Remove once it is in place. State comes from main.js through ext.localModelState().
   const LOCAL_MODELS = ['gemma4:e4b', 'gemma4:e2b', 'gemma4:12b'];
+  const LOCAL_MARK = { idle: '○', checking: '◌', downloading: '↓', installing: '⚙', starting: '▸', ready: '✓', failed: '✕' };
+  const LOCAL_WORD = { idle: 'Not started', checking: 'Checking', downloading: 'Downloading', installing: 'Installing', starting: 'Starting', ready: 'Ready', failed: 'Failed' };
+  const LOCAL_PARTS = [['ollama', 'Ollama'], ['running', 'Ollama running'], ['model', 'Model'], ['ready', 'Ready to use'], ['connected', 'Connected to OpenCode']];
+  const lmBytes = n => n == null ? '?' : n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.round(n / 1e3)} KB`;
+  function localPlanBlock(s) {
+    const p = s.plan;
+    const dl = p.downloads.length ? p.downloads.map(d => `${esc(d.what)} (about ${lmBytes(d.bytes)})`).join(' + ') + `, ${lmBytes(p.totalBytes)} in all` : 'Nothing to download';
+    const disk = p.disk.free == null ? 'Free disk space could not be read' : `${lmBytes(p.disk.free)} free on the disk, ${lmBytes(p.disk.need)} needed${p.disk.ok ? '' : ': not enough'}`;
+    const mem = p.memory.ok == null ? '' : `<div>Memory: ${lmBytes(p.memory.total)}, ${esc(s.model)} wants about ${p.memory.needGB} GB${p.memory.ok ? ': fine' : ': too little'}</div>`;
+    const other = p.other ? `<div class="lm-warn">This computer can't run ${esc(s.model)} well. ${esc(p.other.model)} (about ${lmBytes(p.other.bytes)}) fits.</div>` : '';
+    const notes = p.notes.map(n => `<div class="lm-warn">${esc(n)}</div>`).join('');
+    return `<div class="lm-plan"><b>This will download:</b> ${dl}<div>${disk}</div>${mem}${other}${notes}</div>`;
+  }
   function localModelBlock(cfg, ext) {
     const s = ext.localModelState();
     const model = (cfg.localModel && cfg.localModel.model) || LOCAL_MODELS[0];
     const models = LOCAL_MODELS.includes(model) ? LOCAL_MODELS : [model, ...LOCAL_MODELS];
-    const status = s.status === 'installing' ? `Installing… ${s.pct ? s.pct + '%' : ''} ${s.message || ''}`
-      : s.status === 'ready' ? `Ready: ${s.model}` : s.status === 'error' ? `Error: ${s.message}` : 'Not installed';
-    const active = cfg.teamTiers && cfg.teamTiers.xsmall && cfg.teamTiers.xsmall.active;
-    const link = s.status === 'error' && s.link ? ` <a href="#" data-local-link="${esc(s.link)}">${esc(s.link)}</a>` : '';
-    const bar = s.status === 'installing' ? `<progress max="100" value="${s.pct || 0}" style="width:100%"></progress>` : '';
-    const busy = s.status === 'installing';
-    return `<div class="set-row"><div class="lbl">Local model<span class="hint uc-status${s.status === 'error' ? ' error' : ''}">${esc(status)}${link}${active ? ' · lowest tier is using ' + esc(active) : ''}</span>
-        <span class="hint">The lowest tier uses Big Pickle first. When it is rate limited, busy or out of free use, and this model is installed, it runs here instead (free, on your computer) and goes back to Big Pickle later. Install downloads Ollama (Windows: winget) and the model in the background</span>${bar}</div>
-        <div class="ctl"><select data-local-model${busy ? ' disabled' : ''}>${models.map(m => `<option value="${esc(m)}"${m === model ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
-          <button class="btn primary" data-local-install${busy || s.status === 'ready' ? ' disabled' : ''}>Install</button>
-          <button class="btn" data-local-remove${busy || s.status !== 'ready' ? ' disabled' : ''}>Remove</button></div></div>`;
+    const parts = s.parts || {};
+    const running = s.status === 'installing';
+    const ft = cfg.teamTiers && (cfg.teamTiers.free || cfg.teamTiers.xsmall);
+    const active = ft && ft.fallback ? ft.active : '';
+    const rows = LOCAL_PARTS.map(([id, label]) => {
+      const p = parts[id] || { state: 'idle', detail: 'Not started' };
+      const bar = id === 'model' && p.state === 'downloading' ? `<progress max="100" value="${p.pct || 0}" data-lm-bar></progress>` : '';
+      return `<div class="lm-part ${esc(p.state)}" data-lm-part="${id}"><span class="lm-mark">${LOCAL_MARK[p.state] || '○'}</span>`
+        + `<span class="lm-name">${esc(label)}</span><span class="lm-state">${esc(LOCAL_WORD[p.state] || p.state)}</span><span class="lm-detail">${esc(p.detail || '')}</span>${bar}</div>`;
+    }).join('');
+    const f = s.failed;
+    const fail = f ? `<div class="lm-fail"><b>${esc(f.label)} failed.</b> ${esc(f.what)}<div>${esc(f.leftover)}</div>${f.link ? `<a href="#" data-local-link="${esc(f.link)}">${esc(f.link)}</a>` : ''}</div>`
+      : s.status === 'error' ? `<div class="lm-fail">${esc(s.message)}</div>` : '';
+    const askBlock = s.status === 'confirm' && s.plan ? localPlanBlock(s) : '';
+    const info = s.status === 'ready' && s.info ? `<div class="lm-info">${esc(s.info.model)} · ${lmBytes(s.info.bytes)} on disk · Ollama's models use ${lmBytes(s.info.diskUsed)} in all</div>` : '';
+    const btn = (attr, label, cls = '', dis = false) => `<button class="btn${cls ? ' ' + cls : ''}" ${attr}${dis ? ' disabled' : ''}>${esc(label)}</button>`;
+    let ctl;
+    if (running) ctl = btn('data-local-cancel', 'Cancel');
+    else if (s.status === 'confirm') ctl = btn('data-local-go', 'Download and install', 'primary', !!(s.plan && s.plan.blocked)) + (s.plan && s.plan.other ? btn(`data-local-switch="${esc(s.plan.other.model)}"`, `Use ${s.plan.other.model} instead`) : '') + btn('data-local-dismiss', 'Not now');
+    else if (s.status === 'paused') ctl = btn('data-local-go', 'Resume', 'primary') + btn('data-local-dismiss', 'Close');
+    else if (s.status === 'error') ctl = btn('data-local-go', f ? f.retry : 'Retry', 'primary') + btn('data-local-dismiss', 'Close');
+    else if (s.status === 'ready') ctl = btn('data-local-test', 'Test it') + btn('data-local-remove', 'Remove the model');
+    else ctl = btn('data-local-install', 'Set up the local model', 'primary');
+    const lead = running ? `Working on ${esc(s.model)}: ${esc(s.message || '')}` : s.status === 'ready' ? `Ready: ${esc(s.model)}` : s.status === 'paused' ? 'Paused' : s.status === 'error' ? 'Setup stopped' : s.status === 'confirm' ? 'Waiting for your go-ahead' : esc(s.message || 'Not installed');
+    return `<div class="set-row lm-card"><div class="lbl">Local model<span class="hint uc-status ${esc(s.status)}${s.status === 'error' ? ' error' : ''}" data-lm-lead>${lead}${active ? ' · the free tier is using ' + esc(active) : ''}</span>`
+      + `<span class="hint">The free tier uses Big Pickle first. When it is rate limited, busy or out of free use, and this model is installed, it runs here instead (free, on your computer) and goes back to Big Pickle later. Setup asks before it downloads anything.</span>`
+      + `${askBlock}<div class="lm-parts">${rows}</div>${fail}${info}</div>`
+      + `<div class="ctl"><select data-local-model${running ? ' disabled' : ''}>${models.map(m => `<option value="${esc(m)}"${m === model ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>${ctl}</div></div>`;
   }
-  function teamEditor(cfg, ext) {
-    const team = cfg.team || {};
-    const tiers = team.tiers || {};
-    const tierBlock = (id, label) => {
-      const t = tiers[id] || {};
-      return `<div class="set-row"><div class="lbl">${label} tier</div><div class="ctl">
-          <select data-team-f="${id}.agent">${cfg.agents.map(a => `<option value="${esc(a.id)}"${a.id === t.agent ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+  // The card's own handlers; also used when only the card is redrawn (progress arrives several times a second).
+  function bindLocalCard(pane, cfg, set, ext) {
+    const model = () => (cfg.localModel && cfg.localModel.model) || LOCAL_MODELS[0];
+    const on = (sel, fn) => pane.querySelectorAll(sel).forEach(b => b.onclick = e => { e.preventDefault(); fn(b); });
+    pane.querySelectorAll('[data-local-model]').forEach(el => el.onchange = () => { set('localModel', { ...(cfg.localModel || {}), model: el.value }); ext.localModelDismiss(); });
+    on('[data-local-install]', b => { b.disabled = true; ext.localModelInstall(model()); });
+    on('[data-local-go]', b => { b.disabled = true; ext.localModelInstall(model(), { confirmed: true }); });
+    on('[data-local-switch]', b => { set('localModel', { ...(cfg.localModel || {}), model: b.dataset.localSwitch }); ext.localModelInstall(b.dataset.localSwitch); });
+    on('[data-local-cancel]', b => { b.disabled = true; ext.localModelCancel(); });
+    on('[data-local-dismiss]', () => ext.localModelDismiss());
+    on('[data-local-test]', b => { b.disabled = true; ext.localModelTest(); });
+    on('[data-local-remove]', b => { b.disabled = true; ext.localModelRemove(model()); });
+    on('[data-local-link]', a => ext.openLink(a.dataset.localLink));
+  }
+  // Redraws just the card (returns false when it is not on the page). Called on every state push.
+  function refreshLocalCard(body, cfg, set, ext) {
+    const holder = body && body.querySelector('[data-sid="localModel"]');
+    if (!holder) return false;
+    holder.innerHTML = localModelBlock(cfg, ext);
+    bindLocalCard(holder, cfg, set, ext);
+    return true;
+  }
+  // Items 91/92: the limits' suggestions from past tasks (ext.limitSuggestions(): null until read), and a refused change.
+  let teamLimitMsg = '';
+  const kTok = n => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+  function suggestionText(s) {
+    if (!s) return 'Suggestion: reading past tasks…';
+    if (!s.enough) return `Suggestion: not enough history (${s.n} of 5 finished tasks), so the tier default`;
+    return `Suggested ${kTok(s.tokens)} from ${s.n} passed tasks${s.direction ? ` (${s.direction}: ${s.reason})` : ` (${s.reason})`}`;
+  }
+  // Item 96: per tier, its routes in order and how this week's tasks went on each (ext.routeUse(): null until read).
+  function routesBlock(cfg, ext) {
+    const d = ext.routeUse ? ext.routeUse() : null;
+    const usd = n => '$' + (n || 0).toFixed(2);
+    const lines = Object.entries(cfg.teamTiers || {}).filter(([n, t]) => (t.routes && t.routes.length > 1) || (d && d.use && d.use[n])).map(([n, t]) => {
+      const order = t.routes && t.routes.length > 1 ? t.routes.map(r => r.label).join(' → ') : (t.route ? t.route.label : t.model);
+      const now = t.fallback ? ` · now ${t.active}: ${t.fallback}` : '';
+      const week = ((d && d.use && d.use[n]) || []).map(r => {
+        const why = Object.entries(r.why || {}).map(([k, c]) => `${k} ×${c}`).join(', ');
+        const paid = d.paid && d.paid[n] ? TeamRouteLabel(d.paid[n]) : '';
+        return `${r.route}: ${r.tasks} task${r.tasks === 1 ? '' : 's'}, ${kTok(r.tokens)} tokens${r.free && paid ? `, ${usd(r.savedUsd)} saved vs ${paid}` : r.usd ? `, ${usd(r.usd)}` : ''}${why ? ` (${why})` : ''}`;
+      });
+      return `<b>${esc(n)}</b>: ${esc(order)}${esc(now)}${week.length ? '<br>&nbsp;&nbsp;' + week.map(esc).join('<br>&nbsp;&nbsp;') : ''}`;
+    });
+    return `<div class="set-row"><div class="lbl">Routes this week<span class="hint">Each tier tries its routes in order: the next one only when the first was busy, out of free use, or this kind of task kept failing there. Tasks, tokens and cost saved are from this week's finished tasks</span>
+      <span class="hint">${lines.length ? lines.join('<br>') : (d ? 'No tasks this week yet' : 'Reading this week…')}</span></div></div>`;
+  }
+  // Item 96: after a config migration, an xsmall tier on a paid model is offered Big Pickle first; nothing is switched until the click.
+  function bigPickleOffer(cfg) {
+    if (!(cfg.tierOffers || []).includes('use-big-pickle')) return '';
+    const x = (cfg.team && cfg.team.tiers && cfg.team.tiers.xsmall) || {};
+    return `<div class="set-row"><div class="lbl">Use Big Pickle first<span class="hint">Your xsmall tier runs ${esc(TeamRouteLabel(x.model || ''))}. Big Pickle is free: with this change xsmall runs it first and goes to ${esc(TeamRouteLabel(x.model || ''))} only when Big Pickle is busy, out of free use, or this kind of task kept failing there</span></div>
+        <div class="ctl"><button class="btn primary" data-offer-use-bp>Use Big Pickle</button><button class="btn" data-offer-dismiss>Not now</button></div></div>`;
+  }
+  const TeamRouteLabel = id => (typeof TierRoutes !== 'undefined' ? TierRoutes.labelOf({ model: id }) : id);
+  // Item 94: the team settings, one row each, worded by agent-settings.js. Every row: short label, what it does for
+  // you, the value in effect and when it applies, its warnings, a Reset when it differs from the default, and its
+  // developer term (config key) only under Advanced.
+  let presetPreview = null;
+  function tsetRow(it, cfg, ext) {
+    const m = AgentSettings.byId[it.sid], team = cfg.team || {}, tiers = team.tiers || {};
+    const ctx = { localStatus: ext.localModelState().status };
+    const warn = (AgentSettings.warnings(cfg, ctx)[it.sid] || []).map(w => `<span class="hint warn">${esc(w)}</span>`).join('');
+    const dt = ext.defaults && ext.defaults.team;
+    const rst = m.path && dt && !same(AgentSettings.get(team, m.path), AgentSettings.get(dt, m.path))
+      ? `<button class="btn rst" data-team-reset="${esc(m.path)}" title="Reset to the default">Reset</button>` : '';
+    const eff = AgentSettings.effective(cfg, it.sid);
+    const shell = (ctl, extra = '') => `<div class="set-row${warn ? ' has-warn' : ''}" data-sid="${it.sid}"><div class="lbl">${esc(m.label)}<span class="hint">${esc(m.does)}</span>`
+      + `<span class="hint now">${eff ? `Now: ${esc(eff)} · ` : ''}Applies: ${esc(m.when)}</span>${extra}${warn}${it.adv ? `<span class="hint dev">${esc(m.dev)}</span>` : ''}</div><div class="ctl">${rst}${ctl}</div></div>`;
+    const sugg = ext.limitSuggestions ? ext.limitSuggestions() : null;
+    const tog = (attr, on) => `<button class="toggle${on ? ' on' : ''}" ${attr}></button>`;
+    switch (it.sid) {
+      case 'enabled': return shell(tog('data-team-enabled', team.enabled));
+      case 'maxWorkers': return shell(`<input type="number" data-team-max min="1" max="16" value="${team.maxWorkers ?? 4}">`);
+      case 'maxTier': return shell(`<select data-team-top>${Object.keys(tiers).map(n => `<option value="${esc(n)}"${n === (team.maxTier || Object.keys(tiers).pop()) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`);
+      case 'savingProgress': return shell(`<select data-team-saving><option value="over"${team.savingProgress !== 'inside' ? ' selected' : ''}>On top of the limit</option><option value="inside"${team.savingProgress === 'inside' ? ' selected' : ''}>Inside the limit</option></select>`,
+        `<span class="hint">On top: the work stops at the limit and saving gets its own allowance (10% of the limit, at most 15k). Inside: the allowance comes out of the limit, and limits under 20k are refused.</span>${teamLimitMsg ? `<span class="hint uc-status error">${esc(teamLimitMsg)}</span>` : ''}`);
+      case 'dailyCap': return shell(`<input type="number" data-team-cap min="0" step="100000" value="${team.dailyCap ?? 0}">`);
+      case 'suggest': return shell(`<button class="btn" data-team-apply${sugg && Object.values(sugg).some(s => s && s.enough) ? '' : ' disabled'}>Apply suggestions</button>`,
+        '<span class="hint">From at least 5 passed tasks per tier: the 90th percentile of tokens used, plus 25%.</span>');
+      case 'askBeforeMoveUp': return shell('<button class="toggle on" disabled title="Always on in this release"></button>');
+      case 'verifyBeforeReview': return shell(tog('data-team-verify', team.verifyBeforeReview !== false));
+      case 'messaging': return shell(tog('data-messaging', cfg.messaging));
+      case 'refineTo': return shell(`<select data-refine-to><option value="claude"${cfg.refineTo !== 'team' ? ' selected' : ''}>A Claude tile</option><option value="team"${cfg.refineTo === 'team' ? ' selected' : ''}>Team work</option></select>`);
+      case 'localModel': return `<div data-sid="localModel">${localModelBlock(cfg, ext)}</div>`;
+      case 'routing': {
+        const def = cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
+        const ocNote = def && /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(String(def.command || '').trim().split(/\s+/)[0])
+          ? `<div class="set-row"><div class="lbl">OpenCode tiers<span class="hint">OpenCode is your default agent, so its tiers come from the models it can reach: ${esc(Object.entries(cfg.teamTiers || {}).map(([n, t]) => `${n} ${t.model}${t.effort ? ' · ' + t.effort : ''}`).join(', ') || 'reading its models…')}. Free Zen models have no effort levels, so they give one tier; a paid Zen or OpenAI model adds one per effort level. The tiers under Advanced apply when another agent is the default.</span></div></div>` : '';
+        const fb = ocNote ? [] : Object.entries(cfg.teamTiers || {}).filter(([, t]) => t.fallback);
+        const fbNote = fb.length ? `<div class="set-row"><div class="lbl">Fallbacks in use<span class="hint">${esc(fb.map(([n, t]) => `${n}: ${t.agent} ${t.model}${t.effort ? ' · ' + t.effort : ''} (${t.fallback})`).join('; '))}</span></div></div>` : '';
+        return `<div data-sid="routing">${ocNote}${fbNote}${bigPickleOffer(cfg)}${routesBlock(cfg, ext)}</div>`;
+      }
+    }
+    if (it.sid.startsWith('tier.')) {
+      const id = it.sid.slice(5), t = tiers[id] || {};
+      return shell(`<select data-team-f="${id}.agent">${cfg.agents.map(a => `<option value="${esc(a.id)}"${a.id === t.agent ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
           <input data-team-f="${id}.model" value="${esc(t.model || '')}" placeholder="model id" spellcheck="false">
-          <select data-team-f="${id}.effort" title="Effort (Claude Code only)">${[['', 'Default effort'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']].map(([v, n]) => `<option value="${v}"${v === (t.effort || '') ? ' selected' : ''}>${n}</option>`).join('')}</select></div></div>
-        <div class="set-row"><div class="lbl">${label} use for<span class="hint">Shown to the lead agent, and taught in the skill</span></div>
-          <div class="ctl"><input data-team-f="${id}.use" value="${esc(t.use || '')}" placeholder="what this tier is for" spellcheck="false"></div></div>
-        <div class="set-row"><div class="lbl">${label} budget<span class="hint">Tokens per task (input, output, cache writes). A worker past it is stopped and the task moves up a tier. 0 = no limit</span></div>
-          <div class="ctl"><input type="number" data-team-budget="${id}" min="0" step="10000" value="${team.budgets?.[id] ?? 0}"></div></div>`;
-    };
-    // With OpenCode as the default agent, the tiers come from its models instead of the rows below.
-    const def = cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
-    const ocNote = def && /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(String(def.command || '').trim().split(/\s+/)[0])
-      ? `<div class="set-row"><div class="lbl">OpenCode tiers<span class="hint">OpenCode is your default agent, so its tiers come from the models it can reach: ${esc(Object.entries(cfg.teamTiers || {}).map(([n, t]) => `${n} ${t.model}${t.effort ? ' · ' + t.effort : ''}`).join(', ') || 'reading its models…')}. Free Zen models have no effort levels, so they give one tier; a paid Zen or OpenAI model adds one per effort level. The tiers below apply when another agent is the default.</span></div></div>`
-      : '';
-    const fb = ocNote ? [] : Object.entries(cfg.teamTiers || {}).filter(([, t]) => t.fallback);
-    const fbNote = fb.length ? `<div class="set-row"><div class="lbl">Fallbacks in use<span class="hint">${esc(fb.map(([n, t]) => `${n}: ${t.agent} ${t.model}${t.effort ? ' · ' + t.effort : ''} (${t.fallback})`).join('; '))}</span></div></div>` : '';
-    return `<div class="set-row"><div class="lbl">Team mode<span class="hint">A lead agent hands small tasks to cheaper workers, in their own tiles</span></div>
-        <div class="ctl"><button class="toggle${team.enabled ? ' on' : ''}" data-team-enabled></button></div></div>
-      <div class="set-row"><div class="lbl">Let agents message each other<span class="hint">Adds operant msg and operant inbox: an agent can send another tile a short message, delivered when that tile is between steps · off by default · a Claude Code tile started before you turned this on only gets messages when it is idle</span></div>
-        <div class="ctl"><button class="toggle${cfg.messaging ? ' on' : ''}" data-messaging></button></div></div>
-      <div class="set-row"><div class="lbl">Run checks before review<span class="hint">When a worker finishes a fix, feature, refactor or test task, Operant runs the project's test (else build) command and attaches the result; a failing check sends the task back once</span></div>
-        <div class="ctl"><button class="toggle${team.verifyBeforeReview !== false ? ' on' : ''}" data-team-verify></button></div></div>
-      ${ocNote}${fbNote}
-      ${localModelBlock(cfg, ext)}
-      ${tierBlock('xsmall', 'XSmall')}
-      ${tierBlock('small', 'Small')}
-      ${tierBlock('medium', 'Medium')}
-      ${tierBlock('high', 'High')}
-      ${tierBlock('max', 'Max')}
-      <div class="set-row"><div class="lbl">Max workers at once</div><div class="ctl"><input type="number" data-team-max min="1" max="16" value="${team.maxWorkers ?? 4}"></div></div>
-      <div class="set-row"><div class="lbl">Top tier allowed<span class="hint">Workers can't be started on a tier above this</span></div><div class="ctl"><select data-team-top>${Object.keys(tiers).map(n => `<option value="${esc(n)}"${n === (team.maxTier || Object.keys(tiers).pop()) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div></div>`;
+          <select data-team-f="${id}.effort" title="Effort (Claude Code only)">${[['', 'Default effort'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']].map(([v, n]) => `<option value="${v}"${v === (t.effort || '') ? ' selected' : ''}>${n}</option>`).join('')}</select>`,
+        `<span class="hint">Use for (shown to the lead and taught in the skill): <input data-team-f="${id}.use" value="${esc(t.use || '')}" placeholder="what this tier is for" spellcheck="false" style="width:100%"></span>`);
+    }
+    if (it.sid.startsWith('budget.')) {
+      const id = it.sid.slice(7);
+      return shell(`<input type="number" data-team-budget="${id}" min="0" step="10000" value="${team.budgets?.[id] ?? 0}">`, `<span class="hint">${esc(suggestionText(sugg && sugg[id]))}</span>`);
+    }
+    return '';
+  }
+  // The top of Settings › Agents: what is set now in plain sentences (each with a Change link), and the presets.
+  function agentTop(cfg, ext) {
+    const s = AgentSettings.summary(cfg, { labelOf: TeamRouteLabel, localStatus: ext.localModelState().status, localModel: cfg.localModel && cfg.localModel.model });
+    const team = cfg.team || {};
+    const pv = presetPreview && AgentSettings.PRESETS[presetPreview] ? presetPreview : null;
+    const diff = pv ? AgentSettings.presetDiff(team, pv) : [];
+    const cur = s.preset;
+    const btns = AgentSettings.PRESET_ORDER.map(id => `<button class="btn preset${cur.id === id ? ' on' : ''}${pv === id ? ' previewing' : ''}" data-preset="${id}" title="${esc(AgentSettings.PRESETS[id].blurb)}">${esc(AgentSettings.PRESETS[id].name)}</button>`).join('')
+      + (cur.custom ? '<span class="preset-custom">Custom</span>' : '');
+    const preview = pv ? `<div class="preset-preview"><div><b>${esc(AgentSettings.PRESETS[pv].name)}</b>: ${esc(AgentSettings.PRESETS[pv].blurb)} It does not change which models the tiers use or whether team mode is on.</div>`
+      + (diff.length ? `<ul>${diff.map(c => `<li>${esc(c.text)}</li>`).join('')}</ul><div class="ctl"><button class="btn primary" data-preset-apply="${pv}">Apply ${esc(AgentSettings.PRESETS[pv].name)}</button><button class="btn" data-preset-cancel>Cancel</button></div>`
+        : '<div class="hint">Already set this way; nothing would change.</div><div class="ctl"><button class="btn" data-preset-cancel>Close</button></div>') + '</div>' : '';
+    return `<div class="ag-summary"><div class="ag-title">What is set now</div><ul>${s.lines.map(l => `<li>${esc(l.text)} <a href="#" data-goto="${esc(l.target)}">Change</a></li>`).join('')}</ul>
+        <div class="hint">${esc(s.presetText)}</div></div>
+      <div class="ag-presets"><div class="ag-title">Presets <span class="hint">Pick one to see what it changes first; nothing changes until you apply it.</span></div><div class="preset-row">${btns}</div>${preview}</div>`;
   }
 
   // Settings › Data › Skills backup: the repos skills and rules are pushed to, the two switches, Back up now and the last result.
@@ -486,7 +605,7 @@ const Panels = (() => {
     if (it.type === 'projects') return projectsEditor(cfg);
     if (it.type === 'theme') return themeCards(cfg.theme);
     if (it.type === 'agents') return agentsEditor(cfg.agents);
-    if (it.type === 'team') return teamEditor(cfg, ext);
+    if (it.type === 'tset') return tsetRow(it, cfg, ext);
     if (it.type === 'keys') return '<div class="set-keys"></div>';
     if (it.type === 'codegraph') return '<div class="cg-card"></div>';
     if (it.type === 'tokenBreakdown') return '<div class="tok-breakdown"></div>';
@@ -495,21 +614,22 @@ const Panels = (() => {
     const err = ext.errors && ext.errors[it.key];
     const rst = ext.defaults && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])
       ? `<button class="btn rst" data-reset="${it.key}" title="Reset to the default">Reset</button>` : '';
-    return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}${err ? `<span class="hint uc-status error" data-err="${it.key}">${esc(err)}</span>` : ''}</div><div class="ctl">${rst}${control(it, cfg[it.key], cfg)}</div></div>`;
+    return `<div class="set-row"><div class="lbl">${it.label}${it.hint ? `<span class="hint">${it.hint}</span>` : ''}${it.when ? `<span class="hint now">Applies: ${esc(it.when)}</span>` : ''}${err ? `<span class="hint uc-status error" data-err="${it.key}">${esc(err)}</span>` : ''}</div><div class="ctl">${rst}${control(it, cfg[it.key], cfg)}</div></div>`;
   }
 
   const labelOf = key => SECTIONS.flatMap(s => s[1]).find(i => i.key === key && i.label)?.label || key;
   // Above every pane: settings that only apply after a restart, and saves that were refused for a key with no row of its own.
   function notices(cfg, ext) {
-    const shownKeys = new Set(SECTIONS.flatMap(s => s[1]).filter(i => i.key && i.label && !['agents', 'team'].includes(i.key)).map(i => i.key));
+    const shownKeys = new Set(SECTIONS.flatMap(s => s[1]).filter(i => i.key && i.label && !['agents'].includes(i.key) && i.type !== 'tset').map(i => i.key));
     const stray = Object.entries(ext.errors || {}).filter(([k]) => !shownKeys.has(k));
     const pend = restartPending(cfg);
     return (stray.length ? `<div class="set-row"><div class="lbl"><span class="uc-status error">Not saved</span>${stray.map(([k, m]) => `<span class="hint uc-status error">${esc(labelOf(k))}: ${esc(m)}</span>`).join('')}</div></div>` : '')
       + (pend.length ? `<div class="set-row"><div class="lbl"><span>Restart needed</span><span class="hint">Saved, but applies after a restart: ${esc(pend.map(labelOf).join(', '))}</span></div><div class="ctl"><button class="btn primary" data-restart>Restart now</button></div></div>` : '');
   }
+  const teamChanged = (items, cfg, ext) => items.some(it => it.type === 'tset') && ext.defaults && ext.defaults.team ? AgentSettings.changedFrom(cfg.team || {}, ext.defaults.team) : [];
   // Foot of a tab: put every setting in it back to its default, after a confirm.
   function sectionReset(items, cfg, ext) {
-    const n = items.filter(it => it.key && ext.defaults && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])).length;
+    const n = items.filter(it => it.key && ext.defaults && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])).length + teamChanged(items, cfg, ext).length;
     if (!n) return '';
     const what = `${n} changed setting${n === 1 ? '' : 's'}`;
     return confirmingReset
@@ -541,11 +661,11 @@ const Panels = (() => {
           ? `<div class="set-section" data-grp="${esc(g)}">${groups.length > 1 ? `<h3>${esc(g)}</h3>` : ''}${its.map(it => rowHtml(it, cfg, ext)).join('')}</div>` : ''; }).join('');
         const adv = items.filter(it => it.adv);
         const changed = adv.filter(it => ext.defaults && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])).length;
-        html = `<div class="pane-title">${esc(tab)}</div>` + notices(cfg, ext) + block(items.filter(it => !it.adv))
+        html = `<div class="pane-title">${esc(tab)}</div>` + notices(cfg, ext) + (tab === 'Agents' ? agentTop(cfg, ext) : '') + block(items.filter(it => !it.adv))
           + (adv.length ? `<details class="set-adv"${advOpen ? ' open' : ''}><summary>Advanced <span class="hint">${adv.length} setting${adv.length === 1 ? '' : 's'}${changed ? ` · ${changed} changed` : ''}</span></summary>${block(adv)}</details>` : '')
           + sectionReset(items, cfg, ext);
       } else {
-        const hits = SECTIONS.map(([t, items]) => [t, items.filter(it => `${t} ${it.sub} ${it.label || it.key || ''} ${it.hint || ''} ${it.type === 'theme' ? 'theme colors' : ''} ${it.type === 'agents' ? 'agents commands' : ''}`.toLowerCase().includes(q))])
+        const hits = SECTIONS.map(([t, items]) => [t, items.filter(it => it.type === 'tset' ? AgentSettings.matches(AgentSettings.byId[it.sid], q) : `${t} ${it.sub} ${it.label || it.key || ''} ${it.hint || ''} ${it.type === 'theme' ? 'theme colors' : ''} ${it.type === 'agents' ? 'agents commands' : ''}`.toLowerCase().includes(q))])
           .filter(([, items]) => items.length);
         html = notices(cfg, ext) + (hits.length ? hits.map(([t, items]) => `<div class="set-section"><h3>${esc(t)}</h3>${items.map(it => rowHtml(it, cfg, ext)).join('')}</div>`).join('')
           : `<div class="set-none">Nothing matches “${esc(query)}”.</div>`);
@@ -573,7 +693,12 @@ const Panels = (() => {
       pane.querySelectorAll('[data-reset]').forEach(b => b.onclick = () => { set(b.dataset.reset, clone(ext.defaults[b.dataset.reset]), true); draw(); });
       pane.querySelectorAll('[data-reset-section]').forEach(b => b.onclick = () => {
         const a = b.dataset.resetSection;
-        if (a === 'yes') for (const it of SECTIONS.find(s => s[0] === tab)[1]) if (it.key && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])) set(it.key, clone(ext.defaults[it.key]), true);
+        if (a === 'yes') {
+          const its = SECTIONS.find(s => s[0] === tab)[1];
+          for (const it of its) if (it.key && it.key in ext.defaults && !same(cfg[it.key], ext.defaults[it.key])) set(it.key, clone(ext.defaults[it.key]), true);
+          const paths = teamChanged(its, cfg, ext);
+          if (paths.length) set('team', paths.reduce((t, path) => AgentSettings.put(t, path, AgentSettings.get(ext.defaults.team, path)), cfg.team || {}));
+        }
         confirmingReset = a === 'ask';
         draw();
       });
@@ -666,7 +791,21 @@ const Panels = (() => {
       });
       pane.querySelectorAll('[data-backup-run]').forEach(b => b.onclick = () => { b.disabled = true; ext.backupRun(); });
       pane.querySelectorAll('[data-agent-rm]').forEach(b => b.onclick = () => { setAgents(cfg.agents.filter((_, j) => j !== +b.dataset.agentRm)); draw(); });
+      pane.querySelectorAll('[data-refine-to]').forEach(s => s.onchange = () => { set('refineTo', s.value); draw(); });
       pane.querySelectorAll('[data-messaging]').forEach(b => b.onclick = () => { set('messaging', !cfg.messaging); draw(); });
+      pane.querySelectorAll('[data-team-reset]').forEach(b => b.onclick = () => { set('team', AgentSettings.put(cfg.team || {}, b.dataset.teamReset, clone(AgentSettings.get(ext.defaults.team, b.dataset.teamReset)))); draw(); });
+      pane.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => { presetPreview = presetPreview === b.dataset.preset ? null : b.dataset.preset; draw(); });
+      pane.querySelectorAll('[data-preset-cancel]').forEach(b => b.onclick = () => { presetPreview = null; draw(); });
+      pane.querySelectorAll('[data-preset-apply]').forEach(b => b.onclick = () => { set('team', AgentSettings.applyPreset(cfg.team || {}, b.dataset.presetApply)); presetPreview = null; teamLimitMsg = ''; draw(); });
+      pane.querySelectorAll('[data-goto]').forEach(a => a.onclick = e => {
+        e.preventDefault();
+        const id = a.dataset.goto, row = pane.querySelector(`[data-sid="${CSS.escape(id)}"]`);
+        if (!row) return;
+        const adv = row.closest('.set-adv');
+        if (adv) { adv.open = true; advOpen = true; }
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+      });
       pane.querySelectorAll('[data-team-enabled]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), enabled: !cfg.team?.enabled }); draw(); });
       pane.querySelectorAll('[data-team-verify]').forEach(b => b.onclick = () => { set('team', { ...(cfg.team || {}), verifyBeforeReview: cfg.team?.verifyBeforeReview === false }); draw(); });
       pane.querySelectorAll('[data-team-max]').forEach(el => el.onchange = () => {
@@ -675,12 +814,24 @@ const Panels = (() => {
       });
       pane.querySelectorAll('[data-team-budget]').forEach(el => el.onchange = () => {
         const n = Math.max(0, Math.round(+el.value || 0));
+        if (n && n < 20000 && cfg.team?.savingProgress === 'inside') { teamLimitMsg = `A ${el.dataset.teamBudget} limit under 20k leaves no room to save progress inside it. Nothing was changed.`; draw(); return; }
+        teamLimitMsg = '';
         el.value = n; set('team', { ...(cfg.team || {}), budgets: { ...(cfg.team?.budgets || {}), [el.dataset.teamBudget]: n } });
       });
-      pane.querySelectorAll('[data-local-model]').forEach(el => el.onchange = () => { set('localModel', { ...(cfg.localModel || {}), model: el.value }); ext.localModelRefresh(); });
-      pane.querySelectorAll('[data-local-install]').forEach(b => b.onclick = () => { b.disabled = true; ext.localModelInstall(cfg.localModel && cfg.localModel.model); });
-      pane.querySelectorAll('[data-local-remove]').forEach(b => b.onclick = () => { b.disabled = true; ext.localModelRemove(cfg.localModel && cfg.localModel.model); });
-      pane.querySelectorAll('[data-local-link]').forEach(a => a.onclick = e => { e.preventDefault(); ext.openLink(a.dataset.localLink); });
+      pane.querySelectorAll('[data-team-saving]').forEach(el => el.onchange = () => {
+        const small = Object.entries(cfg.team?.budgets || {}).filter(([, n]) => n && n < 20000).map(([k]) => k);
+        if (el.value === 'inside' && small.length) { teamLimitMsg = `Keep it inside needs every limit at 20k or more (${small.join(', ')} ${small.length === 1 ? 'is' : 'are'} under). Nothing was changed.`; draw(); return; }
+        teamLimitMsg = '';
+        set('team', { ...(cfg.team || {}), savingProgress: el.value }); draw();
+      });
+      pane.querySelectorAll('[data-team-cap]').forEach(el => el.onchange = () => {
+        const n = Math.max(0, Math.round(+el.value || 0));
+        el.value = n; set('team', { ...(cfg.team || {}), dailyCap: n });
+      });
+      pane.querySelectorAll('[data-team-apply]').forEach(b => b.onclick = async () => { if (await ext.applyLimitSuggestions()) draw(); });
+      bindLocalCard(pane, cfg, set, ext);
+      pane.querySelectorAll('[data-offer-use-bp]').forEach(b => b.onclick = () => ext.useBigPickle());
+      pane.querySelectorAll('[data-offer-dismiss]').forEach(b => b.onclick = () => set('tierOffers', (cfg.tierOffers || []).filter(o => o !== 'use-big-pickle')));
       pane.querySelectorAll('[data-team-top]').forEach(el => el.onchange = () => set('team', { ...(cfg.team || {}), maxTier: el.value }));
       pane.querySelectorAll('[data-team-f]').forEach(el => el.onchange = () => {
         const [tierId, field] = el.dataset.teamF.split('.');
@@ -762,5 +913,5 @@ const Panels = (() => {
   // An old tab name (now a group) opens its new tab, scrolled to that group.
   const showTab = t => { [tab, scrollTo] = tabFor(t); query = ''; };
 
-  return { renderSettings, noteLaunch, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
+  return { renderSettings, refreshLocalCard, noteLaunch, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
 })();

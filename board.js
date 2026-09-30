@@ -1,9 +1,10 @@
 (function () {
 // Task board rules, pure over a board object { tasks, nextTaskId }. A worker's "done" is only a
 // handback: the task waits in 'review' until the lead approves it. A failure or a rejection gets one
-// retry in the same tile, then the task moves one tier up (as far as the top tier allowed) or fails.
-// 'verifying': Operant is running the project's checks before the task reaches review.
-const STATUSES = ['todo', 'doing', 'verifying', 'review', 'done', 'failed', 'blocked', 'cancelled'];
+// retry in the same tile; after that the task is paused and the user asked (tier-guard.js): a move up
+// is never automatic. 'verifying': Operant is running the project's checks before the task reaches review.
+// 'paused': waiting for the user's answer on the board.
+const STATUSES = ['todo', 'doing', 'verifying', 'review', 'done', 'failed', 'blocked', 'cancelled', 'paused'];
 const isOpen = t => t.status === 'todo' || t.status === 'doing';
 
 // A worker reports done, blocked or failed. Done waits for review.
@@ -29,10 +30,10 @@ function cancel(task, reason) {
   return task;
 }
 
-// First strike on a tier: back to 'doing' with the note. Second: 'escalate'.
+// First strike on a tier: back to 'doing' with the note. Second: 'ask' (the user decides; never a move up by itself).
 function strike(task) {
   if (!task.retried) { task.retried = true; task.status = 'doing'; return 'retry'; }
-  return 'escalate';
+  return 'ask';
 }
 
 function reject(task, note) {
@@ -41,10 +42,10 @@ function reject(task, note) {
   return strike(task);
 }
 
-// A failed attempt: retry once (unless noRetry), then 'escalate'.
+// A failed attempt: retry once (unless noRetry), then 'ask'.
 function failure(task, note, { noRetry } = {}) {
   task.note = String(note || 'failed');
-  if (noRetry) return 'escalate';
+  if (noRetry) return 'ask';
   return strike(task);
 }
 

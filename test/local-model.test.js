@@ -5,27 +5,6 @@ const lm = require('../local-model');
 const { isFreeModel } = require('../pricing');
 const { validatePatch } = require('../config-migrate');
 
-const base = { xsmall: { agent: 'opencode', model: 'opencode/big-pickle', use: 'easy' }, small: { agent: 'claude', model: 'claude-haiku-4-5' } };
-
-test('fallback order: Big Pickle first, the local model only while Big Pickle is down and the model is ready, then back', () => {
-  let t = 0;
-  const f = lm.createFailover({ now: () => t, cooldownMs: 1000 });
-  const at = ready => lm.overlay(base, { ready, model: 'gemma4:e4b', down: f.active() }).xsmall;
-  assert.equal(at(true).model, 'opencode/big-pickle');
-  assert.equal(at(true).active, 'Big Pickle');
-  f.fail('429 rate limit');
-  assert.equal(at(true).model, 'ollama/gemma4:e4b');
-  assert.match(at(true).active, /^local \(gemma4:e4b\)/);
-  assert.match(at(true).fallback, /rate limit/);
-  assert.equal(at(false).model, 'opencode/big-pickle', 'not installed or ready: silently Big Pickle');
-  assert.equal(at(false).fallback, undefined);
-  t = 1500;
-  assert.equal(f.active(), null);
-  assert.equal(at(true).model, 'opencode/big-pickle', 'back to Big Pickle after the cooldown');
-  assert.equal(lm.overlay(base, { ready: true, model: 'x', down: { reason: 'r' } }).small.model, 'claude-haiku-4-5');
-  assert.equal(lm.overlayModes({ claude: { tiers: base, removed: [], empty: false } }, { ready: true, model: 'm', down: { reason: 'r' } }).claude.tiers.xsmall.model, 'ollama/m');
-});
-
 test('which errors count as Big Pickle being unavailable', () => {
   for (const s of ['429 Too Many Requests', 'Rate limit exceeded', 'Model is overloaded', 'request timed out', 'free usage limit reached', 'quota exhausted', '503']) assert.ok(lm.isFreeFailure(s), s);
   for (const s of ['', 'syntax error in file', 'permission denied']) assert.ok(!lm.isFreeFailure(s), s);
@@ -86,6 +65,7 @@ test('install: winget when Ollama is missing, then the pull with live progress, 
     if (cmd === 'winget') { found(); return { code: 0 }; }
     if (args[0] === 'list') return { code: 0, out: 'NAME ID SIZE\n' };
     if (args[0] === 'pull') return { code: 0, chunks: ['pulling 3f: 10% \r', 'pulling 3f: 60% \r'] };
+    if (args[0] === 'run') return { code: 0, out: 'ok' };
   } });
   const r = await m.install('gemma4:e4b');
   assert.equal(r.status, 'ready');

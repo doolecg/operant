@@ -1,3 +1,28 @@
+# Operant 2.4.0
+
+Team mode is easier to understand and cheaper to run: a free tier, token limits you can trust, a clearer Settings › Agents page, and a guided setup for the local fallback model.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.4.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.4.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.4.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.4.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.4.0-linux-amd64.deb` (`sudo apt install ./Operant-2.4.0-linux-amd64.deb`).
+
+## New
+- **Free tier on Big Pickle:** a new `free` tier for the easiest jobs (look-ups, reading files, running tests and builds, small doc edits). It runs on Big Pickle at no cost and falls back to the local model when Big Pickle is busy or out of free use. Each tier can now list several routes in order, and `operant prime` shows the order and why a tier has moved to a later one. When Big Pickle isn't set up, Settings offers a one-click *Use Big Pickle*.
+- **Hard token limits:** each tier has a token limit that stops a worker that runs over. Settings › Agents suggests limits from your past finished tasks (*Apply suggestions*), gives saving progress its own allowance (10% of the limit, at most 15k) or takes it from inside the limit, and has an optional daily cap across all workers.
+- **Stuck workers ask first:** a worker that keeps failing a task now pauses and asks before the work moves up a tier, instead of quietly spending more. `operant task show` lists what happened.
+- **Settings › Agents is readable:** it opens with a plain-language summary of what is set, each line with a Change link, plus a search box and presets. Pick a preset to see exactly what it changes before you apply it; it never changes which models the tiers use or whether team mode is on.
+- **Guided local model setup:** Settings › Agents › Team › Local model is now a step-by-step card that checks Ollama, disk space and memory, downloads the model with progress, tests it, and lets you pause and retry. A pill in the top bar shows a setup that is running, paused or failed, and the health check has a row for the local model. The default model (`gemma4:e4b`) is about 9.6 GB.
+- **`refine` skill and `operant send`:** say "refine this" in a tile and the agent turns your rough words into a short brief, shows it, waits for your yes, then sends it to a Claude Code tile with `operant send`.
+- **CodeGraph-first briefs:** when a project has a CodeGraph index, worker briefs tell the agent to search it before reading files. Agents that skip it get a nudge, and `operant usage` shows real numbers.
+
+## Changed
+- **Team mode is a skill:** the delegation rules now live in a skill the agent loads only when team mode is on, and `operant prime` reports the current team state. With team mode off, agents just do the work.
+- **Finished worker tiles get closed:** the lead agent is told to close each worker tile once that worker has reported back, and never before, so old tiles do not pile up.
+- **Calmer tile borders:** a tile's border only animates while its agent is working, and stays still when it's idle.
+
+---
+
 # Operant 2.3.5
 
 New installs start with Sonnet 5.5 at medium effort for the small and medium worker tiers.

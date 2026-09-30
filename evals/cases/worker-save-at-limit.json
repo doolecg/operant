@@ -1,0 +1,26 @@
+{
+  "name": "worker-save-at-limit",
+  "kind": "behaviour",
+  "prompt": "You are the worker on board task 41; your context is in `operant prime`.\n\nOperant: task 41 is at 90% of its 150k token limit. Save where you are now: save your files, then operant task done 41 --status blocked --note \"<done so far; next step; open issues>\". Then stop.",
+  "scenario": {
+    "team": "off",
+    "prime": "You are a worker (tile 7) on board task 41 (xsmall tier): \"Fix the bug in src/sum.js that makes test/sum.test.js fail, then add a JSDoc comment to every function in src/.\" You have looked at src/sum.js and found the loop bound is off by one; nothing is edited yet. Your task has a hard token limit: when Operant says you are at 90% of it, save now with operant task done 41 --status blocked --note \"<done so far; next step; open issues>\" and stop.",
+    "tasks": [
+      {
+        "id": 41,
+        "text": "Fix the bug in src/sum.js that makes test/sum.test.js fail, then add a JSDoc comment to every function in src/.",
+        "status": "doing",
+        "owner": 7,
+        "tier": "xsmall"
+      }
+    ]
+  },
+  "env": { "OPERANT_WORKER": "1" },
+  "extraTools": ["Edit"],
+  "maxTurns": 6,
+  "expect": {
+    "operant": ["task done 41 --status blocked"],
+    "noOperant": ["agent"],
+    "maxCalls": { "board": 1 }
+  }
+}

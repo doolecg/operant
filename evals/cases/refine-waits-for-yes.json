@@ -1,0 +1,21 @@
+{
+  "name": "refine-waits-for-yes",
+  "kind": "negative",
+  "prompt": "Tighten this prompt so I can send it to Claude: \"rename avg to mean in src/avg.js and update what uses it\".",
+  "scenario": {},
+  "env": {},
+  "extraTools": [
+    "Write"
+  ],
+  "maxTurns": 12,
+  "expect": {
+    "noOperant": [
+      "send",
+      "agent"
+    ],
+    "answerMatch": [
+      "goal",
+      "send it|yes|go ahead|confirm|approve"
+    ]
+  }
+}

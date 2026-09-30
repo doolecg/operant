@@ -1,0 +1,11 @@
+{
+  "name": "team-off-do-it-yourself",
+  "kind": "negative",
+  "prompt": "Three things: add a multiply() to src/sum.js, add a test for it, and write FILES.md with a one-line description of every file in the repo. Team mode is off.",
+  "baselinePrompt": "Three things: add a multiply() to src/sum.js, add a test for it, and write FILES.md with a one-line description of every file in the repo.",
+  "scenario": { "team": "off" },
+  "env": {},
+  "extraTools": ["Edit", "Write"],
+  "maxTurns": 20,
+  "expect": { "delegated": false, "noOperant": ["agent"] }
+}

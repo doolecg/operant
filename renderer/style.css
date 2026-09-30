@@ -428,6 +428,11 @@ body.anim-off .win::before,
 .board-owner.unassigned { color: var(--dim); cursor: default; }
 .board-owner.unassigned:hover { background: rgba(var(--ink-rgb), .08); }
 .board-note { width: 100%; color: var(--dim); font-size: 11.5px; }
+.board-ask { width: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 8px 9px; border-radius: 8px; background: var(--accent-tint); }
+.board-ask-why { color: var(--text); font-size: 12px; }
+.board-ask-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.board-ask-hint { width: 100%; }
+.board-ask-hint.hidden { display: none; }
 
 .view-wrap { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; position: relative; }
 .view-page { flex: 1; min-height: 0; overflow: auto; outline: none; }
@@ -950,3 +955,49 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 .basement-row .board-note { width: auto; margin-left: auto; }
 .basement-failed { color: var(--danger, #e5484d); }
 .basement-out { margin: 6px 0 0; padding: 8px; max-height: 320px; overflow: auto; font: 11.5px/1.4 var(--mono, monospace); white-space: pre-wrap; color: var(--dim); }
+
+/* Settings > Agents (item 94): the plain summary, the presets, and what each row says about itself. */
+.ag-summary, .ag-presets { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: rgba(var(--ink-rgb), .05); border: 1px solid rgba(var(--ink-rgb), .07); }
+.ag-title { font-weight: 600; margin-bottom: 6px; }
+.ag-title .hint { font-weight: 400; color: var(--dim); font-size: 11.5px; margin-left: 6px; }
+.ag-summary ul { margin: 0 0 6px; padding-left: 18px; }
+.ag-summary li { margin: 3px 0; line-height: 1.4; }
+.ag-summary li a { margin-left: 6px; color: var(--accent); font-size: 11.5px; text-decoration: none; }
+.ag-summary li a:hover { text-decoration: underline; }
+.ag-summary .hint { color: var(--dim); font-size: 11.5px; }
+.preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn.preset.on { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.btn.preset.previewing { outline: 1px solid var(--accent); }
+.preset-custom { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; color: var(--accent); border: 1px solid var(--accent); }
+.preset-preview { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(var(--ink-rgb), .08); font-size: 12.5px; }
+.preset-preview ul { margin: 6px 0 8px; padding-left: 18px; }
+.preset-preview .ctl { display: flex; gap: 8px; }
+.set-row .lbl .hint.now { color: var(--text); opacity: .75; }
+.set-row .lbl .hint.warn { color: #f0b35a; }
+.set-row .lbl .hint.warn::before { content: '⚠ '; }
+.set-row .lbl .hint.dev { font-family: var(--mono); font-size: 11px; opacity: .7; }
+.set-row.flash { animation: setflash 1.4s ease-out; }
+@keyframes setflash { 0% { background: color-mix(in srgb, var(--accent) 30%, transparent); } 100% { background: transparent; } }
+.pill.local { color: var(--agent); cursor: pointer; }
+.pill.local:hover { background: rgba(var(--ink-rgb), .12); }
+.pill.local.bad { color: #f08a78; background: rgba(224, 108, 90, .14); }
+.pill.local.hidden { display: none; }
+.lm-card .lbl { flex: 1 1 auto; min-width: 0; }
+.lm-card .ctl { align-self: flex-start; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.lm-plan, .lm-fail, .lm-info { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: rgba(var(--ink-rgb), .05); font-size: 12px; line-height: 1.5; }
+.lm-plan b, .lm-fail b { color: var(--text); }
+.lm-fail { color: #f08a78; background: rgba(224, 108, 90, .12); }
+.lm-fail a { color: inherit; text-decoration: underline; }
+.lm-warn { color: #f0b35a; }
+.lm-info { color: var(--dim); }
+.lm-parts { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.lm-part { display: grid; grid-template-columns: 16px 170px 92px 1fr; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+.lm-part .lm-mark { text-align: center; }
+.lm-part .lm-name { color: var(--text); }
+.lm-part .lm-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lm-part.ready .lm-mark, .lm-part.ready .lm-state { color: var(--done); }
+.lm-part.checking .lm-mark, .lm-part.downloading .lm-mark, .lm-part.installing .lm-mark, .lm-part.starting .lm-mark,
+.lm-part.checking .lm-state, .lm-part.downloading .lm-state, .lm-part.installing .lm-state, .lm-part.starting .lm-state { color: var(--agent); }
+.lm-part.failed .lm-mark, .lm-part.failed .lm-state { color: #f08a78; }
+.lm-part progress { grid-column: 2 / -1; width: 100%; height: 6px; }
+@media (max-width: 760px) { .lm-part { grid-template-columns: 16px 1fr 80px; } .lm-part .lm-detail { grid-column: 2 / -1; white-space: normal; } }

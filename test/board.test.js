@@ -1,4 +1,4 @@
-// Tests for board.js: a worker's result counts only after review; one retry, then a tier up.
+// Tests for board.js: a worker's result counts only after review; one retry, then the user is asked.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const b = require('../board.js');
@@ -20,20 +20,20 @@ test('blocked and failed are kept as reported; other statuses are refused', () =
   assert.throws(() => b.handback(mk(), 'review'), /status must be/);
 });
 
-test('first reject retries with the note, second escalates', () => {
+test('first reject retries with the note, second asks the user', () => {
   const t = b.handback(mk(), 'done', 'ok');
   assert.equal(b.reject(t, 'tests fail'), 'retry');
   assert.equal(t.status, 'doing');
   assert.equal(t.note, 'tests fail');
   b.handback(t, 'done', 'again');
-  assert.equal(b.reject(t, 'still'), 'escalate');
+  assert.equal(b.reject(t, 'still'), 'ask');
 });
 
-test('a failure retries once, then escalates; noRetry escalates at once', () => {
+test('a failure retries once, then asks; noRetry asks at once', () => {
   const t = mk();
   assert.equal(b.failure(t, 'boom'), 'retry');
-  assert.equal(b.failure(t, 'boom'), 'escalate');
-  assert.equal(b.failure(mk(), 'budget', { noRetry: true }), 'escalate');
+  assert.equal(b.failure(t, 'boom'), 'ask');
+  assert.equal(b.failure(mk(), 'budget', { noRetry: true }), 'ask');
 });
 
 test('escalation goes one tier up, stops at the allowed top', () => {

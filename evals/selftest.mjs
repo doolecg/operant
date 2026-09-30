@@ -136,6 +136,21 @@ assert.equal(Object.values(gA({ maxCalls: { board: 2 } }, [['board'], ['board']]
 assert.equal(Object.values(gA({ maxCalls: { board: 2 } }, [['board'], ['board'], ['board']]))[0], false);
 assert.equal(Object.values(gA({ noShell: ['npm '] }, [], [asst(tu('1', 'Bash', { command: 'operant test' }))]))[0], true);
 assert.equal(Object.values(gA({ noShell: ['npm '] }, [], [asst(tu('1', 'Bash', { command: 'npm test' }))]))[0], false);
+// operantOrder: approving needs an earlier `operant test`; not approving passes this check
+const ord = { operantOrder: [['test', 'task approve']] };
+assert.equal(Object.values(gA(ord, [['test'], ['task', 'approve', '30']]))[0], true);
+assert.equal(Object.values(gA(ord, [['task', 'approve', '30'], ['test']]))[0], false);
+assert.equal(Object.values(gA(ord, [['task', 'approve', '30']]))[0], false);
+assert.equal(Object.values(gA(ord, [['task', 'reject', '30', '--note', 'x']]))[0], true);
+// briefs sent with `operant send`, and the answer's questions
+const gB = (expect, logCalls, result = '') => grade({ expect }, parseStream(JSON.stringify({ type: 'result', subtype: 'success', result })), logCalls).checks;
+const sent = [{ argv: ['send', '--brief', 'x'], brief: 'Goal: fix sum in src/sum.js\nCheck: operant test' }];
+assert.deepEqual(Object.values(gB({ briefMatch: ['src/sum\.js'], briefNot: ['refactor'] }, sent)), [true, true]);
+assert.deepEqual(Object.values(gB({ briefMatch: ['readme'], briefNot: ['operant test'] }, sent)), [false, false]);
+assert.deepEqual(Object.values(gB({ briefMatch: ['sum'] }, [{ argv: ['send', '--file', 'b.md'] }])), [false], 'a send with no logged text matches nothing');
+assert.equal(Object.values(gB({ maxQuestions: 1 }, [], 'Goal: x. Which file?'))[0], true);
+assert.equal(Object.values(gB({ maxQuestions: 1 }, [], 'Which file? And which test?'))[0], false);
+assert.deepEqual(Object.values(gB({ answerMatch: ['send it'], answerNot: ['sent to'] }, [], 'Say "send it" to go.')), [true, true]);
 // baseline arm: operant expectations are not graded
 assert.deepEqual(grade({ expect: { operant: ['task done 1'], delegated: true } }, parseStream(''), [], { baseline: true }).checks, {});
 

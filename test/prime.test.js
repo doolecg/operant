@@ -30,6 +30,7 @@ test('a lead with team mode on gets the tiers and the routing rule', () => {
   assert.match(text, /Team mode is on \(1\/4 workers running\)/);
   assert.match(text, /xsmall\s+opencode opencode\/big-pickle - very easy tasks/);
   assert.match(text, /never above small/);
+  assert.match(text, /only after it has reported back, and then straight away.*never leave a reported one open/);
   assert.match(text, /the Agent tool with `model`/);
   assert.match(text, /one master worker for that CLI, never one tile per task/);
   assert.match(text, /8 ai "worker" · xsmall worker, task 12/);
@@ -40,10 +41,42 @@ test('a lead with team mode on gets the tiers and the routing rule', () => {
   assert.doesNotMatch(text, /CodeGraph/);
 });
 
-test('team mode off leaves out every tier line', () => {
+test('team mode off says so and leaves out every tier line', () => {
   const text = formatPrime(lead({ team: { enabled: false }, tiles: [] }), {});
   assert.doesNotMatch(text, /tier/i);
-  assert.doesNotMatch(text, /Team mode/);
+  assert.match(text, /Team mode is off: do the work yourself/);
+  assert.doesNotMatch(text, /Team mode is on/);
+});
+
+test('a lead sees paused tasks as waiting for the user, not for it', () => {
+  const text = formatPrime(lead({ paused: [{ id: 40, tier: 'xsmall', tldr: 'Fix the off-by-one', why: 'is stuck' }] }), {});
+  assert.match(text, /Paused, waiting for the user: task 40 \(xsmall\) is stuck: Fix the off-by-one — operant task show 40; do not move it up or restart it/);
+});
+
+test('team mode on lists the token budget per task for each tier', () => {
+  const budgeted = { xsmall: { ...tiers.xsmall, budget: 150000 }, small: { ...tiers.small, budget: 1200000 } };
+  const text = formatPrime(lead({ team: { enabled: true, tiers: budgeted, maxWorkers: 4, workers: 0 } }), {});
+  assert.match(text, /Hard token limit per task \(at 90% the worker is told to save; at the limit it is stopped\): xsmall 150k, small 1\.2M\./);
+  assert.match(text, /never moves up a tier by itself/);
+});
+
+test('a CodeGraph folder without its database is reported as degraded, with the grep fall-back', () => {
+  const ok = formatPrime(lead(), { codegraph: true, codegraphBroken: false });
+  const broken = formatPrime(lead(), { codegraph: true, codegraphBroken: true });
+  assert.match(ok, /CodeGraph index found/);
+  assert.match(broken, /CodeGraph is degraded here .*use grep and file reads/);
+  assert.doesNotMatch(broken, /CodeGraph index found/);
+  assert.match(subagentBrief({ codegraph: true, codegraphBroken: true }), /CodeGraph is degraded/);
+});
+
+test('readLocal marks an index folder with no database as broken', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-cg-'));
+  try {
+    fs.mkdirSync(path.join(dir, '.git')); fs.mkdirSync(path.join(dir, '.codegraph'));
+    assert.deepEqual([readLocal(dir).codegraph, readLocal(dir).codegraphBroken], [true, true]);
+    fs.writeFileSync(path.join(dir, '.codegraph', 'codegraph.db'), '');
+    assert.deepEqual([readLocal(dir).codegraph, readLocal(dir).codegraphBroken], [true, false]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('an OpenCode lead is not told about the Agent tool', () => {
@@ -107,8 +140,15 @@ test('readLocal walks up to the repo root, and no further', () => {
     fs.mkdirSync(path.join(repo, '.operant'));
     fs.writeFileSync(path.join(repo, '.operant', 'progress.md'), 'next: tests');
     fs.mkdirSync(path.join(root, '.codegraph')); // above the repo: not this project's index
-    assert.deepEqual(readLocal(deep), { progress: 'next: tests', codegraph: false });
+    assert.deepEqual(readLocal(deep), { progress: 'next: tests', codegraph: false, codegraphBroken: false });
     fs.mkdirSync(path.join(repo, '.codegraph'));
     assert.equal(readLocal(deep).codegraph, true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the lead is told refined prompts go as team work only when that is the setting', () => {
+  const data = { v: '1', role: 'lead', tile: { id: 3, kind: 'ai', title: 't' }, team: { enabled: true, tiers: { small: { agent: 'claude', model: 'm' } } }, tiles: [] };
+  assert.match(formatPrime({ ...data, refineTo: 'team' }), /Refined prompts \(the `refine` skill\) are sent as team work: `operant send --team --file <brief>`/);
+  assert.doesNotMatch(formatPrime({ ...data, refineTo: 'claude' }), /Refined prompts/);
+  assert.doesNotMatch(formatPrime({ ...data, refineTo: 'team', role: 'worker', task: { id: 1, text: 'x', tier: 'small' } }), /Refined prompts/);
 });

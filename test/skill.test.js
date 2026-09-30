@@ -87,3 +87,25 @@ test('the 1.18.0 frontmatter, with ": " in an unquoted description, does not par
     assert.throws(() => parseSkill(OLD_SKILL.join(eol)), { name: 'YAMLException' });
   }
 });
+
+// Item 89: team mode is a skill. The Team section is the whole workflow, gated on `operant team`.
+test('the Team mode section carries the whole workflow and only acts when team mode is on', parsed, () => {
+  const i = skill.body.indexOf('## Team mode');
+  assert.ok(i >= 0, 'no "## Team mode" section');
+  const next = skill.body.indexOf('\n## ', i + 5);
+  const team = skill.body.slice(i, next < 0 ? undefined : next);
+  assert.match(team, /only when `operant team`/);
+  for (const need of ['When to delegate', 'do it yourself', 'operant agent --tier', 'operant task done', '--status done|blocked|failed', 'operant read', 'operant test',
+    'operant task approve', 'operant task reject']) assert.ok(team.includes(need), `the Team mode section lacks "${need}"`);
+  assert.match(team, /Approve only after `operant test` passes/);
+  assert.match(team, /only after it has reported back, and then straight away/);
+  assert.match(team, /never leave a reported one open/);
+});
+
+test('the skill has no Terminal, prompt-box or refiner assumptions', parsed, () => {
+  assert.doesNotMatch(text, /Operant Terminal|prompt box|refiner/i);
+});
+
+test('the skill makes a CodeGraph query the first code action when an index exists', parsed, () => {
+  assert.match(skill.body, /\.codegraph.*first code action is a CodeGraph query/s);
+});

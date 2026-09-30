@@ -193,16 +193,14 @@
     updateBorderFlow();
   }
 
-  // Composited-only border flow is costly per running tile, so it's kept off for tiles that can't
-  // be seen: another workspace, or agent tiles beyond the first couple visible on this one.
+  // The border flows only while the tile's agent is working: still when idle, done, waiting or paused.
+  // It is also kept off for tiles that can't be seen (another workspace, or beyond the first couple
+  // of working tiles on this one), because composited animation costs per tile.
   function updateBorderFlow() {
     let shown = 0;
     for (const w of wins.values()) {
-      const onCurrent = w.ws === current;
-      let pause = !onCurrent;
-      if (onCurrent && w.el.classList.contains('running') && !w.el.classList.contains('hidden-by-fs')) {
-        if (++shown > 2) pause = true;
-      }
+      let pause = w.ws !== current || !isWorking(w) || !!w.waitingPrompt;
+      if (!pause && !w.el.classList.contains('hidden-by-fs') && ++shown > 2) pause = true;
       w.el.classList.toggle('flow-paused', pause);
     }
   }
@@ -1149,9 +1147,9 @@
     const t = wins.get(id);
     return { id, title: t && t.alive ? t.title : `tile ${id} (closed)` };
   }
-  // Traffic light by tier position: first green, second orange, every higher one red.
+  // Traffic light by tier position: first green (free and xsmall both), next orange, every higher one red.
   const tierDot = tier => {
-    const i = Object.keys(activeTiers()).indexOf(tier);
+    const i = tier === 'free' ? 0 : Object.keys(activeTiers()).filter(n => n !== 'free').indexOf(tier);
     return i < 0 ? '' : `<i class="tier-dot t${Math.min(i, 2)}" title="Tier: ${esc(tier)}"></i>`;
   };
   // One line for a task: its --title, else the first sentence of its first line (headings, bullets
@@ -1174,14 +1172,17 @@
     $('#board-badge').textContent = open > 99 ? '99+' : open || '';
     $('#board-badge').classList.toggle('hidden', !open);
     if (openPanel() !== 'board') return;
-    const groups = [['todo', 'To do'], ['doing', 'Doing'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['cancelled', 'Closed'], ['done', 'Done']];
+    const groups = [['paused', 'Waiting for you'], ['todo', 'To do'], ['doing', 'Doing'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['cancelled', 'Closed'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
       return `<div class="board-row"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text" title="${esc(t.text)}">${esc(taskTldr(t))}</span>`
         + (owner ? `<button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : '<span class="board-owner unassigned">unassigned</span>')
         + (Board.attempts(t) > 1 ? `<span class="board-note">attempt ${Board.attempts(t)}${t.tier ? ' · ' + esc(t.tier) : ''}</span>` : '')
         + (t.check ? `<span class="board-note" title="${esc(t.check.summary || '')}">${t.check.ok ? '✓' : '✗'} ${esc(t.check.command || 'checks')}${t.diffStat ? ' · ' + esc(t.diffStat) : ''}</span>` : '')
-        + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '') + '</div>';
+        + (t.limitUse ? `<span class="board-note">${limitLine(t.limitUse)}</span>` : '')
+        + (t.route ? `<span class="board-note" title="The route this task ran on">${esc(t.route.note)}</span>` : '')
+        + (t.note ? `<span class="board-note">${esc(t.note)}</span>` : '')
+        + (t.status === 'paused' && t.ask ? askCard(t) : '') + '</div>';
     };
     $('#board-body').innerHTML = groups.map(([k, label]) => {
       const items = board.tasks.filter(t => t.status === k);
@@ -1191,8 +1192,9 @@
   function boardChanged() { renderBoard(); saveSession(); }
 
   // Workers, review and escalation (board.js has the rules). A worker's `done` waits in review; a
-  // failure or a second rejection closes the tile and hands the task, with a two-line failure note,
-  // to a new worker one tier up. At the top allowed tier the task fails and the user is told.
+  // failure or a rejection gets one retry at the same tier. After that, and whenever the stuck guard fires or a
+  // token limit is spent, the task is paused and the user asked on the board (tier-guard.js, items 91/92): a move
+  // up to a new worker one tier up, with a two-line failure note, only happens when the user picks it.
   const reportLine = id => `when done, report in at most 100 words: operant task done ${id} --status done|blocked|failed --note '<files changed, one line each; open issues>'`;
   const oneLine = s => String(s).replace(/["\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
   // Tier names a project may use, up to the top tier allowed (by slot order, since a mode can drop slots).
@@ -1208,8 +1210,8 @@
   function tagUsage(w, tier, taskId) {
     w.usageTag = { tier, taskId: taskId ?? null, tile: w.id };
     const oc = !w.sessionId || w.sessionId.startsWith('oc:');
-    if (!oc) operant.usageTag({ sessionId: w.sessionId, ...w.usageTag });
-    else if (w.ptyId) operant.usageTag({ ptyId: w.ptyId, ...w.usageTag }).then(r => { w.tagPending = !r?.ok; });
+    if (!oc) operant.usageTag({ sessionId: w.sessionId, cwd: w.cwd, ...w.usageTag });
+    else if (w.ptyId) operant.usageTag({ ptyId: w.ptyId, cwd: w.cwd, ...w.usageTag }).then(r => { w.tagPending = !r?.ok; });
   }
   const tierBudget = t => t.budget != null ? t.budget : cfg.team?.budgets?.[t.tier] || 0;
   // Tells the user through the lead's tile (or the worker's, or any agent tile still open).
@@ -1218,12 +1220,36 @@
     if (to) notify(to, title, body, null, true);
   };
 
+  // Item 90: before a worker starts, Operant checks the CodeGraph index (syncing it when stale) and, for a code task,
+  // runs `codegraph explore` for the symbols it names. Returns the text to add to the brief ('' when none) and notes
+  // the index state on the task (a missing or broken index says so, plainly, and the worker falls back to grep).
+  async function codegraphBrief(t, cwd) {
+    const isCode = CODE_TASKS.includes(TaskType.classifyTask(t.text));
+    const r = await operant.codegraphPrepare({ cwd, task: t.text, isCode }).catch(() => null);
+    if (!r) return '';
+    t.codegraph = { state: r.state, ...(r.reason ? { reason: r.reason } : {}), explored: !!r.explored };
+    if (r.state === 'degraded') toast(`CodeGraph is degraded for task ${t.id}: ${esc(r.reason || '')}. The worker falls back to grep.`);
+    return r.text ? ` — ${r.text}` : '';
+  }
+  // Item 96: the route a tier runs this task on. The tier already skips a route that is busy or out of free use; here a
+  // route this kind of task kept failing on is skipped too (outcomes). `route` is kept on the task and shown on the tile and the review card.
+  async function routeFor(conf, text) {
+    if (!conf || !conf.routes) return conf;
+    const stats = await operant.outcomeRoutes().catch(() => ({}));
+    return TierRoutes.forTask(conf, stats, TaskType.classifyTask(text));
+  }
+  const routeInfo = c => c && c.route ? { label: c.route.label, free: c.route.free, note: c.route.note, why: (c.skipped || []).map(x => `${x.label} ${TierRoutes.REASON_TEXT[x.kind]}`).join('; ') } : null;
+  function noteRoute(w, t, c) {
+    const r = routeInfo(c);
+    if (t) t.route = r;
+    if (w && r) { w.routeNote = r.note; renderIbar(w); }
+  }
   async function startWorker(t, tier) {
-    const conf = tiersIn(t.cwd || lastCwd)[tier];
+    const conf = await routeFor(tiersIn(t.cwd || lastCwd)[tier], t.text);
     if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (agentMode(t.cwd || lastCwd) === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[agentMode(t.cwd || lastCwd)]})`));
     // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
     // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
-    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''} — ${reportLine(t.id)}`;
+    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${await codegraphBrief(t, t.cwd || lastCwd)} — ${reportLine(t.id)}`;
     const lead = wins.get(t.lead);
     const w = await newTerminal('ai', t.cwd, {
       agentId: conf.agent, prompt, title: t.title || undefined, model: conf.model, effort: conf.effort || null,
@@ -1231,6 +1257,8 @@
     });
     w.tier = tier; setTierDot(w);
     t.owner = w.id; t.agent = conf.agent; t.model = conf.model;
+    noteRoute(w, t, conf);
+    armLimit(w, t);
     t.baseline = await operant.git('snapshot', { dir: t.cwd || w.cwd }).catch(() => null);
     tagUsage(w, tier, t.id);
     boardChanged();
@@ -1243,8 +1271,11 @@
     const w = tile === undefined ? wins.get(t.owner) : tile;
     operant.recordOutcome({
       taskId: t.id, type: TaskType.classifyTask(t.text), tier: t.tier || null, agent: t.agent || null, model: t.model || null,
+      sessionId: w?.sessionId || null, ptyId: w?.ptyId || null, codegraphIndex: t.codegraph?.state || null,
       attempts: Board.attempts(t), escalations: t.escalations || 0, status, reason: String(t.failure && status === 'escalated' ? t.failure.split('\n')[0] : t.note || '').slice(0, 200),
       durationMs: t.createdAt ? Date.now() - t.createdAt : null, tokens: addTok(t.tokens, w?.tok), cwd: t.cwd || null,
+      ...(t.limitHit ? { limitHit: true } : {}),
+      ...(t.route ? { route: t.route.label, ...(t.route.why ? { routeWhy: t.route.why } : {}) } : {}),
     });
   }
 
@@ -1257,7 +1288,7 @@
     toast(`Task ${t.id} failed: ${esc(why)}`);
   }
 
-  // Moves the task to a fresh worker one tier up, or fails it at the top.
+  // Moves the task to a fresh worker one tier up, or fails it at the top. Only ever the user's choice (answerAsk).
   async function escalateTask(t, why) {
     const next = Board.escalation(t, allowedTierNames(t.cwd || lastCwd), cfg.team?.maxTier);
     if (!next) { failTask(t, `${why} (top tier ${t.tier} reached)`); return; }
@@ -1267,6 +1298,8 @@
     recordOutcome(t, 'escalated', old);
     t.tokens = addTok(t.tokens, old?.tok);
     if (old?.tok) t.segments = [...(t.segments || []), { model: t.model || null, tokens: addTok(null, old.tok) }];
+    t.limitBase = TierGuard.counted(t.tokens); // the new tier's limit counts from here
+    t.limitHit = false; t.raised = false; t.limitUse = null;
     Board.moveUp(t, next);
     if (old?.alive) closeWin(old);
     boardChanged();
@@ -1274,11 +1307,110 @@
     catch (e) { failTask(t, `could not start a ${next} worker: ${e.message || e}`); }
   }
 
-  // A worker's task went wrong. First time on a tier: the same tile is told to try again; then a tier up.
+  // A worker's task went wrong. First time on a tier: the same tile is told to try again; then the user is asked.
   function taskFailed(t, why, opts) {
     const w = wins.get(t.owner);
     if (Board.failure(t, why, opts) === 'retry') retryTask(t, w, `Your attempt did not work: ${oneLine(why)}. Try once more, differently`);
-    else escalateTask(t, why);
+    else askUser(t, 'failed', why);
+  }
+
+  // ---- Items 91/92: ask before moving up, and hard token limits (tier-guard.js has the rules).
+  const fmtK = TierGuard.fmtTok;
+  // Tokens a task has used on its current tier: earlier tiles on this tier plus the live one (input + output + cache writes).
+  const taskUsed = (t, w) => TierGuard.counted(t.tokens) - (t.limitBase || 0) + TierGuard.counted(w?.tok);
+  const limitLine = u => `limit: ${fmtK(u.work)} of ${fmtK(u.limit)}` + (u.allowanceUsed ? ` · saving allowance ${fmtK(u.allowanceUsed)} of ${fmtK(u.allowance)}` : '');
+  const askCard = t => `<div class="board-ask" data-ask="${t.id}"><div class="board-ask-why">Paused: ${esc(t.ask.why)}${t.ask.reason ? ` · ${esc(t.ask.reason)}` : ''}. Nothing runs until you choose.</div>`
+    + (t.ask.evidence.length ? `<div class="board-note">${t.ask.evidence.map(esc).join(' · ')}</div>` : '')
+    + `<div class="board-ask-btns">${t.ask.choices.map(c => `<button class="btn" data-choice="${c.id}">${esc(c.label)}</button>`).join('')}</div>`
+    + '<input class="board-ask-hint hidden" placeholder="Your hint for the worker, then Enter" spellcheck="false"></div>';
+  // A new worker tile gets the task's limit; `inside` limits under 20k were refused before it started.
+  function armLimit(w, t) {
+    w.limit = { taskId: t.id, tracker: TierGuard.createLimitTracker({ limit: tierBudget(t), saving: cfg.team?.savingProgress }) };
+    t.limitUse = null;
+  }
+  // The suggested limit for a tier (and task type) from past outcomes; the tier default when there is too little.
+  async function suggestionFor(tier, type) {
+    const fallback = cfg.team?.budgets?.[tier] || 0;
+    return await operant.outcomeLimits({ tier, type, current: fallback, fallback }).catch(() => null) || { tokens: fallback, n: 0, enough: false, reason: 'not enough history' };
+  }
+  // Pauses the task and asks the user (notification + board card). Unanswered, it stays paused; never escalated.
+  async function askUser(t, kind, why, ev = {}) {
+    if (t.status === 'paused' || ['done', 'cancelled'].includes(t.status)) return;
+    const w = wins.get(t.owner);
+    const next = Board.escalation(t, allowedTierNames(t.cwd || lastCwd), cfg.team?.maxTier);
+    const nextLimit = next ? await suggestionFor(next, TaskType.classifyTask(t.text)) : null;
+    const limit = tierBudget(t);
+    const ask = TierGuard.makeAsk({ kind, reason: why, next, nextLimit, limit, raised: !!t.raised,
+      evidence: TierGuard.evidence({ ...ev, tokens: taskUsed(t, w), limit }) });
+    TierGuard.pause(t, ask);
+    if (w?.alive && w.ptyId && kind !== 'limit') { stopTile(w); if (w.sessionId) operant.stuckReset(w.sessionId); }
+    boardChanged();
+    tell(t, `Task ${t.id} ${ask.why}: ${taskTldr(t)}`, `${ask.reason}. Paused until you answer on the board: ${ask.choices.map(c => c.label).join(' · ')}`);
+    toast(`Task ${t.id} ${esc(ask.why)} · paused, answer on the Tasks board`, () => { if (openPanel() !== 'board') togglePanel('board'); }, 10000);
+  }
+  // The user's choice on the board card.
+  async function answerAsk(t, choice, hint) {
+    const ask = t.ask, w = wins.get(t.owner);
+    let r;
+    try { r = TierGuard.answer(t, choice, { hint }); } catch (e) { toast(esc(e.message)); return; }
+    if (r.do === 'up') {
+      if (r.limit) t.budget = r.limit; else delete t.budget;
+      await escalateTask(t, ask.reason || ask.why);
+    } else if (r.do === 'retry') {
+      t.note = `Your hint: ${r.hint}`;
+      await retryTask(t, w, `The user looked at where this stopped (${oneLine(ask.reason || ask.why)}) and says: ${oneLine(r.hint)}. Use that`);
+    } else if (r.do === 'raise') {
+      await continueTask(t, w);
+    } else {
+      if (ask.kind === 'limit') recordOutcome(t, 'blocked', w);
+      if (r.do === 'takeover') { if (w?.alive) { closePanels(); if (w.ws !== current) switchWorkspace(w.ws); focusWin(w); } }
+      else if (w?.alive && w.tier && !board.tasks.some(x => x !== t && x.owner === w.id && Board.isOpen(x))) { t.free = !!w.tok?.free; closeWin(w); }
+      boardChanged();
+    }
+  }
+  // Raise once: a new worker on the same tier picks up from the stopped one's handback.
+  async function continueTask(t, w) {
+    t.tokens = addTok(t.tokens, w?.tok);
+    if (w?.tok) t.segments = [...(t.segments || []), { model: t.model || null, tokens: addTok(null, w.tok) }];
+    t.failure = `Continue this task: the last worker stopped at its token limit. Its handback: ${oneLine(t.note || 'none')}`;
+    t.owner = null;
+    if (w?.alive) closeWin(w);
+    boardChanged();
+    try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
+  }
+  // Ends a worker's process at its limit but keeps its tile (the work stays on screen and on the board).
+  function endWorkerProcess(w) {
+    if (!w?.alive || !w.ptyId) return;
+    stopTile(w);
+    w.keepOnExit = true;
+    operant.killPty(w.ptyId);
+  }
+  function checkLimit(w) {
+    const L = w.limit, t = L && board.tasks.find(x => x.id === L.taskId);
+    if (!t || t.owner !== w.id) return;
+    const ev = L.tracker.onTokens(taskUsed(t, w));
+    const st = L.tracker.state();
+    if (st.plan && !st.plan.error) t.limitUse = { work: st.work, limit: st.plan.work, allowanceUsed: st.allowanceUsed, allowance: st.plan.allowance };
+    if (ev) onLimitEvent(t, w, ev);
+  }
+  async function onLimitEvent(t, w, ev) {
+    const st = w.limit.tracker.state();
+    if (ev.type !== 'stop') {
+      Messaging.enqueue(msgState, { from: 'operant', to: w.id, text: TierGuard.limitMessage(ev, { id: t.id, plan: st.plan, used: st.used }) });
+      deliver(w);
+      const what = ev.type === 'warn' ? 'is at 80% of its token limit' : ev.type === 'save' ? 'is at 90% of its token limit and saving' : 'reached its token limit; the worker is saving';
+      tell(t, `Task ${t.id} ${what}: ${taskTldr(t)}`, `${fmtK(st.used)} of ${fmtK(st.plan.work)} tokens`);
+      boardChanged();
+      return;
+    }
+    t.limitHit = true;
+    if (!ev.saved) {
+      const r = w.sessionId ? await operant.stuckRecent(w.sessionId).catch(() => null) : null;
+      t.note = TierGuard.autoHandback({ ...(r || {}), used: st.used, limit: st.plan.work });
+      if (t.status === 'doing' || t.status === 'todo') t.status = 'blocked';
+    }
+    endWorkerProcess(w);
+    await askUser(t, 'limit', `token limit ${fmtK(st.plan.limit)} reached${ev.saved ? '' : ', stopped before it saved (Operant wrote its handback)'}`);
   }
 
   // A code task's handback: run its checks in a background shell tile and attach the result before review.
@@ -1320,6 +1452,15 @@
     try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
   }
   $('#board-body').addEventListener('click', e => {
+    const c = e.target.closest('[data-choice]');
+    if (c) {
+      const card = c.closest('[data-ask]'), t = board.tasks.find(x => x.id === Number(card.dataset.ask));
+      if (!t) return;
+      const input = card.querySelector('.board-ask-hint');
+      if (c.dataset.choice === 'hint' && !input.value.trim()) { input.classList.remove('hidden'); input.focus(); return; }
+      answerAsk(t, c.dataset.choice, input.value);
+      return;
+    }
     const b = e.target.closest('[data-owner]');
     if (!b) return;
     const t = wins.get(Number(b.dataset.owner));
@@ -1594,6 +1735,14 @@
     return hits[0];
   }
 
+  // Item 97: `operant send --file|--brief` hands a refined prompt to a Claude Code tile (messaging.js sendBrief).
+  const sendBrief = (args, self) => Messaging.sendBrief(args, self, {
+    state: msgState, teamEnabled: !!cfg.team?.enabled, agents: cfg.agents, agentKind, agentMode, messageTarget, deliver, flatLine,
+    cwdOf: w => (w && w.cwd) || lastCwd, projectOf: dir => projectDir(dir),
+    tiles: () => [...wins.values()],
+    open: (agentId, dir, prompt, near) => newTerminal('ai', dir, { agentId, prompt, near, focus: false }),
+  });
+
   function closeWin(w) {
     if (!w.alive) return;
     Messaging.drop(msgState, w.id);
@@ -1806,7 +1955,13 @@
     if (w.ws !== current) switchWorkspace(w.ws);
     focusWin(w);
   });
-  operant.on('pty:exit', ({ id }) => { const w = ptyWins.get(id); if (w) { closeWin(w); gitChanged(); } });
+  operant.on('pty:exit', ({ id }) => {
+    const w = ptyWins.get(id);
+    if (!w) return;
+    // Item 92: a worker stopped at its token limit keeps its tile; only the process is gone.
+    if (w.keepOnExit) { ptyWins.delete(id); w.ptyId = null; output(w, '\r\n\x1b[33m[Operant stopped this worker at its token limit. The work stays here and on the board.]\x1b[0m\r\n'); updateBadge(w); gitChanged(); return; }
+    closeWin(w); gitChanged();
+  });
   // An OpenCode tile's main session started or stopped working.
   operant.on('opencode:busy', ({ ptyId, busy }) => {
     const w = ptyWins.get(ptyId);
@@ -1903,6 +2058,7 @@
     }
     w.el.classList.toggle('running', w.status === 'running');
     w.el.classList.toggle('done', w.status === 'done');
+    updateBorderFlow();
     const tools = `${w.tools} tool${w.tools === 1 ? '' : 's'}`;
     if (w.status === 'running') setBadge(w, `<span class="spin">✻</span> ${w.info.agentType} · ${tools}${closing}`);
     else setBadge(w, `✓ done · ${tools}${closing}`);
@@ -1935,7 +2091,9 @@
     w.el.classList.toggle('ibar-on', on);
     if (on !== was) scheduleFit(w, 0);
     if (!on) return;
-    bar.querySelector('.ib-model').textContent = w.model || '';
+    const modelEl = bar.querySelector('.ib-model');
+    modelEl.textContent = w.routeNote || w.model || '';
+    modelEl.title = w.routeNote && w.model ? w.model : '';
     const ctx = cfg.contextBadge ? w.ctx : null, ctxEl = bar.querySelector('.ib-ctx');
     if (ctx && ctx.max) {
       const pct = ctx.tokens / ctx.max;
@@ -1992,14 +2150,8 @@
     if (!w || !w.alive) return;
     w.tok = { input, output, cacheWrite, cacheRead, free };
     renderIbar(w);
-    // Per-task budget: input + output + cache writes (cache reads excluded).
-    const t = w.tier && !w.overBudget ? openTaskOf(w) : null, limit = t ? tierBudget(t) : 0;
-    if (limit && input + output + cacheWrite > limit) {
-      w.overBudget = true;
-      stopTile(w);
-      toast(`Stopped <b>${esc(w.title)}</b> · budget ${limit} tokens reached`);
-      taskFailed(t, `budget ${limit} tokens reached`, { noRetry: true });
-    }
+    // Item 92: the task's hard token limit (input + output + cache writes; cache reads excluded).
+    if (w.tier) checkLimit(w);
   });
 
   // ------------------------------------------------------------ idle reaper
@@ -2082,16 +2234,29 @@
     if (t) taskFailed(t, `runaway: ${detail}`);
   }
 
+  $('#board-body').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || !e.target.matches('.board-ask-hint') || !e.target.value.trim()) return;
+    const t = board.tasks.find(x => x.id === Number(e.target.closest('[data-ask]').dataset.ask));
+    if (t) answerAsk(t, 'hint', e.target.value);
+  });
+
   // Item 60: main saw evidence a tile is stuck (same failing command or error twice, turns with no file
-  // edit). A worker with an open task moves up a tier; any other agent tile gets the runaway warning.
+  // edit). A worker with an open task is paused and the user asked (item 91: never moved up by itself);
+  // any other agent tile gets the runaway warning.
   const CODE_TASKS = ['fix', 'feature', 'refactor', 'test'];
-  operant.on('stuck', ({ sessionId, reason, kind }) => {
+  operant.on('stuck', ({ sessionId, reason, kind, nudge, evidence }) => {
     if (cfg.runawayGuard === 'off') return;
     const w = sessionWin.get(sessionId);
     if (!w || !w.alive) return;
     const t = w.tier ? openTaskOf(w) : null;
+    // Item 90: a one-time nudge to query CodeGraph, not evidence of being stuck: it never escalates a task.
+    if (kind === 'codegraph') {
+      Messaging.enqueue(msgState, { from: 'operant', to: w.id, text: nudge });
+      deliver(w);
+      return;
+    }
     if (kind === 'progress' && !(t && CODE_TASKS.includes(TaskType.classifyTask(t.text)))) return;
-    if (t) escalateTask(t, `stuck: ${reason}`);
+    if (t) askUser(t, 'stuck', `stuck: ${reason}`, evidence || {});
     else if (kind === 'command') flagRunaway(w, 'stuck', `Stuck: ${reason}`);
   });
 
@@ -2828,11 +2993,38 @@
     if (openPanel() === 'settings') renderSettings();
   });
   let localState = { status: 'none', pct: 0, message: '', model: '' };
-  operant.localModelState().then(s => { localState = s; });
-  operant.on('localmodel:state', s => { localState = s; if (openPanel() === 'settings') renderSettings(); });
+  operant.localModelState().then(s => { localState = s; drawLocalPill(); });
+  // Item 95: the setup card pushes progress several times a second, so only the card is redrawn; the whole page only when
+  // the step changes and the card is not on it. The top-bar pill shows a running, paused or failed setup.
+  const localPill = $('#local-pill');
+  let localKey = '';
+  function drawLocalPill() {
+    const st = localState.status, show = st === 'installing' || st === 'paused' || st === 'error';
+    localPill.classList.toggle('hidden', !show);
+    localPill.classList.toggle('bad', st === 'error');
+    if (!show) return;
+    const part = (localState.parts || {}).model || {};
+    localPill.textContent = st === 'installing' ? `Local model ${part.state === 'downloading' ? (part.pct || 0) + '%' : '…'}` : st === 'paused' ? 'Local model paused' : 'Local model failed';
+    localPill.title = `${localState.model}: ${localState.message || ''}
+Click to open the setup card`;
+  }
+  localPill.onclick = () => {
+    if (openPanel() !== 'settings') togglePanel('settings');
+    Panels.showTab('Agents'); renderSettings();
+    const card = $('#settings-body [data-sid="localModel"]');
+    if (card) card.scrollIntoView({ block: 'center' });
+  };
+  operant.on('localmodel:state', s => {
+    localState = s; drawLocalPill();
+    if (openPanel() !== 'settings') return;
+    const key = s.status + '|' + Object.values(s.parts || {}).map(p => p.state).join(',');
+    const changed = key !== localKey; localKey = key;
+    if (!Panels.refreshLocalCard($('#settings-body'), cfg, setSetting, settingsExt()) && changed) renderSettings();
+  });
   let updateStatus = null;
   Panels.noteLaunch(cfg);
-  const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, {
+  let limitSugg = null, limitSuggAt = 0;
+  const settingsExt = () => ({
     defaults,
     errors: settingErrors,
     restart: () => operant.relaunch(),
@@ -2840,7 +3032,10 @@
     renderCodegraph,
     renderMemory,
     localModelState: () => localState,
-    localModelInstall: model => { localState = { ...localState, status: 'installing', message: 'Starting…' }; operant.localModelInstall(model); },
+    localModelInstall: (model, opts) => { if (opts && opts.confirmed) localState = { ...localState, status: 'installing', message: 'Starting…', failed: null }; operant.localModelInstall(model, opts); },
+    localModelCancel: () => operant.localModelCancel(),
+    localModelTest: () => operant.localModelTest(),
+    localModelDismiss: () => operant.localModelDismiss(),
     localModelRemove: model => operant.localModelRemove(model),
     localModelRefresh: () => operant.localModelRefresh(),
     backupStatus: () => ({ last: backupLast, running: backupRunning }),
@@ -2861,7 +3056,50 @@
     openLogFolder: () => operant.openLogFolder(),
     openLink: (url, second) => operant.openLink(url, second),
     renderTokenBreakdown,
+    limitSuggestions,
+    applyLimitSuggestions,
+    routeUse,
+    useBigPickle,
   });
+  const renderSettings = () => Panels.renderSettings($('#settings-body'), cfg, setSetting, operant.pickFolder, settingsExt());
+  // Item 96: this week's tasks per tier and route (Settings › Agents › Team), read at most once a minute.
+  let routeUseData = null, routeUseAt = 0;
+  function routeUse() {
+    if (Date.now() - routeUseAt > 60000) {
+      routeUseAt = Date.now();
+      operant.outcomeRouteUse().then(r => { routeUseData = r || null; if (openPanel() === 'settings') renderSettings(); }).catch(() => {});
+    }
+    return routeUseData;
+  }
+  // The offered change after a config migration: xsmall runs Big Pickle first and keeps what it ran before as its fallback. Only on the click.
+  function useBigPickle() {
+    const oc = (cfg.agents || []).find(a => agentKind(a.id) === 'opencode');
+    const team = cfg.team || {};
+    setSetting('team', { ...team, tiers: { ...(team.tiers || {}), xsmall: TierRoutes.useBigPickle((team.tiers || {}).xsmall, oc ? oc.id : 'opencode') } });
+    setSetting('tierOffers', (cfg.tierOffers || []).filter(o => o !== 'use-big-pickle'));
+    if (openPanel() === 'settings') renderSettings();
+  }
+  // Item 92: Settings › Agents › Team shows each tier's suggested limit from past tasks; the user applies them.
+  function limitSuggestions() {
+    if (Date.now() - limitSuggAt > 60000) {
+      limitSuggAt = Date.now();
+      operant.outcomeLimits({ tiers: Object.keys(cfg.team?.tiers || {}) }).then(s => { limitSugg = s || {}; if (openPanel() === 'settings') renderSettings(); }).catch(() => {});
+    }
+    return limitSugg;
+  }
+  async function applyLimitSuggestions() {
+    const s = Object.entries(limitSugg || {}).filter(([, v]) => v && v.enough);
+    if (!s.length) return false;
+    const now = cfg.team?.budgets || {};
+    const detail = s.map(([k, v]) => `${k}: ${fmtK(now[k] || 0)} -> ${fmtK(v.tokens)} (${v.n} tasks; ${v.reason})`).join('\n');
+    const pick = await operant.ask({ message: 'Apply the suggested token limits?', detail, buttons: ['Apply', 'Cancel'], cancelId: 1 });
+    if (pick !== 0) return false;
+    const inside = cfg.team?.savingProgress === 'inside';
+    const budgets = { ...now };
+    for (const [k, v] of s) if (!(inside && v.tokens < 20000)) budgets[k] = v.tokens;
+    setSetting('team', { ...(cfg.team || {}), budgets });
+    return true;
+  }
   // Settings › Usage › "Where tokens go" (item 39): per project/tile totals, the biggest single
   // turns, files read more than 3 times in a session, and each session's fixed first-turn overhead.
   // Computed fresh from ~/.claude/projects on demand (tab open or range switch), not kept running.
@@ -3216,7 +3454,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   // Agent CLI tiles (the master among them) count as running while output is streaming, idle otherwise.
   const aiWorking = w => w.busySince && Date.now() - w.lastOut < 3000;
   const isWorking = w => w.kind === 'agent' ? w.status === 'running' : w.kind === 'ai' && aiWorking(w);
-  let lastStats = '', lastBusy = '';
+  let lastStats = '', lastBusy = '', lastFlowWork = '';
   function refreshStats() {
     const all = [...wins.values()];
     const ag = all.filter(w => w.kind === 'agent');
@@ -3231,6 +3469,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   setInterval(() => {
     const busy = workspaces.map((_, i) => wsWins(i).some(isWorking) ? 1 : 0).join('');
     if (busy !== lastBusy) { lastBusy = busy; refreshBar(); } else refreshStats();
+    const flow = [...wins.values()].map(w => (isWorking(w) && !w.waitingPrompt ? 1 : 0)).join('');
+    if (flow !== lastFlowWork) { lastFlowWork = flow; updateBorderFlow(); }
   }, 1000);
 
   function toast(html, onClick, duration = 5000) {
@@ -4164,7 +4404,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const list = top.length ? `<h3>By project</h3><div class="usage-projects">${top.map(p => `<div class="up-row${p.other ? ' other' : ''}"><span class="up-nm" title="${esc(p.name)}">${esc(p.name)}</span>`
       + `<span class="up-bar"><i style="width:${(p.n / maxP * 100).toFixed(1)}%"></i></span><span class="up-val">${fmtTok(p.n)}</span></div>`).join('')}</div>` : '';
     const cost = usageCost && usageCost.range === usageRange ? usageCostHtml() : list;
-    usageBody.innerHTML = tiles + '<div class="usage-chart"><div class="u-tip hidden"></div></div>' + cost;
+    // Item 92: each worker task's limit, with the saving allowance on its own line so overshoot is never hidden.
+    const lim = board.tasks.filter(t => t.limitUse);
+    const limits = lim.length ? `<h3>Task token limits</h3><div class="usage-projects">${lim.map(t => `<div class="up-row"><span class="up-nm" title="${esc(t.text)}">#${t.id} ${esc(taskTldr(t))}</span><span class="up-val">${fmtTok(t.limitUse.work)} / ${fmtTok(t.limitUse.limit)}</span></div>`
+      + (t.limitUse.allowanceUsed ? `<div class="up-row other"><span class="up-nm">#${t.id} saving allowance</span><span class="up-val">${fmtTok(t.limitUse.allowanceUsed)} / ${fmtTok(t.limitUse.allowance)}</span></div>` : '')).join('')}</div>` : '';
+    usageBody.innerHTML = tiles + '<div class="usage-chart"><div class="u-tip hidden"></div></div>' + cost + limits;
     usageBody.querySelectorAll('[data-series]').forEach(b => b.onclick = () => toggleSeries(b.dataset.series));
     usageBody.querySelectorAll('[data-uview]').forEach(b => b.onclick = () => {
       usageView = b.dataset.uview;
@@ -4593,9 +4837,12 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const team = cfg.team || {};
     if (!team.enabled) return { enabled: false };
     const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
-    const all = tiersIn(dir), tiers = Object.fromEntries(allowedTierNames(dir).map(n => [n, all[n]]));
+    const all = tiersIn(dir), tiers = Object.fromEntries(allowedTierNames(dir).map(n => {
+      const { routes, skipped, route, fallbacks, ...rest } = all[n] || {};
+      return [n, { ...rest, ...(routes && routes.length > 1 ? { routes: routes.map(r => r.label) } : {}), budget: team.budgets?.[n] || 0 }];
+    }));
     const mode = agentMode(dir);
-    return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers, subagents: subagentLimit(), ...(mode !== 'both' ? { agents: TeamTiers.MODE_LABEL[mode] } : {}) };
+    return { enabled: true, tiers, maxWorkers: team.maxWorkers || 4, workers, subagents: subagentLimit(), askBeforeMoveUp: TierGuard.ASK_BEFORE_MOVE_UP, savingProgress: team.savingProgress || 'over', dailyCap: team.dailyCap || 0, ...(mode !== 'both' ? { agents: TeamTiers.MODE_LABEL[mode] } : {}) };
   }
 
   const MESSAGING_OFF = 'messaging is off - turn it on in Settings › Agents › Team (Let agents message each other)';
@@ -4670,7 +4917,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'agent': {
         if (!args.prompt) throw new Error('prompt required');
-        let agentId = args.agent, model = args.model, effort = args.effort ? String(args.effort) : null, tier = null, suggested = null;
+        let agentId = args.agent, model = args.model, effort = args.effort ? String(args.effort) : null, tier = null, suggested = null, limitInfo = null, routed = null;
         // Item 82: the project's agent choice. An explicit --agent/--model/--tier for the other CLI is an error.
         const dir = args.cwd || self?.cwd || lastCwd, mode = agentMode(dir), mtiers = tiersIn(dir);
         if (mode !== 'both') {
@@ -4694,7 +4941,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const wantTier = args.tier || suggested?.tier;
         if (wantTier) {
           tier = String(wantTier);
-          const t = mtiers[tier];
+          const t = await routeFor(mtiers[tier], args.prompt);
+          routed = t;
           if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (mode === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[mode]}: ${Object.keys(mtiers).join(', ') || 'no tiers'})`));
           const allowed = allowedTierNames(dir);
           if (!allowed.includes(tier)) throw new Error(`tier "${tier}" is above the top tier allowed (${cfg.team.maxTier}) - use --tier ${allowed.join(' or ')}`);
@@ -4704,6 +4952,17 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           agentId = t.agent;
           model = model || t.model;
           if (!args.model && !args.effort) effort = t.effort || null;
+          // Item 92: a limit that leaves no room to save is refused; past the project's daily cap, the user decides first.
+          const lim = args.budget != null && !isNaN(args.budget) ? Math.max(0, Math.round(+args.budget)) : cfg.team?.budgets?.[tier] || 0;
+          const plan = TierGuard.limitPlan(lim, cfg.team?.savingProgress);
+          if (plan?.error) throw new Error(`tier ${tier}: ${plan.error}`);
+          const cap = TierGuard.dailyCap(await operant.projectToday(projectDir(dir)).catch(() => 0), cfg.team?.dailyCap);
+          if (cap?.over) {
+            const pick = await operant.ask({ message: `${shortPath(projectDir(dir))} has used ${fmtK(cap.used)} tokens today, past its daily cap of ${fmtK(cap.cap)}.`,
+              detail: `An agent wants to start a ${tier} worker: ${clip(args.prompt, 160)}`, buttons: ['Start this task', 'Not today'], cancelId: 1 });
+            if (pick !== 0) throw new Error(`the project's daily token cap (${fmtK(cap.cap)}) is reached and the user said not today: do not start more workers; tell the user`);
+          }
+          limitInfo = { limit: lim, suggestion: await suggestionFor(tier, TaskType.classifyTask(args.prompt)) };
         }
         if (agentId && !cfg.agents.some(a => a.id === agentId)) throw new Error(`unknown agent "${agentId}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
         // Item 33: with --tier, a board task is added automatically, owned by the new worker tile,
@@ -4713,15 +4972,16 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           taskId = board.nextTaskId++;
           const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
+          if (routed && !args.model) { task.agent = agentId; task.model = model; task.route = routeInfo(routed); }
           board.tasks.push(task);
           boardChanged();
-          prompt = `${args.prompt} — ${reportLine(taskId)}`;
+          prompt = `${args.prompt}${await codegraphBrief(task, task.cwd || dir)} — ${reportLine(taskId)}`;
         }
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
-        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; boardChanged(); } }
-        return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}) };
+        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
+        return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(tier && routed?.route ? { route: routed.route.note } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}), ...(limitInfo || {}) };
       }
       case 'team':
         return teamInfo(self?.cwd || lastCwd);
@@ -4740,7 +5000,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           role: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell',
           task: task ? { id: task.id, text: task.text, tier: self.tier, subagents: subagentLimit() } : null,
           team: self.tier ? null : teamInfo(self.cwd || lastCwd),
+          refineTo: cfg.refineTo === 'team' ? 'team' : 'claude',
           review: self.tier ? [] : board.tasks.filter(t => t.status === 'review').map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
+          paused: self.tier ? [] : board.tasks.filter(t => t.status === 'paused' && t.ask).map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t), why: t.ask.why })),
           tiles: [...wins.values()].filter(w => w.alive && w.id !== self.id).map(w => ({
             id: w.id, kind: w.kind, title: w.title, busy: isWorking(w), tier: w.tier || null, taskId: w.tier ? openTask(w)?.id ?? null : null })),
           ports: scanPorts(),
@@ -4775,6 +5037,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return { id: w.id, title: w.title, busy: isWorking(w), text, total, shown };
       }
       case 'send': {
+        if (args.brief) return sendBrief(args, self);
         const w = needTile(args.id);
         if (!w.ptyId) throw new Error('tile has no terminal to type into');
         if (args.enter && args.text) sendLine(w, String(args.text));
@@ -4808,7 +5071,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'usage': {
         if (!self) throw new Error('unknown tile');
         const ctx = self.ctx || null;
-        return { id: self.id, tokens: ctx?.tokens ?? null, max: ctx?.max ?? null,
+        const codegraph = await operant.outcomeCodegraph().catch(() => null);
+        return { id: self.id, tokens: ctx?.tokens ?? null, max: ctx?.max ?? null, ...(codegraph && codegraph.tasks ? { codegraph } : {}),
           pct: ctx && ctx.max ? Math.round((ctx.tokens / ctx.max) * 100) : null,
           project: self.cwd ? baseName(self.cwd) : null };
       }
@@ -4887,6 +5151,14 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const id = Number(args.id);
         const t = board.tasks.find(x => x.id === id);
         if (!t) throw new Error(`no task ${id}`);
+        // Items 91/92: the lead reads a paused task's ask here; only the user answers it, on the board.
+        if (args.sub === 'show') {
+          const w = wins.get(t.owner);
+          return { sub: 'show', id: t.id, status: t.status, tier: t.tier || null, attempts: Board.attempts(t), text: t.text, note: t.note, owner: fmtOwner(t.owner),
+            tokens: TierGuard.counted(addTok(t.tokens, w?.tok)), limit: t.tier ? tierBudget(t) : null, limitUse: t.limitUse || null,
+            ask: t.ask ? { why: t.ask.why, reason: t.ask.reason, evidence: t.ask.evidence, next: t.ask.next, choices: t.ask.choices.map(c => c.label) } : null,
+            askText: TierGuard.askText(t) || null };
+        }
         if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
         else if (args.sub === 'done') {
           // A worker's handback: done, or blocked/failed with why in the note.
@@ -4903,6 +5175,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             else t.note = [t.note, 'no test/build command found'].filter(Boolean).join(' · ');
           }
           if (n?.sessionId) operant.stuckReset(n.sessionId);
+          // Item 92: a worker that saved after the 90% call (or past its limit) is stopped here and the user asked.
+          const limitStop = status === 'blocked' && n?.limit?.taskId === t.id ? n.limit.tracker.onSaved() : null;
+          if (limitStop) { onLimitEvent(t, n, limitStop); boardChanged(); return { id: t.id, status: 'paused', note: t.note, sub: args.sub }; }
           if (status === 'blocked' || (status === 'failed' && !t.tier)) recordOutcome(t, status);
           if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
           else if (verify) { verifyTask(t, verify, from); boardChanged(); return { id: t.id, status: t.status, note: t.note, sub: args.sub, verify }; }
@@ -4921,7 +5196,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (!args.note) throw new Error('--note "<why>" required');
           const w = wins.get(t.owner);
           if (Board.reject(t, args.note) === 'retry') retryTask(t, w, `The lead rejected your result: ${oneLine(args.note)}. Fix it`);
-          else escalateTask(t, `rejected twice: ${oneLine(args.note)}`);
+          else askUser(t, 'rejected', `rejected twice: ${oneLine(args.note)}`);
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else if (args.sub === 'cancel') {
@@ -4935,7 +5210,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         return { id: t.id, status: t.status, note: t.note, sub: args.sub };
       }
       case 'board': {
-        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: args.full ? t.text : taskTldr(t), note: t.note, owner: fmtOwner(t.owner), tier: t.tier || null, attempts: Board.attempts(t), check: t.check ? { command: t.check.command, ok: t.check.ok, summary: t.check.summary } : null, diffStat: t.diffStat || null })) };
+        return { tasks: board.tasks.map(t => ({ id: t.id, status: t.status, text: args.full ? t.text : taskTldr(t), note: t.ask ? `${t.ask.why}, waiting for the user (operant task show ${t.id})` : t.note, owner: fmtOwner(t.owner), tier: t.tier || null, attempts: Board.attempts(t), check: t.check ? { command: t.check.command, ok: t.check.ok, summary: t.check.summary } : null, diffStat: t.diffStat || null })) };
       }
       case 'remember': {
         if (!args.text) throw new Error('text required');

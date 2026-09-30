@@ -1,0 +1,28 @@
+{
+  "name": "refine-sends-with-operant-send",
+  "kind": "use",
+  "prompt": "Tighten this prompt and send this to Claude, yes, send it once it is written: \"rename avg to mean in src/avg.js and update what uses it\".",
+  "scenario": {},
+  "env": {},
+  "extraTools": [
+    "Write"
+  ],
+  "maxTurns": 14,
+  "expect": {
+    "operant": [
+      "send"
+    ],
+    "noOperant": [
+      "agent",
+      "run",
+      "test",
+      "build"
+    ],
+    "maxCalls": {
+      "send": 1
+    },
+    "briefMatch": [
+      "mean"
+    ]
+  }
+}

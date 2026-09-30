@@ -1,0 +1,24 @@
+{
+  "name": "refine-team-off-not-plain",
+  "kind": "negative",
+  "prompt": "Refine this and send it as team work. I approve the brief in advance, so send it as soon as it is written: \"fix sum() in src/sum.js so it counts the last number\". Team mode is off.",
+  "scenario": {
+    "team": "off"
+  },
+  "env": {},
+  "extraTools": [
+    "Write"
+  ],
+  "maxTurns": 14,
+  "expect": {
+    "operant": [
+      "send"
+    ],
+    "maxCalls": {
+      "send": 1
+    },
+    "answerMatch": [
+      "team mode"
+    ]
+  }
+}

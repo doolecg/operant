@@ -1,0 +1,14 @@
+{
+  "name": "refine-no-added-scope",
+  "kind": "use",
+  "prompt": "Refine this and send it to Claude. I approve the brief in advance, so send it as soon as it is written: \"sum() in src/sum.js drops the last number, fix that\".",
+  "scenario": {},
+  "env": {},
+  "extraTools": ["Write"],
+  "maxTurns": 14,
+  "expect": {
+    "operant": ["send"],
+    "briefMatch": ["sum"],
+    "briefNot": ["refactor", "add (a |more |new )?tests?", "readme", "typescript", "documentation", "lint"]
+  }
+}

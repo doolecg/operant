@@ -5,6 +5,8 @@
 // States: healthy | available (something to act on, nothing wrong) | degraded | unavailable | not-configured | unknown.
 // Nothing is healthy without having been checked: a part with no probe result is unknown.
 
+const { healthOf } = require('./local-setup');
+
 const STATES = ['healthy', 'available', 'degraded', 'unavailable', 'not-configured', 'unknown'];
 // Worst first. available counts as fine; not-configured and unknown are grey, and rank above healthy so a part that
 // was never checked is not hidden behind green ones.
@@ -163,10 +165,18 @@ function checkAnalytics(raw) {
   return [row('analytics', name, 'healthy', parts.join(' · '))];
 }
 
+// The local model card (local-setup.js decides the state; this only words the row).
+function checkLocalModel(raw) {
+  const name = 'Local model';
+  if (!raw) return [unknownRow('localmodel', name)];
+  const h = healthOf(raw);
+  return [row('localmodel', name, h.state, h.detail, { action: 'settings:Agents' })];
+}
+
 const COMPONENTS = [
   ['app', checkApp], ['updates', checkUpdates], ['backups', checkBackups], ['config', checkConfig],
   ['agents', checkAgents], ['models', checkModels], ['memory', checkMemory], ['codegraph', checkCodegraph],
-  ['mcp', checkMcp], ['analytics', checkAnalytics],
+  ['mcp', checkMcp], ['localmodel', checkLocalModel], ['analytics', checkAnalytics],
 ];
 const CHECKS = Object.fromEntries(COMPONENTS);
 

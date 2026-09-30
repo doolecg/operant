@@ -43,17 +43,17 @@ const COMMANDS = {
   test: { group: 'terminals', usage: 'operant test [command...] [--cwd c] [--idle s] [--timeout s] [--title t] [--focus] [--json]', desc: 'run tests in the Backrooms (auto-detected if no command; --focus: in a tile instead), wait, return the status and only the failures', examples: ['operant test', 'operant test "pytest -k foo"'], flags: ['cwd', 'idle', 'timeout', 'title', 'focus'] },
   build: { group: 'terminals', usage: 'operant build [command...] [--cwd c] [--idle s] [--timeout s] [--title t] [--focus] [--json]', desc: 'like test, for a build/compile command', examples: ['operant build', 'operant build "cargo build --release"'], flags: ['cwd', 'idle', 'timeout', 'title', 'focus'] },
   read: { group: 'terminals', usage: 'operant read <id> [--lines n] [--new] [--errors] [--grep p] [--digest]', desc: "a tile's terminal output", examples: ['operant read 7 --errors', 'operant read 7 --digest'], flags: ['lines', 'new', 'errors', 'grep', 'digest'] },
-  send: { group: 'terminals', usage: 'operant send <id> <text...> [--enter]', desc: 'type into a tile', examples: ['operant send 7 "y" --enter'], flags: ['enter'] },
+  send: { group: 'terminals', usage: 'operant send <id> <text...> [--enter]  |  operant send [<claude-tile>] --file <brief> | --brief "<text>" [--new] [--team]', desc: 'type into a tile; with --file or --brief (a refined prompt) it puts the brief into the lead Claude tile of the project as its next message (or the tile you name; --new starts a fresh one), framed as from another agent on behalf of the user, and returns at once: a busy tile is never interrupted, the brief waits until it is idle; --team hands it over as team work (needs team mode)', examples: ['operant send 7 "y" --enter', 'operant send --file brief.md', 'operant send 7 --file brief.md --team'], flags: ['enter', 'brief', 'file', 'new', 'team'] },
   wait: { group: 'terminals', usage: 'operant wait <id> [--idle s] [--timeout s] [--lines n] [--new] [--errors] [--grep p] [--digest]', desc: 'block until a tile goes quiet or exits, then read (same read filters, or a test/build digest)', examples: ['operant wait 7 --idle 5', 'operant wait 7 --digest'], flags: ['idle', 'timeout', 'lines', 'new', 'errors', 'grep', 'digest'] },
   stop: { group: 'terminals', usage: 'operant stop <id>', desc: "stop a tile's running agent/command", examples: ['operant stop 7'], flags: [] },
 
   browse: { group: 'browser', usage: 'operant browse <url>', desc: 'open a URL in the default browser (follows Settings › General › Open links in)', examples: ['operant browse localhost:3000'], flags: [] },
 
-  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier xsmall|small|medium|high|max] [--budget tokens] [--model id] [--cwd c] [--title t] [--focus]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task; --budget overrides the tier\'s token budget for that task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier xsmall'], flags: ['agent', 'tier', 'budget', 'model', 'cwd', 'title', 'focus'] },
+  agent: { group: 'agents & tasks', usage: 'operant agent <prompt...> [--agent id] [--tier free|xsmall|small|medium|high|max] [--budget tokens] [--model id] [--cwd c] [--title t] [--focus]', desc: 'start a new agent tile with a prompt (a tier picks the agent+model and adds a board task, and prints its token limit with the suggested limit from past tasks; --budget overrides the tier\'s hard token limit for that task; workers can\'t start their own workers)', examples: ['operant agent "task..." --title worker', 'operant agent "list the files in bin/" --tier xsmall'], flags: ['agent', 'tier', 'budget', 'model', 'cwd', 'title', 'focus'] },
   ask: { group: 'agents & tasks', usage: 'operant ask <question...> [--options "A,B,C"] [--detail d]', desc: 'blocking dialog, returns the choice (comma-separated options; a | works in bash but PowerShell hands it to cmd.exe as a pipe)', examples: ['operant ask "Delete old migrations?" --options "Delete,Keep"'], flags: ['options', 'detail'] },
   notify: { group: 'agents & tasks', usage: 'operant notify <text...> [--title t]', desc: 'Windows notification', examples: ['operant notify "Tests pass, ready for review"'], flags: ['title'] },
   plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'], flags: [] },
-  task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | done <id> [--status done|blocked|failed] [--note n] | approve <id> | reject <id> --note "<why>" | note <id> "<text>" | cancel <id> [--note "<reason>"]', desc: 'add/claim/finish/note/close a board task (cancel stops its worker, never retried); a worker reports with done --status and a short note (files changed, one line each; open issues); done waits in review until the lead runs approve, or reject with the reason (one retry, then a tier up)', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --status done --note "login.js: null check on refresh; open: none"', 'operant task done 3 --status blocked --note "needs the API key from the user"', 'operant task approve 3', 'operant task reject 3 --note "the null check is missing on refresh"'], flags: ['for', 'note', 'status'] },
+  task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] | claim <id> | show <id> | done <id> [--status done|blocked|failed] [--note n] | approve <id> | reject <id> --note "<why>" | note <id> "<text>" | cancel <id> [--note "<reason>"]', desc: 'add/claim/show/finish/note/close a board task (cancel stops its worker, never retried); a worker reports with done --status and a short note (files changed, one line each; open issues); done waits in review until the lead runs approve, or reject with the reason (one retry, then the task is paused and the user decides; show prints why and the choices)', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --status done --note "login.js: null check on refresh; open: none"', 'operant task done 3 --status blocked --note "needs the API key from the user"', 'operant task approve 3', 'operant task reject 3 --note "the null check is missing on refresh"'], flags: ['for', 'note', 'status'] },
   board: { group: 'agents & tasks', usage: 'operant board [--full]', desc: 'list every task: id, status (todo, doing, review, done, failed, blocked), tier and attempt, owner, one-line summary (--full: whole text), last note', examples: ['operant board', 'operant board --full'], flags: ['full'] },
   team: { group: 'agents & tasks', usage: 'operant team', desc: 'team mode: enabled/disabled, each tier (agent, model, use), running workers', examples: ['operant team'], flags: [] },
   summarize: { group: 'agents & tasks', usage: 'operant summarize <file|tile-id|url> ["question"]', desc: 'an xsmall-tier worker reads it and answers, so you never load it yourself', examples: ['operant summarize RELEASE_NOTES.md "what shipped in 1.10.0, 3 bullets"', 'operant summarize 7 "why did it fail"'], flags: [] },
@@ -141,8 +141,9 @@ const TOPICS = {
     'operant read <id> --new to check, operant stop <id> if it is off task, and tell the user.',
     'A worker done waits in review: check it (operant diff, the files), then operant task approve <id>',
     'or operant task reject <id> --note "<why>". A reject or failure gets one retry in the same tile, then',
-    'the task moves a tier up as a new worker (same id); over its token budget (--budget) it moves up too.',
-    'At the top tier it fails.',
+    'the task is paused and the user asked on the board (move up, retry with a hint, take over, stop);',
+    'a stuck worker or a spent token limit (--budget) pauses it too. operant task show <id> says why.',
+    'Never move a task up or restart it yourself.',
     'After approving, operant close <id>. Never restart a stopped worker.',
   ].join('\n'),
   worker: [
@@ -153,7 +154,9 @@ const TOPICS = {
     '  Your task is on the board: operant board lists it (--full for the whole text).',
     '  Report once, in at most 100 words, then stop: operant task done <id> --status done|blocked|failed',
     '    --note "TL;DR: <one sentence>; <files changed, one line each; open issues>". No narration.',
-    '  The lead reviews your done: a rejection comes back once with the reason. Stay in your token budget.',
+    '  The lead reviews your done: a rejection comes back once with the reason. Your task has a hard token limit:',
+    '    when Operant says you are at 90%, save your files and run operant task done <id> --status blocked',
+    '    --note "<done so far; next step; open issues>" at once, then stop.',
     '  Targeted edits (a whole file only if it is new); narrow reads (--errors, --new, --grep).',
     '  One retry at most: a step that fails twice means --status failed, with two lines on why.',
     '  Tests and builds: operant test, operant build.',
@@ -360,6 +363,19 @@ function buildArgs(cmd, positionals, flags) {
     else if (!isNaN(val) && val.trim() !== '') args[k] = Number(val);
     else args[k] = val;
   }
+  // send with --file / --brief / --new / --team hands over a brief: the tile is optional, and a bare flag before the text
+  // (`--team "text"`) is not given the text as its value.
+  if (cmd === 'send' && (flags.file || flags.brief || flags.new || flags.team)) {
+    const words = [...positionals];
+    for (const k of ['brief', 'new', 'team', 'enter']) if (typeof flags[k] === 'string') { words.push(flags[k]); args[k] = true; }
+    delete args.id; delete args.text;
+    args.brief = true;
+    if (typeof flags.file === 'string') { args.file = require('path').resolve(flags.file); if (words.length) args.id = words[0]; }
+    else if (words.length > 1) { args.id = words[0]; args.text = words.slice(1).join(' '); }
+    else if (words.length) args.text = words[0];
+    if (args.id !== undefined && !isNaN(args.id) && String(args.id).trim() !== '') args.id = Number(args.id);
+    if (flags.file === true) args.file = true;
+  }
   // recall / memory used|wrong <id>: feedback on a fact, not a query.
   if (cmd === 'recall' && (positionals[0] === 'used' || positionals[0] === 'wrong') && positionals.length > 1) {
     args.feedback = positionals[0]; args.id = positionals[1]; delete args.query;
@@ -433,6 +449,23 @@ function fmtBreakdown(b) {
   return lines.join('\n');
 }
 
+const kTok = n => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+// `operant agent` with a tier: the task's hard token limit and the suggestion from past tasks (item 92).
+function fmtLimit(r) {
+  if (!r.tier || r.limit == null) return '';
+  const s = r.suggestion;
+  const sug = !s ? '' : s.enough ? `; suggested ${kTok(s.tokens)} from ${s.n} passed tasks (${s.reason})` : `; suggestion: not enough history (${s.n} of 5 tasks), using the tier default`;
+  return `\ntoken limit ${r.limit ? kTok(r.limit) : 'none'}${sug}`;
+}
+// `operant task show <id>`: the task, its limit use and, when paused, why and the user's choices.
+function fmtTaskShow(r) {
+  const lines = [`${r.id}  ${r.status}${r.tier ? `  ${r.tier}${r.attempts > 1 ? ` try ${r.attempts}` : ''}` : ''}  ${r.owner ? `${r.owner.id} ${r.owner.title}` : '-'}`, r.text];
+  if (r.tier) lines.push(`tokens ${kTok(r.tokens || 0)}${r.limit ? ` · limit ${kTok(r.limit)}` : ' · no limit'}${r.limitUse && r.limitUse.allowanceUsed ? ` · saving allowance used ${kTok(r.limitUse.allowanceUsed)} of ${kTok(r.limitUse.allowance)}` : ''}`);
+  if (r.note) lines.push(`note: ${r.note}`);
+  if (r.askText) lines.push(r.askText, 'Only the user answers this, on the board. Do not move the task up or restart it yourself.');
+  return lines.join('\n');
+}
+
 function formatResult(cmd, result) {
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
@@ -440,14 +473,16 @@ function formatResult(cmd, result) {
     case 'view': case 'edit': case 'diff': return `tile ${result.id}`;
     // A bare "tile 12" was once read as "the tests passed": say it only started, and how to get the outcome.
     case 'run': if (result.text) return result.text; return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
-    case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', ' + (result.basis || 'suggested') + ': ' + result.reason : ''}]  task ${result.taskId}` : '');
+    case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', ' + (result.basis || 'suggested') + ': ' + result.reason : ''}]  task ${result.taskId}` : '') + fmtLimit(result);
     case 'summarize': case 'find': return result.text || '(no answer)';
+    case 'send': return result && result.brief ? result.text : '';
     case 'msg': return result.delivered ? `delivered to tile ${result.to}` : `queued for tile ${result.to} (${result.queued} waiting); it gets it when it is between steps`;
     case 'inbox': return result.text || '(no messages)';
     case 'team': {
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
       const lines = [`team mode: enabled  ·  ${result.workers}/${result.maxWorkers} workers running`];
-      for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}${t.effort ? ` (${t.effort} effort)` : ''}${t.fallback ? ` (${t.fallback})` : ''}  —  ${t.use}`);
+      for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}${t.effort ? ` (${t.effort} effort)` : ''}${t.fallback ? ` (${t.fallback})` : ''}${Array.isArray(t.routes) ? ` [routes: ${t.routes.join(' > ')}]` : ''}  —  ${t.use}`);
+      if (result.askBeforeMoveUp) lines.push('a task never moves up a tier by itself: a stuck worker, a second failure or rejection, or a spent limit pauses it until the user answers on the board');
       return lines.join('\n');
     }
     case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : (result.text || '(no output)');
@@ -464,7 +499,8 @@ function formatResult(cmd, result) {
         : '(no watches)';
       return result.off ? `stopped watching tile ${result.id}` : `watching tile ${result.id}`;
     case 'plan': return result.approved ? 'approved' : `change: ${result.note || ''}`;
-    case 'task': return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}${result.verify ? `\nverifying: operant runs ${result.verify} before review` : ''}`;
+    case 'task': if (result.sub === 'show') return fmtTaskShow(result);
+      return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}${result.verify ? `\nverifying: operant runs ${result.verify} before review` : ''}`;
     case 'board': {
       const owner = o => o ? `${o.id} ${o.title}` : '-';
       const via = t => (t.tier ? t.tier + (t.attempts > 1 ? ` try ${t.attempts}` : '') : '-');
@@ -487,6 +523,13 @@ function formatResult(cmd, result) {
       else {
         if (pct(l.session)) lines.push(`session (5h): ${pct(l.session)}`);
         if (pct(l.week)) lines.push(`week: ${pct(l.week)}`);
+      }
+      const g = result.codegraph;
+      if (g && g.tasks) {
+        const k = n => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
+        lines.push(`codegraph (last 30 days, ${g.tasks} worker tasks): first code action was CodeGraph in ${Math.round(g.firstCodegraph * 100)}%; files read before/after the first query: ${g.avgFilesBefore.toFixed(1)} / ${g.avgFilesAfter.toFixed(1)} per task`
+          + (g.tokensWith != null && g.tokensWithout != null ? `; tokens per task ${k(g.tokensWith)} with CodeGraph, ${k(g.tokensWithout)} without` : '')
+          + (g.nudged ? `; nudged: ${g.nudged}` : '') + (g.degraded ? `; index degraded: ${g.degraded}` : ''));
       }
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
@@ -563,6 +606,13 @@ async function main() {
   let cmd = r.cmd;
   const args = buildArgs(cmd, positionals, flags);
   const asJson = !!flags.json;
+  if (cmd === 'send' && args.brief && args.file !== undefined) {
+    try {
+      if (args.file === true) throw new Error('--file needs a path');
+      args.text = require('fs').readFileSync(args.file, 'utf8');
+    } catch (e) { await fail(`operant: can't read the brief file: ${e.message}`, []); }
+    delete args.file;
+  }
   // A Backrooms task runs in the folder the agent is in.
   if (cmd === 'run' && args.background && args.cwd == null) args.cwd = process.cwd();
 

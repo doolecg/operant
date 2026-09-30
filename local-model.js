@@ -1,15 +1,14 @@
-// A local model for the lowest team tier, through Ollama. Big Pickle (opencode/big-pickle) stays the first
-// choice; when it is busy or its free use has run out (a failover, below) and the local model is installed and
-// ready, that one tier runs `ollama/<model>` until Big Pickle has had time to recover. Everything here is pure or
+// A local model for the free team tier, through Ollama. Big Pickle (opencode/big-pickle) stays the first
+// choice; when it is busy or its free use has run out (a fallback route, tier-routes.js) and the local model is
+// installed and ready, that tier runs `ollama/<model>` until Big Pickle has had time to recover. Everything here is pure or
 // takes its process spawner, so it is tested without Ollama; main.js owns the one instance and the IPC.
 const { spawn: nodeSpawn } = require('child_process');
+const setup = require('./local-setup');
 
 const MODELS = ['gemma4:e4b', 'gemma4:e2b', 'gemma4:12b'];
 const DEFAULT_MODEL = 'gemma4:e4b';
 const BASE_URL = 'http://localhost:11434/v1';
 const FREE_MODEL = 'opencode/big-pickle';
-const FREE_TIER = 'xsmall';
-const COOLDOWN_MS = 10 * 60 * 1000;
 const WINGET_ARGS = ['install', '--id', 'Ollama.Ollama', '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements'];
 const DOWNLOAD_URL = 'https://ollama.com/download';
 
@@ -37,31 +36,6 @@ const FREE_FAILURE = /\b(429|502|503|504|529)\b|rate.?limit|too many requests|ov
 const isFreeFailure = text => FREE_FAILURE.test(String(text || ''));
 const isFreeModelId = id => id === FREE_MODEL || id === 'big-pickle';
 
-// Remembers that Big Pickle failed, so the tier runs the local model for a while, then tries Big Pickle again.
-function createFailover({ now = Date.now, cooldownMs = COOLDOWN_MS } = {}) {
-  let down = null;
-  return {
-    fail(reason) { down = { reason: String(reason || 'unavailable').replace(/\s+/g, ' ').slice(0, 120), until: now() + cooldownMs }; return down; },
-    clear() { down = null; },
-    active() { if (down && now() >= down.until) down = null; return down; },
-  };
-}
-
-// The tiers with the lowest one swapped for the local model while Big Pickle is down and the local model is ready.
-// The tier says which one is active (`active`) and, on the local one, why (`fallback`, which Settings already shows).
-function overlay(tiers, { ready, model, down }) {
-  const t = tiers && tiers[FREE_TIER];
-  if (!t || t.model !== FREE_MODEL) return tiers;
-  const active = ready && down ? { ...t, model: `ollama/${model}`, fallback: `Big Pickle: ${down.reason}`, active: `local (${model})` } : { ...t, active: 'Big Pickle' };
-  return { ...tiers, [FREE_TIER]: active };
-}
-// The same for a { claude, opencode } map of per-mode results ({ tiers, removed, empty }).
-function overlayModes(modes, o) {
-  const out = {};
-  for (const [k, m] of Object.entries(modes || {})) out[k] = m && m.tiers ? { ...m, tiers: overlay(m.tiers, o) } : m;
-  return out;
-}
-
 // "pulling 3f1c...  45% ▕███▏ 1.2 GB/2.6 GB" -> 45 (the last percentage in the text), or null.
 function parsePercent(text) {
   const all = String(text || '').match(/(\d{1,3})%/g);
@@ -70,23 +44,31 @@ function parsePercent(text) {
   return n >= 0 && n <= 100 ? n : null;
 }
 
-// The install/remove worker. deps: { spawn, which(cmd) -> Promise<path|null>, env() -> Promise<env>, platform, onChange(state) }.
-function createLocalModel({ spawn = nodeSpawn, which, env = async () => process.env, platform = process.platform, onChange = () => {}, wait = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
-  let st = { status: 'none', pct: 0, message: '', model: DEFAULT_MODEL, link: '' };
-  let busy = false;
+// The setup worker behind the Settings card. deps: { spawn, which(cmd) -> Promise<path|null>, env() -> Promise<env>, platform,
+// onChange(state), probe() -> Promise<bool> (is the server answering on localhost:11434), freeDisk() -> bytes|null,
+// totalMem() -> bytes|null, connected(model) -> bool (the OpenCode provider entry is in place) }.
+// State: { status: none|confirm|installing|paused|ready|error, pct, message, link, model, parts, failed, plan, info, everReady }.
+function createLocalModel({ spawn = nodeSpawn, which, env = async () => process.env, platform = process.platform, onChange = () => {}, wait = ms => new Promise(r => setTimeout(r, ms)),
+  probe = null, freeDisk = () => null, totalMem = () => null, connected = () => true, now = Date.now, testTimeoutMs = 180000 } = {}) {
+  let st = { status: 'none', pct: 0, message: '', model: DEFAULT_MODEL, link: '', parts: setup.freshParts(), failed: null, plan: null, info: null, everReady: false };
+  let busy = false, current = null, cancelled = false;
   const set = patch => { st = { ...st, ...patch }; onChange(st); };
+  const part = (id, state, detail, extra) => set({ parts: setup.setPart(st.parts, id, state, detail, extra) });
 
   // Runs a command to the end, feeding each chunk of its output to onText. -> exit code (-1: could not start).
-  const exec = (cmd, args, onText) => new Promise(async resolve => {
+  const exec = (cmd, args, onText, { timeoutMs = 0 } = {}) => new Promise(async resolve => {
     let child;
     try { child = spawn(cmd, args, { env: await env(), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch { return resolve(-1); }
-    let out = '';
-    const feed = d => { out += d.toString('utf8'); onText && onText(d.toString('utf8')); };
+    current = child;
+    let timer = null;
+    if (timeoutMs) timer = setTimeout(() => { try { child.kill && child.kill(); } catch {} }, timeoutMs);
+    const feed = d => { onText && onText(d.toString('utf8')); };
     child.stdout && child.stdout.on('data', feed);
     child.stderr && child.stderr.on('data', feed);
-    child.on('error', () => resolve(-1));
-    child.on('close', code => resolve(code == null ? -1 : code));
+    const end = code => { clearTimeout(timer); if (current === child) current = null; resolve(code); };
+    child.on('error', () => end(-1));
+    child.on('close', code => end(code == null ? -1 : code));
   });
   const execOut = (cmd, args) => new Promise(async resolve => {
     let out = '', child;
@@ -97,61 +79,178 @@ function createLocalModel({ spawn = nodeSpawn, which, env = async () => process.
   });
 
   const find = async () => (await which('ollama')) || null;
-
+  const listed = async (exe, model) => {
+    const r = await execOut(exe, ['list']);
+    return r.code === 0 ? setup.parseList(r.out, model) : null;
+  };
   // Is the model there? -> true/false; null when Ollama isn't installed or its server isn't answering.
   async function has(model) {
     const exe = await find();
     if (!exe) return null;
-    const r = await execOut(exe, ['list']);
-    if (r.code !== 0) return null;
-    const want = model.includes(':') ? model : model + ':latest';
-    return r.out.split(/\r?\n/).some(l => l.trim().split(/\s+/)[0] === want);
+    const l = await listed(exe, model);
+    return l ? l.has : null;
+  }
+  const answering = async exe => probe ? !!(await probe()) : (await execOut(exe, ['list'])).code === 0;
+
+  // Sets the parts and info from what is on the machine, without downloading or running the model.
+  async function look(model) {
+    const exe = await find();
+    let parts = setup.freshParts();
+    const mk = (id, state, detail) => { parts = setup.setPart(parts, id, state, detail); };
+    if (!exe) { set({ status: 'none', model, pct: 0, message: '', parts, info: null }); return; }
+    mk('ollama', 'ready', 'Found');
+    if (!(await answering(exe))) {
+      mk('running', 'idle', 'Not running');
+      set({ status: 'none', model, pct: 0, message: 'Ollama is installed but not running', parts, info: null });
+      return;
+    }
+    mk('running', 'ready', 'Answering on localhost:11434');
+    const l = await listed(exe, model);
+    if (!l || !l.has) {
+      mk('model', 'idle', 'Not downloaded');
+      set({ status: 'none', model, pct: 0, message: '', parts, info: null });
+      return;
+    }
+    mk('model', 'ready', l.size ? `${setup.fmtBytes(l.size)} on disk` : 'Downloaded');
+    const tested = st.model === model && st.parts.ready.state === 'ready';
+    mk('ready', tested ? 'ready' : 'idle', tested ? st.parts.ready.detail : 'Not tested yet, press Test it');
+    const ok = !!connected(model);
+    mk('connected', ok ? 'ready' : 'failed', ok ? 'Provider entry in place' : 'No ollama provider for OpenCode');
+    set({ status: 'ready', model, pct: 100, message: '', parts, failed: null, everReady: true, info: { model, bytes: l.size, diskUsed: l.total } });
   }
 
   async function refresh(model = st.model) {
     if (busy) return st;
-    const exe = await find();
-    if (!exe) { set({ status: 'none', model, message: '', pct: 0 }); return st; }
-    const r = await has(model);
-    set({ status: r ? 'ready' : 'none', model, pct: 0, message: r === null ? 'Ollama is installed but not running' : '' });
+    await look(model);
     return st;
+  }
+
+  // What would be downloaded, and whether the machine can take it. Nothing is changed.
+  async function plan(model = st.model) {
+    const exe = await find();
+    const running = exe ? await answering(exe) : false;
+    const l = exe && running ? await listed(exe, model) : null;
+    const p = setup.preflight({ model, platform, ollamaInstalled: !!exe, modelInstalled: !!(l && l.has), freeDisk: freeDisk(), totalMem: totalMem() });
+    return { ...p, other: p.suggest ? { model: p.suggest, bytes: (setup.MODEL_INFO[p.suggest] || {}).bytes } : null };
   }
 
   // Ollama installed and its server answering; starts `ollama serve` (detached) when it isn't.
   async function serve(exe) {
-    if ((await execOut(exe, ['list'])).code === 0) return true;
+    if (await answering(exe)) return true;
     try { const c = spawn(exe, ['serve'], { env: await env(), windowsHide: true, detached: true, stdio: 'ignore' }); c.unref && c.unref(); } catch { return false; }
-    for (let i = 0; i < 20; i++) { await wait(500); if ((await execOut(exe, ['list'])).code === 0) return true; }
+    for (let i = 0; i < 20; i++) { await wait(500); if (await answering(exe)) return true; }
     return false;
   }
 
-  // Install Ollama when missing (Windows: winget; elsewhere the official installer is linked, never piped into a shell), then pull the model.
-  async function install(model = st.model) {
+  const clean = t => setup.stripAnsi(t).trim().split(/[\r\n]+/).filter(Boolean).pop() || '';
+  const fail = (partId, what, opts) => {
+    const f = setup.failure(partId, what, opts);
+    set({ status: 'error', message: what, link: f.link, failed: f, parts: setup.setPart(st.parts, partId, 'failed', what) });
+    return st;
+  };
+  const pause = (partId, what) => {
+    set({ status: 'paused', message: what, failed: null, parts: setup.setPart(st.parts, partId, 'idle', what, { paused: true }) });
+    return st;
+  };
+
+  // The tiny test prompt: the model has to answer. -> { ok, code, text }
+  async function tryPrompt(exe, model) {
+    let text = '';
+    const code = await exec(exe, ['run', model, setup.TEST_PROMPT], t => { text += t; }, { timeoutMs: testTimeoutMs });
+    const answer = clean(text);
+    return { ok: code === 0 && !!answer && !cancelled, code, text: answer };
+  }
+  const promptFailure = t => t.code === 0 ? 'The model did not answer the test prompt'
+    : `The test prompt failed (${t.code === -1 ? 'timed out or could not start' : 'exit ' + t.code})${t.text ? ': ' + t.text : ''}`;
+
+  // Install Ollama when missing (Windows: winget; elsewhere the official installer is linked, never piped into a shell), start it,
+  // pull the model, try it, check the OpenCode entry. `ask`: look first and wait for the user's go-ahead (status 'confirm').
+  // Parts already in place are skipped, so this is also the retry for a failed part and the resume after Cancel.
+  async function install(model = st.model, { ask = false } = {}) {
     if (busy) return st;
-    busy = true;
-    set({ status: 'installing', model, pct: 0, message: 'Checking for Ollama…', link: '' });
+    if (ask) {
+      const p = await plan(model);
+      if (!p.nothingToDownload || p.notes.length) { set({ status: 'confirm', model, plan: p, message: '', failed: null }); return st; }
+    }
+    busy = true; cancelled = false;
+    set({ status: 'installing', model, pct: 0, message: 'Checking for Ollama…', link: '', failed: null, plan: null, parts: setup.freshParts() });
     try {
+      // 1. Ollama
+      part('ollama', 'checking', 'Looking for Ollama…');
       let exe = await find();
       if (!exe) {
-        if (platform !== 'win32') { set({ status: 'error', message: `Install Ollama from ${DOWNLOAD_URL}, then press Install again`, link: DOWNLOAD_URL }); return st; }
+        if (platform !== 'win32') return fail('ollama', `Install Ollama from ${DOWNLOAD_URL}, then press Install again`, { link: DOWNLOAD_URL, leftover: 'Nothing was installed.' });
         set({ message: 'Installing Ollama (winget)…' });
-        const code = await exec('winget', WINGET_ARGS, t => { const p = parsePercent(t); if (p != null) set({ pct: Math.min(p, 99) }); });
+        part('ollama', 'installing', 'Installing with winget…');
+        const code = await exec('winget', WINGET_ARGS, t => { const p = parsePercent(t); if (p != null) { set({ pct: Math.min(p, 99) }); part('ollama', 'installing', `Installing with winget… ${Math.min(p, 99)}%`); } });
+        if (cancelled) return pause('ollama', 'Ollama install cancelled. Resume runs the installer again');
         exe = await find();
-        if (!exe) { set({ status: 'error', message: code === -1 ? `winget is not available. Install Ollama from ${DOWNLOAD_URL}` : `The Ollama install did not finish (exit ${code}). Install it from ${DOWNLOAD_URL}`, link: DOWNLOAD_URL }); return st; }
+        if (!exe) return fail('ollama', code === -1 ? `winget is not available. Install Ollama from ${DOWNLOAD_URL}` : `The Ollama install did not finish (exit ${code}). Install it from ${DOWNLOAD_URL}`, { link: DOWNLOAD_URL });
       }
+      part('ollama', 'ready', 'Found');
+      // 2. Ollama running
       set({ message: 'Starting Ollama…', pct: 0 });
-      if (!await serve(exe)) { set({ status: 'error', message: 'Ollama did not start. Open the Ollama app and try again' }); return st; }
-      set({ message: `Downloading ${model}…` });
-      let tail = '';
-      const code = await exec(exe, ['pull', model], t => {
-        tail = (tail + t).slice(-400);
-        const p = parsePercent(t);
-        if (p != null) set({ pct: p });
-      });
-      if (code !== 0) { set({ status: 'error', message: `Could not download ${model}: ${tail.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').trim().split(/[\r\n]+/).pop() || 'exit ' + code}` }); return st; }
-      set({ status: 'ready', pct: 100, message: '' });
+      part('running', 'checking', 'Checking localhost:11434…');
+      if (!await answering(exe)) part('running', 'starting', 'Starting Ollama…');
+      if (!await serve(exe)) return fail('running', 'Ollama did not start. Open the Ollama app and try again');
+      part('running', 'ready', 'Answering on localhost:11434');
+      // 3. the model
+      part('model', 'checking', 'Checking for the model…');
+      const before = await listed(exe, model);
+      if (!before || !before.has) {
+        set({ message: `Downloading ${model}…` });
+        const tracker = setup.createPullTracker({ now });
+        part('model', 'downloading', 'Starting the download…');
+        let tail = '';
+        const code = await exec(exe, ['pull', model], t => {
+          tail = (tail + t).slice(-400);
+          const snap = tracker.feed(t);
+          if (snap.total || snap.phase !== 'starting') { set({ pct: snap.pct }); part('model', 'downloading', setup.progressDetail(snap), { pct: snap.pct, done: snap.done, total: snap.total, speed: snap.speed, etaSec: snap.etaSec }); }
+        });
+        if (cancelled) { const s = tracker.snapshot(); return pause('model', `Paused${s.total ? ` at ${s.pct}% (${setup.fmtBytes(s.done)} of ${setup.fmtBytes(s.total)})` : ''}. Resume continues from there`); }
+        if (code !== 0) return fail('model', `Could not download ${model}: ${clean(tail) || 'exit ' + code}`);
+      }
+      const l = await listed(exe, model);
+      part('model', 'ready', l && l.size ? `${setup.fmtBytes(l.size)} on disk` : 'Downloaded');
+      // 4. does it answer
+      set({ message: 'Trying the model…', pct: 100 });
+      part('ready', 'checking', 'Sending a tiny test prompt…');
+      const t = await tryPrompt(exe, model);
+      if (cancelled) return pause('ready', 'Cancelled before the test prompt finished');
+      if (!t.ok) return fail('ready', promptFailure(t));
+      part('ready', 'ready', `Answered: "${t.text.slice(0, 40)}"`);
+      // 5. OpenCode
+      part('connected', 'checking', 'Checking the OpenCode provider entry…');
+      if (!connected(model)) return fail('connected', 'The OpenCode provider entry for the model is missing');
+      part('connected', 'ready', 'Provider entry in place');
+      set({ status: 'ready', pct: 100, message: '', failed: null, everReady: true, info: { model, bytes: l && l.size, diskUsed: l && l.total } });
       return st;
-    } finally { busy = false; }
+    } finally { busy = false; current = null; }
+  }
+
+  // Stops what is running; the model download keeps its partial files, so install() resumes it.
+  function cancel() {
+    if (!busy) return st;
+    cancelled = true;
+    set({ message: 'Cancelling…' });
+    try { current && current.kill && current.kill(); } catch {}
+    return st;
+  }
+
+  // The Test it button: only the test prompt, on a model that is already there.
+  async function test(model = st.model) {
+    if (busy) return st;
+    busy = true; cancelled = false;
+    try {
+      const exe = await find();
+      if (!exe || !(await answering(exe))) return fail('running', 'Ollama is not running');
+      part('ready', 'checking', 'Sending a tiny test prompt…');
+      const t = await tryPrompt(exe, model);
+      if (!t.ok) return fail('ready', promptFailure(t));
+      part('ready', 'ready', `Answered: "${t.text.slice(0, 40)}"`);
+      set({ status: 'ready', failed: null, message: '' });
+      return st;
+    } finally { busy = false; current = null; }
   }
 
   // Removes the model (Ollama itself stays).
@@ -161,12 +260,17 @@ function createLocalModel({ spawn = nodeSpawn, which, env = async () => process.
     try {
       const exe = await find();
       if (exe) await exec(exe, ['rm', model]);
-      set({ status: 'none', pct: 0, message: '', model });
+      const kept = st.parts.ollama.state === 'ready';
+      set({ status: 'none', pct: 0, message: '', model, failed: null, plan: null, info: null, everReady: false,
+        parts: kept ? { ...st.parts, model: { state: 'idle', detail: 'Not downloaded' }, ready: { state: 'idle', detail: 'Not started' }, connected: { state: 'idle', detail: 'Not started' } } : setup.freshParts() });
     } finally { busy = false; }
     return st;
   }
 
-  return { install, remove, refresh, state: () => st, setModel: m => { if (!busy && m !== st.model) { st = { ...st, model: m }; } }, busy: () => busy };
+  // Drops the go-ahead question or a failure and goes back to what is on the machine.
+  async function dismiss() { if (busy) return st; set({ plan: null, failed: null }); return refresh(); }
+
+  return { install, remove, refresh, plan, cancel, test, dismiss, state: () => st, setModel: m => { if (!busy && m !== st.model) { st = { ...st, model: m, plan: null, failed: null }; } }, busy: () => busy };
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, BASE_URL, FREE_MODEL, FREE_TIER, COOLDOWN_MS, WINGET_ARGS, providerConfig, withProvider, isFreeFailure, isFreeModelId, createFailover, overlay, overlayModes, parsePercent, createLocalModel };
+module.exports = { MODELS, DEFAULT_MODEL, BASE_URL, FREE_MODEL, WINGET_ARGS, providerConfig, withProvider, isFreeFailure, isFreeModelId, parsePercent, createLocalModel };

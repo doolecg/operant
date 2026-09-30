@@ -395,10 +395,25 @@ function grade(c, s, logCalls, opts = {}) {
     if ('delegated' in e) checks.delegated = delegated === e.delegated;
     for (const want of e.operant || []) checks[`operant ${want}`] = calls.some(a => startsWith(a, want.split(/\s+/)));
     for (const group of e.operantAny || []) checks[`operant any of ${group.join(' | ')}`] = group.some(want => calls.some(a => startsWith(a, want.split(/\s+/))));
+    // operantOrder: [[first, then]]: when a `then` call (argv prefix) is made, a `first` call came before it.
+    for (const [first, then] of e.operantOrder || []) {
+      const at = w => calls.findIndex(a => startsWith(a, w.split(/\s+/)));
+      const t = at(then);
+      checks[`operant ${first} before ${then}`] = t < 0 || (at(first) >= 0 && at(first) < t);
+    }
     if (e.noOperant) {
       const banned = new Set(e.noOperant);
       checks[`no operant ${e.noOperant.join('|')}`] = ![...calls.map(a => a[0]), ...attempts.map(w => w[0])].some(w => banned.has(w));
     }
+    // Briefs the agent handed over with `operant send` (the stub logs each one's text with the call).
+    const briefs = logCalls.filter(l => typeof l.brief === 'string').map(l => l.brief);
+    for (const re of e.briefMatch || []) checks[`brief /${re}/`] = briefs.some(b => new RegExp(re, 'i').test(b));
+    for (const re of e.briefNot || []) checks[`brief not /${re}/`] = !briefs.some(b => new RegExp(re, 'i').test(b));
+    // The agent's last message: what it showed the user, and how many questions it asked.
+    const answer = [...s.resultEvents].reverse().map(r => r.result).find(t => typeof t === 'string' && t) || '';
+    for (const re of e.answerMatch || []) checks[`answer /${re}/`] = new RegExp(re, 'i').test(answer);
+    for (const re of e.answerNot || []) checks[`answer not /${re}/`] = !new RegExp(re, 'i').test(answer);
+    if ('maxQuestions' in e) checks[`at most ${e.maxQuestions} question`] = (answer.match(/\?/g) || []).length <= e.maxQuestions;
     if (e.agentTier) checks[`agent --tier ${e.agentTier.join('|')}`] = calls.some(a => a[0] === 'agent' && e.agentTier.includes(a[a.indexOf('--tier') + 1]));
     for (const [cmd, max] of Object.entries(e.maxCalls || {})) checks[`at most ${max} operant ${cmd}`] = calls.filter(a => a[0] === cmd).length <= max;
     for (const re of e.noShell || []) checks[`no shell /${re}/`] = !shell.some(x => new RegExp(re, 'i').test(String(x.t.input.command || '')));

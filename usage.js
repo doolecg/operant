@@ -152,6 +152,12 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onToolResult, on
     return { ready: scanned, today: sum(events.filter(e => e[0] >= midnight(now))), hour: sum(events.filter(e => e[0] >= now - 3600e3)) };
   }
 
+  // One project's counted tokens today (input + output + cache writes), for its daily cap.
+  function todayFor(project) {
+    const t = sum(events.filter(e => e[0] >= midnight(Date.now()) && e[5] === project));
+    return t.input + t.output + t.cacheWrite;
+  }
+
   // The graph: stacked buckets over the range, plus each project's share of it.
   function series(range) {
     const [span, step] = RANGES[range] || RANGES['24h'];
@@ -195,7 +201,7 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onToolResult, on
     events.push([t, input || 0, output || 0, cacheWrite || 0, cacheRead || 0, project || 'other']);
   }
 
-  return { start, stop, summary, series, refresh: scan, addEvent, breakdown: opts => computeBreakdown(projectsDir, opts) };
+  return { start, stop, summary, todayFor, series, refresh: scan, addEvent, breakdown: opts => computeBreakdown(projectsDir, opts) };
 }
 
 // ------------------------------------------------------------ item 39: "where the tokens go"

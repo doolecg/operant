@@ -81,7 +81,7 @@ test('the flag table is what the handlers read', () => {
     read: 'lines new errors grep digest', wait: 'idle timeout new errors grep digest lines',
     agent: 'agent tier budget model cwd title focus', ask: 'options detail', notify: 'title', task: 'for note status', board: 'full',
     remember: 'type global about confidence supersedes', recall: 'about all note', usage: 'breakdown days', watch: 'errors grep off',
-    close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', send: 'enter',
+    close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', send: 'enter brief file new team',
   };
   for (const [name, c] of Object.entries(COMMANDS)) {
     assert.deepEqual([...c.flags].sort(), (expected[name] || '').split(' ').filter(Boolean).sort(), name);
@@ -373,6 +373,15 @@ test('each topic is 8 to 20 short lines', () => {
 
 // ---- the request to the app
 
+test('agent prints the token limit and the suggestion behind it; task show prints a paused task\'s ask', () => {
+  assert.equal(formatResult('agent', { id: 3, tier: 'small', taskId: 9, limit: 300000, suggestion: { tokens: 120000, n: 7, enough: true, reason: '90th percentile of 7 passed tasks (90k) + 25%' } }),
+    'tile 3  [small]  task 9\ntoken limit 300k; suggested 120k from 7 passed tasks (90th percentile of 7 passed tasks (90k) + 25%)');
+  assert.equal(formatResult('agent', { id: 3, tier: 'small', taskId: 9, limit: 300000, suggestion: { tokens: 300000, n: 2, enough: false } }),
+    'tile 3  [small]  task 9\ntoken limit 300k; suggestion: not enough history (2 of 5 tasks), using the tier default');
+  const out = formatResult('task', { sub: 'show', id: 40, status: 'paused', tier: 'xsmall', attempts: 1, text: 'Fix it', owner: { id: 22, title: 'fix' }, tokens: 48000, limit: 150000, note: null, askText: 'paused: is stuck; waiting for the user' });
+  assert.equal(out, '40  paused  xsmall  22 fix\nFix it\ntokens 48k · limit 150k\npaused: is stuck; waiting for the user\nOnly the user answers this, on the board. Do not move the task up or restart it yourself.');
+});
+
 test('run says the tile only started, and how to get the outcome; --json and the other tile commands are unchanged', async () => {
   assert.equal(formatResult('run', { id: 12 }), 'tile 12 · running; read it with: operant wait 12 --errors');
   for (const cmd of ['view', 'edit', 'diff']) assert.equal(formatResult(cmd, { id: 3 }), 'tile 3', cmd);
@@ -508,4 +517,49 @@ test('outside a tile nothing is sent anywhere', async () => {
   const r = await runCli(['logs', '7', '--tail', '5']);
   assert.equal(r.code, 2);
   assert.equal(r.err.split('\n').length, 3);
+});
+
+test('usage shows the CodeGraph measurements when there are any, and nothing when there are none', () => {
+  const base = { tokens: 1000, max: 200000, pct: 1, limits: null };
+  assert.doesNotMatch(formatResult('usage', base), /codegraph/);
+  const out = formatResult('usage', { ...base, codegraph: { tasks: 4, firstCodegraph: 0.75, avgFilesBefore: 1.5, avgFilesAfter: 3, nudged: 1, degraded: 0, tokensWith: 42000, tokensWithout: 12500 } });
+  assert.match(out, /codegraph \(last 30 days, 4 worker tasks\): first code action was CodeGraph in 75%; files read before\/after the first query: 1\.5 \/ 3\.0 per task; tokens per task 42k with CodeGraph, 13k without; nudged: 1/);
+});
+
+test('send with --file, --brief, --new or --team hands over a brief: the tile is optional and a bare flag never eats the text', () => {
+  const b = (pos, flags) => buildArgs('send', pos, flags);
+  assert.deepEqual(b([], { file: 'brief.md' }), { file: path.resolve('brief.md'), brief: true });
+  assert.deepEqual(b(['7'], { file: 'brief.md', team: true }), { file: path.resolve('brief.md'), team: true, brief: true, id: 7 });
+  assert.deepEqual(b([], { brief: 'fix the sum' }), { brief: true, text: 'fix the sum' });
+  assert.deepEqual(b([], { team: 'fix the sum' }), { team: true, brief: true, text: 'fix the sum' });
+  assert.deepEqual(b(['7', 'fix', 'it'], { brief: true, new: true }), { brief: true, new: true, id: 7, text: 'fix it' });
+  assert.deepEqual(b([], { new: 'fix it' }), { new: true, brief: true, text: 'fix it' });
+  assert.deepEqual(buildArgs('send', ['7', 'y'], { enter: true }), { id: 7, text: 'y', enter: true }, 'typing into a tile is unchanged');
+});
+
+test('send names its brief flags in help and prints what the app said', () => {
+  assert.match(COMMANDS.send.usage, /--file <brief>/);
+  assert.match(COMMANDS.send.desc, /never interrupted/);
+  assert.match(COMMANDS.send.desc, /needs team mode/);
+  assert.equal(formatResult('send', { brief: true, text: 'tile 3 is busy: the brief is queued' }), 'tile 3 is busy: the brief is queued');
+  assert.equal(formatResult('send', { id: 7 }), '');
+});
+
+test('send --file reads the brief in the CLI and sends its text; an unreadable file never reaches the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-brief-'));
+  const file = path.join(dir, 'brief.md');
+  fs.writeFileSync(file, 'Goal: fix sum\nCheck: operant test\n');
+  try {
+    await withApi(app({ send: { to: 3, brief: true, text: 'sent to Claude Code tile 3' } }), async (env, calls) => {
+      const r = await runCli(['send', '--file', file, '--team'], env);
+      assert.deepEqual([r.code, r.out, r.err], [0, 'sent to Claude Code tile 3\n', '']);
+      assert.deepEqual(calls[0].args, { team: true, brief: true, text: 'Goal: fix sum\nCheck: operant test\n' });
+    });
+    await withApi(app({ send: { to: 3, brief: true, text: 'x' } }), async (env, calls) => {
+      const r = await runCli(['send', '--file', path.join(dir, 'missing.md')], env);
+      assert.equal(r.code, 1);
+      assert.match(r.err, /can't read the brief file/);
+      assert.equal(calls.length, 0);
+    });
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

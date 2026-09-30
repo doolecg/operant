@@ -1,0 +1,15 @@
+{
+  "name": "team-delegate-part",
+  "kind": "use",
+  "prompt": "Two things: write FILES.md with a one-line description of every file in the repo, and fix src/sum.js so node --test passes (the totals come out wrong and the cause is not obvious). Team mode is on.",
+  "baselinePrompt": "Two things: write FILES.md with a one-line description of every file in the repo, and fix src/sum.js so node --test passes (the totals come out wrong and the cause is not obvious). Don't run npm test (it hangs here); use node --test.",
+  "scenario": { "team": "on" },
+  "env": {},
+  "extraTools": ["Agent", "Edit", "Write"],
+  "maxTurns": 24,
+  "expect": {
+    "delegated": true,
+    "agentTier": ["xsmall", "small"],
+    "outcome": "node --test"
+  }
+}

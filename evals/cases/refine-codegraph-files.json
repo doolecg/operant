@@ -1,0 +1,31 @@
+{
+  "name": "refine-codegraph-files",
+  "kind": "use",
+  "prompt": "Refine this and send it to Claude. I approve the brief in advance, so send it as soon as it is written: \"check that avg in src/avg.js and sum in src/sum.js both cope with an empty list\".",
+  "scenario": {
+    "prime": "<operant-context>\nYou are the lead agent in an Operant tile.\nCodeGraph index found: for any question about the code, start with CodeGraph (`codegraph explore \"<symbols or question>\"`), not grep, glob or reading files.\n</operant-context>"
+  },
+  "env": {},
+  "extraTools": [
+    "Write",
+    "Bash(codegraph *)",
+    "PowerShell(codegraph *)"
+  ],
+  "maxTurns": 14,
+  "expect": {
+    "operant": [
+      "codegraph explore",
+      "send"
+    ],
+    "operantOrder": [
+      [
+        "codegraph explore",
+        "send"
+      ]
+    ],
+    "briefMatch": [
+      "src[\\/]sum\\.js",
+      "src[\\/]avg\\.js"
+    ]
+  }
+}

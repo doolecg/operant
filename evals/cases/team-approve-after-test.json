@@ -1,0 +1,44 @@
+{
+  "name": "team-approve-after-test",
+  "kind": "behaviour",
+  "prompt": "Worker task 30 is waiting in review. Review it and approve it or reject it with the reason. Your context: `operant prime`.",
+  "baselinePrompt": "Someone claims src/sum.js now sums every number in the list and its tests pass. Check that and tell me yes or no. Don't run npm test (it hangs here); use node --test.",
+  "scenario": {
+    "team": "on",
+    "prime": "You are the lead (tile 7). Team mode is on. Board: task 30 [review] owner tile 22 (xsmall) \"Fix the off-by-one in src/sum.js\"; worker note: \"TL;DR: fixed; src/sum.js: loop bound changed; open: none\". Review it (operant read 22, the files), run operant test, and only then operant task approve 30, or operant task reject 30 --note \"<why>\".",
+    "tasks": [
+      {
+        "id": 30,
+        "text": "Fix the off-by-one in src/sum.js so test/sum.test.js passes.",
+        "status": "review",
+        "owner": 22,
+        "tier": "xsmall",
+        "note": "TL;DR: fixed; src/sum.js: loop bound changed; open: none"
+      }
+    ],
+    "tiles": [
+      {
+        "id": 22,
+        "title": "sum fix",
+        "tier": "xsmall",
+        "lines": [
+          "Claude Code v2.1.284",
+          "",
+          "> Fix the off-by-one in src/sum.js so test/sum.test.js passes.",
+          "",
+          "Edit src/sum.js",
+          "● Loop bound changed. Done."
+        ]
+      }
+    ]
+  },
+  "env": {},
+  "extraTools": [],
+  "maxTurns": 12,
+  "expect": {
+    "operant": ["test"],
+    "operantAny": [["task approve 30", "task reject 30"]],
+    "operantOrder": [["test", "task approve"]],
+    "noShell": ["npm "]
+  }
+}

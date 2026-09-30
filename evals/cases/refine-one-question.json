@@ -1,0 +1,13 @@
+{
+  "name": "refine-one-question",
+  "kind": "behaviour",
+  "prompt": "Refine this for Claude, do not send anything yet: \"make it faster\". Ask me if you need something, but no more than you must.",
+  "scenario": {},
+  "env": {},
+  "extraTools": ["Write"],
+  "maxTurns": 12,
+  "expect": {
+    "maxQuestions": 1,
+    "noOperant": ["send"]
+  }
+}

@@ -2,6 +2,7 @@
 // for routing from outcomes (item 59) and benchmarks.
 const fs = require('fs');
 const { writeFileAtomic } = require('./atomic-write');
+const { labelOf, isFreeRoute } = require('./tier-routes');
 
 function appendOutcome(file, entry) {
   fs.appendFileSync(file, JSON.stringify(entry) + '\n');
@@ -52,4 +53,60 @@ function summarize(entries) {
   return out;
 }
 
-module.exports = { appendOutcome, readOutcomes, trimOutcomes, summarize };
+// Item 90: outcomes carry `codegraph` (first code action, files read before/after the first CodeGraph call, nudge, index state) -> what `operant usage` shows.
+// { tasks, firstCodegraph (0..1), avgFilesBefore, avgFilesAfter, nudged, degraded, tokensWith, tokensWithout }
+function summarizeCodegraph(entries) {
+  const total = t => t ? (t.input || 0) + (t.output || 0) + (t.cacheWrite || 0) : 0;
+  const list = (entries || []).filter(e => e && e.codegraph && e.kind !== 'orchestration');
+  const out = { tasks: list.length, firstCodegraph: 0, avgFilesBefore: 0, avgFilesAfter: 0, nudged: 0, degraded: 0, tokensWith: null, tokensWithout: null };
+  if (!list.length) return out;
+  let w = [], wo = [];
+  for (const e of list) {
+    const g = e.codegraph;
+    if (g.firstAction === 'codegraph') out.firstCodegraph++;
+    out.avgFilesBefore += g.filesBefore || 0;
+    out.avgFilesAfter += g.filesAfter || 0;
+    if (g.nudged) out.nudged++;
+    if (g.index === 'degraded') out.degraded++;
+    (g.codegraphCalls > 0 ? w : wo).push(total(e.tokens));
+  }
+  out.firstCodegraph /= list.length;
+  out.avgFilesBefore /= list.length;
+  out.avgFilesAfter /= list.length;
+  const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null;
+  out.tokensWith = avg(w); out.tokensWithout = avg(wo);
+  return out;
+}
+
+// Item 96: how each kind of task went on each route (model), for the routing that stops sending a task type to a route
+// that keeps failing there. -> { "<type>": { "<model>": { n, passed } } }
+function summarizeRoutes(entries) {
+  const out = {};
+  for (const e of entries || []) {
+    if (e.kind === 'orchestration' || !e.model) continue;
+    const cell = ((out[e.type || 'other'] ||= {})[e.model] ||= { n: 0, passed: 0 });
+    cell.n++;
+    if (e.status === 'done') cell.passed++;
+  }
+  return out;
+}
+
+// Item 96: per tier, which route its tasks ran on, for Settings. priceFn(model, tokens) -> { usd }; paid[tier] is the model
+// of the paid route a free one saved money against. -> { "<tier>": [{ route, free, tasks, tokens, usd, savedUsd, why: { "<reason>": n } }] }
+function summarizeRouteUse(entries, priceFn, paid = {}) {
+  const out = {};
+  for (const e of entries || []) {
+    if (e.kind === 'orchestration' || !e.tier || !e.model) continue;
+    const list = (out[e.tier] ||= []);
+    const route = e.route || labelOf({ model: e.model });
+    const cell = list.find(c => c.route === route) || (list.push({ route, free: isFreeRoute({ model: e.model }), tasks: 0, tokens: 0, usd: 0, savedUsd: 0, why: {} }), list[list.length - 1]);
+    cell.tasks++;
+    cell.tokens += total(e.tokens);
+    cell.usd += typeof e.usd === 'number' ? e.usd : 0;
+    if (cell.free && paid[e.tier]) cell.savedUsd += priceFn(paid[e.tier], e.tokens).usd || 0;
+    if (e.routeWhy) cell.why[e.routeWhy] = (cell.why[e.routeWhy] || 0) + 1;
+  }
+  return out;
+}
+
+module.exports = { appendOutcome, readOutcomes, trimOutcomes, summarize, summarizeCodegraph, summarizeRoutes, summarizeRouteUse };

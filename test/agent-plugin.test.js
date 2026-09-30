@@ -22,9 +22,9 @@ test('plugin.json names the plugin and carries the app\'s version', () => {
   assert.ok(typeof m.author?.name === 'string' && m.author.name.trim());
 });
 
-test('the plugin has one skill, operant', () => {
-  assert.deepEqual(fs.readdirSync(path.join(plugin, 'skills')), ['operant']);
-  assert.ok(fs.statSync(path.join(plugin, 'skills', 'operant', 'SKILL.md')).isFile());
+test('the plugin has two skills, operant and refine', () => {
+  assert.deepEqual(fs.readdirSync(path.join(plugin, 'skills')).sort(), ['operant', 'refine']);
+  for (const name of ['operant', 'refine']) assert.ok(fs.statSync(path.join(plugin, 'skills', name, 'SKILL.md')).isFile());
 });
 
 test('every hook runs `operant hook <event>` for an event the CLI handles', () => {

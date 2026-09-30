@@ -29,7 +29,11 @@ function reasoningModel(models) {
 function opencodeTiers(models, base, agentId) {
   const use = n => base[n]?.use || '';
   const own = base.xsmall?.agent === agentId && base.xsmall.model;
-  const tiers = { xsmall: { agent: agentId, model: own || FREE_MODEL, use: use('xsmall') } };
+  // Fallback routes that OpenCode itself can run (the local model, or another of its models) carry over.
+  const keep = n => { const f = (base[n]?.fallbacks || []).filter(r => r.local || (r.agent || base[n].agent) === agentId); return f.length ? { fallbacks: f } : {}; };
+  const tiers = {};
+  if (base.free) tiers.free = { agent: agentId, model: FREE_MODEL, use: use('free'), ...keep('free') };
+  tiers.xsmall = { agent: agentId, model: own || FREE_MODEL, use: use('xsmall'), ...keep('xsmall') };
   const m = reasoningModel(models);
   if (!m) return tiers;
   const variants = Object.keys(m.variants);
@@ -96,8 +100,10 @@ function tiersForMode(tiers, mode, { isClaude, isOpenCode, derived } = {}) {
   names.forEach((name, i) => {
     const t = tiers[name];
     if (kind(t) === mode) { out[name] = t; return; }
+    // A tier whose first route is on the other CLI can still run on a fallback route that is on this one.
+    const promote = c => { const r = kind(c) === mode ? c : (c.fallbacks || []).find(f => !f.local && kind({ agent: f.agent || c.agent }) === mode); return !r ? null : r === c ? c : { ...c, agent: r.agent || c.agent, model: r.model, effort: r.effort, fallbacks: undefined }; };
     const sub = (mode === 'opencode' && derived?.[name] && kind(derived[name]) === 'opencode' ? derived[name] : null)
-      || names.slice(i).map(n => tiers[n]).find(c => kind(c) === mode);
+      || names.slice(i).map(n => promote(tiers[n])).find(Boolean);
     if (sub) out[name] = { ...sub, use: t.use, fallback: MODE_LABEL[mode] };
     else removed.push(name);
   });
@@ -154,7 +160,8 @@ function suggestTier(prompt, tiers) {
   });
   let reason = best ? `matches "${hits.join(', ')}"` : 'default';
   const raise = (min, why) => { const m = Math.min(Math.max(names.indexOf(min), 0) || 0, names.length - 1); if (idx < m) { idx = m; reason = why; } };
-  if (RESEARCH.test(prompt) && idx === 0 && names.length > 1) { idx = 1; reason = 'needs research'; }
+  const research = Math.max(names.indexOf('small'), 1);
+  if (RESEARCH.test(prompt) && idx < research && names.length > 1) { idx = Math.min(research, names.length - 1); reason = 'needs research'; }
   if (String(prompt).length > 800) raise(names.includes('medium') ? 'medium' : names[1] || names[0], 'long prompt');
   return { tier: names[idx], reason };
 }
