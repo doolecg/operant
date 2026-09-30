@@ -24,6 +24,9 @@ const { redactText } = require('./redact');
 const { createStuckTracker } = require('./stuck');
 const cgFirst = require('./codegraph-first');
 const outcomes = require('./outcomes');
+const dataStore = require('./store');
+const failureClass = require('./failure-class');
+const routeHealthLib = require('./route-health');
 const tierGuard = require('./tier-guard');
 const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
@@ -1685,12 +1688,21 @@ ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile, cwd }) 
 const OUTCOMES_PATH = path.join(app.getPath('userData'), 'outcomes.jsonl');
 const OUTCOMES_KEEP = 90 * 86400e3;
 try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch {}
+// 2.5: the versioned local database (store.js); a store that will not open leaves the app running without it.
+let db = null;
+try { db = dataStore.openStore(path.join(app.getPath('userData'), 'store')); } catch (e) { try { logLine('store: ' + e.message); } catch {} }
+const dbDo = fn => { try { return db ? fn(db) : null; } catch { return null; } };
+ipcMain.handle('store:decision', (_e, d) => dbDo(s => s.append('routingDecisions', { ...d, project: d?.cwd ? path.basename(d.cwd) : null, corr: d?.corr || dataStore.corrOf(d?.cwd ? path.basename(d.cwd) : null, d?.taskId), cwd: undefined })) && { ok: true });
+// Recorded call health per model, decayed (route-health.js): the renderer's routing skips a route known down.
+ipcMain.handle('health:routes', () => dbDo(s => routeHealthLib.summarize(s.query('providerCalls', { sinceMs: Date.now() - 7 * 86400e3 }), Date.now())) || {});
 ipcMain.handle('outcome:record', async (_e, o) => {
   try {
     const { cwd, model, sessionId, ptyId, codegraphIndex, ...rest } = o || {};
     const cg = cgStatsFor(sessionId, ptyId);
     const entry = { t: Date.now(), ...rest, ...(cg ? { codegraph: { ...cg, index: codegraphIndex || 'off' } } : {}), model: model || null, usd: model ? priceOf(model, rest.tokens).usd : null, project: cwd ? path.basename(cwd) : null };
+    if (entry.status && entry.status !== 'done') { const f = failureClass.classify({ note: entry.reason, check: entry.check, stuck: entry.stuck }); if (f) entry.failureClass = f; }
     outcomes.appendOutcome(OUTCOMES_PATH, entry);
+    dbDo(s => dataStore.feedOutcome(s, entry));
     return { ok: true };
   } catch { return { ok: false }; }
 });
@@ -1875,6 +1887,8 @@ const opencode = createOpenCode({
     if (routeHealth.down(key)) return;
     logLine('Big Pickle unavailable, its tiers move to their next route: ' + reason);
     const down = routeHealth.fail(key, reason);
+    const kind = failureClass.classify({ note: reason });
+    dbDo(s => s.append('providerCalls', { key, provider: 'opencode', ok: false, kind: kind && failureClass.ROUTE_KINDS.includes(kind.kind) ? kind.kind : 'error', latencyMs: null }));
     refreshTiers();
     clearTimeout(localTimer);
     localTimer = setTimeout(refreshTiers, Math.max(1000, down.until - Date.now() + 500));

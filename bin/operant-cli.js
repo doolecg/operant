@@ -465,6 +465,7 @@ function fmtTaskShow(r) {
   if (r.reviewAdvice) lines.push(r.reviewAdvice);
   if (r.tools) lines.push(`${r.tier} worker tools ${r.tools}`);
   if (r.note) lines.push(`note: ${r.note}`);
+  if (r.failureClass) lines.push(`failure: ${r.failureClass.kind} (${r.failureClass.evidence})`);
   for (const c of r.changes || []) lines.push(`retry ${c.attempt}: changed ${c.kind}: ${c.text}`);
   if (r.signals) lines.push(`signals (suggestion only, moving up always asks the user): ${[r.signals.up.length ? 'consider a higher tier: ' + r.signals.up.join('; ') : '', r.signals.down.length ? 'could run on a lower tier: ' + r.signals.down.join('; ') : ''].filter(Boolean).join(' · ')}`);
   if (r.askText) lines.push(r.askText, 'Only the user answers this, on the board. Do not move the task up or restart it yourself.');

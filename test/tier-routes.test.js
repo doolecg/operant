@@ -171,3 +171,13 @@ test('outcomes: per route results for learning, and this week\'s use with cost s
   assert.equal(bp.tasks, 2); assert.equal(bp.free, true); assert.equal(bp.savedUsd, 2); assert.equal(bp.tokens, 2e6);
   assert.equal(hk.tasks, 1); assert.equal(hk.savedUsd, 0); assert.equal(hk.usd, 1); assert.deepEqual(hk.why, { 'Big Pickle was busy': 1 });
 });
+
+test('a route the recorded health says is down is skipped with the reason', () => {
+  const RouteHealth = require('../route-health');
+  const tier = { agent: 'claude', model: 'm1', fallbacks: [{ model: 'm2' }] };
+  const conf = R.resolve(tier, {});
+  const snap = RouteHealth.summarize([{ key: 'm1', t: Date.now() - 60e3, ok: false, kind: 'rate-limit' }]);
+  const r = R.forTask(conf, {}, 'fix', RouteHealth.asHealth(snap));
+  assert.equal(r.model, 'm2');
+  assert.match(r.skipped[0].reason, /rate limited/);
+});

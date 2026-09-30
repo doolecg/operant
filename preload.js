@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld('operant', {
   outcomeStats: () => ipcRenderer.invoke('outcome:stats'),
   workerTools: () => ipcRenderer.invoke('agent:workerTools'),
   outcomeRoutes: () => ipcRenderer.invoke('outcome:routes'),
+  healthRoutes: () => ipcRenderer.invoke('health:routes'),
+  storeDecision: d => ipcRenderer.invoke('store:decision', d),
   outcomeRouteUse: () => ipcRenderer.invoke('outcome:routeUse'),
   outcomeLimits: opts => ipcRenderer.invoke('outcome:limits', opts),
   projectToday: cwd => ipcRenderer.invoke('usage:projectToday', cwd),

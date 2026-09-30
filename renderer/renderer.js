@@ -1275,7 +1275,19 @@ async function contextBrief(t) {
   async function routeFor(conf, text) {
     if (!conf || !conf.routes) return conf;
     const stats = await operant.outcomeRoutes().catch(() => ({}));
-    return TierRoutes.forTask(conf, stats, TaskType.classifyTask(text));
+    const provider = RouteHealth.asHealth(await operant.healthRoutes().catch(() => ({})));
+    return TierRoutes.forTask(conf, stats, TaskType.classifyTask(text), provider);
+  }
+  // 2.5 decision trace: what was decided for a task and on what (its type, risk, the tiers' records, skipped routes), never the prompt.
+  // Correlated with the task's outcome by project + task id; the worker id links the tile.
+  function traceDecision(t, w, conf, why) {
+    operant.storeDecision({
+      taskId: t.id, workerId: w?.id ?? null, cwd: t.cwd || lastCwd, tier: t.tier || null, agent: conf?.agent || t.agent || null, model: conf?.model || t.model || null,
+      inputs: { type: TaskType.classifyTask(t.text), risk: t.profile?.risk || null, complexity: t.profile?.complexity || null, attempt: Board.attempts(t), escalations: t.escalations || 0 },
+      alternatives: (why && why.alternatives) || (conf?.routes || []).map(r => ({ route: r.label, skipped: r.skipped ? r.skipped.kind : null })),
+      strategy: { basis: (why && why.basis) || (t.attempts > 1 ? 'escalation' : 'explicit'), tier: t.tier || null, route: conf?.route?.label || null, skipped: [...((why && why.skipped) || []), ...(conf?.skipped || []).map(x => ({ route: x.label, kind: x.kind, reason: x.reason }))] },
+      reason: (why && why.reason) || conf?.route?.note || null,
+    }).catch(() => {});
   }
   const routeInfo = c => c && c.route ? { label: c.route.label, free: c.route.free, note: c.route.note, why: (c.skipped || []).map(x => `${x.label} ${TierRoutes.REASON_TEXT[x.kind]}`).join('; ') } : null;
   function noteRoute(w, t, c) {
@@ -1297,6 +1309,7 @@ async function contextBrief(t) {
     w.tier = tier; setTierDot(w);
     t.owner = w.id; t.agent = conf.agent; t.model = conf.model;
     noteRoute(w, t, conf);
+    traceDecision(t, w, conf, t.decision);
     armLimit(w, t);
     t.baseline = await operant.git('snapshot', { dir: t.cwd || w.cwd }).catch(() => null);
     tagUsage(w, tier, t.id);
@@ -1313,6 +1326,7 @@ async function contextBrief(t) {
       sessionId: w?.sessionId || null, ptyId: w?.ptyId || null, codegraphIndex: t.codegraph?.state || null,
       lead: t.lead ?? null, attempts: Board.attempts(t), escalations: t.escalations || 0, status, reason: String(t.failure && status === 'escalated' ? t.failure.split('\n')[0] : t.note || '').slice(0, 200),
       durationMs: t.createdAt ? Date.now() - t.createdAt : null, tokens: addTok(t.tokens, w?.tok), cwd: t.cwd || null,
+      workerId: w?.id ?? null, ...(t.check ? { check: { ok: !!t.check.ok, command: t.check.command || null } } : {}),
       ...(t.limitHit ? { limitHit: true } : {}),
       ...(t.route ? { route: t.route.label, ...(t.route.why ? { routeWhy: t.route.why } : {}) } : {}),
     });
@@ -5027,7 +5041,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const key = 'operant.route.' + TaskType.classifyTask(args.prompt);
           let counter = 0;
           try { counter = +localStorage.getItem(key) || 0; } catch {}
-          suggested = Routing.route({ prompt: args.prompt, tiers: Object.keys(capped), stats: await operant.outcomeStats().catch(() => ({})), counter, fallback });
+          suggested = Routing.route({ prompt: args.prompt, tiers: Object.keys(capped), stats: await operant.outcomeStats().catch(() => ({})), counter, fallback,
+            health: RouteHealth.asHealth(await operant.healthRoutes().catch(() => ({}))), modelOf: n => capped[n]?.model });
           try { localStorage.setItem(key, String(counter + 1)); } catch {}
         }
         const wantTier = args.tier || suggested?.tier;
@@ -5065,6 +5080,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
           if (routed && !args.model) { task.agent = agentId; task.model = model; task.route = routeInfo(routed); }
+          if (suggested) task.decision = { basis: suggested.basis, reason: suggested.reason, alternatives: suggested.alternatives, skipped: suggested.skipped };
           task.profile = await profileTask(task.text, task.cwd || dir).catch(() => TaskType.describeTask(task.text));
           board.tasks.push(task);
           boardChanged();
@@ -5073,7 +5089,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? current, near: self, focus: !!args.focus,
         });
-        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
+        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; traceDecision(t, w, routed, t.decision); if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(tier && routed?.route ? { route: routed.route.note } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}), ...(limitInfo || {}) };
       }
       case 'team':
@@ -5252,6 +5268,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             tokens: TierGuard.counted(addTok(t.tokens, w?.tok)), limit: t.tier ? tierBudget(t) : null, limitUse: t.limitUse || null,
             ask: t.ask ? { why: t.ask.why, reason: t.ask.reason, evidence: t.ask.evidence, next: t.ask.next, choices: t.ask.choices.map(c => c.label) } : null,
             askText: TierGuard.askText(t) || null,
+            failureClass: ['failed', 'blocked', 'paused', 'review'].includes(t.status) ? FailureClass.classify({ note: t.note, failure: t.failure, check: t.check }) : null,
             changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: TaskType.reviewAdvice(t.profile),
             signals: (() => { const s = signalsOf(t); return s.up.length || s.down.length ? { suggestionOnly: true, up: s.up.map(x => x.text), down: s.down.map(x => x.text) } : null; })() };
         }

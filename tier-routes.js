@@ -77,7 +77,7 @@ function choose(routes, ctx) {
   let pick = -1;
   list.forEach((r, i) => {
     let why = r.skipped || null;
-    const d = !why && ctx.health && ctx.health.down(keyOf(r));
+    const d = !why && ((ctx.health && ctx.health.down(keyOf(r))) || (ctx.provider && ctx.provider.down(keyOf(r))));
     if (d) why = { kind: d.kind, reason: d.reason };
     else if (!why && ctx.ready && !ctx.ready(r)) why = { kind: 'unavailable', reason: REASON_TEXT.unavailable, quiet: true };
     else if (!why && ctx.type && failedBefore(ctx.stats, ctx.type, r) && i < list.length - 1) why = { kind: 'failed', reason: `${ctx.type} tasks failed here before` };
@@ -104,16 +104,17 @@ function shape(tier, { list, pick, skipped }) {
   return out;
 }
 
-// Picks the route a tier runs on now. ctx: { localModel, ready(route) -> bool, health, stats, type }.
+// Picks the route a tier runs on now. ctx: { localModel, ready(route) -> bool, health, provider, stats, type }.
 function resolve(tier, ctx = {}) {
   const routes = routesOf(tier, ctx.localModel);
   return routes.length ? shape(tier, choose(routes, ctx)) : tier;
 }
 
 // A tier that is already resolved, picked again for one kind of task: a route this type failed on before is skipped.
-function forTask(tier, stats, type) {
+// `provider` is the recorded health of each model (route-health.js asHealth): a route known down is skipped with the reason.
+function forTask(tier, stats, type, provider) {
   if (!tier || !tier.routes || tier.routes.length < 2) return tier;
-  return shape(tier, choose(tier.routes, { stats, type }));
+  return shape(tier, choose(tier.routes, { stats, type, provider }));
 }
 
 // Every tier with routes resolved (a tier with one route just gets its `route` note).

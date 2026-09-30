@@ -9,7 +9,9 @@ const go = (stats, extra = {}) => route({ prompt: 'fix the login bug', tiers, st
 
 test('cheapest proven tier wins', () => {
   const r = go({ fix: { xsmall: cell(2, 3), small: cell(5, 1, 0, 0.123), medium: cell(9) } });
-  assert.deepEqual(r, { tier: 'small', basis: 'outcomes', reason: 'small: 5/6 fix tasks passed, $0.12 avg' });
+  assert.deepEqual({ tier: r.tier, basis: r.basis, reason: r.reason }, { tier: 'small', basis: 'outcomes', reason: 'small: 5/6 fix tasks passed, $0.12 avg' });
+  assert.deepEqual(r.alternatives.map(a => a.tier), tiers);
+  assert.deepEqual(r.skipped, []);
 });
 
 test('unknown cost reads as unknown', () => {
@@ -28,7 +30,7 @@ test('every tenth decision tries the tier below the proven one', () => {
 
 test('all tiers with data failing: one tier above the most expensive failing one', () => {
   const r = go({ fix: { xsmall: cell(1, 4), small: cell(2, 3) } });
-  assert.deepEqual(r, { tier: 'medium', basis: 'outcomes', reason: 'medium: small passed only 2/5 fix tasks' });
+  assert.deepEqual({ tier: r.tier, basis: r.basis, reason: r.reason }, { tier: 'medium', basis: 'outcomes', reason: 'medium: small passed only 2/5 fix tasks' });
 });
 
 test('a failing top tier stays at the top tier', () => {
@@ -43,7 +45,7 @@ test('blocked counts as a failure, escalated as a non-pass', () => {
 
 test('too little data falls back to the keyword suggestion', () => {
   const r = go({ fix: { xsmall: cell(2, 1) } });
-  assert.deepEqual(r, { tier: 'small', basis: 'insufficient data', reason: 'insufficient data for fix tasks (3 recorded); short prompt' });
+  assert.deepEqual({ tier: r.tier, basis: r.basis, reason: r.reason }, { tier: 'small', basis: 'insufficient data', reason: 'insufficient data for fix tasks (3 recorded); short prompt' });
   assert.equal(go({}).tier, 'small');
 });
 
@@ -68,4 +70,20 @@ test('signals suggest a lower tier only for simple, low-risk, small tasks', () =
   assert.deepEqual(s.down.map(x => x.id), ['simple', 'low-risk', 'small-context']);
   assert.deepEqual(signals({ id: 3, text: 'rename foo', changes: [{}] }, {}).down, []);
   assert.equal(signalLine({ up: [], down: [] }), '');
+});
+
+test('a tier whose route is known down is skipped with the reason, never picked', () => {
+  const stats = { fix: { small: cell(6), medium: cell(6) } };
+  const health = { down: k => (k === 'm-small' ? { reason: 'was rate limited 2 min ago' } : null) };
+  const r = go(stats, { health, modelOf: n => 'm-' + n });
+  assert.equal(r.tier, 'medium');
+  assert.equal(r.basis, 'health');
+  assert.match(r.reason, /small was rate limited 2 min ago, skipped/);
+  assert.deepEqual(r.skipped, [{ tier: 'small', reason: 'was rate limited 2 min ago' }]);
+});
+
+test('every route down: stays on the pick and says so', () => {
+  const r = go({ fix: { small: cell(6) } }, { health: { down: () => ({ reason: 'timed out' }) }, modelOf: n => n });
+  assert.equal(r.tier, 'small');
+  assert.match(r.reason, /every tier's route is down/);
 });

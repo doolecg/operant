@@ -4,30 +4,49 @@
 const MIN_N = 5, MIN_RATE = 0.8, EXPLORE_EVERY = 10;
 const classify = p => (typeof TaskType !== 'undefined' ? TaskType : require('./task-type')).classifyTask(p);
 
-function route({ prompt, tiers, stats, counter, fallback }) {
+// health: { down(key) -> { reason } | null } (route-health.js asHealth) and modelOf(tier) -> the key it runs on: a tier whose
+// route is known down is skipped with the reason shown, never picked and retried blindly. Every result carries `alternatives`
+// (what each tier's record looked like) and `skipped`, the inputs of the decision trace (no prompt contents).
+function route({ prompt, tiers, stats, counter, fallback, health, modelOf }) {
   const type = classify(prompt);
+  const r = pickTier({ type, tiers, stats, counter, fallback });
+  const down = name => (health && modelOf ? health.down(modelOf(name)) : null);
+  const skipped = [];
+  let out = r;
+  if (down(r.tier)) {
+    skipped.push({ tier: r.tier, reason: down(r.tier).reason });
+    const at = tiers.indexOf(r.tier);
+    const next = [...tiers.slice(at + 1), ...tiers.slice(0, at).reverse()].find(n => !down(n));
+    if (next) out = { tier: next, basis: 'health', reason: `${next}: ${r.tier} ${down(r.tier).reason}, skipped (${r.reason})` };
+    else out = { ...r, reason: `${r.reason}; every tier's route is down, staying on ${r.tier}` };
+  }
+  return { ...out, type, skipped, alternatives: r.alternatives };
+}
+
+function pickTier({ type, tiers, stats, counter, fallback }) {
   const cells = tiers.map(name => {
     const c = stats?.[type]?.[name];
     const n = c ? c.passed + c.failed + c.escalated : 0;
     return { name, c, n, rate: n ? c.passed / n : 0 };
   });
+  const alternatives = cells.map(x => ({ tier: x.name, n: x.n, rate: Math.round(x.rate * 100) / 100 }));
   const usd = c => (c.avgUsd == null ? 'unknown' : '$' + c.avgUsd.toFixed(2));
   const proven = cells.findIndex(x => x.n >= MIN_N && x.rate >= MIN_RATE);
   if (proven >= 0) {
     const p = cells[proven];
     if (proven > 0 && (counter | 0) % EXPLORE_EVERY === EXPLORE_EVERY - 1) {
-      return { tier: cells[proven - 1].name, basis: 'exploration', reason: `trying ${cells[proven - 1].name} (1 in 10, so a cheaper tier can earn its way back; ${p.name} is proven)` };
+      return { tier: cells[proven - 1].name, basis: 'exploration', reason: `trying ${cells[proven - 1].name} (1 in 10, so a cheaper tier can earn its way back; ${p.name} is proven)`, alternatives };
     }
-    return { tier: p.name, basis: 'outcomes', reason: `${p.name}: ${p.c.passed}/${p.n} ${type} tasks passed, ${usd(p.c)} avg` };
+    return { tier: p.name, basis: 'outcomes', reason: `${p.name}: ${p.c.passed}/${p.n} ${type} tasks passed, ${usd(p.c)} avg`, alternatives };
   }
   let failing = -1;
   cells.forEach((x, i) => { if (x.n >= MIN_N) failing = i; });
   if (failing >= 0) {
     const f = cells[failing], next = cells[Math.min(failing + 1, cells.length - 1)];
-    return { tier: next.name, basis: 'outcomes', reason: `${next.name}: ${f.name} passed only ${f.c.passed}/${f.n} ${type} tasks` };
+    return { tier: next.name, basis: 'outcomes', reason: `${next.name}: ${f.name} passed only ${f.c.passed}/${f.n} ${type} tasks`, alternatives };
   }
   const k = cells.reduce((s, x) => s + x.n, 0);
-  return { tier: fallback?.tier ?? tiers[0], basis: 'insufficient data', reason: `insufficient data for ${type} tasks (${k} recorded); ${fallback?.reason ?? 'no keyword match'}` };
+  return { tier: fallback?.tier ?? tiers[0], basis: 'insufficient data', reason: `insufficient data for ${type} tasks (${k} recorded); ${fallback?.reason ?? 'no keyword match'}`, alternatives };
 }
 
 // Escalation and downgrade signals for one task. They only suggest: nothing here moves a task, and moving up always
