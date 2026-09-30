@@ -1196,7 +1196,7 @@
     $('#board-badge').textContent = open > 99 ? '99+' : open || '';
     $('#board-badge').classList.toggle('hidden', !open);
     if (openPanel() !== 'board') return;
-    const groups = [['paused', 'Waiting for you'], ['todo', 'To do'], ['doing', 'Doing'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['cancelled', 'Closed'], ['done', 'Done']];
+    const groups = [['paused', 'Waiting for you'], ['todo', 'To do'], ['planning', 'Planning'], ['doing', 'Doing'], ['waiting', 'Waiting'], ['recovery', 'Recovering'], ['verifying', 'Running checks'], ['review', 'Waiting for review'], ['blocked', 'Blocked'], ['failed', 'Failed'], ['cancelled', 'Closed'], ['done', 'Done']];
     const row = t => {
       const owner = fmtOwner(t.owner);
       const sig = ['review', 'failed', 'blocked'].includes(t.status) ? Routing.signalLine(signalsOf(t)) : '';
@@ -1301,7 +1301,7 @@ async function contextBrief(t) {
     if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (agentMode(t.cwd || lastCwd) === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[agentMode(t.cwd || lastCwd)]})`));
     // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
     // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
-    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${await codegraphBrief(t, t.cwd || lastCwd)}${await contextBrief(t)} — ${reportLine(t.id)}`;
+    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${Board.resumeBrief(t) ? ' — ' + Board.resumeBrief(t) : ''}${await codegraphBrief(t, t.cwd || lastCwd)}${await contextBrief(t)} — ${reportLine(t.id)}`;
     const lead = wins.get(t.lead);
     const w = await newTerminal('ai', t.cwd, {
       agentId: conf.agent, prompt, title: t.title || undefined, model: conf.model, effort: conf.effort || null,
@@ -5056,9 +5056,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (!t) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (mode === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[mode]}: ${Object.keys(mtiers).join(', ') || 'no tiers'})`));
           const allowed = allowedTierNames(dir);
           if (!allowed.includes(tier)) throw new Error(`tier "${tier}" is above the top tier allowed (${cfg.team.maxTier}) - use --tier ${allowed.join(' or ')}`);
-          const maxWorkers = cfg.team?.maxWorkers || 4;
-          const workers = [...wins.values()].filter(x => x.alive && x.tier).length;
-          if (workers >= maxWorkers) throw new Error(`max workers already running (${maxWorkers}) - wait for one to finish`);
+          const blocked = Board.startBlock([...wins.values()].filter(x => x.alive && x.tier).map(x => ({ tier: x.tier, project: x.cwd })), tier, dir, cfg.team);
+          if (blocked) throw new Error(blocked);
           agentId = t.agent;
           model = model || t.model;
           if (!args.model && !args.effort) effort = t.effort || null;
@@ -5110,7 +5109,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           v: version,
           tile: { id: self.id, kind: self.kind, title: self.title, cwd: self.cwd, project, branch: gitState.get(project)?.status?.branch, agent: self.agentId || null },
           role: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell',
-          task: task ? { id: task.id, text: task.text, tier: self.tier, subagents: subagentLimit(), tools: await operant.workerTools().catch(() => null) } : null,
+          task: task ? { id: task.id, text: task.text, plan: PlanCheck.lines(PlanCheck.check(task.text, task.profile)), tier: self.tier, subagents: subagentLimit(), tools: await operant.workerTools().catch(() => null) } : null,
           team: self.tier ? null : teamInfo(self.cwd || lastCwd),
           refineTo: cfg.refineTo === 'team' ? 'team' : 'claude',
           review: self.tier ? [] : board.tasks.filter(t => t.status === 'review').map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
@@ -5271,6 +5270,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             tokens: TierGuard.counted(addTok(t.tokens, w?.tok)), limit: t.tier ? tierBudget(t) : null, limitUse: t.limitUse || null,
             ask: t.ask ? { why: t.ask.why, reason: t.ask.reason, evidence: t.ask.evidence, next: t.ask.next, choices: t.ask.choices.map(c => c.label) } : null,
             askText: TierGuard.askText(t) || null,
+            plan: PlanCheck.lines(PlanCheck.check(t.text, t.profile)), checkpoint: t.checkpoint || null, actions: (t.actions || []).map(a => a.cmd),
             failureClass: ['failed', 'blocked', 'paused', 'review'].includes(t.status) ? FailureClass.classify({ note: t.note, failure: t.failure, check: t.check }) : null,
             changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: TaskType.reviewAdvice(t.profile),
             signals: (() => { const s = signalsOf(t); return s.up.length || s.down.length ? { suggestionOnly: true, up: s.up.map(x => x.text), down: s.down.map(x => x.text) } : null; })() };
@@ -5325,6 +5325,18 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           else askUser(t, 'rejected', t.retried ? `rejected twice: ${oneLine(args.note)}` : `rejected, and a retry would change nothing (${oneLine(args.note)})`);
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
+        else if (args.sub === 'checkpoint') {
+          // A worker saves what a resume needs: decisions, files and the next step.
+          if (args.decision == null && args.files == null && args.next == null) throw new Error('--decision, --files or --next required');
+          Board.checkpoint(t, { decisions: args.decision, files: args.files, next: args.next });
+        }
+        else if (args.sub === 'did') {
+          // Before a destructive command: recorded on the task, and skipped when this task already ran it.
+          if (!args.text) throw new Error('command required');
+          const g = Board.guardAction(t, args.text);
+          boardChanged();
+          return { id: t.id, status: t.status, sub: 'did', run: g.run, reason: g.reason || null };
+        }
         else if (args.sub === 'cancel') {
           // Closed by you, with or without a reason: its worker stops and its tile closes; never retried, not an outcome.
           Board.cancel(t, args.note);

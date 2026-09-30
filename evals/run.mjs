@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { benchMain } from './bench.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STUB_DIR = path.join(HERE, 'stub');
@@ -664,6 +665,7 @@ function printDryRun(cases, o, brief, claudeBin, runDir) {
 
 // ------------------------------------------------------------ main
 async function main() {
+  if (process.argv.includes('--bench')) { benchMain(); return; } // replay evals/bench: no session, no spend
   const o = parseOptions();
   for (const pd of o.pluginDirs) if (!fs.existsSync(pd)) die(`--plugin-dir ${pd} does not exist`);
   const cases = loadCases(o.cases);

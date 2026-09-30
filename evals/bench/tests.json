@@ -1,0 +1,47 @@
+{
+  "category": "tests",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "sum-edge-cases",
+      "fixture": "node-app",
+      "prompt": "Add edge-case tests for sum: empty, negative, NaN; do not change src/",
+      "runs": {
+        "baseline": {
+          "gross": 58000,
+          "cost": 0.29,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 43000,
+          "overhead": 4500,
+          "cost": 0.13,
+          "success": true,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "id": "server-tests",
+      "fixture": "node-app",
+      "prompt": "Add tests for the dev server routes; the suite must stay green",
+      "runs": {
+        "baseline": {
+          "gross": 92000,
+          "cost": 0.46,
+          "success": false,
+          "retries": 1
+        },
+        "operant": {
+          "gross": 70000,
+          "overhead": 6500,
+          "cost": 0.21,
+          "success": true,
+          "retries": 1
+        }
+      }
+    }
+  ]
+}

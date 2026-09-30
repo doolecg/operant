@@ -43,6 +43,9 @@ const minutesMeta = t => ({ id: 'minutes.' + t, path: 'minutes.' + t, group: GRO
 const callsMeta = t => ({ id: 'calls.' + t, path: 'calls.' + t, group: GROUPS[1], label: `${TIER_NAME[t]} tool-call limit`,
   does: `Stops a ${t} worker after this many tool calls on a task (you are told at 90%, and earlier when its pace says it will be passed). It asks you first; it never moves up by itself. 0 = no limit.`,
   when: 'Workers started after the change; a running worker keeps its limit', dev: `team.calls.${t}` });
+const tierWorkersMeta = t => ({ id: 'workers.' + t, path: 'tierWorkers.' + t, group: GROUPS[0], label: `${TIER_NAME[t]} workers at once`,
+  does: `How many ${t} workers may run side by side. 0 = no limit beyond the total.`,
+  when: 'The next worker the lead starts', dev: `team.tierWorkers.${t}` });
 const tierMeta = t => ({ id: 'tier.' + t, group: GROUPS[0], adv: true, label: `${TIER_NAME[t]} tier: agent, model, effort`,
   does: `Which agent and model runs ${t} jobs, and what the lead is told this tier is for.`,
   when: 'The next worker the lead starts', dev: `team.tiers.${t}.agent, .model, .effort, .use` });
@@ -51,6 +54,9 @@ const META = [
     when: 'The next thing the lead starts', dev: 'team.enabled' },
   { id: 'maxWorkers', path: 'maxWorkers', group: GROUPS[0], label: 'Workers at once', does: 'How many workers may run side by side.',
     when: 'The next worker the lead starts', dev: 'team.maxWorkers' },
+  { id: 'projectWorkers', path: 'projectWorkers', group: GROUPS[0], label: 'Workers at once per project', does: 'How many workers may run side by side in one project folder. 0 = no limit beyond the total.',
+    when: 'The next worker the lead starts', dev: 'team.projectWorkers' },
+  ...TIERS.map(tierWorkersMeta),
   { id: 'maxTier', path: 'maxTier', group: GROUPS[0], label: 'Highest tier workers may use', does: 'Workers cannot be started above this tier, however hard the job.',
     when: 'The next worker the lead starts', dev: 'team.maxTier' },
   { id: 'refineTo', group: GROUPS[0], label: 'Refined prompts go to', does: 'Where "send it" goes after a refine: a Claude tile that plans it itself, or team work (one master runs numbered parts on their tiers). You can still pick each time.',
@@ -90,6 +96,7 @@ function effective(cfg, id) {
   switch (id) {
     case 'enabled': return t.enabled ? 'On' : 'Off';
     case 'maxWorkers': return `${t.maxWorkers ?? 4} at once`;
+    case 'projectWorkers': return t.projectWorkers ? `${t.projectWorkers} per project` : 'No per-project limit';
     case 'maxTier': return tierName(topTier(t)) + ' and below';
     case 'savingProgress': return t.savingProgress === 'inside' ? 'Inside the limit' : 'On top of the limit';
     case 'dailyCap': return t.dailyCap ? `${kTok(t.dailyCap)} tokens a day` : 'No cap';
@@ -195,7 +202,7 @@ function matches(m, q) {
 // Team settings that differ from the defaults (defaults: cfg.team of the shipped config), as paths.
 function changedFrom(team, defaults) {
   const out = [];
-  for (const f of ['enabled', 'maxWorkers', 'maxTier', 'savingProgress', 'dailyCap', 'verifyBeforeReview', 'verifyTypesLint', ...TIERS.map(x => 'budgets.' + x), ...TIERS.map(x => 'minutes.' + x), ...TIERS.map(x => 'calls.' + x)]) {
+  for (const f of ['enabled', 'maxWorkers', 'maxTier', 'savingProgress', 'dailyCap', 'verifyBeforeReview', 'verifyTypesLint', 'projectWorkers', ...TIERS.map(x => 'tierWorkers.' + x), ...TIERS.map(x => 'budgets.' + x), ...TIERS.map(x => 'minutes.' + x), ...TIERS.map(x => 'calls.' + x)]) {
     if (!same(get(team, f), get(defaults, f))) out.push(f);
   }
   return out;

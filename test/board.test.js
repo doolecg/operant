@@ -152,3 +152,52 @@ test('handoff: structured state on a tier change, only when not longer than the 
   const big = mk({ attempts: 2, changes: [{ kind: 'strategy', text: 'x'.repeat(200) }, { kind: 'tool', text: 'y'.repeat(200) }], diffStat: 'z'.repeat(200), check: { ok: true, command: 'npm test' } });
   assert.equal(b.handoff(big, 'nope'), b.failureNote(big, 'nope'));
 });
+
+test('transitions are enforced in one place', () => {
+  const t = mk({ status: 'todo' });
+  for (const s of ['planning', 'doing', 'waiting', 'recovery', 'doing']) assert.equal(b.transition(t, s).status, s);
+  assert.throws(() => b.transition(t, 'done'), /cannot go from doing to done/);
+  assert.throws(() => b.transition(t, 'nonsense'), /unknown status/);
+  b.cancel(t);
+  assert.throws(() => b.transition(t, 'doing'), /cannot go from cancelled/);
+  assert.throws(() => b.transition(mk({ status: 'done' }), 'todo'), /cannot go from done/);
+  assert.equal(b.transition(mk({ status: 'failed' }), 'recovery').status, 'recovery');
+  assert.throws(() => b.approve(mk({ status: 'recovery' })), /not waiting for review/);
+});
+
+test('checkpoint merges and resumes without replaying context', () => {
+  const t = mk();
+  b.checkpoint(t, { decisions: 'use a map; keep the API', files: ['a.js'], next: 'write tests' }, 5);
+  b.checkpoint(t, { files: 'b.js', decisions: 'use a map' });
+  assert.deepEqual(t.checkpoint.decisions, ['use a map', 'keep the API']);
+  assert.deepEqual(t.checkpoint.files, ['a.js', 'b.js']);
+  b.interrupt(t);
+  assert.equal(t.status, 'recovery');
+  const brief = b.resume(t);
+  assert.equal(t.status, 'doing');
+  assert.match(brief, /next step: write tests/);
+  assert.equal(b.resumeBrief(mk()), '');
+});
+
+test('a recorded destructive action is skipped on retry and resume', () => {
+  const t = mk();
+  assert.equal(b.guardAction(t, 'npm test').run, true);
+  assert.equal(t.actions, undefined);
+  for (const c of ['git push origin main', 'rm -rf dist', 'git reset --hard HEAD~1', 'git push --force', 'ls; rm x']) assert.equal(b.isDestructive(c), true, c);
+  for (const c of ['git status', 'npm run build', 'git commit -m x', 'echo perform']) assert.equal(b.isDestructive(c), false, c);
+  assert.equal(b.guardAction(t, 'git push origin main').run, true);
+  const again = b.guardAction(t, 'git  push origin main');
+  assert.equal(again.run, false);
+  assert.match(again.reason, /already ran/);
+  assert.match(b.resumeBrief(t), /do not repeat: git push origin main/);
+});
+
+test('worker limits: total, per tier and per project', () => {
+  const ws = [{ tier: 'small', project: 'A' }, { tier: 'small', project: 'A' }, { tier: 'high', project: 'B' }];
+  assert.equal(b.startBlock(ws, 'medium', 'C', { maxWorkers: 4 }), null);
+  assert.match(b.startBlock(ws, 'medium', 'C', { maxWorkers: 3 }), /max workers/);
+  assert.match(b.startBlock(ws, 'small', 'C', { maxWorkers: 9, tierWorkers: { small: 2 } }), /2 small workers/);
+  assert.equal(b.startBlock(ws, 'high', 'C', { maxWorkers: 9, tierWorkers: { small: 2 } }), null);
+  assert.match(b.startBlock(ws, 'xsmall', 'A', { maxWorkers: 9, projectWorkers: 2 }), /in this project/);
+  assert.equal(b.startBlock(ws, 'xsmall', 'B', { maxWorkers: 9, projectWorkers: 2, tierWorkers: { xsmall: 0 } }), null);
+});

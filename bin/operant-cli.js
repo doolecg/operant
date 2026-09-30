@@ -406,6 +406,7 @@ function buildArgs(cmd, positionals, flags) {
   if (cmd === 'task') {
     args.sub = positionals[0];
     if (args.sub === 'add') args.text = positionals.slice(1).join(' ');
+    else if (args.sub === 'did') { args.id = Number(positionals[1]); args.text = positionals.slice(2).join(' '); }
     else if (args.sub === 'note') { args.id = Number(positionals[1]); args.text = positionals.slice(2).join(' '); }
     else args.id = Number(positionals[1]);
   }
@@ -483,6 +484,9 @@ function fmtTaskShow(r) {
   if (r.profile) lines.push(`profile: ${r.profile.type} · complexity ${r.profile.complexity} · risk ${r.profile.risk} · repo ${r.profile.repoSize} · ${r.profile.language} · context ${r.profile.context} · verification ${r.profile.verification}`);
   if (r.reviewAdvice) lines.push(r.reviewAdvice);
   if (r.tools) lines.push(`${r.tier} worker tools ${r.tools}`);
+  for (const l of r.plan || []) lines.push(l);
+  if (r.checkpoint) lines.push(`checkpoint: next ${r.checkpoint.next || '-'}${r.checkpoint.decisions.length ? ` · decided ${r.checkpoint.decisions.join('; ')}` : ''}${r.checkpoint.files.length ? ` · files ${r.checkpoint.files.join(', ')}` : ''}`);
+  if (r.actions && r.actions.length) lines.push(`destructive actions already run (never repeated): ${r.actions.join(' | ')}`);
   if (r.note) lines.push(`note: ${r.note}`);
   if (r.failureClass) lines.push(`failure: ${r.failureClass.kind} (${r.failureClass.evidence})`);
   for (const c of r.changes || []) lines.push(`retry ${c.attempt}: changed ${c.kind}: ${c.text}`);
@@ -527,6 +531,7 @@ function formatResult(cmd, result, opts) {
       return result.off ? `stopped watching tile ${result.id}` : `watching tile ${result.id}`;
     case 'plan': return result.approved ? 'approved' : `change: ${result.note || ''}`;
     case 'task': if (result.sub === 'show') return fmtTaskShow(result);
+      if (result.sub === 'did') return result.run ? `run: ${result.id}` : `skip: ${result.reason}`;
       return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}${result.verify ? `\nverifying: operant runs ${result.verify} before review` : ''}`;
     case 'board': {
       const owner = o => o ? `${o.id} ${o.title}` : '-';

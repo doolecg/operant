@@ -1,0 +1,47 @@
+{
+  "category": "exploration",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "find-entry",
+      "fixture": "node-app",
+      "prompt": "Where does the dev server decide which file to serve? Answer with file and line only",
+      "runs": {
+        "baseline": {
+          "gross": 52000,
+          "cost": 0.26,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 21000,
+          "overhead": 4000,
+          "cost": 0.07,
+          "success": true,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "id": "list-exports",
+      "fixture": "node-app",
+      "prompt": "List every exported function in src/ and what calls it",
+      "runs": {
+        "baseline": {
+          "gross": 60000,
+          "cost": 0.3,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 26000,
+          "overhead": 4000,
+          "cost": 0.09,
+          "success": true,
+          "retries": 0
+        }
+      }
+    }
+  ]
+}

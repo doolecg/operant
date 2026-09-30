@@ -1,0 +1,47 @@
+{
+  "category": "refactor",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "extract-format",
+      "fixture": "node-app",
+      "prompt": "Extract the number formatting in build.js into src/format.js without changing behaviour; tests must pass",
+      "runs": {
+        "baseline": {
+          "gross": 88000,
+          "cost": 0.44,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 64000,
+          "overhead": 6000,
+          "cost": 0.2,
+          "success": true,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "id": "rename-sum",
+      "fixture": "node-app",
+      "prompt": "Rename sum to total everywhere, keep an alias; tests must pass",
+      "runs": {
+        "baseline": {
+          "gross": 64000,
+          "cost": 0.32,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 47000,
+          "overhead": 5000,
+          "cost": 0.15,
+          "success": true,
+          "retries": 0
+        }
+      }
+    }
+  ]
+}

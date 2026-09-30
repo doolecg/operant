@@ -22,7 +22,7 @@ function parseLines(file) {
   const out = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    try { const e = JSON.parse(line); if (e && typeof e === 'object') out.push(e); } catch {}
+    try { const e = JSON.parse(line); if (e && typeof e === 'object' && !Array.isArray(e)) out.push(e); } catch {}
   }
   return out;
 }

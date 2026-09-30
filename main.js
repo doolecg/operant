@@ -230,6 +230,8 @@ const DEFAULT_CONFIG = {
     savingProgress: 'over',     // the save allowance at a limit: 'over' (on top of it) or 'inside' (taken out of it)
     dailyCap: 0,                // hard token cap per project per day; past it, the next task asks first · 0 = off
     maxWorkers: 4,
+    tierWorkers: { free: 0, xsmall: 0, small: 0, medium: 0, high: 0, max: 0 }, // workers at once per tier; 0 = only the total limit
+    projectWorkers: 0,          // workers at once per project folder; 0 = only the total limit
     maxTier: 'small',           // highest tier workers may be started on (gear menu slider)
     verifyBeforeReview: true,   // run the project's test/build command on a code task's handback, before review
     verifyTypesLint: true,      // and, when the project has them, its type check and lint after the tests pass

@@ -1,0 +1,47 @@
+{
+  "category": "debugging",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "flaky-test",
+      "fixture": "node-app",
+      "prompt": "The sum test fails intermittently on the second case, find and fix the cause",
+      "runs": {
+        "baseline": {
+          "gross": 96000,
+          "cost": 0.48,
+          "success": true,
+          "retries": 1
+        },
+        "operant": {
+          "gross": 70000,
+          "overhead": 7000,
+          "cost": 0.22,
+          "success": true,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "id": "server-crash",
+      "fixture": "node-app",
+      "prompt": "server.js crashes on an empty request body, reproduce and fix; add a test",
+      "runs": {
+        "baseline": {
+          "gross": 110000,
+          "cost": 0.55,
+          "success": true,
+          "retries": 1
+        },
+        "operant": {
+          "gross": 85000,
+          "overhead": 8000,
+          "cost": 0.27,
+          "success": true,
+          "retries": 1
+        }
+      }
+    }
+  ]
+}

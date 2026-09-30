@@ -1,0 +1,47 @@
+{
+  "category": "complex-coding",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "config-layer",
+      "fixture": "node-app",
+      "prompt": "Add a layered config (defaults, file, env) across src/ and server.js with tests; keep the public API",
+      "runs": {
+        "baseline": {
+          "gross": 420000,
+          "cost": 2.1,
+          "success": true,
+          "retries": 2
+        },
+        "operant": {
+          "gross": 330000,
+          "overhead": 30000,
+          "cost": 1.05,
+          "success": true,
+          "retries": 1
+        }
+      }
+    },
+    {
+      "id": "plugin-hooks",
+      "fixture": "node-app",
+      "prompt": "Add before/after hooks to the build step and the dev server; tests must pass",
+      "runs": {
+        "baseline": {
+          "gross": 510000,
+          "cost": 2.55,
+          "success": false,
+          "retries": 2
+        },
+        "operant": {
+          "gross": 400000,
+          "overhead": 36000,
+          "cost": 1.3,
+          "success": true,
+          "retries": 1
+        }
+      }
+    }
+  ]
+}

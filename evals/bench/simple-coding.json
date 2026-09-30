@@ -1,0 +1,47 @@
+{
+  "category": "simple-coding",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "sum-off-by-one",
+      "fixture": "node-app",
+      "prompt": "Fix the off-by-one in src/sum.js so the tests pass",
+      "runs": {
+        "baseline": {
+          "gross": 42000,
+          "cost": 0.21,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 30000,
+          "overhead": 3000,
+          "cost": 0.09,
+          "success": true,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "id": "add-clamp",
+      "fixture": "node-app",
+      "prompt": "Add a clamp(n, lo, hi) helper to src/ with a test",
+      "runs": {
+        "baseline": {
+          "gross": 38000,
+          "cost": 0.19,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 29000,
+          "overhead": 3000,
+          "cost": 0.08,
+          "success": true,
+          "retries": 0
+        }
+      }
+    }
+  ]
+}

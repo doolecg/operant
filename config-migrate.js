@@ -176,6 +176,9 @@ function teamErrors(team, cur, agentIds, bad) {
   }
   for (const [name, n] of Object.entries(team.budgets || {})) if (!Number.isInteger(n) || n < 0) return bad('budgets as whole numbers of 0 or more', name);
   for (const key of ['minutes', 'calls']) for (const [name, n] of Object.entries(team[key] || {})) if (!Number.isInteger(n) || n < 0) return bad(key + ' as whole numbers of 0 or more', name);
+  if (team.projectWorkers !== undefined && !(Number.isInteger(team.projectWorkers) && team.projectWorkers >= 0 && team.projectWorkers <= 16)) return bad('workers per project a whole number 0-16');
+  if (team.tierWorkers !== undefined && !isPlain(team.tierWorkers)) return bad('workers per tier as an object');
+  for (const [name, n] of Object.entries(team.tierWorkers || {})) if (!Number.isInteger(n) || n < 0 || n > 16) return bad('workers per tier as whole numbers 0-16', name);
   const tiers = team.tiers === undefined ? cur.tiers : team.tiers;
   if (team.maxTier !== undefined && isPlain(tiers) && !(team.maxTier in tiers)) return bad('a top tier that exists: ' + Object.keys(tiers).join(', '));
 }
@@ -188,7 +191,8 @@ function mergeUser(defaults, user, keybinds) {
     backups: { ...defaults.backups, ...(user.backups || {}) },
     localModel: { ...defaults.localModel, ...(user.localModel || {}) },
     team: { ...defaults.team, ...(user.team || {}), tiers: { ...defaults.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...defaults.team.budgets, ...(user.team?.budgets || {}) },
-      minutes: { ...defaults.team.minutes, ...(user.team?.minutes || {}) }, calls: { ...defaults.team.calls, ...(user.team?.calls || {}) } },
+      minutes: { ...defaults.team.minutes, ...(user.team?.minutes || {}) }, calls: { ...defaults.team.calls, ...(user.team?.calls || {}) },
+      tierWorkers: { ...defaults.team.tierWorkers, ...(user.team?.tierWorkers || {}) } },
   };
 }
 

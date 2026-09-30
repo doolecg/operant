@@ -3,21 +3,38 @@
 // handback: the task waits in 'review' until the lead approves it. A failure or a rejection gets one
 // retry in the same tile; after that the task is paused and the user asked (tier-guard.js): a move up
 // is never automatic. 'verifying': Operant is running the project's checks before the task reaches review.
-// 'paused': waiting for the user's answer on the board.
-const STATUSES = ['todo', 'doing', 'verifying', 'review', 'done', 'failed', 'blocked', 'cancelled', 'paused'];
+// 'paused': waiting for the user's answer on the board. 'planning': the worker is planning before it edits.
+// 'waiting': held on something outside the task (a limit, another task, a rate-limited route). 'recovery': an
+// interrupted task being resumed from its checkpoint. Every status change goes through transition().
+const STATUSES = ['todo', 'planning', 'doing', 'waiting', 'recovery', 'verifying', 'review', 'done', 'failed', 'blocked', 'cancelled', 'paused'];
 const isOpen = t => t.status === 'todo' || t.status === 'doing';
+const LIVE = ['todo', 'planning', 'doing', 'waiting', 'recovery', 'verifying', 'review', 'paused', 'blocked'];
+const TRANSITIONS = {};
+for (const from of LIVE) TRANSITIONS[from] = [...LIVE, 'failed', 'cancelled'];
+TRANSITIONS.review.push('done');
+TRANSITIONS.failed = ['todo', 'doing', 'recovery', 'paused', 'blocked'];
+TRANSITIONS.done = [];
+TRANSITIONS.cancelled = [];
+// The one place a status changes. done needs review first; done and cancelled are final.
+function transition(task, to) {
+  if (!STATUSES.includes(to)) throw new Error(`unknown status "${to}"`);
+  if (task.status === to) return task;
+  if (!(TRANSITIONS[task.status] || []).includes(to)) throw new Error(`task ${task.id} cannot go from ${task.status} to ${to}`);
+  task.status = to;
+  return task;
+}
 
 // A worker reports done, blocked or failed. Done waits for review.
 function handback(task, status, note) {
   if (!['done', 'blocked', 'failed'].includes(status)) throw new Error(`status must be done, blocked or failed, not "${status}"`);
-  task.status = status === 'done' ? 'review' : status;
+  transition(task, status === 'done' ? 'review' : status);
   if (note != null) task.note = String(note);
   return task;
 }
 
 function approve(task) {
   if (task.status !== 'review') throw new Error(`task ${task.id} is ${task.status}, not waiting for review`);
-  task.status = 'done';
+  transition(task, 'done');
   return task;
 }
 
@@ -28,7 +45,7 @@ function cancel(task, reason) {
   if (task.status === 'done' || task.status === 'cancelled') throw new Error(`task ${task.id} is already ${task.status}`);
   const was = task.status, last = String(task.note || '').replace(/\s+/g, ' ').trim().slice(0, 160);
   task.closedFrom = { status: was, attempt: attempts(task), note: last || null };
-  task.status = 'cancelled';
+  transition(task, 'cancelled');
   task.retried = true; // nothing retries it
   delete task.ask;
   const why = reason ? `Closed: ${String(reason).trim()}` : 'Closed';
@@ -57,7 +74,7 @@ function noteChange(task, change) {
 // decides; never a move up by itself).
 function strike(task, change) {
   if (!change || task.retried) return 'ask';
-  task.retried = true; task.status = 'doing';
+  task.retried = true; transition(task, 'doing');
   noteChange(task, change);
   return 'retry';
 }
@@ -78,7 +95,7 @@ function failure(task, note, { noRetry, change } = {}) {
 
 // The checks failed on a task in 'verifying': the first time it goes back like a reject, then the lead sees it in review.
 function verifyFailed(task, note) {
-  task.status = 'review';
+  transition(task, 'review');
   if (task.verifyRetried) { task.note = String(note || 'checks failed'); return 'review'; }
   task.verifyRetried = true;
   task.note = String(note || 'checks failed');
@@ -99,11 +116,71 @@ function moveUp(task, tier) {
   task.attempts = attempts(task) + 1;
   task.retried = false;
   task.owner = null;
-  task.status = 'todo';
+  transition(task, 'todo');
   return task;
 }
 
 const attempts = task => task.attempts || 1;
+
+// Checkpoint: what an interrupted task needs to carry on without replaying its context. Merged, so a worker can
+// save decisions, files and the next step in separate calls. Each list keeps its last 8 short entries.
+const list = v => (Array.isArray(v) ? v : v == null || v === '' ? [] : String(v).split(/\s*;\s*/)).map(x => String(x).replace(/\s+/g, ' ').trim().slice(0, 160)).filter(Boolean);
+function checkpoint(task, { decisions, files, next } = {}, now = Date.now()) {
+  const cp = task.checkpoint || { decisions: [], files: [], next: '' };
+  const merge = (old, add) => [...old, ...list(add).filter(x => !old.includes(x))].slice(-8);
+  cp.decisions = merge(cp.decisions, decisions);
+  cp.files = merge(cp.files, files);
+  if (next != null) cp.next = String(next).replace(/\s+/g, ' ').trim().slice(0, 200);
+  cp.at = now;
+  task.checkpoint = cp;
+  return cp;
+}
+
+// Destructive actions: a push, a delete, a forced or hard reset. Once recorded on the task, a retry or a resume
+// skips them instead of repeating them.
+const DESTRUCTIVE = [/\bgit\s+(?:\S+\s+)*push\b/, /\bgit\s+(?:\S+\s+)*reset\s+.*--hard\b/, /\bgit\s+(?:\S+\s+)*clean\b.*-\w*f/, /\bgit\s+(?:\S+\s+)*branch\s+-D\b/, /\bgit\s+(?:\S+\s+)*tag\s+-d\b/,
+  /(?:^|[;&|]\s*)(?:sudo\s+)?rm\s/, /\brmdir\b/, /\bRemove-Item\b/i, /\bdel\s+\/[a-z]/i, /(?:^|\s)--force(?:-with-lease)?\b/, /\bDROP\s+(?:TABLE|DATABASE)\b/i, /\bnpm\s+publish\b/];
+const isDestructive = cmd => DESTRUCTIVE.some(re => re.test(String(cmd || '')));
+// A worker (or a hook) is about to run `cmd`. -> { run: true } for anything safe or new (a new destructive one is
+// recorded now), { run: false, reason } for a destructive one this task already ran.
+function guardAction(task, cmd, now = Date.now()) {
+  const c = String(cmd || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  if (!c || !isDestructive(c)) return { run: true };
+  const done = task.actions || (task.actions = []);
+  const prior = done.find(a => a.cmd === c);
+  if (prior) { prior.skipped = (prior.skipped || 0) + 1; return { run: false, reason: `already ran for this task: ${c}` }; }
+  done.push({ cmd: c, at: now });
+  return { run: true };
+}
+
+// What a resumed or retried worker is told: the saved next step, decisions and files, and what not to repeat.
+// '' when the task has neither.
+function resumeBrief(task) {
+  const cp = task.checkpoint, acts = task.actions || [];
+  if (!cp && !acts.length) return '';
+  const parts = [];
+  if (cp && cp.next) parts.push(`next step: ${cp.next}`);
+  if (cp && cp.decisions.length) parts.push(`decided: ${cp.decisions.join('; ')}`);
+  if (cp && cp.files.length) parts.push(`files: ${cp.files.join(', ')}`);
+  if (acts.length) parts.push(`already done, do not repeat: ${acts.map(a => a.cmd).join(' | ')}`);
+  return `Resume from the checkpoint, do not redo finished work (${parts.join('. ')})`;
+}
+
+// An interrupted task (its worker died or the app restarted) goes to 'recovery'; resuming puts it back to 'doing'.
+const interrupt = task => transition(task, 'recovery');
+function resume(task) { transition(task, 'doing'); return resumeBrief(task); }
+
+// May another worker start? workers: [{ tier, project }] already running; team: the team settings.
+// -> null, or the reason it may not (total, per tier or per project limit).
+function startBlock(workers, tier, project, team = {}) {
+  const total = team.maxWorkers || 4, ws = workers || [];
+  if (ws.length >= total) return `max workers already running (${total}) - wait for one to finish`;
+  const perTier = team.tierWorkers && team.tierWorkers[tier];
+  if (perTier && ws.filter(w => w.tier === tier).length >= perTier) return `${perTier} ${tier} worker${perTier === 1 ? '' : 's'} already running (limit for this tier) - wait for one to finish`;
+  const perProject = team.projectWorkers;
+  if (perProject && project && ws.filter(w => w.project === project).length >= perProject) return `${perProject} worker${perProject === 1 ? '' : 's'} already running in this project (limit) - wait for one to finish`;
+  return null;
+}
 
 // Two lines the next worker starts from.
 function failureNote(task, why) {
@@ -150,6 +227,6 @@ function readyToClose(board, w, { busy = false, waiting = false, read = false } 
   return review;
 }
 
-const api = { retryChange, noteChange, readyToClose, unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, handoff, attempts };
+const api = { transition, TRANSITIONS, checkpoint, isDestructive, guardAction, resumeBrief, interrupt, resume, startBlock, retryChange, noteChange, readyToClose, unreportedChange, STATUSES, isOpen, handback, approve, reject, cancel, verifyFailed, failure, escalation, moveUp, failureNote, handoff, attempts };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.Board = api;
 })();

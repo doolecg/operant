@@ -494,6 +494,7 @@ const Panels = (() => {
     switch (it.sid) {
       case 'enabled': return shell(tog('data-team-enabled', team.enabled));
       case 'maxWorkers': return shell(`<input type="number" data-team-max min="1" max="16" value="${team.maxWorkers ?? 4}">`);
+      case 'projectWorkers': return shell(`<input type="number" data-team-limit="projectWorkers" min="0" max="16" value="${team.projectWorkers ?? 0}">`);
       case 'maxTier': return shell(`<select data-team-top>${Object.keys(tiers).map(n => `<option value="${esc(n)}"${n === (team.maxTier || Object.keys(tiers).pop()) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`);
       case 'savingProgress': return shell(`<select data-team-saving><option value="over"${team.savingProgress !== 'inside' ? ' selected' : ''}>On top of the limit</option><option value="inside"${team.savingProgress === 'inside' ? ' selected' : ''}>Inside the limit</option></select>`,
         `<span class="hint">On top: the work stops at the limit and saving gets its own allowance (10% of the limit, at most 15k). Inside: the allowance comes out of the limit, and limits under 20k are refused.</span>${teamLimitMsg ? `<span class="hint uc-status error">${esc(teamLimitMsg)}</span>` : ''}`);
@@ -526,6 +527,7 @@ const Panels = (() => {
       const id = it.sid.slice(7);
       return shell(`<input type="number" data-team-budget="${id}" min="0" step="10000" value="${team.budgets?.[id] ?? 0}">`, `<span class="hint">${esc(suggestionText(sugg && sugg[id]))}</span>`);
     }
+    if (it.sid.startsWith('workers.')) return shell(`<input type="number" data-team-limit="tierWorkers.${it.sid.slice(8)}" min="0" max="16" value="${team.tierWorkers?.[it.sid.slice(8)] ?? 0}">`);
     if (it.sid.startsWith('minutes.') || it.sid.startsWith('calls.')) {
       const [kind, id] = it.sid.split('.');
       return shell(`<input type="number" data-team-limit="${kind}.${id}" min="0" step="${kind === 'minutes' ? 5 : 10}" value="${team[kind]?.[id] ?? 0}">`);
@@ -827,6 +829,7 @@ const Panels = (() => {
       pane.querySelectorAll('[data-team-limit]').forEach(el => el.onchange = () => {
         const [kind, id] = el.dataset.teamLimit.split('.');
         const n = Math.max(0, Math.round(+el.value || 0));
+        if (!id) { el.value = n; set('team', { ...(cfg.team || {}), [kind]: n }); return; }
         el.value = n; set('team', { ...(cfg.team || {}), [kind]: { ...(cfg.team?.[kind] || {}), [id]: n } });
       });
       pane.querySelectorAll('[data-team-saving]').forEach(el => el.onchange = () => {

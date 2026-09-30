@@ -1,0 +1,47 @@
+{
+  "category": "medium-coding",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "average-helper",
+      "fixture": "node-app",
+      "prompt": "Add average() and median() to src/, export them, add tests; do not change sum()",
+      "runs": {
+        "baseline": {
+          "gross": 120000,
+          "cost": 0.6,
+          "success": true,
+          "retries": 1
+        },
+        "operant": {
+          "gross": 82000,
+          "overhead": 9000,
+          "cost": 0.26,
+          "success": true,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "id": "cli-flag",
+      "fixture": "node-app",
+      "prompt": "Add a --precision flag to build.js that rounds output; tests must pass",
+      "runs": {
+        "baseline": {
+          "gross": 135000,
+          "cost": 0.68,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 99000,
+          "overhead": 10000,
+          "cost": 0.31,
+          "success": true,
+          "retries": 1
+        }
+      }
+    }
+  ]
+}

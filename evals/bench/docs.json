@@ -1,0 +1,47 @@
+{
+  "category": "docs",
+  "synthetic": true,
+  "note": "Recorded results are synthetic; they exercise the replay, they are not measurements.",
+  "tasks": [
+    {
+      "id": "readme-usage",
+      "fixture": "node-app",
+      "prompt": "Add a usage section to the README covering build and dev; no code changes",
+      "runs": {
+        "baseline": {
+          "gross": 30000,
+          "cost": 0.15,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 22000,
+          "overhead": 2500,
+          "cost": 0.06,
+          "success": true,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "id": "jsdoc-src",
+      "fixture": "node-app",
+      "prompt": "Add JSDoc comments to the functions in src/; do not change code",
+      "runs": {
+        "baseline": {
+          "gross": 44000,
+          "cost": 0.22,
+          "success": true,
+          "retries": 0
+        },
+        "operant": {
+          "gross": 32000,
+          "overhead": 3000,
+          "cost": 0.09,
+          "success": true,
+          "retries": 0
+        }
+      }
+    }
+  ]
+}
