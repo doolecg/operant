@@ -1,3 +1,33 @@
+# Operant 2.5.0
+
+Team mode now watches its own cost and reliability: smarter context, routing that learns from past results, safer retries and stops, and a health dashboard.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.5.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.5.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.5.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.5.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.5.0-linux-amd64.deb` (`sudo apt install ./Operant-2.5.0-linux-amd64.deb`).
+
+## New
+- **Context engine:** worker briefs are built from the files, symbols, history and memories that matter for the task, ranked and kept within a budget, with repeated content removed. You can choose which context providers are used.
+- **Overflow recovery and smaller tool output:** a worker nearing its context limit saves a checkpoint and recovers instead of failing, and long tool output keeps the errors, paths and exit codes while dropping the noise.
+- **Project profile and git awareness:** `operant prime` reports the project's languages, build and test commands, branch and recent changes.
+- **Routing that learns:** each routing decision is scored on expected benefit and cost, recorded with its reasons, and informed by how each provider and model has recently performed. A route that is known to be down is skipped, with the reason shown, and old outages fade from the score.
+- **Local store and failure classes:** Operant keeps a small versioned local history (90 days by default) of task runs, decisions and failures. Failures are classified (timeout, rate limit, sign-in, bad output, failing tests, context overflow, stuck loop) and shown in `operant task show`.
+- **Operations commands and dashboard:** `operant doctor`, `stats`, `route`, `providers` and `models` explain what is set up and why a task went where it did, and a new dashboard shows health and token savings.
+- **Task states and checkpoints:** tasks have clear planning, waiting, recovery and cancelled states and can resume from a checkpoint. Plans are checked for missing constraints before work starts, and each tier has its own worker limits.
+- **Registries and privacy controls:** component and model registries, a redaction audit that keeps keys and tokens out of logs and prompts, privacy switches, and a way to clear local history.
+- **Local helper model:** the local model can help with small utility jobs such as summarising, and is never required.
+- **Benchmarks and failure tests:** replayable benchmark tasks and tests for timeouts, bad credentials, rate limits and corrupt data.
+
+## Changed
+- **Retries must change something:** a retried task now has to change the model, provider, context, strategy, tool or verification, or it stops and says why.
+- **Stops and escalation:** cancelling a task also stops its follow-on work, more stuck patterns are caught, workers have per-tier minute and tool-call limits, and signals such as low confidence or high risk suggest a move up but never make it without asking.
+- **Verification by risk:** type check and lint join tests and build, and handoffs between workers carry a short structured summary of decisions, constraints and files.
+- **Safer briefs:** tool output and repository content are treated as data that cannot override your rules, and the tools each worker may use are listed.
+- **Approving a task focuses its lead tile.**
+
+---
+
 # Operant 2.4.0
 
 Team mode is easier to understand and cheaper to run: a free tier, token limits you can trust, a clearer Settings › Agents page, and a guided setup for the local fallback model.
