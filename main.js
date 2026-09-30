@@ -321,6 +321,8 @@ const DEFAULT_CONFIG = {
   notifySubagents: true,          // a Claude subagent finished
   notifyOnlyUnfocused: true,      // skip it when you're already looking at that tile
   // Runaway guard: flags a tile whose agent may be stuck.
+  typingGuardMode: 'hold',        // a message for a tile you are typing in: 'hold' until you stop | 'refuse' it
+  typingGuardSeconds: 3,          // keystrokes within this many seconds count as typing · 0 = off
   runawayGuard: 'warn',           // 'warn' (badge + notification) | 'stop' (also interrupts) | 'off'
   stuckTurns: 30,                 // a worker on a code task: this many tool calls with no file edit = stuck; 0 = off
   runawayLoopRepeats: 5,          // same tool + same input this many times in a tile's last 20 tool calls

@@ -508,8 +508,8 @@ function formatResult(cmd, result, opts) {
     case 'run': if (result.text) return result.text; return `tile ${result.id} · running; read it with: operant wait ${result.id} --errors`;
     case 'agent': return `tile ${result.id}` + (result.tier ? `  [${result.tier}${result.reason ? ', ' + (result.basis || 'suggested') + ': ' + result.reason : ''}]  task ${result.taskId}` : '') + fmtLimit(result);
     case 'summarize': case 'find': return result.text || '(no answer)';
-    case 'send': return result && result.brief ? result.text : '';
-    case 'msg': return result.delivered ? `delivered to tile ${result.to}` : `queued for tile ${result.to} (${result.queued} waiting); it gets it when it is between steps`;
+    case 'send': return result && result.brief ? result.text : result && result.held ? `held for tile ${result.id}: the user is typing there; it goes in when they stop` : '';
+    case 'msg': return result.held ? `held for tile ${result.to}: the user is typing there; it is delivered when they stop` : result.delivered ? `delivered to tile ${result.to}` : `queued for tile ${result.to} (${result.queued} waiting); it gets it when it is between steps`;
     case 'inbox': return result.text || '(no messages)';
     case 'team': {
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';

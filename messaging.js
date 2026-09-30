@@ -97,6 +97,7 @@ async function sendBrief(args, self, env) {
     if (!nw) throw new Error(`could not start a ${label} tile`);
     return { to: nw.id, brief: true, opened: true, delivered: true, waiting: false, team: !!args.team, text: `started ${label} tile ${nw.id} with the brief${suffix}; it is running now` };
   }
+  if (env.guard) env.guard(w);
   const r = enqueue(env.state, { ...from, to: w.id, text: body });
   if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${REASONS[r.reason]}`);
   const delivered = await env.deliver(w);

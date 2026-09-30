@@ -297,7 +297,7 @@
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="tier"></span><span class="waiting"></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div>${IBAR}<div class="term"></div></div>`;
+      <span class="title"></span><span class="tier"></span><span class="waiting"></span><span class="held" hidden><span class="held-t">message held, you are typing</span><button class="held-release" title="Deliver now">Release</button><button class="held-discard" title="Drop the held messages">Discard</button></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div>${IBAR}<div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -308,6 +308,8 @@
     el.querySelector('.title').textContent = title;
     el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
     el.querySelector('.runaway').addEventListener('click', e => { e.stopPropagation(); stopTile(w); });
+    el.querySelector('.held-release').addEventListener('click', e => { e.stopPropagation(); releaseHeld(w); });
+    el.querySelector('.held-discard').addEventListener('click', e => { e.stopPropagation(); discardHeld(w); });
     el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
     term.attachCustomKeyEventHandler(e => handleTermKey(e, w));
     // Copy on select: copies once when the drag ends, not on every selection tick.
@@ -484,6 +486,7 @@
     ptyWins.set(info.id, w);
     w.term.onData(d => {
       touch(w); w.lastInput = lastKey = Date.now(); w.typed = true; w.busySince = null;
+      if (TypingGuard.isUserKey(d)) w.lastUserKey = w.lastInput;
       // Text typed but not sent yet: auto compact waits instead of typing into it.
       if (d.endsWith('\r') || d === '\x03') w.draft = false;
       else if (/[^\x00-\x1f\x7f]/.test(d.replace(/\x1b(\[[\d;?]*[ -\/]*[@-~]|O.)?/g, ''))) w.draft = true;
@@ -1803,8 +1806,41 @@ async function contextBrief(t) {
   // Other tiles read theirs with `operant inbox`.
   const msgState = Messaging.newState();
   const flatLine = s => s.replace(/\s*\n\s*/g, ' ');
-  async function deliver(w) {
+  // Typing guard: the user's own keystrokes in a tile hold agent messages (and `operant send` text) until they stop.
+  const typingNow = w => TypingGuard.isTyping(w.lastUserKey, cfg.typingGuardSeconds);
+  const guardAction = w => TypingGuard.decide({ mode: cfg.typingGuardMode, seconds: cfg.typingGuardSeconds, lastKey: w.lastUserKey });
+  function setHeldLine(w, has) {
+    if (has === !!w.heldShown) return;
+    w.heldShown = has;
+    const el = w.el.querySelector('.held');
+    if (el) el.hidden = !has;
+  }
+  const hasHeld = w => !!(w.heldSends && w.heldSends.length) || !!w.typingHeld;
+  function releaseHeld(w) {
+    w.typingHeld = false;
+    const sends = w.heldSends || []; w.heldSends = [];
+    for (const s of sends) if (w.alive && w.ptyId) { if (s.enter && s.text) sendLine(w, s.text); else operant.writePty(w.ptyId, s.text + (s.enter ? '\r' : '')); }
+    setHeldLine(w, false);
+    return deliver(w, true);
+  }
+  function discardHeld(w) {
+    w.typingHeld = false; w.heldSends = [];
+    Messaging.drop(msgState, w.id);
+    setHeldLine(w, false);
+  }
+  // Called at the top of send/msg: refuses (throws) while the user is typing and the setting says refuse.
+  function refuseIfTyping(w) {
+    if (guardAction(w) === 'refuse') throw new Error(TypingGuard.REFUSED(w.id, cfg.typingGuardSeconds));
+  }
+  // The 1s tick: hand over what was held once typing has stopped, keep the line in step.
+  function typingTick(w) {
+    if (!hasHeld(w)) { setHeldLine(w, false); return; }
+    if (typingNow(w)) { setHeldLine(w, true); return; }
+    releaseHeld(w);
+  }
+  async function deliver(w, force) {
     if (!w.alive || !w.ptyId || w.delivering || !Messaging.pending(msgState, w.id)) return false;
+    if (!force && guardAction(w) !== 'deliver') { w.typingHeld = true; setHeldLine(w, true); return false; }
     const oc = String(w.sessionId || '').startsWith('oc:');
     if (!oc && !isClaudeTile(w)) return false;
     if (oc ? w.ocBusy : isWorking(w)) return false;
@@ -1835,7 +1871,7 @@ async function contextBrief(t) {
 
   // Item 97: `operant send --file|--brief` hands a refined prompt to a Claude Code tile (messaging.js sendBrief).
   const sendBrief = (args, self) => Messaging.sendBrief(args, self, {
-    state: msgState, teamEnabled: !!cfg.team?.enabled, agents: cfg.agents, agentKind, agentMode, messageTarget, deliver, flatLine,
+    state: msgState, teamEnabled: !!cfg.team?.enabled, agents: cfg.agents, agentKind, agentMode, messageTarget, deliver, flatLine, guard: refuseIfTyping,
     cwdOf: w => (w && w.cwd) || lastCwd, projectOf: dir => projectDir(dir),
     tiles: () => [...wins.values()],
     open: (agentId, dir, prompt, near) => newTerminal('ai', dir, { agentId, prompt, near, focus: false }),
@@ -1844,6 +1880,7 @@ async function contextBrief(t) {
   function closeWin(w) {
     if (!w.alive) return;
     Messaging.drop(msgState, w.id);
+    w.heldSends = []; w.typingHeld = false;
     // A worker that ends without `operant task done` still reports back: the master is told it never did.
     for (const t of w.tier ? board.tasks.filter(x => x.owner === w.id && Board.isOpen(x)) : []) {
       t.note = 'Worker closed without reporting a result';
@@ -2031,6 +2068,7 @@ async function contextBrief(t) {
   setInterval(() => {
     const now = Date.now();
     for (const w of wins.values()) {
+      typingTick(w);
       if (Messaging.pending(msgState, w.id)) deliver(w);
       if (w.ocBusy) w.lastOut = now;
       if (!w.busySince || now - w.lastOut < cfg.notifyWhenIdleSeconds * 1000) continue;
@@ -5127,13 +5165,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'hook': {
         if (!self) throw new Error('unknown tile');
         if (args.event === 'subagent-start') return cfg.briefAgents ? {} : { off: true };
-        if (args.event === 'post-tool-use') return Messaging.pending(msgState, self.id) ? { context: Messaging.frameAll(Messaging.take(msgState, self.id)) } : {};
+        if (args.event === 'post-tool-use') return Messaging.pending(msgState, self.id) && guardAction(self) === 'deliver' ? { context: Messaging.frameAll(Messaging.take(msgState, self.id)) } : {};
         if (args.event === 'output' || args.event === 'stop') {
           if (args.event === 'output') return {};
         }
         if (args.event !== 'stop') return {};
         // Waiting messages keep the turn going, even when a Stop hook already did: the queue drains.
-        if (Messaging.pending(msgState, self.id)) return { block: Messaging.frameAll(Messaging.take(msgState, self.id)) };
+        if (Messaging.pending(msgState, self.id) && guardAction(self) === 'deliver') return { block: Messaging.frameAll(Messaging.take(msgState, self.id)) };
         const open = self.tier ? openTaskOf(self) : null;
         if (args.active || !open || self.nudged) return {};
         self.nudged = true;
@@ -5152,6 +5190,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (args.brief) return sendBrief(args, self);
         const w = needTile(args.id);
         if (!w.ptyId) throw new Error('tile has no terminal to type into');
+        const ga = guardAction(w);
+        if (ga === 'refuse') refuseIfTyping(w);
+        if (ga === 'hold') {
+          (w.heldSends ||= []).push({ text: String(args.text ?? ''), enter: !!args.enter });
+          setHeldLine(w, true);
+          return { id: w.id, held: true };
+        }
         if (args.enter && args.text) sendLine(w, String(args.text));
         else operant.writePty(w.ptyId, String(args.text ?? '') + (args.enter ? '\r' : ''));
         return { id: w.id };
@@ -5160,10 +5205,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         if (!cfg.messaging) throw new Error(MESSAGING_OFF);
         const w = messageTarget(args.id);
+        refuseIfTyping(w);
         const r = Messaging.enqueue(msgState, { from: self.id, to: w.id, text: args.text, fromAgent: self.agentName, fromRole: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell' });
         if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${Messaging.REASONS[r.reason]}`);
         const delivered = await deliver(w);
-        return { to: w.id, delivered, queued: Messaging.pending(msgState, w.id) };
+        return { to: w.id, delivered, queued: Messaging.pending(msgState, w.id), held: !delivered && !!w.typingHeld };
       }
       case 'inbox': {
         if (!self) throw new Error('unknown tile');

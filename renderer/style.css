@@ -314,6 +314,11 @@ body.anim-off .win::before,
 .tbar .waiting:empty { display: none; }
 .tbar .waiting { font-size: 10.5px; padding: 1px 8px; border-radius: 99px;
   color: #7aa6e3; background: color-mix(in srgb, #7aa6e3 16%, transparent); }
+.tbar .held { display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; font-size: 10.5px; padding: 1px 4px 1px 8px; border-radius: 99px;
+  color: #e3b27a; background: color-mix(in srgb, #e3b27a 16%, transparent); white-space: nowrap; }
+.tbar .held[hidden] { display: none; }
+.tbar .held .held-t { overflow: hidden; text-overflow: ellipsis; }
+.tbar .held button { font: inherit; padding: 0 6px; border: 0; border-radius: 99px; cursor: pointer; color: inherit; background: color-mix(in srgb, currentColor 18%, transparent); }
 .tbar .runaway:empty { display: none; }
 .tbar .runaway { font-size: 10.5px; padding: 1px 8px; border-radius: 99px; cursor: pointer;
   color: #f08a78; background: color-mix(in srgb, #f08a78 16%, transparent); }
