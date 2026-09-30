@@ -20,7 +20,7 @@ const { createUsage, contextMax } = require('./usage');
 const { writeFileAtomic } = require('./atomic-write');
 const configMigrate = require('./config-migrate');
 const installState = require('./install-state');
-const { redactText } = require('./redact');
+const { redactText, redactSecrets, redactValues } = require('./redact');
 const { createStuckTracker } = require('./stuck');
 const cgFirst = require('./codegraph-first');
 const outcomes = require('./outcomes');
@@ -29,6 +29,7 @@ const failureClass = require('./failure-class');
 const routeHealthLib = require('./route-health');
 const analytics = require('./analytics');
 const ops = require('./ops');
+const registry = require('./registry');
 const routingLib = require('./routing');
 const tierGuard = require('./tier-guard');
 const { priceOf } = require('./pricing');
@@ -204,6 +205,12 @@ const DEFAULT_CONFIG = {
   backgroundAfterSeconds: 5,       // a rerouted long command (test/build/install) that is still running after this many seconds moves to the Backrooms and the agent waits for its errors · 0 = always at once (Settings > Agents)
   longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
+  autoRouting: true,              // suggest a tier for a task by expected utility when a task has none (Settings > Privacy)
+  memoryEnabled: true,            // shared project memory: remember and recall (Settings > Privacy)
+  integrationsEnabled: true,      // share your main agent's setup (rules, MCP servers, skills) with launched agents; off overrides Share setup (Settings > Privacy)
+  cloudProviders: true,           // allow routes to cloud providers; off keeps routing to local models (Settings > Privacy)
+  localModels: true,              // allow the local Ollama model as a route and provider (Settings > Privacy)
+  retentionDays: 90,              // days the local store and outcomes are kept (Settings > Privacy)
   opencodeTheme: true,            // OpenCode tiles use Operant's current theme/accent (Settings > Agents)
   autoCompact: 80,                // percent of an agent tile's context that triggers automatic /compact (Settings > Agents) · 0 = off
   cacheTtlMinutes: 5,              // Claude's prompt cache lifetime; 60 if your setup uses the 1-hour cache (Settings > Agents)
@@ -354,7 +361,7 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
           if (bk.beforeMigration) stateBackup.createBackup({ userDataDir: app.getPath('userData'), location: bk.location, reason: 'before-migration', version: app.getVersion() });
         } catch (e) { console.error('backup before the config migration failed', e); }
         fs.copyFileSync(CONFIG_PATH, CONFIG_PATH.replace(/\.json$/, `.v${m.from}.json`));
-        writeFileAtomic(CONFIG_PATH, JSON.stringify(m.user, null, 2));
+        writeFileAtomic(CONFIG_PATH, JSON.stringify(redactValues(m.user), null, 2));
         user = m.user;
       } catch (e) { console.error('config migration not saved', e); }
     } else user = m.user;
@@ -372,9 +379,9 @@ let cliInstalled = {};
 // and the reason for any skipped one ride on each tier (`route`, `routes`, `skipped`), which Settings and the tiles show.
 const routeHealth = tierRoutes.createHealth();
 let localReady = false, localTimer = null;
-const routeCtx = c => ({
-  health: routeHealth, localModel: c.localModel?.model || localModelLib.DEFAULT_MODEL,
-  ready: r => (r.local ? localReady : cliInstalled[r.agent] !== false),
+const routeCtx = cfg => ({
+  health: routeHealth, localModel: cfg.localModel?.model || localModelLib.DEFAULT_MODEL,
+  ready: r => (r.local ? localReady && cfg.localModels !== false : cfg.cloudProviders !== false && cliInstalled[r.agent] !== false),
 });
 const withTiers = c => ({ ...c, teamTiers: tierRoutes.overlay(teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), routeCtx(c)),
   // Per-project agent choice: the tiers left when a project is Claude only or OpenCode only (team-tiers.js tiersForMode).
@@ -397,7 +404,7 @@ if (!config.hardwareAcceleration) app.disableHardwareAcceleration();
 
 function saveUser() {
   try {
-    writeFileAtomic(CONFIG_PATH, JSON.stringify(user, null, 2));
+    writeFileAtomic(CONFIG_PATH, JSON.stringify(redactValues(user), null, 2));
   } catch (e) { console.error('config save failed', e); }
 }
 
@@ -425,6 +432,8 @@ ipcMain.handle('config:set', (e, patch) => {
   if ('agents' in patch || 'defaultAgent' in patch) scanOpencodeModels();
   if ('localModel' in patch) { localModel.setModel(config.localModel?.model || localModelLib.DEFAULT_MODEL); localModel.refresh(config.localModel?.model).then(refreshTiers); }
   if ('backups' in patch) scheduleStateBackups();
+  if ('retentionDays' in patch) { dbDo(s => s.prune(config.retentionDays * 86400e3)); try { outcomes.trimOutcomes(OUTCOMES_PATH, config.retentionDays * 86400e3); } catch {} }
+  if ('cloudProviders' in patch || 'localModels' in patch) refreshTiers();
   // Other Operant windows pick the change up live.
   for (const w of windows) if (w.webContents !== e.sender) sendTo(w, 'config:changed', config);
   return config;
@@ -584,7 +593,7 @@ function startControlServer() {
           const done = await bgTasks.settled(t.id, (Number(args.timeout) || 600) * 1000);
           return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
         }
-        if (['doctor', 'providers', 'models', 'stats', 'route'].includes(cmd)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
+        if (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history'].includes(cmd)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -610,6 +619,7 @@ ipcMain.handle('config', () => config);
 ipcMain.handle('memory', (_e, { op, args = {} }) => {
   const userDataDir = app.getPath('userData');
   try {
+    if (!config.memoryEnabled && (op === 'remember' || op === 'recall')) return { ok: false, error: 'memory is turned off in Settings' };
     if (op === 'remember') return { ok: true, result: memory.remember({ ...args, userDataDir }) };
     if (op === 'recall') return { ok: true, result: memory.recall({ ...args, userDataDir }) };
     if (op === 'list') return { ok: true, result: memory.listAll({ ...args, userDataDir }) };
@@ -967,7 +977,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
     // own env below; other agents have no equivalent flag, so they're skipped.
     // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
-    const rules = config.shareSetup ? agentBrief.mainRulesText(agentSetup.mainAgentId(config), 'claude') : '';
+    const rules = (config.integrationsEnabled && config.shareSetup) ? agentBrief.mainRulesText(agentSetup.mainAgentId(config), 'claude') : '';
     const briefText = [config.briefAgents && agentBrief.briefFor('claude'), rules].filter(Boolean).join('\n\n');
     const briefArgs = briefText && isClaude(agent) ? ['--append-system-prompt', briefText] : [];
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
@@ -1026,24 +1036,24 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // env var also carries the long-command reroute plugin when that setting is on, merged into the
   // same object rather than a second env var. The operant skill goes in as a skills.paths entry, after the
   // user's own (OpenCode replaces that array).
-  if (isOc && (config.briefAgents || config.longCommandHook || config.shareSetup || config.installSkill)) {
+  if (isOc && (config.briefAgents || config.longCommandHook || (config.integrationsEnabled && config.shareSetup) || config.installSkill)) {
     const skillPaths = config.installSkill && pluginReady() && await agentCan(agent, 'skillPaths')
       ? agentSetup.opencodeSkillPaths(dir, path.join(PLUGIN_DIR, 'skills')) : [];
     envBase.OPENCODE_CONFIG_CONTENT = agentBrief.opencodeConfigContent(config.briefAgents ? BRIEF_PATH : null, {
-      mainAgent: config.shareSetup ? agentSetup.mainAgentId(config) : null,
+      mainAgent: (config.integrationsEnabled && config.shareSetup) ? agentSetup.mainAgentId(config) : null,
       plugins: [config.longCommandHook && OC_HOOK_PATH, config.briefAgents && OC_OPERANT_PATH].filter(Boolean),
       skillPaths,
     });
   }
   // The local model's provider, so `opencode -m ollama/<model>` works; merged per process, the user's own ollama provider is kept.
-  if (isOc && localReady) {
+  if (isOc && localReady && config.localModels) {
     const own = agentSetup.opencodeConfigFiles(dir).map(f => agentSetup.readJson(f)?.provider?.ollama).find(Boolean);
     envBase.OPENCODE_CONFIG_CONTENT = localModelLib.withProvider(envBase.OPENCODE_CONFIG_CONTENT, config.localModel?.model || localModelLib.DEFAULT_MODEL, own);
   }
   // Folds the main agent's MCP servers, plugin skills and CodeGraph hook into whatever
   // OPENCODE_CONFIG_CONTENT already carries (brief instructions, rules, other plugin entries),
   // rather than replacing it. Per process only — never touches ~/.config/opencode.
-  if (isOc && config.shareSetup) {
+  if (isOc && config.integrationsEnabled && config.shareSetup) {
     envBase.OPENCODE_CONFIG_CONTENT = agentSetup.buildOpencodeConfigContent({
       base: envBase.OPENCODE_CONFIG_CONTENT, cwd: dir, userDataDir: AGENT_SETUP_DIR, config,
     });
@@ -1692,11 +1702,21 @@ ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile, cwd }) 
 });
 // Item 57: one line per finished or escalated board task, kept 90 days.
 const OUTCOMES_PATH = path.join(app.getPath('userData'), 'outcomes.jsonl');
-const OUTCOMES_KEEP = 90 * 86400e3;
+const OUTCOMES_KEEP = config.retentionDays * 86400e3;
 try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch {}
 // 2.5: the versioned local database (store.js); a store that will not open leaves the app running without it.
+const STORE_DIR = path.join(app.getPath('userData'), 'store');
 let db = null;
-try { db = dataStore.openStore(path.join(app.getPath('userData'), 'store')); } catch (e) { try { logLine('store: ' + e.message); } catch {} }
+try { db = dataStore.openStore(STORE_DIR, { keepMs: config.retentionDays * 86400e3 }); } catch (e) { try { logLine('store: ' + e.message); } catch {} }
+// Deletes the store folder's contents and outcomes.jsonl, then reopens the store empty. -> { ok, removed }
+function clearHistory() {
+  let removed = 0;
+  try { db = null; removed += dataStore.clearAll(STORE_DIR); } catch {}
+  try { if (fs.existsSync(OUTCOMES_PATH)) { fs.rmSync(OUTCOMES_PATH, { force: true }); removed++; } } catch {}
+  try { db = dataStore.openStore(STORE_DIR, { keepMs: config.retentionDays * 86400e3 }); } catch (e) { try { logLine('store: ' + e.message); } catch {} }
+  return { ok: true, removed };
+}
+ipcMain.handle('history:clear', () => clearHistory());
 const dbDo = fn => { try { return db ? fn(db) : null; } catch { return null; } };
 ipcMain.handle('store:decision', (_e, d) => dbDo(s => s.append('routingDecisions', { ...d, project: d?.cwd ? path.basename(d.cwd) : null, corr: d?.corr || dataStore.corrOf(d?.cwd ? path.basename(d.cwd) : null, d?.taskId), cwd: undefined })) && { ok: true });
 // Recorded call health per model, decayed (route-health.js): the renderer's routing skips a route known down.
@@ -1755,7 +1775,26 @@ async function opsCommand(cmd, args = {}) {
     const active = config.teamTiers || {}, base = config.team?.tiers || {};
     const src = Object.keys(active).length ? active : base;
     const list = ops.modelsList({ tiers: Object.entries(src).map(([name, t]) => ({ name, agent: t.agent, model: t.model, active: t })), routeHealth: routeHealthNow() });
-    return { ok: true, result: { models: list, text: ops.formatModels(list) } };
+    const caps = registry.modelRegistry({ tiers: Object.entries(src).map(([name, t]) => ({ name, agent: t.agent, model: t.model, effort: t.effort })), opencodeModels: ocModels, local: config.localModels === false ? null : { model: config.localModel?.model || localModelLib.DEFAULT_MODEL, status: localModel.state().status } });
+    return { ok: true, result: { models: list, capabilities: caps, text: ops.formatModels(list) + '\n\nCapabilities:\n' + registry.formatModelRegistry(caps) } };
+  }
+  if (cmd === 'history') {
+    if (args.sub !== 'clear') return { ok: false, error: 'usage: operant history clear --yes' };
+    const n = dataStore.TABLES.length;
+    if (!args.yes) return { ok: false, error: `this would delete the local store (${n} tables, including routing decision traces) and outcomes.jsonl. Nothing was deleted; run operant history clear --yes to do it.` };
+    const r = clearHistory();
+    return { ok: true, result: { removed: r.removed, text: `Deleted ${r.removed} files of local history.` } };
+  }
+  if (cmd === 'components') {
+    const file = path.join(app.getPath('userData'), 'component-records.json');
+    let records = {}; try { records = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+    if (args.sub === 'set') {
+      if (!args.id) return { ok: false, error: 'usage: operant components set <id> [--decision adopted|optional|evaluating|rejected] [--reason "..."] [--security "..."] [--capabilities a,b]' };
+      try { records = registry.withRecord(records, String(args.id), args); } catch (e) { return { ok: false, error: e.message }; }
+      writeFileAtomic(file, JSON.stringify(redactSecrets(records), null, 2));
+    }
+    const list = registry.componentRegistry({ rows: await comps(), records });
+    return { ok: true, result: { components: list, text: registry.formatComponents(list) } };
   }
   if (cmd === 'stats') {
     const days = +args.days === 7 ? 7 : 30, t = tablesSince(Date.now() - days * 86400e3);
@@ -1956,6 +1995,9 @@ const localModel = localModelLib.createLocalModel({
     if (s.status !== 'installing') healthCheck.get({ force: true, cwd: healthCwd }).catch(() => {});
   },
 });
+const localHelper = localModelLib.createHelper({ model: () => config.localModel?.model || localModelLib.DEFAULT_MODEL, which: ollamaWhich, env: freshEnv, ready: () => localReady && config.localModels !== false });
+ipcMain.handle('localhelper:classify', (_e, text, fallback) => fallback && fallback !== 'other' ? fallback : localHelper.classify(String(text || ''), () => 'other'));
+ipcMain.handle('localhelper:summarise', (_e, text) => localHelper.summarise(String(text || '')));
 ipcMain.handle('localmodel:state', () => localModel.state());
 ipcMain.handle('localmodel:plan', (_e, model) => localModel.plan(String(model || config.localModel?.model)));
 // Without `confirmed` the card only looks and asks (status 'confirm'); the download starts on the user's go-ahead.
@@ -2395,7 +2437,7 @@ function writeSession() {
   clearTimeout(sessionT); sessionT = null;
   // Nothing saved yet this run: keep what's on disk for the next start.
   if (snapshots.size) session.windows = [...snapshots.values()];
-  try { writeFileAtomic(SESSION_PATH, JSON.stringify(session)); } catch (e) { console.error('session save failed', e); }
+  try { writeFileAtomic(SESSION_PATH, JSON.stringify(redactValues(session))); } catch (e) { console.error('session save failed', e); }
 }
 ipcMain.on('session:save', (e, snap) => {
   snapshots.set(e.sender.id, snap);
@@ -2491,7 +2533,7 @@ function createWindow(startDir = null, restore = null) {
     if (config.tokenUsage) usage.start();
     opencode.start();
     scanOpencodeModels();
-    localModel.refresh(config.localModel?.model);
+    if (config.localModels) localModel.refresh(config.localModel?.model);
     pollLimits();
   });
   return w;

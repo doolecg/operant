@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { redactText } = require('../redact');
 
 const BUDGET = 4000;            // well under Claude Code's 10k cap for injected hook text
 const PROGRESS_CHARS = 900;
@@ -170,7 +171,8 @@ function memoryBlock(d, maxLines) {
 
 // `local` is readLocal()'s result for the tile's project. Sections shrink before anything is cut, in
 // the order that matters least: memory, other tiles, the progress note.
-function formatPrime(data, local = {}, { budget = BUDGET } = {}) {
+const formatPrime = (data, local, opts) => redactText(formatPrimeRaw(data, local, opts));
+function formatPrimeRaw(data, local = {}, { budget = BUDGET } = {}) {
   const d = data || {};
   const build = ({ progress, memory, tiles, gitOn }) => {
     const parts = [header(d)];

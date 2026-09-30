@@ -3137,6 +3137,7 @@ Click to open the setup card`;
     localModelDismiss: () => operant.localModelDismiss(),
     localModelRemove: model => operant.localModelRemove(model),
     localModelRefresh: () => operant.localModelRefresh(),
+    clearHistory: () => operant.clearHistory(),
     backupStatus: () => ({ last: backupLast, running: backupRunning }),
     checkBackupRepo: dir => operant.backupCheckRepo(dir),
     backupRun: () => { backupRunning = true; operant.backupRun(); },
@@ -5035,7 +5036,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (!Object.keys(mtiers).length) throw new Error(`this project is set to ${TeamTiers.MODE_LABEL[mode]}, but no tier for it can run right now - change it in the project's sidebar menu (Agents) or Settings › Agents`);
         }
         // Team mode on and no tier, agent or model named: pick the cheapest tier that fits the prompt. A project limited to one CLI always routes within its tiers.
-        if (!args.tier && !args.agent && !args.model && (cfg.team?.enabled || mode !== 'both')) {
+        if (cfg.autoRouting && !args.tier && !args.agent && !args.model && (cfg.team?.enabled || mode !== 'both')) {
           const capped = Object.fromEntries(allowedTierNames(dir).map(n => [n, mtiers[n]]));
           if (!Object.keys(capped).length) throw new Error('no worker tiers are set up - set them up in Settings › Agents › Team');
           const fallback = TeamTiers.suggestTier(args.prompt, capped);

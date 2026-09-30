@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const hub = require('./hub');
+const { redactText } = require('./redact');
 
 const SKIP_SKILLS = new Set(['synced', hub.LINK_NAME, 'operant']); // 'operant' is the app's own, handed to each session
 const SKIP_DIRS = new Set(['__pycache__', '.git', 'node_modules', '.venv', '.mypy_cache', '.pytest_cache']);
@@ -25,6 +26,13 @@ const norm = p => realPath(p).replace(/[\\/]+$/, '').toLowerCase();
 const same = (a, b) => norm(a) === norm(b);
 const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
 
+const TEXT_EXT = /\.(md|json|txt|ya?ml|toml|js|py|sh|mjs|cjs|ts)$/i;
+// Text files are written with anything that looks like a key or token redacted; other files are copied as they are.
+function copyFile(s, d, st) {
+  if (TEXT_EXT.test(s) && st.size < (1 << 20)) fs.writeFileSync(d, redactText(fs.readFileSync(s, 'utf8')));
+  else fs.copyFileSync(s, d);
+}
+
 // Copies src into dest following junctions/symlinks, skipping junk and secrets. `seen` holds the real
 // paths on the current branch of the walk so a link back to a parent can't loop.
 function copyTree(src, dest, seen = new Set()) {
@@ -37,7 +45,7 @@ function copyTree(src, dest, seen = new Set()) {
     const s = path.join(src, e), d = path.join(dest, e);
     let st; try { st = fs.statSync(s); } catch { continue; } // broken link
     if (st.isDirectory()) { if (!SKIP_DIRS.has(e)) copyTree(s, d, seen); }
-    else if (st.isFile()) fs.copyFileSync(s, d);
+    else if (st.isFile()) copyFile(s, d, st);
   }
   seen.delete(real);
 }
@@ -67,7 +75,7 @@ function stage(repoDir, hubDir, claudeDir) {
   fs.rmSync(out, { recursive: true, force: true });
   for (const [name, dir] of collectSkills(hubDir, claudeDir)) copyTree(dir, path.join(out, name));
   const rules = rulesSource(hubDir, claudeDir);
-  if (rules) fs.copyFileSync(rules, path.join(repoDir, 'rules.md'));
+  if (rules) fs.writeFileSync(path.join(repoDir, 'rules.md'), redactText(fs.readFileSync(rules, 'utf8')));
 }
 
 // The repo folder must be the root of a git repository with a remote, on a branch.
@@ -117,4 +125,4 @@ async function backupAll({ repos, hubDir, claudeDir }) {
   return results;
 }
 
-module.exports = { backupRepo, checkRepo, backupAll, collectSkills, copyTree };
+module.exports = { backupRepo, checkRepo, backupAll, collectSkills, copyTree, stage };

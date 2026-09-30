@@ -10,6 +10,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { writeFileAtomic } = require('./atomic-write');
+const { redactText } = require('./redact');
 
 const TYPES = ['user', 'feedback', 'project', 'reference'];
 const CONFIDENCE = ['verified', 'observed', 'inferred', 'stale'];
@@ -245,7 +246,7 @@ function targetDir(cwd, userDataDir, type, global, homeDir) {
 // Saves one fact, updating an existing one instead of adding a duplicate when its name or
 // description (normalized) matches a fact already in the same memory dir.
 function remember({ cwd, userDataDir, text, type = 'project', global = false, about = [], confidence, supersedes, source, commits, homeDir }) {
-  const fact = String(text || '').trim();
+  const fact = redactText(String(text || '')).trim();
   if (!fact) throw new Error('text required');
   const kind = TYPES.includes(type) ? type : 'project';
   const dir = targetDir(cwd, userDataDir, kind, global, homeDir);

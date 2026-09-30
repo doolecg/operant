@@ -36,6 +36,17 @@ function redactWalk(obj, { remove = false } = {}) {
   return { value: go(obj, ''), paths };
 }
 
+// A deep copy of obj where string values that look like secrets are redacted; key names stay as they are.
+function redactValues(obj) {
+  const go = v => {
+    if (typeof v === 'string') return redactText(v);
+    if (Array.isArray(v)) return v.map(go);
+    if (v && typeof v === 'object') { const o = {}; for (const [k, x] of Object.entries(v)) o[k] = go(x); return o; }
+    return v;
+  };
+  return go(obj);
+}
+
 const redactSecrets = (obj, opts) => redactWalk(obj, opts).value;
 
-module.exports = { redactSecrets, redactWalk, redactText, MARK };
+module.exports = { redactValues, redactSecrets, redactWalk, redactText, MARK };

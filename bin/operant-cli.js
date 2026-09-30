@@ -16,7 +16,7 @@ const POSITIONAL = {
   summarize: ['target', 'question'], find: ['question'],
   remember: ['text'], recall: ['query'],
   msg: ['id', 'text'], inbox: [],
-  doctor: [], providers: [], models: [], stats: [], route: ['sub', 'id'],
+  doctor: [], providers: [], models: [], components: ['sub', 'id'], history: ['sub'], stats: [], route: ['sub', 'id'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', test: 'command', build: 'command',
@@ -71,7 +71,9 @@ const COMMANDS = {
 
   doctor: { group: 'operations', usage: 'operant doctor', desc: 'health of providers, credentials (present or not, never printed), versions, MCP, local model, the local store and context providers: healthy, degraded, unavailable, not configured or unknown', examples: ['operant doctor'], flags: [] },
   providers: { group: 'operations', usage: 'operant providers', desc: 'the configured agent CLIs: installed, credentials present, state', examples: ['operant providers'], flags: [] },
-  models: { group: 'operations', usage: 'operant models', desc: 'each team tier with its model, recorded availability and latency, and state', examples: ['operant models'], flags: [] },
+  models: { group: 'operations', usage: 'operant models', desc: 'each team tier with its model, recorded availability and latency, and state, then every known model with provider, cost tier, context window, tools and reasoning', examples: ['operant models'], flags: [] },
+  components: { group: 'operations', usage: 'operant components [set <id> --decision d --reason ".." --security ".." --capabilities a,b]', desc: 'what Operant is built on: installed, available, healthy, capabilities, when last checked, and the adoption decision with its reason and security note (information only, installs nothing); set updates a record', examples: ['operant components', 'operant components set codegraph --decision adopted --reason "fewer file reads"'], flags: ['decision', 'reason', 'security', 'capabilities'] },
+  history: { group: 'operations', usage: 'operant history clear --yes', desc: 'deletes the local store (including routing decision traces) and outcomes.jsonl; without --yes it says what it would delete and refuses', examples: ['operant history clear', 'operant history clear --yes'], flags: ['yes'] },
   stats: { group: 'operations', usage: 'operant stats [--days 7|30]', desc: 'from the local store: gross vs net tokens saved, the cost of Operant itself, retry hot spots, the model that wastes most tokens, unused integrations', examples: ['operant stats', 'operant stats --days 7'], flags: ['days'] },
   route: { group: 'operations', usage: 'operant route explain <task id> | set <tier> [--global] [--hours n] | clear [--global] | show', desc: 'the stored reason for a task\'s tier (chosen, rejected alternative, evidence); set/clear/show a routing override for this project or (--global) all, optionally temporary; routing only picks among tiers already allowed', examples: ['operant route explain 8', 'operant route set small --hours 4', 'operant route clear'], flags: ['global', 'hours'] },
 
@@ -416,7 +418,7 @@ function buildArgs(cmd, positionals, flags) {
   if (cmd === 'open' && typeof args.target === 'string' && require('fs').existsSync(args.target)) args.target = path.resolve(args.target);
   // So does where a new tile starts: after a cd into a subproject, or through the long-command reroute
   // hook, the tile's own starting folder would be the wrong one to test, build or work in.
-  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
+  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route', 'components'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
   return args;
 }
 
@@ -577,7 +579,7 @@ function formatResult(cmd, result, opts) {
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }
-    case 'doctor': case 'providers': case 'models': case 'stats': case 'route': return result.text || 'ok';
+    case 'doctor': case 'providers': case 'models': case 'components': case 'history': case 'stats': case 'route': return result.text || 'ok';
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0
       ? 'ok' : JSON.stringify(result);
   }

@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('./atomic-write');
+const { redactValues } = require('./redact');
 const { classify, ROUTE_KINDS } = require('./failure-class');
 
 const DAY = 86400e3;
@@ -64,7 +65,7 @@ function openStore(dir, { migrations = MIGRATIONS, keepMs = DEFAULT_KEEP_MS, now
     },
     append(table, row) {
       if (!TABLES.includes(table)) throw new Error(`unknown table "${table}"`);
-      const rec = { id: newId(table.slice(0, 3), now()), t: now(), v: meta.schemaVersion, ...row };
+      const rec = { id: newId(table.slice(0, 3), now()), t: now(), v: meta.schemaVersion, ...redactValues(row) };
       fs.appendFileSync(fileOf(table), JSON.stringify(rec) + '\n');
       return rec;
     },
@@ -103,4 +104,12 @@ function feedOutcome(store, e) {
   return bad ? failure : null;
 }
 
-module.exports = { feedOutcome, openStore, newId, corrOf, MIGRATIONS, TABLES, DEFAULT_KEEP_MS };
+// Deletes every table file, meta.json and anything else in the store folder (the folder stays). -> number of files removed.
+function clearAll(dir) {
+  let removed = 0, names = [];
+  try { names = fs.readdirSync(dir); } catch { return 0; }
+  for (const n of names) { try { fs.rmSync(path.join(dir, n), { recursive: true, force: true }); removed++; } catch {} }
+  return removed;
+}
+
+module.exports = { clearAll, feedOutcome, openStore, newId, corrOf, MIGRATIONS, TABLES, DEFAULT_KEEP_MS };

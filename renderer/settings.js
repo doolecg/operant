@@ -24,7 +24,7 @@ const Panels = (() => {
   // Called once the config is loaded, before anything can change it: what the running app started with.
   const noteLaunch = cfg => { for (const k of RESTART_KEYS) launchVals[k] = cfg[k]; };
   const restartPending = cfg => RESTART_KEYS.filter(k => k in launchVals && !same(cfg[k], launchVals[k]));
-  let confirmingReset = false;
+  let confirmingReset = false, confirmingClear = false, clearMsg = '';
   // Token counts as typed and shown in Settings: 2M, 1.5m, 500k, 1200000.
   const fmtTokens = n => n >= 1e6 ? +(n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(n);
   const parseTokens = t => {
@@ -192,6 +192,15 @@ const Panels = (() => {
     ['Backups', [
       { type: 'stateBackups', label: 'Backups restore config session memory copy folder' },
     ]],
+    ['Privacy', [
+      { key: 'autoRouting', label: 'Automatic routing', hint: 'Suggest the tier for a task from past results and cost when you did not pick one', type: 'toggle' },
+      { key: 'memoryEnabled', label: 'Project memory', hint: 'Agents can remember and recall facts about a project · off blocks both', type: 'toggle' },
+      { key: 'integrationsEnabled', label: 'Share your setup with agents', hint: 'Off stops sharing rules, MCP servers and skills with launched agents, whatever Share setup says', type: 'toggle' },
+      { key: 'cloudProviders', label: 'Cloud providers', hint: 'Off keeps routing to local models only', type: 'toggle' },
+      { key: 'localModels', label: 'Local models', hint: 'Allow the local Ollama model as a route and a provider', type: 'toggle' },
+      { key: 'retentionDays', label: 'Keep local history for', hint: 'Days, 1-3650 · older store records and outcomes are deleted', type: 'number', min: 1, max: 3650 },
+      { type: 'clearHistory', label: 'Clear local history delete store outcomes traces privacy' },
+    ]],
     ['Updates', [
       { type: 'updates', label: 'Check for updates version release' },
       { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and on the schedule below, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
@@ -211,7 +220,7 @@ const Panels = (() => {
     ['Tiles', ['Layout', 'Tiles & subagents']],
     ['Projects', ['Projects', 'Sidebar', 'Files', 'CodeGraph']],
     ['Usage', ['Usage', 'Context and cache']],
-    ['Data', ['Memory', 'Backups', 'Skills backup']],
+    ['Data', ['Memory', 'Privacy', 'Backups', 'Skills backup']],
     ['Keybinds', ['Keybinds']],
   ];
   // Rows that move to another group than the one they were written in.
@@ -607,6 +616,11 @@ const Panels = (() => {
   }
 
   function rowHtml(it, cfg, ext) {
+    if (it.type === 'clearHistory') {
+      return confirmingClear
+        ? `<div class="set-row"><div class="lbl"><span>Delete store, outcomes and traces?</span><span class="hint">This cannot be undone</span></div><div class="ctl"><button class="btn primary" data-clear-history="yes">Yes</button><button class="btn" data-clear-history="no">Cancel</button></div></div>`
+        : `<div class="set-row"><div class="lbl"><span>Local history</span><span class="hint">${esc(clearMsg || 'The local store, task outcomes and routing decision traces')}</span></div><div class="ctl"><button class="btn" data-clear-history="ask">Clear local history</button></div></div>`;
+    }
     if (it.type === 'stateBackups') return stateBackupsEditor(cfg);
     if (it.type === 'skillsBackup') return backupEditor(cfg, ext);
     if (it.type === 'projects') return projectsEditor(cfg);
@@ -785,6 +799,12 @@ const Panels = (() => {
         await refreshBackups();
       });
       if (Date.now() - updateHistoryAt > 2000 && pane.querySelector('[data-uh]')) { updateHistoryAt = Date.now(); ext.updateHistory().then(l => { updateHistory = l; draw(); }); }
+      pane.querySelectorAll('[data-clear-history]').forEach(b => b.onclick = async () => {
+        const a = b.dataset.clearHistory;
+        if (a === 'yes') { const r = await ext.clearHistory(); clearMsg = r && r.ok ? `Deleted ${r.removed} files` : 'Could not clear history'; }
+        confirmingClear = a === 'ask';
+        draw();
+      });
       pane.querySelectorAll('[data-sbk-create]').forEach(b => b.onclick = async () => {
         b.disabled = true;
         const r = await ext.createStateBackup();
@@ -880,7 +900,7 @@ const Panels = (() => {
     }
 
     body.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => {
-      tab = b.dataset.tab; query = ''; search.value = ''; confirmingReset = false;
+      tab = b.dataset.tab; query = ''; search.value = ''; confirmingReset = false; confirmingClear = false;
       try { localStorage.setItem('operant.settings.tab', tab); } catch {}
       markTabs(); pane.scrollTop = 0; draw();
     });

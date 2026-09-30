@@ -54,6 +54,7 @@ function applyPatch(user, patch, defaults) {
 // Numeric limits per setting. The Settings controls' min/max and these must agree (test/settings-contract.test.js).
 // int: whole numbers only; unit: how the message names it.
 const RANGES = {
+  retentionDays: { min: 1, max: 3650, int: true, unit: 'days' },
   borderAnimationSeconds: { min: 2, max: 20, int: true, unit: 'seconds' },
   opacity: { min: 0.4, max: 1 },
   blur: { min: 0, max: 40, int: true, unit: 'px' },

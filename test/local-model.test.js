@@ -97,3 +97,31 @@ test('a failed pull is an error, refresh finds the model, remove clears it', asy
   assert.equal((await h.m.remove('gemma4:e4b')).status, 'none');
   assert.equal((await h.m.refresh('gemma4:e4b')).status, 'none');
 });
+
+test('local helper: classify uses a valid answer, falls back otherwise, never calls run when not ready', async () => {
+  let calls = 0;
+  const ok = { run: async () => { calls++; return ' Docs.\n'; }, ready: () => true, fallback: () => 'other' };
+  assert.equal(await lm.classifyTask('write the readme', ok), 'docs');
+  assert.equal(await lm.classifyTask('x', { ...ok, run: async () => 'banana split' }), 'other');
+  assert.equal(await lm.classifyTask('x', { ...ok, run: async () => { throw new Error('boom'); } }), 'other');
+  assert.equal(await lm.classifyTask('x', { ...ok, run: () => new Promise(() => {}), timeoutMs: 20 }), 'other');
+  calls = 0;
+  assert.equal(await lm.classifyTask('x', { ...ok, ready: () => false, run: async () => { calls++; return 'fix'; } }), 'other');
+  assert.equal(calls, 0);
+  assert.equal(await lm.classifyTask('fix the crash', { run: async () => 'docs', ready: () => false }), 'fix');
+});
+
+test('local helper: summary falls back and secrets never reach the model', async () => {
+  const long = Array.from({ length: 200 }, (_, i) => `line ${i} sk-abcdefghijklmnopqrstuvwx ghp_abcdefghijklmnopqrstuvwxyz0123456789 Authorization: Bearer abc123def456ghi789jkl`).join('\n');
+  const seen = [];
+  const run = async p => { seen.push(p); return 'summary with sk-abcdefghijklmnopqrstuvwx'; };
+  const out = await lm.summariseOutput(long, { run, ready: () => true });
+  assert.equal(seen.length, 1);
+  for (const p of [seen[0], out]) assert.doesNotMatch(p, /sk-abcdefghijklmnopqrstuvwx|ghp_abcdefgh|Bearer abc123/);
+  assert.equal(await lm.summariseOutput('short', { run, ready: () => true }), 'short');
+  const fb = await lm.summariseOutput(long, { ready: () => true, run: async () => { throw new Error('x'); }, maxChars: 500 });
+  assert.ok(fb.length <= 560);
+  seen.length = 0;
+  await lm.summariseOutput(long, { run, ready: () => false });
+  assert.equal(seen.length, 0);
+});

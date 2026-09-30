@@ -273,4 +273,68 @@ function createLocalModel({ spawn = nodeSpawn, which, env = async () => process.
   return { install, remove, refresh, plan, cancel, test, dismiss, state: () => st, setModel: m => { if (!busy && m !== st.model) { st = { ...st, model: m, plan: null, failed: null }; } }, busy: () => busy };
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, BASE_URL, FREE_MODEL, WINGET_ARGS, providerConfig, withProvider, isFreeFailure, isFreeModelId, parsePercent, createLocalModel };
+// Cheap classification helpers for the local model: never a prompt refiner. Pure; `run(prompt) -> Promise<string>` is injected.
+const taskTypeLib = require('./task-type');
+const { redactText: redactForModel } = require('./redact');
+const outputCompress = require('./output-compress');
+const withTimeout = (p, ms) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error('timeout')), ms); Promise.resolve(p).then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); }); });
+const HELPER_TIMEOUT_MS = 20000;
+
+async function classifyTask(text, { run, ready, fallback = taskTypeLib.classifyTask, timeoutMs = HELPER_TIMEOUT_MS } = {}) {
+  const fb = () => fallback(text);
+  try {
+    if (typeof run !== 'function' || typeof ready !== 'function' || !ready()) return fb();
+    const types = taskTypeLib.TYPES;
+    const prompt = `Classify this coding task. Answer with exactly one word from: ${types.join(', ')}.
+
+Task:
+${redactForModel(String(text || '')).slice(0, 2000)}
+
+Answer:`;
+    const word = String(await withTimeout(run(prompt), timeoutMs)).toLowerCase().match(/[a-z]+/);
+    return word && types.includes(word[0]) ? word[0] : fb();
+  } catch { return fb(); }
+}
+
+function clipHeadTail(text, maxChars) {
+  return text.length <= maxChars ? text : `${text.slice(0, Math.floor(maxChars * 0.4))}
+... ${text.length - maxChars} chars omitted ...
+${text.slice(-Math.floor(maxChars * 0.6))}`;
+}
+
+async function summariseOutput(text, { run, ready, maxChars = 1500, timeoutMs = HELPER_TIMEOUT_MS } = {}) {
+  const s = String(text == null ? '' : text);
+  if (s.length < 1500) return s;
+  const fb = () => clipHeadTail(outputCompress.compress(s, { minChars: 0, minLines: 0 }), maxChars);
+  try {
+    if (typeof run !== 'function' || typeof ready !== 'function' || !ready()) return fb();
+    const prompt = `Summarise this tool output in under ${Math.floor(maxChars / 6)} words. Keep errors, file paths and exit codes. Do not add advice.
+
+${clipHeadTail(redactForModel(s), 6000)}`;
+    const out = redactForModel(String(await withTimeout(run(prompt), timeoutMs)).trim());
+    return out ? clipHeadTail(out, maxChars) : fb();
+  } catch { return fb(); }
+}
+
+// Builds `run` from `ollama run <model> <prompt>`. deps: { model(), which, spawn, env, ready() }.
+function createHelper({ model, which, spawn = nodeSpawn, env = async () => process.env, ready = () => false, timeoutMs = HELPER_TIMEOUT_MS } = {}) {
+  const run = async prompt => {
+    const exe = await which('ollama');
+    if (!exe) throw new Error('ollama not found');
+    return new Promise(async (resolve, reject) => {
+      let out = '', child;
+      try { child = spawn(exe, ['run', typeof model === 'function' ? model() : model, prompt], { env: await env(), windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { return reject(e); }
+      const t = setTimeout(() => { try { child.kill(); } catch {} reject(new Error('timeout')); }, timeoutMs);
+      child.stdout && child.stdout.on('data', d => { out += d.toString('utf8'); });
+      child.on('error', e => { clearTimeout(t); reject(e); });
+      child.on('close', code => { clearTimeout(t); code === 0 ? resolve(out) : reject(new Error(`exit ${code}`)); });
+    });
+  };
+  return {
+    run,
+    classify: (text, fallback) => classifyTask(text, { run, ready, fallback, timeoutMs }),
+    summarise: (text, o) => summariseOutput(text, { run, ready, timeoutMs, ...o }),
+  };
+}
+
+module.exports = { classifyTask, summariseOutput, createHelper, MODELS, DEFAULT_MODEL, BASE_URL, FREE_MODEL, WINGET_ARGS, providerConfig, withProvider, isFreeFailure, isFreeModelId, parsePercent, createLocalModel };

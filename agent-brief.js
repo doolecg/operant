@@ -5,6 +5,7 @@
 // (bin/operant-prime.js). So this stays identical every launch, short and cache-friendly.
 const fs = require('fs');
 const path = require('path');
+const { redactText } = require('./redact');
 
 // The skill's name as each agent sees it: Claude Code namespaces plugin skills.
 const SKILL_NAME = { claude: 'operant:operant', opencode: 'operant' };
@@ -32,7 +33,7 @@ function contextSection(task, pieces, { maxBytes = CONTEXT_MAX_BYTES, budget, he
   const room = Math.min(maxBytes, CONTEXT_MAX_BYTES) - Buffer.byteLength(heading);
   if (room <= 0) return '';
   const r = require('./context-engine').buildContext(task, pieces, { maxBytes: room, budget, headroom });
-  return r.text ? heading + r.text : '';
+  return r.text ? redactText(heading + r.text) : '';
 }
 
 // Written once into Operant's userData, never touching the user's own files. Claude Code gets its
@@ -75,7 +76,7 @@ function mainRules(mainAgent, launching) {
 }
 function mainRulesText(mainAgent, launching) {
   const p = mainRules(mainAgent, launching);
-  try { return p ? fs.readFileSync(p, 'utf8') : ''; } catch { return ''; }
+  try { return p ? redactText(fs.readFileSync(p, 'utf8')) : ''; } catch { return ''; }
 }
 // `pluginPath`, when given, is the long-command reroute (hooks/opencode-long-commands.mjs), in the
 // same object so everything merges into one config. `skillPaths` are folders of skill folders (the agent
