@@ -47,7 +47,7 @@ const HANDLERS = {
   async 'subagent-start'(input) {
     const r = await call('hook', { event: 'subagent-start' });
     if (!r || r.off) return null;
-    return { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: prime.subagentBrief(prime.readLocal(input.cwd || process.cwd())) } };
+    return { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: prime.subagentBrief(prime.readLocal(input.cwd || process.cwd(), { withGit: false })) } };
   },
   // Before the turn ends: agent messages waiting for this tile keep it going, and a worker with its
   // board task open is asked once for the report. The app decides which; stop_hook_active tells it

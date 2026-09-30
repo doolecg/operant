@@ -1,0 +1,308 @@
+> app@1.0.0 build
+> tsc -p .
+  progress: compiled module 0 of 200 ok
+  progress: compiled module 1 of 200 ok
+  progress: compiled module 2 of 200 ok
+  progress: compiled module 3 of 200 ok
+  progress: compiled module 4 of 200 ok
+  progress: compiled module 5 of 200 ok
+  progress: compiled module 6 of 200 ok
+  progress: compiled module 7 of 200 ok
+  progress: compiled module 8 of 200 ok
+  progress: compiled module 9 of 200 ok
+  progress: compiled module 10 of 200 ok
+  progress: compiled module 11 of 200 ok
+  progress: compiled module 12 of 200 ok
+  progress: compiled module 13 of 200 ok
+  progress: compiled module 14 of 200 ok
+  progress: compiled module 15 of 200 ok
+  progress: compiled module 16 of 200 ok
+  progress: compiled module 17 of 200 ok
+  progress: compiled module 18 of 200 ok
+  progress: compiled module 19 of 200 ok
+  progress: compiled module 20 of 200 ok
+  progress: compiled module 21 of 200 ok
+  progress: compiled module 22 of 200 ok
+  progress: compiled module 23 of 200 ok
+  progress: compiled module 24 of 200 ok
+  progress: compiled module 25 of 200 ok
+  progress: compiled module 26 of 200 ok
+  progress: compiled module 27 of 200 ok
+  progress: compiled module 28 of 200 ok
+  progress: compiled module 29 of 200 ok
+  progress: compiled module 30 of 200 ok
+  progress: compiled module 31 of 200 ok
+  progress: compiled module 32 of 200 ok
+  progress: compiled module 33 of 200 ok
+  progress: compiled module 34 of 200 ok
+  progress: compiled module 35 of 200 ok
+  progress: compiled module 36 of 200 ok
+  progress: compiled module 37 of 200 ok
+  progress: compiled module 38 of 200 ok
+  progress: compiled module 39 of 200 ok
+  progress: compiled module 40 of 200 ok
+  progress: compiled module 41 of 200 ok
+  progress: compiled module 42 of 200 ok
+  progress: compiled module 43 of 200 ok
+  progress: compiled module 44 of 200 ok
+  progress: compiled module 45 of 200 ok
+  progress: compiled module 46 of 200 ok
+  progress: compiled module 47 of 200 ok
+  progress: compiled module 48 of 200 ok
+  progress: compiled module 49 of 200 ok
+  progress: compiled module 50 of 200 ok
+  progress: compiled module 51 of 200 ok
+  progress: compiled module 52 of 200 ok
+  progress: compiled module 53 of 200 ok
+  progress: compiled module 54 of 200 ok
+  progress: compiled module 55 of 200 ok
+  progress: compiled module 56 of 200 ok
+  progress: compiled module 57 of 200 ok
+  progress: compiled module 58 of 200 ok
+  progress: compiled module 59 of 200 ok
+  progress: compiled module 60 of 200 ok
+  progress: compiled module 61 of 200 ok
+  progress: compiled module 62 of 200 ok
+  progress: compiled module 63 of 200 ok
+  progress: compiled module 64 of 200 ok
+  progress: compiled module 65 of 200 ok
+  progress: compiled module 66 of 200 ok
+  progress: compiled module 67 of 200 ok
+  progress: compiled module 68 of 200 ok
+  progress: compiled module 69 of 200 ok
+  progress: compiled module 70 of 200 ok
+  progress: compiled module 71 of 200 ok
+  progress: compiled module 72 of 200 ok
+  progress: compiled module 73 of 200 ok
+  progress: compiled module 74 of 200 ok
+  progress: compiled module 75 of 200 ok
+  progress: compiled module 76 of 200 ok
+  progress: compiled module 77 of 200 ok
+  progress: compiled module 78 of 200 ok
+  progress: compiled module 79 of 200 ok
+  progress: compiled module 80 of 200 ok
+  progress: compiled module 81 of 200 ok
+  progress: compiled module 82 of 200 ok
+  progress: compiled module 83 of 200 ok
+  progress: compiled module 84 of 200 ok
+  progress: compiled module 85 of 200 ok
+  progress: compiled module 86 of 200 ok
+  progress: compiled module 87 of 200 ok
+  progress: compiled module 88 of 200 ok
+  progress: compiled module 89 of 200 ok
+  progress: compiled module 90 of 200 ok
+  progress: compiled module 91 of 200 ok
+  progress: compiled module 92 of 200 ok
+  progress: compiled module 93 of 200 ok
+  progress: compiled module 94 of 200 ok
+  progress: compiled module 95 of 200 ok
+  progress: compiled module 96 of 200 ok
+  progress: compiled module 97 of 200 ok
+  progress: compiled module 98 of 200 ok
+  progress: compiled module 99 of 200 ok
+  progress: compiled module 100 of 200 ok
+  progress: compiled module 101 of 200 ok
+  progress: compiled module 102 of 200 ok
+  progress: compiled module 103 of 200 ok
+  progress: compiled module 104 of 200 ok
+  progress: compiled module 105 of 200 ok
+  progress: compiled module 106 of 200 ok
+  progress: compiled module 107 of 200 ok
+  progress: compiled module 108 of 200 ok
+  progress: compiled module 109 of 200 ok
+  progress: compiled module 110 of 200 ok
+  progress: compiled module 111 of 200 ok
+  progress: compiled module 112 of 200 ok
+  progress: compiled module 113 of 200 ok
+  progress: compiled module 114 of 200 ok
+  progress: compiled module 115 of 200 ok
+  progress: compiled module 116 of 200 ok
+  progress: compiled module 117 of 200 ok
+  progress: compiled module 118 of 200 ok
+  progress: compiled module 119 of 200 ok
+  progress: compiled module 120 of 200 ok
+  progress: compiled module 121 of 200 ok
+  progress: compiled module 122 of 200 ok
+  progress: compiled module 123 of 200 ok
+  progress: compiled module 124 of 200 ok
+  progress: compiled module 125 of 200 ok
+  progress: compiled module 126 of 200 ok
+  progress: compiled module 127 of 200 ok
+  progress: compiled module 128 of 200 ok
+  progress: compiled module 129 of 200 ok
+  progress: compiled module 130 of 200 ok
+  progress: compiled module 131 of 200 ok
+  progress: compiled module 132 of 200 ok
+  progress: compiled module 133 of 200 ok
+  progress: compiled module 134 of 200 ok
+  progress: compiled module 135 of 200 ok
+  progress: compiled module 136 of 200 ok
+  progress: compiled module 137 of 200 ok
+  progress: compiled module 138 of 200 ok
+  progress: compiled module 139 of 200 ok
+  progress: compiled module 140 of 200 ok
+  progress: compiled module 141 of 200 ok
+  progress: compiled module 142 of 200 ok
+  progress: compiled module 143 of 200 ok
+  progress: compiled module 144 of 200 ok
+  progress: compiled module 145 of 200 ok
+  progress: compiled module 146 of 200 ok
+  progress: compiled module 147 of 200 ok
+  progress: compiled module 148 of 200 ok
+  progress: compiled module 149 of 200 ok
+  progress: compiled module 150 of 200 ok
+  progress: compiled module 151 of 200 ok
+  progress: compiled module 152 of 200 ok
+  progress: compiled module 153 of 200 ok
+  progress: compiled module 154 of 200 ok
+  progress: compiled module 155 of 200 ok
+  progress: compiled module 156 of 200 ok
+  progress: compiled module 157 of 200 ok
+  progress: compiled module 158 of 200 ok
+  progress: compiled module 159 of 200 ok
+  progress: compiled module 160 of 200 ok
+  progress: compiled module 161 of 200 ok
+  progress: compiled module 162 of 200 ok
+  progress: compiled module 163 of 200 ok
+  progress: compiled module 164 of 200 ok
+  progress: compiled module 165 of 200 ok
+  progress: compiled module 166 of 200 ok
+  progress: compiled module 167 of 200 ok
+  progress: compiled module 168 of 200 ok
+  progress: compiled module 169 of 200 ok
+  progress: compiled module 170 of 200 ok
+  progress: compiled module 171 of 200 ok
+  progress: compiled module 172 of 200 ok
+  progress: compiled module 173 of 200 ok
+  progress: compiled module 174 of 200 ok
+  progress: compiled module 175 of 200 ok
+  progress: compiled module 176 of 200 ok
+  progress: compiled module 177 of 200 ok
+  progress: compiled module 178 of 200 ok
+  progress: compiled module 179 of 200 ok
+  progress: compiled module 180 of 200 ok
+  progress: compiled module 181 of 200 ok
+  progress: compiled module 182 of 200 ok
+  progress: compiled module 183 of 200 ok
+  progress: compiled module 184 of 200 ok
+  progress: compiled module 185 of 200 ok
+  progress: compiled module 186 of 200 ok
+  progress: compiled module 187 of 200 ok
+  progress: compiled module 188 of 200 ok
+  progress: compiled module 189 of 200 ok
+  progress: compiled module 190 of 200 ok
+  progress: compiled module 191 of 200 ok
+  progress: compiled module 192 of 200 ok
+  progress: compiled module 193 of 200 ok
+  progress: compiled module 194 of 200 ok
+  progress: compiled module 195 of 200 ok
+  progress: compiled module 196 of 200 ok
+  progress: compiled module 197 of 200 ok
+  progress: compiled module 198 of 200 ok
+  progress: compiled module 199 of 200 ok
+src/app.ts:42:7 - error TS2322: Type string is not assignable to type number.
+TypeError: x is not a function
+    at run (F:/repo/src/app.js:42:7)
+    at Object.<anonymous> (F:/repo/src/index.js:9:1)
+  copying asset file_0.png
+  copying asset file_1.png
+  copying asset file_2.png
+  copying asset file_3.png
+  copying asset file_4.png
+  copying asset file_5.png
+  copying asset file_6.png
+  copying asset file_7.png
+  copying asset file_8.png
+  copying asset file_9.png
+  copying asset file_10.png
+  copying asset file_11.png
+  copying asset file_12.png
+  copying asset file_13.png
+  copying asset file_14.png
+  copying asset file_15.png
+  copying asset file_16.png
+  copying asset file_17.png
+  copying asset file_18.png
+  copying asset file_19.png
+  copying asset file_20.png
+  copying asset file_21.png
+  copying asset file_22.png
+  copying asset file_23.png
+  copying asset file_24.png
+  copying asset file_25.png
+  copying asset file_26.png
+  copying asset file_27.png
+  copying asset file_28.png
+  copying asset file_29.png
+  copying asset file_30.png
+  copying asset file_31.png
+  copying asset file_32.png
+  copying asset file_33.png
+  copying asset file_34.png
+  copying asset file_35.png
+  copying asset file_36.png
+  copying asset file_37.png
+  copying asset file_38.png
+  copying asset file_39.png
+  copying asset file_40.png
+  copying asset file_41.png
+  copying asset file_42.png
+  copying asset file_43.png
+  copying asset file_44.png
+  copying asset file_45.png
+  copying asset file_46.png
+  copying asset file_47.png
+  copying asset file_48.png
+  copying asset file_49.png
+  copying asset file_50.png
+  copying asset file_51.png
+  copying asset file_52.png
+  copying asset file_53.png
+  copying asset file_54.png
+  copying asset file_55.png
+  copying asset file_56.png
+  copying asset file_57.png
+  copying asset file_58.png
+  copying asset file_59.png
+  copying asset file_60.png
+  copying asset file_61.png
+  copying asset file_62.png
+  copying asset file_63.png
+  copying asset file_64.png
+  copying asset file_65.png
+  copying asset file_66.png
+  copying asset file_67.png
+  copying asset file_68.png
+  copying asset file_69.png
+  copying asset file_70.png
+  copying asset file_71.png
+  copying asset file_72.png
+  copying asset file_73.png
+  copying asset file_74.png
+  copying asset file_75.png
+  copying asset file_76.png
+  copying asset file_77.png
+  copying asset file_78.png
+  copying asset file_79.png
+  copying asset file_80.png
+  copying asset file_81.png
+  copying asset file_82.png
+  copying asset file_83.png
+  copying asset file_84.png
+  copying asset file_85.png
+  copying asset file_86.png
+  copying asset file_87.png
+  copying asset file_88.png
+  copying asset file_89.png
+  copying asset file_90.png
+  copying asset file_91.png
+  copying asset file_92.png
+  copying asset file_93.png
+  copying asset file_94.png
+  copying asset file_95.png
+  copying asset file_96.png
+  copying asset file_97.png
+  copying asset file_98.png
+  copying asset file_99.png
+npm ERR! code ELIFECYCLE
+Process exited with code 2

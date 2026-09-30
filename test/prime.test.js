@@ -140,7 +140,7 @@ test('readLocal walks up to the repo root, and no further', () => {
     fs.mkdirSync(path.join(repo, '.operant'));
     fs.writeFileSync(path.join(repo, '.operant', 'progress.md'), 'next: tests');
     fs.mkdirSync(path.join(root, '.codegraph')); // above the repo: not this project's index
-    assert.deepEqual(readLocal(deep), { progress: 'next: tests', codegraph: false, codegraphBroken: false });
+    assert.deepEqual(readLocal(deep, { withGit: false }), { progress: 'next: tests', codegraph: false, codegraphBroken: false, profile: null, git: null });
     fs.mkdirSync(path.join(repo, '.codegraph'));
     assert.equal(readLocal(deep).codegraph, true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }

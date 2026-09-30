@@ -635,6 +635,8 @@
     + "project (what's done, what's next, open questions), then stop.";
   const compacting = new Map(); // tile id -> { stage, idleSince, sentAt, seenActivity }
   const pctOf = w => w.ctx && w.ctx.max ? w.ctx.tokens / w.ctx.max : 0;
+  const recovery = ContextRecovery.createRecovery();
+  const resuming = new Map(); // tile id -> { sentAt, text, split }: a compact was sent; hand the checkpoint back once it settles
 
   function queueCompact(w) {
     if (!w.alive || !w.ptyId || compacting.has(w.id)) return;
@@ -652,11 +654,27 @@
 
   async function runCompact(w) {
     if (!w.alive || !w.ptyId) return;
+    const t = openTaskOf(w);
+    const { checkpoint, split } = recovery.beginCompact(w.id, { task: t && t.text, files: ((t && t.changes) || []).map(c => c.path || c) });
+    resuming.set(w.id, { sentAt: Date.now(), text: ContextRecovery.checkpointText(checkpoint), split });
+    if (split) toast(`${esc(w.title)} has compacted twice, suggest splitting its task`);
     if (String(w.sessionId || '').startsWith('oc:')) {
       const r = await operant.summarizeOpenCode(w.ptyId).catch(() => null);
       if (r && r.ok) return;
     }
     sendLine(w, '/compact');
+  }
+
+  // After a compact settles, the worker gets its checkpoint back (and the split advice on the second one).
+  function tickResuming() {
+    const now = Date.now();
+    for (const [id, st] of [...resuming]) {
+      const w = wins.get(id);
+      if (!w || !w.alive || !w.ptyId) { resuming.delete(id); continue; }
+      if (isWorking(w) || w.draft || w.lastActivity <= st.sentAt || now - w.lastActivity < 3000) { if (now - st.sentAt > 180000) resuming.delete(id); continue; }
+      resuming.delete(id);
+      sendLine(w, st.text + (st.split ? ' ' + ContextRecovery.SPLIT_MSG : ''));
+    }
   }
 
   // A tile that was never typed into by hand (e.g. started with `operant agent`) never sets
@@ -689,6 +707,11 @@
 
   function checkAutoCompact() {
     const threshold = (cfg.autoCompact || 0) / 100;
+    const warnAt = ContextRecovery.warnLevel(cfg.autoCompact) / 100;
+    for (const w of wins.values()) {
+      if (w.kind !== 'ai' || !w.alive || !w.ptyId || !w.ctx || !w.ctx.max || compacting.has(w.id) || resuming.has(w.id)) continue;
+      if (recovery.shouldWarn(w.id, pctOf(w), warnAt, threshold) && !(sq && sq.ids.includes(w.id))) sendLine(w, ContextRecovery.WARN_MSG(pctOf(w) * 100));
+    }
     if (threshold > 0) {
       for (const w of wins.values()) {
         if (w.kind !== 'ai' || !w.alive || !w.ptyId || !w.ctx || !w.ctx.max) continue;
@@ -698,6 +721,7 @@
       }
     }
     tickCompacting();
+    tickResuming();
     tickCacheState();
   }
   setInterval(checkAutoCompact, 1000);
@@ -1826,6 +1850,7 @@
     const closeMs = parseFloat(getComputedStyle(document.body).getPropertyValue('--anim-pop')) || 0;
     setTimeout(() => { w.term?.dispose(); w.el.remove(); }, closeMs);
     wins.delete(w.id);
+    recovery.forget(w.id); resuming.delete(w.id);
     layout(wsIndex);
     if (wasFocused) {
       const n = neighbour || wins.get(wsWins(wsIndex).at(-1)?.id);

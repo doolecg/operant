@@ -471,7 +471,9 @@ function fmtTaskShow(r) {
   return lines.join('\n');
 }
 
-function formatResult(cmd, result) {
+function formatResult(cmd, result, opts) {
+  // Long plain output only: --errors, --grep and --digest output is already narrowed.
+  const sq = t => (opts && opts.compress) ? require('../output-compress').compress(t) : t;
   switch (cmd) {
     case 'tiles': return (result || []).map(fmtTile).join('\n');
     case 'status': return `${result.id}  ${result.kind}  ${result.title}  ${result.cwd}  ws=${result.ws}${result.branch ? '  ' + result.branch : ''}${result.tokens ? '  ' + result.tokens + ' tokens' : ''}`;
@@ -490,8 +492,8 @@ function formatResult(cmd, result) {
       if (result.askBeforeMoveUp) lines.push('a task never moves up a tier by itself: a stuck worker, a second failure or rejection, or a spent limit pauses it until the user answers on the board');
       return lines.join('\n');
     }
-    case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : (result.text || '(no output)');
-    case 'read': return ('digest' in result) ? fmtDigest(result.digest) : (result.text || '') + footer(result);
+    case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : sq(result.text || '(no output)');
+    case 'read': return ('digest' in result) ? fmtDigest(result.digest) : sq(result.text || '') + footer(result);
     case 'wait': return ('digest' in result) ? (result.exited ? '[exited]\n' : '') + fmtDigest(result.digest) : (result.exited ? '[exited]\n' : '') + (result.text || '') + footer(result);
     case 'stop': return `stopped tile ${result.id} (${result.how})`;
     case 'ask': return result.answer === null ? '(closed)' : String(result.answer);
@@ -643,11 +645,11 @@ async function main() {
     await quit(1);
   }
 
-  let body;
+  let body, inlineWait = false;
   try { body = JSON.parse(res.text); } catch { body = null; }
   // --inline: not finished within the threshold, so it now lives in the Backrooms: wait for its errors only.
   if (cmd === 'run' && body && body.ok !== false && body.result && body.result.handedOver) {
-    try { res = await post(api, { cmd: 'wait', args: { id: body.result.id, errors: true }, tile: process.env.OPERANT_TILE }); body = JSON.parse(res.text); cmd = 'wait'; } catch { body = null; }
+    try { res = await post(api, { cmd: 'wait', args: { id: body.result.id, errors: true }, tile: process.env.OPERANT_TILE }); body = JSON.parse(res.text); cmd = 'wait'; inlineWait = true; } catch { body = null; }
   }
 
   if (body && body.warn) console.error(body.warn);
@@ -659,7 +661,7 @@ async function main() {
 
   if (asJson) console.log(JSON.stringify(body.result));
   else {
-    const text = formatResult(cmd, body.result);
+    const text = formatResult(cmd, body.result, { compress: !inlineWait && !args.errors && !args.grep && !args.digest });
     if (text) console.log(text);
   }
 }
