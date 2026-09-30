@@ -45,3 +45,18 @@ test('counters are stored in .operant and read back with a rate', () => {
     assert.equal(cp.formatStats({}), '');
   } finally { fs.rmSync(cwd, { recursive: true, force: true }); }
 });
+
+test('tool noter: CodeGraph and git lookups are calls, the next edit makes them used', () => {
+  const seen = [];
+  const note = cp.createToolNoter((p, f) => seen.push(`${p}:${f}`));
+  note('Bash', { command: 'codegraph explore "foo"' });
+  note('mcp__codegraph__codegraph_explore', {});
+  note('Bash', { command: 'git log --oneline -5' });
+  note('Bash', { command: 'git commit -m x' }); // not a lookup
+  note('Read', { file_path: 'a.js' });
+  assert.deepEqual(seen, ['codegraph:called', 'codegraph:called', 'git:called']);
+  note('Edit', { file_path: 'a.js' });
+  assert.deepEqual(seen.slice(3).sort(), ['codegraph:used', 'git:used']);
+  note('Edit', { file_path: 'b.js' }); // nothing new to credit
+  assert.equal(seen.length, 5);
+});

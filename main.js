@@ -1736,14 +1736,24 @@ ipcMain.handle('outcome:routeUse', async () => {
 ipcMain.handle('outcome:codegraph', async () => {
   try { return outcomes.summarizeCodegraph(outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 })); } catch { return null; }
 });
+// Decomposition: lead-spawned worker groups of the last 30 days, for `operant usage`.
+ipcMain.handle('outcome:parallel', async () => {
+  try { return outcomes.summarizeGroups(outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 })); } catch { return null; }
+});
 // Item 90: before a worker starts on a code task, Operant checks the index (syncing it when stale) and runs
 // `codegraph explore` for the symbols the task names; the renderer adds the capped result to the worker's brief.
 ipcMain.handle('codegraph:prepare', async (_e, { cwd, task, isCode }) => {
   try {
     const env = await freshEnv();
     const exec = (args, o = {}) => run('codegraph', args, { shell: true, env, cwd, timeout: o.timeout || 30000 });
-    return await cgFirst.prepareBrief({ cwd, task, isCode: isCode !== false, exists: fs.existsSync, exec });
+    const r = await cgFirst.prepareBrief({ cwd, task, isCode: isCode !== false, exists: fs.existsSync, exec });
+    if (r.explored) { const cp = require('./context-providers'); cp.recordFor(cwd, 'codegraph', 'called'); cp.recordFor(cwd, 'codegraph', 'used'); }
+    return r;
   } catch (e) { return { state: 'degraded', reason: 'the check failed', text: cgFirst.DEGRADED_TEXT('the check failed'), explored: false }; }
+});
+// The context section of a worker's brief: files the task names, project profile, matching memories, git changes.
+ipcMain.handle('worker:context', (_e, { cwd, task }) => {
+  try { return require('./worker-context').workerContext({ cwd, task, userDataDir: app.getPath('userData') }); } catch (e) { return { text: '', sources: [] }; }
 });
 // Health view (health.js): each part of the app with a state, checked from what Operant already knows (no new probes
 // per refresh; CodeGraph's version is remembered for 5 minutes). Cached, re-checked every 5 minutes, and the
@@ -2055,11 +2065,13 @@ function cgOf(sessionId) {
 function cgArm(sessionId, cwd) {
   const on = !!cwd && isDir(path.join(cwd, '.codegraph'));
   const c = cgOf(sessionId);
+  if (cwd && c.cwd !== cwd) { c.cwd = cwd; c.noter = require('./context-providers').createToolNoter((p, f) => require('./context-providers').recordFor(cwd, p, f)); }
   if (on !== c.enabled) { c.enabled = on; const st = c.tracker.stats(); if (!st.firstAction) c.tracker = cgFirst.createCgTracker({ enabled: on }); }
 }
 function noteCodegraph(sessionId, owner, name, input, toolId) {
   const c = cgOf(sessionId);
   if (toolId != null) { if (c.seen.has(toolId)) return; c.seen.add(toolId); if (c.seen.size > 400) c.seen.delete(c.seen.values().next().value); }
+  if (c.noter) c.noter(name, input);
   const sig = c.tracker.onToolUse(name, input);
   if (sig && c.enabled && config.runawayGuard !== 'off' && alive(owner)) sendTo(owner, 'stuck', { sessionId, reason: sig.reason, kind: sig.kind, nudge: cgFirst.NUDGE_TEXT });
 }

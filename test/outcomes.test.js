@@ -43,3 +43,31 @@ test('summarize groups by type and tier', () => {
   assert.equal(s.fix.medium.failed, 1);
   assert.equal(s.docs.small.avgUsd, 0);
 });
+
+test('summarizeGroups: workers, tokens, wall time and extra tokens per lead group', () => {
+  const MIN = 60000, tok = n => ({ input: n, output: 0, cacheWrite: 0, cacheRead: 0 });
+  const e = (taskId, lead, t, durationMs, n, extra = {}) => ({ t, taskId, lead, project: 'p', durationMs, tokens: tok(n), status: 'done', ...extra });
+  const s = o.summarizeGroups([
+    e(1, 5, 10 * MIN, 10 * MIN, 100),
+    e(2, 5, 12 * MIN, 8 * MIN, 200),
+    e(3, 5, 14 * MIN, 8 * MIN, 300, { status: 'escalated' }),
+    e(3, 5, 20 * MIN, 12 * MIN, 400),
+    e(9, 7, 500 * MIN, 5 * MIN, 50),          // a lone task is no group
+    e(10, null, 12 * MIN, MIN, 1e6),           // no lead: ignored
+  ]);
+  assert.equal(s.groups, 1);
+  assert.equal(s.latest.workers, 3);
+  assert.equal(s.latest.tokens, 1000);
+  assert.equal(s.latest.wallMs, 20 * MIN);
+  assert.equal(s.latest.serialMs, 30 * MIN);
+  assert.equal(s.avgTask, Math.round((100 + 200 + 700 + 50) / 4));
+  assert.equal(s.latest.extraTokens, 1000 - s.avgTask);
+  assert.equal(o.summarizeGroups([e(1, 5, 10 * MIN, MIN, 1)]), null);
+});
+
+test('summarizeGroups: a long gap starts a new group', () => {
+  const MIN = 60000, tok = { input: 10, output: 0, cacheWrite: 0, cacheRead: 0 };
+  const e = (taskId, t) => ({ t, taskId, lead: 1, project: 'p', durationMs: MIN, tokens: tok, status: 'done' });
+  const s = o.summarizeGroups([e(1, 10 * MIN), e(2, 11 * MIN), e(3, 300 * MIN), e(4, 301 * MIN)]);
+  assert.equal(s.groups, 2);
+});

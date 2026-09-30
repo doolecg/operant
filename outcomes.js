@@ -78,6 +78,40 @@ function summarizeCodegraph(entries) {
   return out;
 }
 
+// Decomposition: outcomes of tasks one lead handed out (same `lead`, each starting within `gapMs` of the last one
+// still running or just done) form a group. Groups of two or more tasks are reported with their workers, total
+// tokens (escalated runs included), wall time (first start to last finish) and the time the same tasks would take
+// one after another. Extra tokens are estimated against one worker doing the job: the average task's tokens.
+// -> { groups, workers, tokens, avgTask, extraTokens, wallMs, serialMs, latest } or null when no group qualifies.
+function summarizeGroups(entries, { gapMs = 30 * 60000 } = {}) {
+  const list = (entries || []).filter(e => e && e.kind !== 'orchestration' && e.lead != null && e.taskId != null && typeof e.t === 'number');
+  const tasks = new Map();
+  for (const e of list) { const k = e.project + '|' + e.taskId + '|' + e.lead; if (!tasks.has(k)) tasks.set(k, []); tasks.get(k).push(e); }
+  const avgTask = tasks.size ? Math.round([...tasks.values()].reduce((a, es) => a + es.reduce((x, e) => x + total(e.tokens), 0), 0) / tasks.size) : 0;
+  const byLead = new Map();
+  for (const e of list) { const k = e.project + '|' + e.lead; if (!byLead.has(k)) byLead.set(k, []); byLead.get(k).push(e); }
+  const start = e => e.t - (e.durationMs || 0);
+  const groups = [];
+  for (const es of byLead.values()) {
+    es.sort((a, b) => start(a) - start(b));
+    let cur = null;
+    for (const e of es) {
+      if (!cur || start(e) - cur.end > gapMs) groups.push(cur = { es: [], end: 0 });
+      cur.es.push(e); cur.end = Math.max(cur.end, e.t);
+    }
+  }
+  const out = groups.map(g => {
+    const ids = new Set(g.es.map(e => e.taskId));
+    const tokens = g.es.reduce((a, e) => a + total(e.tokens), 0);
+    const wallMs = g.end - Math.min(...g.es.map(start));
+    const serialMs = g.es.filter(e => e.status !== 'escalated').reduce((a, e) => a + (e.durationMs || 0), 0);
+    return { workers: ids.size, tokens, extraTokens: tokens - avgTask, wallMs, serialMs, end: g.end };
+  }).filter(g => g.workers >= 2).sort((a, b) => a.end - b.end);
+  if (!out.length) return null;
+  const sum = k => out.reduce((a, g) => a + g[k], 0);
+  return { groups: out.length, workers: sum('workers'), tokens: sum('tokens'), avgTask, extraTokens: sum('extraTokens'), wallMs: sum('wallMs'), serialMs: sum('serialMs'), latest: out[out.length - 1] };
+}
+
 // Item 96: how each kind of task went on each route (model), for the routing that stops sending a task type to a route
 // that keeps failing there. -> { "<type>": { "<model>": { n, passed } } }
 function summarizeRoutes(entries) {
@@ -109,4 +143,4 @@ function summarizeRouteUse(entries, priceFn, paid = {}) {
   return out;
 }
 
-module.exports = { appendOutcome, readOutcomes, trimOutcomes, summarize, summarizeCodegraph, summarizeRoutes, summarizeRouteUse };
+module.exports = { appendOutcome, readOutcomes, trimOutcomes, summarize, summarizeCodegraph, summarizeGroups, summarizeRoutes, summarizeRouteUse };

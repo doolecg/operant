@@ -66,6 +66,26 @@ function bump(cwd, provider, field) {
 }
 const recordCall = (cwd, provider) => bump(cwd, provider, 'called');
 const recordUse = (cwd, provider) => bump(cwd, provider, 'used');
+// The same, for any folder inside a project: the counters live in the project root (where `operant usage` reads them).
+function recordFor(cwd, provider, field) {
+  let root = null;
+  try { root = require('./memory').memoryProjectDir(cwd); } catch { /* no project */ }
+  if (root) bump(root, provider, field === 'used' ? 'used' : 'called');
+}
+
+// Counts a worker's own lookups as they happen (main.js feeds it every tool use): a CodeGraph query or a git
+// history command is a call; the next edit after it counts the provider as used (the answer was acted on).
+const GIT_LOOKUP = /(?:^|[;&|(])\s*git\s+(?:-C\s+\S+\s+)?(log|diff|show|blame|status|reflog|shortlog|branch)(?![\w-])/i;
+function createToolNoter(record) {
+  const open = new Set();
+  return (name, input) => {
+    const k = require('./codegraph-first').classify(name, input).kind;
+    const c = input && typeof input === 'object' ? String(input.command ?? input.cmd ?? '') : '';
+    const provider = k === 'codegraph' ? 'codegraph' : k === 'other' && /^(bash|shell|powershell)$/i.test(String(name)) && GIT_LOOKUP.test(c) ? 'git' : null;
+    if (provider) { record(provider, 'called'); open.add(provider); return; }
+    if (k === 'edit' && open.size) { for (const p of open) record(p, 'used'); open.clear(); }
+  };
+}
 
 // One line for `operant usage`, '' when nothing was recorded.
 function formatStats(stats) {
@@ -73,4 +93,4 @@ function formatStats(stats) {
   return parts.length ? `context providers: ${parts.join('; ')}` : '';
 }
 
-module.exports = { choose, shapeOf, recordCall, recordUse, readStats, formatStats, CHAINS, PROVIDERS };
+module.exports = { choose, shapeOf, recordCall, recordUse, recordFor, createToolNoter, readStats, formatStats, CHAINS, PROVIDERS };

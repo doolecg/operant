@@ -539,6 +539,14 @@ function formatResult(cmd, result, opts) {
           + (g.tokensWith != null && g.tokensWithout != null ? `; tokens per task ${k(g.tokensWith)} with CodeGraph, ${k(g.tokensWithout)} without` : '')
           + (g.nudged ? `; nudged: ${g.nudged}` : '') + (g.degraded ? `; index degraded: ${g.degraded}` : ''));
       }
+      const pl = result.parallel;
+      if (pl) {
+        const k = n => Math.abs(n) >= 1000 ? `${(n / 1000).toFixed(Math.abs(n) >= 10000 ? 0 : 1)}k` : String(Math.round(n));
+        const m = ms => ms >= 3600000 ? `${(ms / 3600000).toFixed(1)}h` : `${Math.max(1, Math.round(ms / 60000))}m`;
+        const sign = n => (n >= 0 ? '+' : '-') + k(n);
+        const x = pl.latest;
+        lines.push(`parallel workers (last 30 days, ${pl.groups} group${pl.groups > 1 ? 's' : ''}): latest ${x.workers} workers, ${k(x.tokens)} tokens (${sign(x.extraTokens)} vs one worker, est. from the ${k(pl.avgTask)} average task), elapsed ${m(x.wallMs)}${x.serialMs > x.wallMs ? ` (about ${m(x.serialMs)} one after another)` : ''}`);
+      }
       const providerLine = require('../context-providers').formatStats(result.contextProviders);
       if (providerLine) lines.push(providerLine);
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));

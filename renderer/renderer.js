@@ -1265,7 +1265,12 @@
     if (r.state === 'degraded') toast(`CodeGraph is degraded for task ${t.id}: ${esc(r.reason || '')}. The worker falls back to grep.`);
     return r.text ? ` — ${r.text}` : '';
   }
-  // Item 96: the route a tier runs this task on. The tier already skips a route that is busy or out of free use; here a
+  // The brief's context section (worker-context.js): the files the task names, project profile, matching memories, git changes.
+async function contextBrief(t) {
+  const r = await operant.workerContext({ cwd: t.cwd || lastCwd, task: t.text }).catch(() => null);
+  return r && r.text ? r.text : '';
+}
+// Item 96: the route a tier runs this task on. The tier already skips a route that is busy or out of free use; here a
   // route this kind of task kept failing on is skipped too (outcomes). `route` is kept on the task and shown on the tile and the review card.
   async function routeFor(conf, text) {
     if (!conf || !conf.routes) return conf;
@@ -1283,7 +1288,7 @@
     if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team` + (agentMode(t.cwd || lastCwd) === 'both' ? '' : ` (this project is ${TeamTiers.MODE_LABEL[agentMode(t.cwd || lastCwd)]})`));
     // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
     // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
-    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${await codegraphBrief(t, t.cwd || lastCwd)} — ${reportLine(t.id)}`;
+    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${await codegraphBrief(t, t.cwd || lastCwd)}${await contextBrief(t)} — ${reportLine(t.id)}`;
     const lead = wins.get(t.lead);
     const w = await newTerminal('ai', t.cwd, {
       agentId: conf.agent, prompt, title: t.title || undefined, model: conf.model, effort: conf.effort || null,
@@ -1306,7 +1311,7 @@
     operant.recordOutcome({
       taskId: t.id, type: TaskType.classifyTask(t.text), tier: t.tier || null, agent: t.agent || null, model: t.model || null,
       sessionId: w?.sessionId || null, ptyId: w?.ptyId || null, codegraphIndex: t.codegraph?.state || null,
-      attempts: Board.attempts(t), escalations: t.escalations || 0, status, reason: String(t.failure && status === 'escalated' ? t.failure.split('\n')[0] : t.note || '').slice(0, 200),
+      lead: t.lead ?? null, attempts: Board.attempts(t), escalations: t.escalations || 0, status, reason: String(t.failure && status === 'escalated' ? t.failure.split('\n')[0] : t.note || '').slice(0, 200),
       durationMs: t.createdAt ? Date.now() - t.createdAt : null, tokens: addTok(t.tokens, w?.tok), cwd: t.cwd || null,
       ...(t.limitHit ? { limitHit: true } : {}),
       ...(t.route ? { route: t.route.label, ...(t.route.why ? { routeWhy: t.route.why } : {}) } : {}),
@@ -5160,7 +5165,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         const ctx = self.ctx || null;
         const codegraph = await operant.outcomeCodegraph().catch(() => null);
-        return { id: self.id, tokens: ctx?.tokens ?? null, max: ctx?.max ?? null, ...(codegraph && codegraph.tasks ? { codegraph } : {}),
+        const parallel = await operant.outcomeParallel().catch(() => null);
+        return { id: self.id, tokens: ctx?.tokens ?? null, max: ctx?.max ?? null, ...(codegraph && codegraph.tasks ? { codegraph } : {}), ...(parallel ? { parallel } : {}),
           pct: ctx && ctx.max ? Math.round((ctx.tokens / ctx.max) * 100) : null,
           project: self.cwd ? baseName(self.cwd) : null, dir: self.cwd ? projectDir(self.cwd) : null };
       }
