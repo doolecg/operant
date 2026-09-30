@@ -81,7 +81,7 @@ test('the flag table is what the handlers read', () => {
     read: 'lines new errors grep digest', wait: 'idle timeout new errors grep digest lines',
     agent: 'agent tier budget model cwd title focus', ask: 'options detail', notify: 'title', task: 'for note status', board: 'full',
     remember: 'type global about confidence supersedes source commit', recall: 'about all note', usage: 'breakdown days', watch: 'errors grep off',
-    close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', send: 'enter brief file new team',
+    stats: 'days', route: 'global hours', close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', send: 'enter brief file new team',
   };
   for (const [name, c] of Object.entries(COMMANDS)) {
     assert.deepEqual([...c.flags].sort(), (expected[name] || '').split(' ').filter(Boolean).sort(), name);
@@ -329,7 +329,7 @@ test('hooks outside a tile exit 0 and print nothing', async () => {
 test('help lists the topics; help <topic> prints one; a command still wins', async () => {
   const list = await runCli(['help']);
   assert.equal(list.code, 0);
-  assert.ok(list.out.includes('operant help <topic> for a short guide: workflows, fan-out, worker, team, gotchas.'));
+  assert.ok(list.out.includes('operant help <topic> for a short guide: workflows, fan-out, worker, team, operations, gotchas.'));
   assert.ok(list.out.includes('agents & tasks: agent, ask, notify, plan, task, board, team, summarize, find, msg, inbox'));
   assert.doesNotMatch(list.out, /version|hook|_desire/, 'hidden commands are not listed');
 
@@ -363,7 +363,7 @@ test('help for a guessed command shows the real one, and a near miss names the c
 });
 
 test('each topic is 8 to 20 short lines', () => {
-  assert.deepEqual(Object.keys(TOPICS), ['workflows', 'fan-out', 'worker', 'team', 'gotchas']);
+  assert.deepEqual(Object.keys(TOPICS), ['workflows', 'fan-out', 'worker', 'team', 'operations', 'gotchas']);
   for (const [name, text] of Object.entries(TOPICS)) {
     const lines = text.split('\n');
     assert.ok(lines.length >= 8 && lines.length <= 20, `${name} has ${lines.length} lines`);

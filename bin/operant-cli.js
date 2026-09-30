@@ -16,6 +16,7 @@ const POSITIONAL = {
   summarize: ['target', 'question'], find: ['question'],
   remember: ['text'], recall: ['query'],
   msg: ['id', 'text'], inbox: [],
+  doctor: [], providers: [], models: [], stats: [], route: ['sub', 'id'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', test: 'command', build: 'command',
@@ -25,7 +26,7 @@ const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'tex
 // usage/description/examples (for `operant help <cmd>`), and flags: the flags the command really reads
 // (--json works on every command, and a positional's name works as --name too). Keeps them in sync.
 // hidden: known to the CLI but left out of the lists and out of suggestions.
-const GROUP_ORDER = ['tiles', 'terminals', 'files', 'browser', 'agents & tasks', 'memory', 'context', 'misc'];
+const GROUP_ORDER = ['tiles', 'terminals', 'files', 'browser', 'agents & tasks', 'memory', 'context', 'operations', 'misc'];
 const COMMANDS = {
   tiles: { group: 'tiles', usage: 'operant tiles', desc: "list this window's tiles", examples: ['operant tiles'], flags: [] },
   status: { group: 'tiles', usage: 'operant status', desc: 'info about the calling tile', examples: ['operant status'], flags: [] },
@@ -67,6 +68,12 @@ const COMMANDS = {
   usage: { group: 'context', usage: 'operant usage [--breakdown] [--days 1|7]', desc: "your tile's context size and the plan limits, or (--breakdown) where its project's tokens went", examples: ['operant usage', 'operant usage --breakdown', 'operant usage --breakdown --days 7'], flags: ['breakdown', 'days'] },
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'], flags: [] },
   prime: { group: 'context', usage: 'operant prime', desc: 'your live Operant context: role and task, team tiers (while team mode is on), other tiles, dev servers, progress note, memory. Agents get it at session start and after each compact', examples: ['operant prime'], flags: [] },
+
+  doctor: { group: 'operations', usage: 'operant doctor', desc: 'health of providers, credentials (present or not, never printed), versions, MCP, local model, the local store and context providers: healthy, degraded, unavailable, not configured or unknown', examples: ['operant doctor'], flags: [] },
+  providers: { group: 'operations', usage: 'operant providers', desc: 'the configured agent CLIs: installed, credentials present, state', examples: ['operant providers'], flags: [] },
+  models: { group: 'operations', usage: 'operant models', desc: 'each team tier with its model, recorded availability and latency, and state', examples: ['operant models'], flags: [] },
+  stats: { group: 'operations', usage: 'operant stats [--days 7|30]', desc: 'from the local store: gross vs net tokens saved, the cost of Operant itself, retry hot spots, the model that wastes most tokens, unused integrations', examples: ['operant stats', 'operant stats --days 7'], flags: ['days'] },
+  route: { group: 'operations', usage: 'operant route explain <task id> | set <tier> [--global] [--hours n] | clear [--global] | show', desc: 'the stored reason for a task\'s tier (chosen, rejected alternative, evidence); set/clear/show a routing override for this project or (--global) all, optionally temporary; routing only picks among tiers already allowed', examples: ['operant route explain 8', 'operant route set small --hours 4', 'operant route clear'], flags: ['global', 'hours'] },
 
   ports: { group: 'misc', usage: 'operant ports', desc: "list dev-server URLs found in this window's tiles", examples: ['operant ports'], flags: [] },
   watch: { group: 'misc', usage: 'operant watch <id> --errors [--grep p]', desc: 'notify (and tell the agent on its next call) on a new matching line in a tile (--off to stop, no id to list)', examples: ['operant watch 7 --errors', 'operant watch 7 --off'], flags: ['errors', 'grep', 'off'] },
@@ -179,6 +186,18 @@ const TOPICS = {
     '  hand them to the xsmall tier and return only the answer, so you never load it yourself.',
     '  Check each worker result before you accept it, then operant close <id>.',
     '  Workers started with a tier run their parts as their own subagents; they cannot start workers of their own.',
+  ].join('\n'),
+  operations: [
+    'Check Operant itself and see why it routed the way it did; all of it reads the local store.',
+    '',
+    '  operant doctor            each part: healthy, degraded, unavailable, not configured or unknown',
+    '  operant providers         the agent CLIs: installed, credentials present (never shown)',
+    '  operant models            each tier\'s model with its recorded availability and latency',
+    '  operant route explain <task id>   the stored reason: chosen tier, rejected alternative, evidence',
+    '  operant stats             gross vs net tokens saved, Operant\'s own cost, retry hot spots, waste',
+    '  operant route set <tier> [--global] [--hours n]   pin routing to an allowed tier; route clear ends it',
+    'Routing chooses among the tiers already allowed and never moves a task up on its own: that stays with',
+    'the user. Under 5 recorded tasks it stays on the keyword suggestion; high-risk work is never explored.',
   ].join('\n'),
   gotchas: [
     'Exit code 2: you are not inside Operant (OPERANT_API is not set), so use your normal shell. 1 error, 0 ok.',
@@ -396,7 +415,7 @@ function buildArgs(cmd, positionals, flags) {
   if (cmd === 'open' && typeof args.target === 'string' && require('fs').existsSync(args.target)) args.target = path.resolve(args.target);
   // So does where a new tile starts: after a cd into a subproject, or through the long-command reroute
   // hook, the tile's own starting folder would be the wrong one to test, build or work in.
-  if (['run', 'test', 'build', 'agent'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
+  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
   return args;
 }
 
@@ -553,6 +572,7 @@ function formatResult(cmd, result, opts) {
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }
+    case 'doctor': case 'providers': case 'models': case 'stats': case 'route': return result.text || 'ok';
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0
       ? 'ok' : JSON.stringify(result);
   }

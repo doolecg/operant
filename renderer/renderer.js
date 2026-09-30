@@ -1287,6 +1287,7 @@ async function contextBrief(t) {
       alternatives: (why && why.alternatives) || (conf?.routes || []).map(r => ({ route: r.label, skipped: r.skipped ? r.skipped.kind : null })),
       strategy: { basis: (why && why.basis) || (t.attempts > 1 ? 'escalation' : 'explicit'), tier: t.tier || null, route: conf?.route?.label || null, skipped: [...((why && why.skipped) || []), ...(conf?.skipped || []).map(x => ({ route: x.label, kind: x.kind, reason: x.reason }))] },
       reason: (why && why.reason) || conf?.route?.note || null,
+      structured: (why && why.structured) || null, rejected: (why && why.rejected) || null,
     }).catch(() => {});
   }
   const routeInfo = c => c && c.route ? { label: c.route.label, free: c.route.free, note: c.route.note, why: (c.skipped || []).map(x => `${x.label} ${TierRoutes.REASON_TEXT[x.kind]}`).join('; ') } : null;
@@ -5041,7 +5042,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const key = 'operant.route.' + TaskType.classifyTask(args.prompt);
           let counter = 0;
           try { counter = +localStorage.getItem(key) || 0; } catch {}
+          const ev = await operant.routingEvidence({ cwd: dir }).catch(() => null);
           suggested = Routing.route({ prompt: args.prompt, tiers: Object.keys(capped), stats: await operant.outcomeStats().catch(() => ({})), counter, fallback,
+            ...(ev ? { runs: ev.runs.length ? ev.runs : undefined, overrides: ev.overrides, project: ev.project } : {}),
             health: RouteHealth.asHealth(await operant.healthRoutes().catch(() => ({}))), modelOf: n => capped[n]?.model });
           try { localStorage.setItem(key, String(counter + 1)); } catch {}
         }
@@ -5080,7 +5083,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
           if (routed && !args.model) { task.agent = agentId; task.model = model; task.route = routeInfo(routed); }
-          if (suggested) task.decision = { basis: suggested.basis, reason: suggested.reason, alternatives: suggested.alternatives, skipped: suggested.skipped };
+          if (suggested) task.decision = { basis: suggested.basis, reason: suggested.reason, alternatives: suggested.alternatives, skipped: suggested.skipped, structured: suggested.detail, rejected: suggested.rejected };
           task.profile = await profileTask(task.text, task.cwd || dir).catch(() => TaskType.describeTask(task.text));
           board.tasks.push(task);
           boardChanged();

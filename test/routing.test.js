@@ -87,3 +87,92 @@ test('every route down: stays on the pick and says so', () => {
   assert.equal(r.tier, 'small');
   assert.match(r.reason, /every tier's route is down/);
 });
+
+// ---- expected utility (2.5)
+const { decide } = require('../routing');
+const NOW = 1e12, DAYMS = 86400e3;
+const runsOf = (tier, n, okN, extra = {}) => Array.from({ length: n }, (_, i) => ({ t: NOW - 1000, type: 'fix', tier, status: i < okN ? 'done' : 'failed', usd: 0.05, durationMs: 60e3, project: 'P', ...extra }));
+const pick = (runs, extra = {}) => decide({ prompt: 'fix the login bug', tiers, runs, project: 'P', now: NOW, counter: 0, fallback, ...extra });
+
+test('thin evidence (under 5 tasks per tier) takes the keyword fallback, with the structured reason', () => {
+  const r = pick(runsOf('xsmall', 4, 4));
+  assert.deepEqual({ tier: r.tier, basis: r.basis }, { tier: 'small', basis: 'insufficient data' });
+  assert.equal(r.detail.chosen.evidence, false);
+  assert.equal(r.detail.risk, 'low');
+  assert.equal(r.alternatives.length, 4);
+});
+
+test('a cheap tier with 5+ good tasks beats dearer tiers on utility, and the runner-up is stored', () => {
+  const r = pick([...runsOf('xsmall', 6, 6), ...runsOf('medium', 6, 6, { usd: 0.8, durationMs: 300e3 })]);
+  assert.equal(r.tier, 'xsmall');
+  assert.equal(r.basis, 'utility');
+  assert.equal(r.detail.chosen.n, 6);
+  assert.ok(r.rejected.tier && r.rejected.utility <= r.detail.chosen.utility && /lower utility/.test(r.rejected.why));
+  assert.deepEqual(r.detail.rejected, r.rejected);
+});
+
+test('a failing cheap tier loses to a proven dearer one', () => {
+  const r = pick([...runsOf('xsmall', 6, 1), ...runsOf('small', 6, 6, { usd: 0.2 })]);
+  assert.equal(r.tier, 'small');
+});
+
+test('old outcomes decay: last month failures count for less than this week passes', () => {
+  const old = runsOf('xsmall', 6, 0, { t: NOW - 120 * DAYMS }), fresh = runsOf('xsmall', 6, 6);
+  const e = require('../routing').tierEvidence([...old, ...fresh], { type: 'fix', tiers: ['xsmall'], project: 'P', now: NOW })[0];
+  assert.ok(e.rate > 0.99, `rate ${e.rate}`);
+  const ev2 = require('../routing').tierEvidence(old, { type: 'fix', tiers: ['xsmall'], project: 'P', now: NOW })[0];
+  assert.equal(ev2.rate, 0);
+});
+
+test('a project uses its own record once it has 5 tasks, else the pooled one', () => {
+  const rows = [...runsOf('small', 5, 0, { project: 'P' }), ...runsOf('small', 6, 6, { project: 'Q' })];
+  const t = require('../routing').tierEvidence;
+  assert.equal(t(rows, { type: 'fix', tiers: ['small'], project: 'P', now: NOW })[0].scope, 'project');
+  assert.equal(t(rows, { type: 'fix', tiers: ['small'], project: 'Z', now: NOW })[0].scope, 'all projects');
+});
+
+test('never explores on high-risk work; explores 1 in 10 otherwise', () => {
+  const runs = [...runsOf('small', 6, 6), ...runsOf('medium', 6, 6, { usd: 0.9 })];
+  const calm = { prompt: 'fix the login bug', counter: 9 };
+  assert.equal(pick(runs, calm).basis, 'exploration');
+  assert.equal(pick(runs, calm).tier, 'xsmall');
+  const risky = pick(runs, { prompt: 'fix the production migration', counter: 9 });
+  assert.notEqual(risky.basis, 'exploration');
+  assert.equal(risky.detail.risk, 'high');
+});
+
+test('an override wins while live, only within the allowed tiers; expired or unallowed ones are ignored', () => {
+  const runs = runsOf('small', 6, 6);
+  assert.equal(pick(runs, { overrides: [{ tier: 'medium', project: 'P', until: NOW + 1000 }] }).tier, 'medium');
+  assert.equal(pick(runs, { overrides: [{ tier: 'medium', project: 'P', until: NOW + 1000 }] }).basis, 'override');
+  assert.notEqual(pick(runs, { overrides: [{ tier: 'medium', project: 'P', until: NOW - 1 }] }).basis, 'override');
+  assert.notEqual(pick(runs, { overrides: [{ tier: 'max' }] }).basis, 'override');
+  assert.equal(pick(runs, { overrides: [{ tier: 'high' }, { tier: 'medium', project: 'P' }] }).tier, 'medium');
+  assert.equal(pick(runs, { overrides: [{ tier: 'high', project: 'Other' }] }).basis === 'override', false);
+});
+
+test('never moves a task above the tier it already runs on', () => {
+  const runs = [...runsOf('xsmall', 6, 0), ...runsOf('small', 6, 0), ...runsOf('medium', 6, 6)];
+  assert.equal(pick(runs).tier, 'medium');
+  const r = pick(runs, { current: 'small', overrides: [{ tier: 'high' }] });
+  assert.ok(['xsmall', 'small'].includes(r.tier));
+  assert.equal(route({ prompt: 'fix it', tiers, runs, project: 'P', now: NOW, fallback, current: 'small', health: { down: k => (k === 'm-small' ? { reason: 'timed out' } : null) }, modelOf: n => 'm-' + n }).tier, 'xsmall');
+});
+
+test('route() with runs uses utility and still skips a route known down', () => {
+  const runs = [...runsOf('small', 6, 6), ...runsOf('medium', 6, 6, { usd: 0.9 })];
+  const r = route({ prompt: 'fix the login bug', tiers, runs, project: 'P', now: NOW, fallback, health: { down: k => (k === 'm-small' ? { reason: 'timed out' } : null) }, modelOf: n => 'm-' + n });
+  assert.equal(r.basis, 'health');
+  assert.equal(r.skipped[0].tier, 'small');
+  assert.ok(r.detail && r.alternatives.length === 4);
+});
+
+test('withOverride replaces the same scope, keeps others, drops expired, and can clear', () => {
+  const { withOverride } = require('../routing');
+  let l = withOverride([], { tier: 'small' }, NOW);
+  l = withOverride(l, { tier: 'medium', project: 'P', hours: 2 }, NOW);
+  l = withOverride(l, { tier: 'high' }, NOW);
+  assert.deepEqual(l.map(o => [o.tier, o.project || null, o.until || null]), [['medium', 'P', NOW + 7200e3], ['high', null, null]]);
+  assert.deepEqual(withOverride(l, { project: 'P' }, NOW).map(o => o.tier), ['high']);
+  assert.deepEqual(withOverride(l, { project: 'P' }, NOW + 9e6).map(o => o.tier), ['high']);
+});

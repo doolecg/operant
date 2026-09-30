@@ -1,6 +1,6 @@
 {
   "generatedFrom": "F:\\PROGRAMMING\\REPOS\\Operant",
-  "list": "operant <cmd> [args] [--flag value] [--json]\n\n  tiles: tiles, status, focus, close, ws, title\n  terminals: run, test, build, read, send, wait, stop\n  files: view, edit, diff, open\n  browser: browse\n  agents & tasks: agent, ask, notify, plan, task, board, team, summarize, find\n  memory: remember, recall\n  context: usage, compact\n  misc: ports, watch\n\n  operant help <cmd> for flags and examples.\n  --json prints the raw JSON result instead of formatted text.\n  read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines, --digest a test/build summary+failures.",
+  "list": "operant <cmd> [args] [--flag value] [--json]\n\n  tiles: tiles, status, focus, close, ws, title\n  terminals: run, test, build, read, send, wait, stop\n  files: view, edit, diff, open\n  browser: browse\n  agents & tasks: agent, ask, notify, plan, task, board, team, summarize, find\n  memory: remember, recall\n  context: usage, compact\n  operations: doctor, providers, models, stats, route\n  misc: ports, watch\n\n  operant help <cmd> for flags and examples.\n  --json prints the raw JSON result instead of formatted text.\n  read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines, --digest a test/build summary+failures.",
   "commands": {
     "tiles": "operant tiles\n\n  list this window's tiles\n\nExamples:\n  operant tiles",
     "status": "operant status\n\n  info about the calling tile\n\nExamples:\n  operant status",
@@ -34,6 +34,11 @@
     "usage": "operant usage [--breakdown] [--days 1|7]\n\n  your tile's context size and the plan limits, or (--breakdown) where its project's tokens went\n\nExamples:\n  operant usage\n  operant usage --breakdown\n  operant usage --breakdown --days 7",
     "compact": "operant compact\n\n  queue a progress note + compact for your tile's next idle moment\n\nExamples:\n  operant compact",
     "ports": "operant ports\n\n  list dev-server URLs found in this window's tiles\n\nExamples:\n  operant ports",
-    "watch": "operant watch <id> --errors [--grep p]\n\n  notify (and tell the agent on its next call) on a new matching line in a tile (--off to stop, no id to list)\n\nExamples:\n  operant watch 7 --errors\n  operant watch 7 --off"
+    "watch": "operant watch <id> --errors [--grep p]\n\n  notify (and tell the agent on its next call) on a new matching line in a tile (--off to stop, no id to list)\n\nExamples:\n  operant watch 7 --errors\n  operant watch 7 --off",
+    "doctor": "operant doctor\n\n  health of providers, credentials (present or not, never printed), versions, MCP, local model, the local store and context providers: healthy, degraded, unavailable, not configured or unknown\n\nExamples:\n  operant doctor",
+    "providers": "operant providers\n\n  the configured agent CLIs: installed, credentials present, state\n\nExamples:\n  operant providers",
+    "models": "operant models\n\n  each team tier with its model, recorded availability and latency, and state\n\nExamples:\n  operant models",
+    "stats": "operant stats [--days 7|30]\n\n  from the local store: gross vs net tokens saved, the cost of Operant itself, retry hot spots, the model that wastes most tokens, unused integrations\n\nExamples:\n  operant stats\n  operant stats --days 7",
+    "route": "operant route explain <task id> | set <tier> [--global] [--hours n] | clear [--global] | show\n\n  the stored reason for a task's tier (chosen, rejected alternative, evidence); set/clear/show a routing override for this project or (--global) all, optionally temporary; routing only picks among tiers already allowed\n\nExamples:\n  operant route explain 8\n  operant route set small --hours 4\n  operant route clear"
   }
 }

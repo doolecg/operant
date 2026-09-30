@@ -27,6 +27,9 @@ const outcomes = require('./outcomes');
 const dataStore = require('./store');
 const failureClass = require('./failure-class');
 const routeHealthLib = require('./route-health');
+const analytics = require('./analytics');
+const ops = require('./ops');
+const routingLib = require('./routing');
 const tierGuard = require('./tier-guard');
 const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
@@ -579,6 +582,7 @@ function startControlServer() {
           const done = await bgTasks.settled(t.id, (Number(args.timeout) || 600) * 1000);
           return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
         }
+        if (['doctor', 'providers', 'models', 'stats', 'route'].includes(cmd)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -1695,6 +1699,96 @@ const dbDo = fn => { try { return db ? fn(db) : null; } catch { return null; } }
 ipcMain.handle('store:decision', (_e, d) => dbDo(s => s.append('routingDecisions', { ...d, project: d?.cwd ? path.basename(d.cwd) : null, corr: d?.corr || dataStore.corrOf(d?.cwd ? path.basename(d.cwd) : null, d?.taskId), cwd: undefined })) && { ok: true });
 // Recorded call health per model, decayed (route-health.js): the renderer's routing skips a route known down.
 ipcMain.handle('health:routes', () => dbDo(s => routeHealthLib.summarize(s.query('providerCalls', { sinceMs: Date.now() - 7 * 86400e3 }), Date.now())) || {});
+// Routing evidence (routing.js decide): stored task runs with their cost, 60 days, and the overrides in force.
+const OVERRIDES_PATH = path.join(app.getPath('userData'), 'routing-overrides.json');
+const readOverrides = () => { try { const l = JSON.parse(fs.readFileSync(OVERRIDES_PATH, 'utf8')); return Array.isArray(l) ? l : []; } catch { return []; } };
+const tablesSince = (sinceMs, project) => (db ? Object.fromEntries(dataStore.TABLES.map(t => [t, db.query(t, { sinceMs, project: project || undefined })])) : null);
+ipcMain.handle('routing:evidence', (_e, { cwd } = {}) => {
+  const t = tablesSince(Date.now() - 60 * 86400e3);
+  if (!t) return null;
+  const runs = analytics.joinRuns({ taskRuns: t.taskRuns, modelRuns: t.modelRuns }).slice(-3000).map(r => ({ t: r.t, type: r.type, tier: r.tier, status: r.status, durationMs: r.durationMs, usd: r.usd, project: r.project }));
+  return { runs, overrides: readOverrides(), project: cwd ? path.basename(cwd) : null };
+});
+// The Usage view: the store's figures over `days` (analytics.js), with the health rows and the context providers' counters.
+ipcMain.handle('analytics:get', async (_e, { days = 30, cwd } = {}) => {
+  const t = tablesSince(Date.now() - days * 86400e3);
+  if (!t) return { error: 'the local store is not open' };
+  const h = await healthCheck.get({ cwd: cwd || healthCwd }).catch(() => null);
+  const comps = h ? h.components : [];
+  const s = analytics.summarize(t, { orchestration: orchestrationSince(Date.now() - days * 86400e3), integrations: integrationsOf(comps, t) });
+  let cp = {}; try { const root = cwd && memory.memoryProjectDir(cwd); if (root) cp = require('./context-providers').readStats(root); } catch {}
+  return { days, stats: s, health: comps.map(c => ({ id: c.id, name: c.name, state: ops.stateOf(c.state), detail: c.detail })), contextProviders: cp, routes: routeHealthNow(), decisions: db ? db.count('routingDecisions') : 0, store: storeFacts() };
+});
+const routeHealthNow = () => dbDo(x => routeHealthLib.summarize(x.query('providerCalls', { sinceMs: Date.now() - 7 * 86400e3 }), Date.now())) || {};
+const orchestrationSince = sinceMs => { try { return outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs }).filter(e => e.kind === 'orchestration'); } catch { return []; } };
+const storeFacts = () => db && { version: db.version(), pruned: db.pruned, rows: Object.fromEntries(dataStore.TABLES.map(t => [t, db.count(t)])) };
+// An integration is configured when its health row is not missing or unknown; used comes from the store, null where nothing tracks use.
+function integrationsOf(comps, t) {
+  const ok = id => { const c = comps.find(x => x.id === id); return !!c && ['healthy', 'available', 'degraded'].includes(c.state); };
+  return [
+    { id: 'codegraph', name: 'CodeGraph', configured: ok('codegraph'), used: t.toolCalls.some(x => x.tool === 'codegraph' && x.calls > 0) },
+    { id: 'localmodel', name: 'Local model', configured: ok('localmodel'), used: t.modelRuns.some(x => x.model === (config.localModel?.model || localModelLib.DEFAULT_MODEL)) },
+    { id: 'mcp', name: 'MCP servers', configured: ok('mcp'), used: null },
+  ];
+}
+// 'operant doctor | providers | models | stats | route ...' (bin/operant-cli.js): answered here, no renderer round trip.
+async function opsCommand(cmd, args = {}) {
+  const project = args.cwd ? path.basename(args.cwd) : null;
+  const comps = async () => (await healthCheck.get({ cwd: args.cwd || healthCwd }).catch(() => null))?.components || [];
+  if (cmd === 'doctor') {
+    const which = async exe => { try { return (await run(exe, ['--version'])).code === 0; } catch { return false; } };
+    const health = await comps();
+    const okc = id => health.some(c => c.id === id && ['healthy', 'available'].includes(c.state));
+    const [git, rg] = await Promise.all([which('git'), which('rg')]);
+    const rows = ops.buildDoctor({ health, credentials: ops.collectCredentials(), store: storeFacts(),
+      versions: { Operant: app.getVersion(), Electron: process.versions.electron, Node: process.versions.node, CodeGraph: await codegraphVersion().catch(() => null) },
+      contextProviders: { codegraph: okc('codegraph'), memory: !health.some(c => c.id === 'memory' && c.state === 'unavailable'), git, ripgrep: rg } });
+    return { ok: true, result: { rows, text: ops.formatDoctor(rows) } };
+  }
+  if (cmd === 'providers') {
+    const list = ops.providersList({ agents: config.agents, installed: cliInstalled, credentials: ops.collectCredentials() });
+    return { ok: true, result: { providers: list, text: ops.formatProviders(list) } };
+  }
+  if (cmd === 'models') {
+    const active = config.teamTiers || {}, base = config.team?.tiers || {};
+    const src = Object.keys(active).length ? active : base;
+    const list = ops.modelsList({ tiers: Object.entries(src).map(([name, t]) => ({ name, agent: t.agent, model: t.model, active: t })), routeHealth: routeHealthNow() });
+    return { ok: true, result: { models: list, text: ops.formatModels(list) } };
+  }
+  if (cmd === 'stats') {
+    const days = +args.days === 7 ? 7 : 30, t = tablesSince(Date.now() - days * 86400e3);
+    if (!t) return { ok: false, error: 'the local store is not open (see operant doctor)' };
+    const s = analytics.summarize(t, { orchestration: orchestrationSince(Date.now() - days * 86400e3), integrations: integrationsOf(await comps(), t) });
+    return { ok: true, result: { stats: s, text: analytics.formatStats(s, { days }) } };
+  }
+  if (cmd === 'route') {
+    const sub = args.sub || 'explain';
+    if (sub === 'explain') {
+      if (args.id == null) return { ok: false, error: 'usage: operant route explain <task id>' };
+      const rows = dbDo(x => x.query('routingDecisions', { where: r => String(r.taskId) === String(args.id) })) || [];
+      const mine = rows.filter(r => !project || r.project === project);
+      const d = (mine.length ? mine : rows).slice(-1)[0] || null;
+      return { ok: true, result: { decision: d, text: ops.formatExplain(d, args.id) } };
+    }
+    if (sub === 'show') {
+      const l = readOverrides().filter(o => !o.until || o.until > Date.now());
+      return { ok: true, result: { overrides: l, text: l.length ? l.map(o => `${o.tier}  ${o.project ? 'project ' + o.project : 'global'}  ${o.until ? 'until ' + new Date(o.until).toLocaleString() : 'no end'}`).join('\n') : 'no routing overrides' } };
+    }
+    if (sub === 'set' || sub === 'clear') {
+      const scope = args.global ? null : project;
+      if (sub === 'set') {
+        const names = Object.keys(config.team?.tiers || {});
+        if (!names.includes(String(args.id))) return { ok: false, error: `unknown tier "${args.id}" - tiers: ${names.join(', ')}` };
+        if (args.hours != null && !(+args.hours > 0)) return { ok: false, error: '--hours needs a number above 0' };
+      }
+      const next = routingLib.withOverride(readOverrides(), sub === 'set' ? { tier: String(args.id), project: scope, hours: args.hours != null ? +args.hours : 0 } : { project: scope });
+      writeFileAtomic(OVERRIDES_PATH, JSON.stringify(next));
+      return { ok: true, result: { text: sub === 'set' ? `routing override: ${args.id} for ${scope ? 'project ' + scope : 'all projects'}${args.hours ? ` for ${args.hours} h` : ', until cleared'}. It only applies while that tier is allowed.` : `cleared the ${scope ? 'project' : 'global'} override` } };
+    }
+    return { ok: false, error: 'usage: operant route explain <task id> | set <tier> [--global] [--hours n] | clear [--global] | show' };
+  }
+  return { ok: false, error: 'unknown command' };
+}
 ipcMain.handle('outcome:record', async (_e, o) => {
   try {
     const { cwd, model, sessionId, ptyId, codegraphIndex, ...rest } = o || {};
