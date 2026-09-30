@@ -1,5 +1,5 @@
 (function () {
-// Seat view helpers (2.7 UI): plain data in, plain data out, so the tile badge, the board's Seats view and the later office view all
+// Seat view helpers (2.7 UI): plain data in, plain data out, so the tile badge, the board's Seats view all
 // read a seat the same way. Seat records come from `seatOp list` (main.js); nothing here asks a model.
 const STATE_LABEL = { active: 'active', idle: 'idle-closed', needs: 'needs input', restored: 'restored', empty: 'empty' };
 

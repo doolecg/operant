@@ -23,7 +23,6 @@ const MODEL_INFO = {
   'gemma4:e2b': { bytes: 7.2 * GB, ramGB: 4 },
   'gemma4:12b': { bytes: 8 * GB, ramGB: 16 },
 };
-const SMALLER_MODEL = 'gemma4:e2b';
 const TEST_PROMPT = 'Reply with the single word: ok';
 
 const UNITS = { B: 1, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
@@ -177,7 +176,7 @@ function healthOf(s) {
 }
 
 module.exports = {
-  PARTS, PART_STATES, MODEL_INFO, OLLAMA_BYTES, SMALLER_MODEL, TEST_PROMPT,
+  PARTS, PART_STATES, MODEL_INFO, OLLAMA_BYTES, TEST_PROMPT,
   partLabel, parseSize, fmtBytes, fmtSpeed, fmtEta, stripAnsi, createPullTracker, progressDetail,
   freshParts, setPart, preflight, failure, parseList, healthOf,
 };

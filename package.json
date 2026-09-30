@@ -1,6 +1,6 @@
 {
   "name": "operant",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenCode and more",
   "main": "main.js",
   "scripts": {
@@ -101,7 +101,10 @@
       "shell-integration.js",
       "bin/**",
       "agent-plugin/**",
-      "hooks/**"
+      "hooks/**",
+      "!node_modules/@xterm/*/src/**",
+      "!node_modules/@xterm/*/lib/*.mjs",
+      "!node_modules/@xterm/*/lib/*.map"
     ],
     "asarUnpack": [
       "node_modules/@lydell/**",

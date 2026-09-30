@@ -34,7 +34,6 @@ function withProvider(content, model, user) {
 // Error text that means Big Pickle can't take the work right now: rate limited, overloaded, timed out, or its free use is used up.
 const FREE_FAILURE = /\b(429|502|503|504|529)\b|rate.?limit|too many requests|overload|capacity|timed? ?out|timeout|quota|usage limit|limit (reached|exceeded)|exceeded|insufficient|free (usage|tier|use)|unavailable|busy/i;
 const isFreeFailure = text => FREE_FAILURE.test(String(text || ''));
-const isFreeModelId = id => id === FREE_MODEL || id === 'big-pickle';
 
 // "pulling 3f1c...  45% ▕███▏ 1.2 GB/2.6 GB" -> 45 (the last percentage in the text), or null.
 function parsePercent(text) {
@@ -337,4 +336,4 @@ function createHelper({ model, which, spawn = nodeSpawn, env = async () => proce
   };
 }
 
-module.exports = { classifyTask, summariseOutput, createHelper, MODELS, DEFAULT_MODEL, BASE_URL, FREE_MODEL, WINGET_ARGS, providerConfig, withProvider, isFreeFailure, isFreeModelId, parsePercent, createLocalModel };
+module.exports = { classifyTask, summariseOutput, createHelper, MODELS, DEFAULT_MODEL, BASE_URL, FREE_MODEL, WINGET_ARGS, providerConfig, withProvider, isFreeFailure, parsePercent, createLocalModel };

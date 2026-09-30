@@ -422,7 +422,7 @@ body.anim-off .win::before,
 .tbar .tier:empty { display: none; }
 .tbar .seat { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .tbar .seat[hidden] { display: none; }
-/* Seat state colours, defined once: tile badge, board Seats view and the office view all read these. */
+/* Seat state colours, defined once: tile badge, and board Seats view read these. */
 :root { --seat-active: #3fb950; --seat-idle: #948f84; --seat-needs: #f0883e; --seat-restored: #58a6ff; --seat-empty: #6e6a62; }
 .seat-badge { flex: none; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; line-height: 1.5; color: var(--seat-c); background: color-mix(in srgb, var(--seat-c) 16%, transparent); }
 .seat-active { --seat-c: var(--seat-active); }
@@ -1031,7 +1031,6 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 @media (max-width: 760px) { .lm-part { grid-template-columns: 16px 1fr 80px; } .lm-part .lm-detail { grid-column: 2 / -1; white-space: normal; } }
 
 /* Usage > Operations (ops-view.js) */
-#ops-body { overflow: auto; }
 .ops-sec { margin: 0 0 14px; }
 .ops-sec h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
 .ops-tiles { display: flex; flex-wrap: wrap; gap: 8px; }

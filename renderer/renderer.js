@@ -4872,7 +4872,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     while (rows.length && !rows.at(-1).trim()) rows.pop();
     return rows.slice(-n);
   }
-  function tileText(w, lines) { return rawLines(w, lines).join('\n'); }
 
   // Clean noisy terminal output: strip stray escapes, collapse repeated/progress-y lines and long blank runs.
   const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\\-';

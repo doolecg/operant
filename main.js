@@ -933,8 +933,6 @@ ipcMain.handle('editor:name', async () => { const c = await editorCommand(); ret
 const projectOf = dir => Object.keys(config.projectDefaults || {})
   .filter(p => { const a = path.resolve(dir).toLowerCase(), b = path.resolve(p).toLowerCase(); return a === b || a.startsWith(b.replace(/[\\/]$/, '') + path.sep); })
   .sort((a, b) => b.length - a.length)[0];
-// Item 82: a project's agent choice (both | claude | opencode).
-const agentModeOf = dir => { const m = dir ? config.projectDefaults?.[projectOf(dir)]?.agents : null; return m === 'claude' || m === 'opencode' ? m : 'both'; };
 
 ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, resume, edit, tileId, prompt, model, effort, worker }) => {
   await controlReady;
@@ -1608,7 +1606,7 @@ let stateBackupTimer = null;
 function scheduleStateBackups() {
   clearInterval(stateBackupTimer);
   stateBackupTimer = setInterval(stateBackupTick, 60 * 60 * 1000);
-  stateBackupTick();
+  setImmediate(stateBackupTick); // after the first window is created, not before
 }
 ipcMain.handle('backups:list', () => stateBackup.listBackups(app.getPath('userData'), bkCfg().location));
 ipcMain.handle('backups:status', () => stateBackup.statusSummary(app.getPath('userData'), bkCfg().location));
