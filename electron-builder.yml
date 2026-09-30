@@ -1,0 +1,59 @@
+appId: com.doolecg.operant2
+productName: Operant 2
+copyright: Copyright © 2026 doolecg
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+  # CodeGraph's platform bundle is copied by build/after-pack.cjs instead (its own Node runtime is left
+  # out: the embedded library runs on Electron's Node).
+  - "!node_modules/@colbymchenry/codegraph-*/**"
+
+extraResources:
+  # The operant skill plugin that operators load with --plugin-dir.
+  - from: plugin
+    to: plugin
+
+# Native modules must be real files on disk.
+asarUnpack:
+  - node_modules/@lydell/node-pty*/**
+
+npmRebuild: false
+
+# Copies CodeGraph's platform library (with its grammars) into resources/codegraph/lib.
+afterPack: build/after-pack.cjs
+
+win:
+  target:
+    - target: msi
+      arch: [x64]
+  artifactName: Operant2-${version}-windows-${arch}.${ext}
+
+msi:
+  oneClick: false
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Operant 2
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  artifactName: Operant2-${version}-mac-${arch}.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Development
+  maintainer: doolecg <doolecg@gmail.com>
+  artifactName: Operant2-${version}-linux-${arch}.${ext}
+
+publish: null

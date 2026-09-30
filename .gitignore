@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Build output and installers
+out/
+dist/
+release/
+*.tsbuildinfo
+
+# Local indexes
+.codegraph/
+
+# AI assistant files (settings, memory, instructions, plans). plugin/ is not one of these:
+# it's the operant skill that ships with the app.
+.claude/
+/CLAUDE.md
+/CLAUDE.local.md
+/AGENTS.md
+/GEMINI.md
+.codex/
+.cursor/
+.cursorrules
+.windsurf/
+.windsurfrules
+.aider*
+.continue/
+.copilot/
+.github/copilot-instructions.md
+.gemini/
+.opencode/
+.operant/
+docs/superpowers/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+
+# Logs and test output
+*.log
+npm-debug.log*
+coverage/
+test-results/
+playwright-report/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
