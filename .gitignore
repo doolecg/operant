@@ -6,3 +6,5 @@ config.json
 evals/results/
 docs/
 .operant/
+plan.md
+plan-archive.md
