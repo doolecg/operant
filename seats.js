@@ -6,13 +6,14 @@
 const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('./atomic-write');
+const { readyCheck } = require('./ready-check');
 
 const SCHEMA = 1;
 const KINDS = ['normal', 'hard', 'master'];
 const STATES = ['empty', 'active', 'idle-closed'];
 const TIERS = ['free', 'xsmall', 'small', 'medium', 'high', 'max'];
 const HISTORY_MAX = 20;
-const CAPS = { decisions: [6, 160], constraints: [6, 160], files: [12, 120], verification: 300, lastError: 400, note: 300, guidance: 600 };
+const CAPS = { decisions: [6, 160], constraints: [6, 160], files: [12, 120], verification: 300, lastError: 400, note: 300, guidance: 600, podBrief: 1500, podName: 60 };
 
 // id, role, kind, tier, guidance
 const DEFAULTS = [
@@ -27,6 +28,14 @@ const DEFAULTS = [
   ['lead', 'lead', 'master', 'small', 'Split the work, hand parts to seats, review what comes back.'],
 ];
 
+// Pods (2.7): seats that share one brief (project facts, rules), stored once here and referenced by id.
+// id, name, brief, seatIds (briefs start empty: the user fills them with operant pod set)
+const DEFAULT_PODS = [
+  ['feature', 'feature', '', ['planner', 'implementer', 'reviewer', 'tester']],
+  ['research', 'research', '', ['explorer', 'docs']],
+];
+const defaultPods = () => DEFAULT_PODS.map(([id, name, brief, seatIds]) => ({ id, name, brief, seatIds: [...seatIds] }));
+
 const emptyTaskState = () => ({ decisions: [], constraints: [], files: [], verification: '', lastError: '', note: '' });
 const oneLine = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
 const asList = v => (Array.isArray(v) ? v : v == null || v === '' ? [] : String(v).split(/\s*[;\n]\s*/)).map(x => oneLine(x, 1000)).filter(Boolean);
@@ -35,7 +44,7 @@ const capList = (v, [n, len]) => [...new Set(asList(v).map(x => x.slice(0, len))
 function makeSeat([id, role, kind, tier, guidance], now = Date.now()) {
   return { id, role, kind, tier, guidance, state: 'empty', tileId: null, podId: null, history: [], taskState: emptyTaskState(), createdAt: now };
 }
-const defaultSeats = (now = Date.now()) => ({ schema: SCHEMA, seats: DEFAULTS.map(d => makeSeat(d, now)) });
+const defaultSeats = (now = Date.now()) => ({ schema: SCHEMA, seats: DEFAULTS.map(d => makeSeat(d, now)), pods: defaultPods() });
 
 // Tolerant of a hand-edited or older file: bad fields fall back, unknown seats are kept, missing defaults are added back.
 function normalize(data, now = Date.now()) {
@@ -57,11 +66,25 @@ function normalize(data, now = Date.now()) {
     if (s.state !== 'active') s.tileId = null;
     if (Array.isArray(raw.history)) s.history = raw.history.filter(e => e && typeof e.event === 'string').slice(-HISTORY_MAX);
     s.taskState = capState({ ...emptyTaskState(), ...(raw.taskState || {}) });
+    if (typeof raw.readyFor === 'string' && raw.readyFor && s.state !== 'active') s.readyFor = oneLine(raw.readyFor, 60);
+    if (Number(raw.budget) > 0) s.budget = Math.floor(Number(raw.budget));
     if (raw.boost && TIERS.includes(raw.boost.tier)) s.boost = { tier: raw.boost.tier, taskId: raw.boost.taskId ?? null };
     seats.push(s);
   }
   for (const s of base.seats) if (!seats.some(x => x.id === s.id)) seats.push(s);
-  return { schema: SCHEMA, seats };
+  return { schema: SCHEMA, seats, pods: normalizePods(data.pods, seats) };
+}
+
+// Pods: bad entries dropped, a member that is no seat dropped, the default pods added back when missing.
+function normalizePods(raw, seats) {
+  const ids = new Set(seats.map(s => s.id)), pods = [];
+  for (const p of Array.isArray(raw) ? raw : []) {
+    if (!p || typeof p.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(p.id) || pods.some(x => x.id === p.id)) continue;
+    const seatIds = [...new Set((Array.isArray(p.seatIds) ? p.seatIds : []).filter(x => ids.has(x)))];
+    pods.push({ id: p.id, name: oneLine(p.name || p.id, CAPS.podName), brief: String(p.brief == null ? '' : p.brief).trim().slice(0, CAPS.podBrief), seatIds });
+  }
+  for (const d of defaultPods()) if (!pods.some(x => x.id === d.id)) pods.push({ ...d, seatIds: d.seatIds.filter(x => ids.has(x)) });
+  return pods;
 }
 
 function capState(ts) {
@@ -134,13 +157,36 @@ function setGuidance(store, id, text) {
   const s = need(store, id); s.guidance = oneLine(text, CAPS.guidance); return s;
 }
 
+// ---- pods
+const findPod = (store, id) => (store.pods || []).find(p => p.id === id) || null;
+function needPod(store, id) {
+  const p = findPod(store, id);
+  if (!p) throw new Error(`no pod "${id}" (pods: ${(store.pods || []).map(x => x.id).join(', ')})`);
+  return p;
+}
+// The pod a seat belongs to: the one it was bound to, else the first pod listing it.
+function podOf(store, seatId) {
+  const s = find(store, seatId);
+  return (s && s.podId && findPod(store, s.podId)) || (store.pods || []).find(p => p.seatIds.includes(seatId)) || null;
+}
+// The shared brief is edited in one place; seats never carry a copy.
+function setPodBrief(store, id, text) {
+  const p = needPod(store, id); p.brief = String(text == null ? '' : text).trim().slice(0, CAPS.podBrief); return p;
+}
+// What a worker launched into a seat starts from: a one-line reference to its pod, the pod brief text once, then the seat brief.
+function launchBrief(store, seatId) {
+  const seat = need(store, seatId), pod = podOf(store, seatId);
+  if (!pod || !pod.brief) return brief(seat);
+  return [`Pod "${pod.id}" (${pod.seatIds.join(', ')}) shares the brief below; it is the same for every seat in it.`, pod.brief, '', brief(seat)].join('\n');
+}
+
 // ---- binding
 // A worker takes the seat: recorded as seated, or replaced when another worker still held it.
-function take(store, id, { tileId, podId = null, now = Date.now() } = {}) {
+function take(store, id, { tileId, podId, now = Date.now() } = {}) {
   if (tileId == null) throw new Error('a tile id is required to take a seat');
   const s = need(store, id);
   const prev = s.state === 'active' && s.tileId != null && s.tileId !== tileId ? s.tileId : null;
-  s.state = 'active'; s.tileId = tileId; s.podId = podId;
+  s.state = 'active'; s.tileId = tileId; s.podId = podId !== undefined ? podId : (podOf(store, id) || {}).id || null; delete s.readyFor;
   log(s, prev != null ? 'replaced' : 'seated', prev != null ? { tileId, was: prev } : { tileId }, now);
   return s;
 }
@@ -222,7 +268,79 @@ function formatSeat(seat) {
   return L.join('\n');
 }
 
+function formatPods(store) {
+  const pods = store.pods || [];
+  if (!pods.length) return '(no pods)';
+  return pods.map(p => `${p.id}  ${p.name}  seats: ${p.seatIds.join(', ') || '-'}\n  brief: ${p.brief ? oneLine(p.brief, 200) : '-'}`).join('\n');
+}
+
+// ---- team templates: small JSON in the user data dir; the shipped defaults sit beneath what the user saved
+// {name, seats:[{seat, tier, budget?}], podBriefs:{podId: text}}. Defaults use the cheapest tier that fits and no medium seat.
+const DEFAULT_TEMPLATES = [
+  { name: 'feature team', seats: [{ seat: 'planner', tier: 'small' }, { seat: 'implementer', tier: 'small' }, { seat: 'reviewer', tier: 'xsmall' }, { seat: 'tester', tier: 'free' }], podBriefs: {} },
+  { name: 'review team', seats: [{ seat: 'reviewer', tier: 'xsmall' }, { seat: 'explorer', tier: 'free' }, { seat: 'tester', tier: 'free' }], podBriefs: {} },
+];
+const templatesFile = userDir => path.join(userDir, 'team-templates.json');
+function normalizeTemplate(raw) {
+  if (!raw || typeof raw.name !== 'string' || !oneLine(raw.name, 60) || !Array.isArray(raw.seats)) return null;
+  const seats = [];
+  for (const e of raw.seats) {
+    if (!e || typeof e.seat !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(e.seat) || seats.some(x => x.seat === e.seat)) continue;
+    const o = { seat: e.seat, tier: TIERS.includes(e.tier) ? e.tier : 'small' };
+    if (Number(e.budget) > 0) o.budget = Math.floor(Number(e.budget));
+    seats.push(o);
+  }
+  const podBriefs = {};
+  if (raw.podBriefs && typeof raw.podBriefs === 'object') for (const [k, v] of Object.entries(raw.podBriefs)) if (typeof v === 'string' && v.trim()) podBriefs[k] = v.trim().slice(0, CAPS.podBrief);
+  return { name: oneLine(raw.name, 60), seats, podBriefs };
+}
+function savedTemplates(userDir) {
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(templatesFile(userDir), 'utf8')); } catch {}
+  return (Array.isArray(raw && raw.templates) ? raw.templates : []).map(normalizeTemplate).filter(Boolean);
+}
+// Defaults first, then the user's; a saved template with a default's name replaces it.
+function loadTemplates(userDir) {
+  const mine = savedTemplates(userDir), key = n => n.toLowerCase();
+  return [...DEFAULT_TEMPLATES.filter(d => !mine.some(m => key(m.name) === key(d.name))).map(normalizeTemplate), ...mine];
+}
+const findTemplate = (list, name) => list.find(t => t.name.toLowerCase() === String(name).trim().toLowerCase()) || null;
+function saveTemplate(userDir, tpl) {
+  const t = normalizeTemplate(tpl);
+  if (!t) throw new Error('a template needs a name and a seats list');
+  const mine = savedTemplates(userDir).filter(x => x.name.toLowerCase() !== t.name.toLowerCase());
+  fs.mkdirSync(userDir, { recursive: true });
+  writeFileAtomic(templatesFile(userDir), JSON.stringify({ schema: SCHEMA, templates: [...mine, t] }, null, 2));
+  return t;
+}
+// A template from the seats in use now (any seat that is not empty): their tiers, budgets and their pods' briefs.
+function templateFromSeats(store, name) {
+  const used = store.seats.filter(s => s.state !== 'empty');
+  if (!used.length) throw new Error('no seats are in use: nothing to save as a template');
+  const podBriefs = {};
+  for (const s of used) { const p = podOf(store, s.id); if (p && p.brief) podBriefs[p.id] = p.brief; }
+  return { name, seats: used.map(s => ({ seat: s.id, tier: s.tier, ...(s.budget ? { budget: s.budget } : {}) })), podBriefs };
+}
+// Mark a template's seats ready to fill (tier and budget applied, pod briefs set). Launches nothing. -> { ready, skipped }
+function startTemplate(store, tpl) {
+  const ready = [], skipped = [];
+  for (const e of tpl.seats) {
+    const s = find(store, e.seat);
+    if (!s) { skipped.push(`${e.seat} (no such seat)`); continue; }
+    if (s.state === 'active') { skipped.push(`${e.seat} (already active)`); continue; }
+    s.tier = e.tier; delete s.boost;
+    if (e.budget) s.budget = e.budget; else delete s.budget;
+    s.readyFor = tpl.name;
+    ready.push(e.seat);
+  }
+  for (const [id, text] of Object.entries(tpl.podBriefs || {})) { const p = findPod(store, id); if (p) p.brief = text.slice(0, CAPS.podBrief); }
+  return { ready, skipped };
+}
+const formatTemplates = list => list.map(t => `${t.name}  ${t.seats.map(e => `${e.seat} ${e.tier}${e.budget ? ` (${e.budget})` : ''}`).join(', ')}`).join('\n');
+
 module.exports = {
   SCHEMA, KINDS, STATES, TIERS, HISTORY_MAX, CAPS, DEFAULTS, defaultSeats, normalize, load, save, update, fileOf, find, need,
+  DEFAULT_PODS, defaultPods, findPod, needPod, podOf, setPodBrief, launchBrief, formatPods, DEFAULT_TEMPLATES, templatesFile, normalizeTemplate,
+  loadTemplates, findTemplate, saveTemplate, templateFromSeats, startTemplate, formatTemplates, readyCheck,
   tierFor, canFill, boost, setTier, setGuidance, take, release, keep, taskStateFrom, seatOfTile, brief, formatTable, formatSeat, emptyTaskState,
 };

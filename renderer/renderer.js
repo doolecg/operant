@@ -1858,8 +1858,16 @@ async function contextBrief(t) {
     if (typingNow(w)) { setHeldLine(w, true); return; }
     releaseHeld(w);
   }
+  // Ready check (ready-check.js): a tile holding a seat gets a message only when its process is up, its agent started and it is idle; otherwise it stays queued with the reason.
+  function notReadyReason(w) {
+    if (!w.seatId) return null;
+    const r = ReadyCheck.readyCheck({ alive: w.alive, ptyId: w.ptyId, started: !!w.sessionId, working: String(w.sessionId || '').startsWith('oc:') ? w.ocBusy : isWorking(w), waitingPrompt: w.waitingPrompt || (isClaudeTile(w) && !!claudePromptInLast(w)) });
+    return r.ready ? null : r.reason;
+  }
   async function deliver(w, force) {
     if (!w.alive || !w.ptyId || w.delivering || !Messaging.pending(msgState, w.id)) return false;
+    w.notReady = notReadyReason(w);
+    if (w.notReady) return false;
     if (!force && guardAction(w) !== 'deliver') { w.typingHeld = true; setHeldLine(w, true); return false; }
     const oc = String(w.sessionId || '').startsWith('oc:');
     if (!oc && !isClaudeTile(w)) return false;
@@ -1891,7 +1899,7 @@ async function contextBrief(t) {
 
   // Item 97: `operant send --file|--brief` hands a refined prompt to a Claude Code tile (messaging.js sendBrief).
   const sendBrief = (args, self) => Messaging.sendBrief(args, self, {
-    state: msgState, teamEnabled: !!cfg.team?.enabled, agents: cfg.agents, agentKind, agentMode, messageTarget, deliver, flatLine, guard: refuseIfTyping,
+    state: msgState, teamEnabled: !!cfg.team?.enabled, agents: cfg.agents, agentKind, agentMode, messageTarget, deliver, flatLine, guard: refuseIfTyping, notReady: w => w.notReady || null,
     cwdOf: w => (w && w.cwd) || lastCwd, projectOf: dir => projectDir(dir),
     tiles: () => [...wins.values()],
     open: (agentId, dir, prompt, near) => newTerminal('ai', dir, { agentId, prompt, near, focus: false }),

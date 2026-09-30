@@ -596,7 +596,7 @@ function startControlServer() {
           const done = await bgTasks.settled(t.id, (Number(args.timeout) || 600) * 1000);
           return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
         }
-        if (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat'].includes(cmd)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
+        if (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat', 'pods', 'pod'].includes(cmd) || (cmd === 'team' && args.sub)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -1688,7 +1688,7 @@ ipcMain.handle('seats:op', (_e, { dir, op, seat, ...o }) => {
     if (op === 'plan') { // may this seat be filled, at which tier, with which brief? nothing is changed
       const st = seatsLib.load(root), s = seatsLib.need(st, seat);
       const can = seatsLib.canFill(s, { userAsked: true, tierUpApproved: !!o.tierUpApproved });
-      return { ok: true, result: { tier: seatsLib.tierFor(s, { tier: o.tier }), brief: seatsLib.brief(s), kind: s.kind, ...can } };
+      return { ok: true, result: { tier: seatsLib.tierFor(s, { tier: o.tier }), brief: seatsLib.launchBrief(st, seat), kind: s.kind, ...can } };
     }
     return { ok: true, result: seatsLib.update(root, st => {
       if (op === 'take') return seatsLib.take(st, seat, { tileId: o.tileId, podId: o.podId });
@@ -1807,6 +1807,35 @@ async function opsCommand(cmd, args = {}) {
       if (!args.id) return { ok: false, error: 'usage: operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]' };
       const seat = seatsLib.need(seatsLib.load(dir), String(args.id));
       return { ok: true, result: { seat, text: seatsLib.formatSeat(seat) } };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (cmd === 'pods' || cmd === 'pod') {
+    const dir = memory.memoryProjectDir(args.cwd) || args.cwd;
+    if (!dir) return { ok: false, error: 'no project folder' };
+    try {
+      if (cmd === 'pods') { const store = seatsLib.load(dir); return { ok: true, result: { pods: store.pods, text: seatsLib.formatPods(store) } }; }
+      if (args.sub !== 'set' || !args.id || typeof args.brief !== 'string') return { ok: false, error: 'usage: operant pod set <id> --brief "<text>"' };
+      const pod = seatsLib.update(dir, st => seatsLib.setPodBrief(st, String(args.id), args.brief));
+      return { ok: true, result: { pod, text: `pod ${pod.id} brief set (${pod.brief.length} characters)` } };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (cmd === 'team' && args.sub) {
+    const dir = memory.memoryProjectDir(args.cwd) || args.cwd, userDir = app.getPath('userData');
+    try {
+      if (args.sub === 'list') { const templates = seatsLib.loadTemplates(userDir); return { ok: true, result: { templates, text: seatsLib.formatTemplates(templates) } }; }
+      if (!args.name) return { ok: false, error: 'usage: operant team list | save <name> | start <name>' };
+      if (!dir) return { ok: false, error: 'no project folder' };
+      if (args.sub === 'save') {
+        const t = seatsLib.saveTemplate(userDir, seatsLib.templateFromSeats(seatsLib.load(dir), String(args.name)));
+        return { ok: true, result: { template: t, text: `saved team "${t.name}": ${t.seats.map(e => `${e.seat} ${e.tier}`).join(', ')}` } };
+      }
+      if (args.sub === 'start') {
+        const t = seatsLib.findTemplate(seatsLib.loadTemplates(userDir), String(args.name));
+        if (!t) return { ok: false, error: `no team template "${args.name}" (operant team list)` };
+        const r = seatsLib.update(dir, st => seatsLib.startTemplate(st, t));
+        return { ok: true, result: { ...r, text: `team "${t.name}": ready to fill: ${r.ready.join(', ') || '-'}${r.skipped.length ? `; skipped: ${r.skipped.join(', ')}` : ''} (nothing launched; fill a seat with operant agent --seat <id>)` } };
+      }
+      return { ok: false, error: 'usage: operant team list | save <name> | start <name>' };
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (cmd === 'providers') {

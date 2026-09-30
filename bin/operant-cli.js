@@ -12,11 +12,11 @@ const POSITIONAL = {
   send: ['id', 'text'],
   browse: ['url'],
   ports: [], watch: ['id'],
-  plan: ['path'], board: [], team: [], prime: [],
+  plan: ['path'], board: [], team: ['sub'], prime: [],
   summarize: ['target', 'question'], find: ['question'],
   remember: ['text'], recall: ['query'],
   msg: ['id', 'text'], inbox: [],
-  doctor: [], providers: [], models: [], components: ['sub', 'id'], history: ['sub'], stats: [], route: ['sub', 'id'], seats: [], seat: ['sub', 'id'],
+  doctor: [], providers: [], models: [], components: ['sub', 'id'], history: ['sub'], stats: [], route: ['sub', 'id'], seats: [], seat: ['sub', 'id'], pods: [], pod: ['sub', 'id'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', test: 'command', build: 'command',
@@ -56,7 +56,7 @@ const COMMANDS = {
   plan: { group: 'agents & tasks', usage: 'operant plan <file.md>', desc: 'show a plan, block until Approve or Change (returns the note)', examples: ['operant plan plan.md'], flags: [] },
   task: { group: 'agents & tasks', usage: 'operant task add "<text>" [--for id] [--seat id] | claim <id> | show <id> | done <id> [--status done|blocked|failed] [--note n] | approve <id> | reject <id> --note "<why>" | note <id> "<text>" | cancel <id> [--note "<reason>"]', desc: 'add/claim/show/finish/note/close a board task (cancel stops its worker, never retried); a worker reports with done --status and a short note (files changed, one line each; open issues); done waits in review until the lead runs approve, or reject with the reason (one retry, then the task is paused and the user decides; show prints why and the choices)', examples: ['operant task add "fix the login bug"', 'operant task claim 3', 'operant task done 3 --status done --note "login.js: null check on refresh; open: none"', 'operant task done 3 --status blocked --note "needs the API key from the user"', 'operant task approve 3', 'operant task reject 3 --note "the null check is missing on refresh"'], flags: ['for', 'note', 'status', 'seat'] },
   board: { group: 'agents & tasks', usage: 'operant board [--full]', desc: 'list every task: id, status (todo, doing, review, done, failed, blocked), tier and attempt, owner, one-line summary (--full: whole text), last note', examples: ['operant board', 'operant board --full'], flags: ['full'] },
-  team: { group: 'agents & tasks', usage: 'operant team', desc: 'team mode: enabled/disabled, each tier (agent, model, use), running workers', examples: ['operant team'], flags: [] },
+  team: { group: 'agents & tasks', usage: 'operant team', desc: 'team mode: enabled/disabled, each tier (agent, model, use), running workers; team list | save <name> | start <name>: list shows the team templates, save keeps the seats in use as one, start marks the template seats ready to fill (nothing is launched)', examples: ['operant team', 'operant team list', 'operant team save my team', 'operant team start feature team'], flags: [] },
   summarize: { group: 'agents & tasks', usage: 'operant summarize <file|tile-id|url> ["question"]', desc: 'an xsmall-tier worker reads it and answers, so you never load it yourself', examples: ['operant summarize RELEASE_NOTES.md "what shipped in 1.10.0, 3 bullets"', 'operant summarize 7 "why did it fail"'], flags: [] },
   find: { group: 'agents & tasks', usage: 'operant find "<question>"', desc: 'an xsmall-tier worker searches the project and answers with file:line references', examples: ['operant find "where is the auto compact threshold checked"'], flags: [] },
   msg: { group: 'agents & tasks', usage: 'operant msg <tile id or title> "<text>"', desc: 'message another agent tile (needs Settings › Agents › Team › Let agents message each other); it arrives between its steps, framed as from you, never as the user', examples: ['operant msg 7 "the API returns 404 for /users, can you check the route?"'], flags: [] },
@@ -70,6 +70,8 @@ const COMMANDS = {
   prime: { group: 'context', usage: 'operant prime', desc: 'your live Operant context: role and task, team tiers (while team mode is on), other tiles, dev servers, progress note, memory. Agents get it at session start and after each compact', examples: ['operant prime'], flags: [] },
 
   seats: { group: 'operations', usage: 'operant seats', desc: 'the seats (named roles that outlive their worker): id, role, kind, default tier, state, tile', examples: ['operant seats'], flags: [] },
+  pods: { group: 'operations', usage: 'operant pods', desc: 'the pods (seats that share one brief, stored once): id, seats, brief', examples: ['operant pods'], flags: [] },
+  pod: { group: 'operations', usage: 'operant pod set <id> --brief "<text>"', desc: "set a pod's shared brief (project facts and rules); every seat in the pod gets it once per launch", examples: ['operant pod set feature --brief "Use CodeGraph first. Never commit."'], flags: ['brief'] },
   seat: { group: 'operations', usage: 'operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]', desc: "one seat's details and history; set changes its default tier or standing guidance", examples: ['operant seat planner', 'operant seat set explorer --tier free'], flags: ['tier', 'guidance'] },
   doctor: { group: 'operations', usage: 'operant doctor', desc: 'health of providers, credentials (present or not, never printed), versions, MCP, local model, the local store and context providers: healthy, degraded, unavailable, not configured or unknown', examples: ['operant doctor'], flags: [] },
   providers: { group: 'operations', usage: 'operant providers', desc: 'the configured agent CLIs: installed, credentials present, state', examples: ['operant providers'], flags: [] },
@@ -415,6 +417,9 @@ function buildArgs(cmd, positionals, flags) {
     else args.id = Number(positionals[1]);
   }
   // seat <id> shows one seat; seat set <id> changes it.
+  // pod set <id> --brief; team list | save <name> | start <name> (a template name may be several words).
+  if (cmd === 'pod') { args.sub = positionals[0]; args.id = positionals[1]; if (typeof flags.brief === 'string') args.brief = flags.brief; }
+  if (cmd === 'team' && positionals.length) { args.sub = positionals[0]; args.name = positionals.slice(1).join(' '); }
   if (cmd === 'seat' && args.sub !== 'set') { if (args.sub != null) args.id = args.sub; delete args.sub; }
   // Relative paths mean the shell's current folder, not the folder the tile started in.
   const path = require('path');
@@ -422,7 +427,7 @@ function buildArgs(cmd, positionals, flags) {
   if (cmd === 'open' && typeof args.target === 'string' && require('fs').existsSync(args.target)) args.target = path.resolve(args.target);
   // So does where a new tile starts: after a cd into a subproject, or through the long-command reroute
   // hook, the tile's own starting folder would be the wrong one to test, build or work in.
-  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route', 'components', 'seats', 'seat'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
+  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route', 'components', 'seats', 'seat', 'pods', 'pod', 'team'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
   return args;
 }
 
@@ -516,6 +521,7 @@ function formatResult(cmd, result, opts) {
     case 'msg': return result.held ? `held for tile ${result.to}: the user is typing there; it is delivered when they stop` : result.delivered ? `delivered to tile ${result.to}` : `queued for tile ${result.to} (${result.queued} waiting); it gets it when it is between steps`;
     case 'inbox': return result.text || '(no messages)';
     case 'team': {
+      if (result.text) return result.text;
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
       const lines = [`team mode: enabled  ·  ${result.workers}/${result.maxWorkers} workers running`];
       for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}${t.effort ? ` (${t.effort} effort)` : ''}${t.fallback ? ` (${t.fallback})` : ''}${Array.isArray(t.routes) ? ` [routes: ${t.routes.join(' > ')}]` : ''}  —  ${t.use}`);
@@ -583,7 +589,7 @@ function formatResult(cmd, result, opts) {
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }
-    case 'doctor': case 'seats': case 'seat': case 'providers': case 'models': case 'components': case 'history': case 'stats': case 'route': return result.text || 'ok';
+    case 'doctor': case 'seats': case 'seat': case 'pods': case 'pod': case 'providers': case 'models': case 'components': case 'history': case 'stats': case 'route': return result.text || 'ok';
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0
       ? 'ok' : JSON.stringify(result);
   }

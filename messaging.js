@@ -69,7 +69,7 @@ const REASONS = {
 // a new one). A busy tile is never interrupted: the brief waits in its queue until deliver() finds it idle. --team is team
 // work, refused (never turned into a plain send) while team mode is off. `env` is the app's side: state, teamEnabled, agents,
 // agentKind(id), agentMode(dir), messageTarget(ref), deliver(tile), flatLine(text), cwdOf(tile), projectOf(dir), tiles(),
-// open(agentId, dir, prompt, near) -> tile.
+// open(agentId, dir, prompt, near) -> tile; notReady(tile) -> why a seat tile could not take it yet, or null (optional).
 async function sendBrief(args, self, env) {
   if (!self) throw new Error('unknown tile');
   const text = String(args.text ?? '').trim();
@@ -102,7 +102,7 @@ async function sendBrief(args, self, env) {
   if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${REASONS[r.reason]}`);
   const delivered = await env.deliver(w);
   return { to: w.id, brief: true, opened: false, delivered, waiting: !delivered, team: !!args.team,
-    text: delivered ? `sent to ${label} tile ${w.id}${suffix}` : `tile ${w.id} is busy: the brief is queued and goes in when it is idle (not interrupted)` };
+    text: delivered ? `sent to ${label} tile ${w.id}${suffix}` : env.notReady && env.notReady(w) ? `tile ${w.id} is not ready (${env.notReady(w)}): the brief is queued and goes in when it is` : `tile ${w.id} is busy: the brief is queued and goes in when it is idle (not interrupted)` };
 }
 
 const api = { MAX_TEXT, BRIEF_MAX, teamBrief, sendBrief, newState, frame, frameAll, enqueue, take, pending, drop, REASONS };
