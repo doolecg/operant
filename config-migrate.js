@@ -175,6 +175,7 @@ function teamErrors(team, cur, agentIds, bad) {
     }
   }
   for (const [name, n] of Object.entries(team.budgets || {})) if (!Number.isInteger(n) || n < 0) return bad('budgets as whole numbers of 0 or more', name);
+  for (const key of ['minutes', 'calls']) for (const [name, n] of Object.entries(team[key] || {})) if (!Number.isInteger(n) || n < 0) return bad(key + ' as whole numbers of 0 or more', name);
   const tiers = team.tiers === undefined ? cur.tiers : team.tiers;
   if (team.maxTier !== undefined && isPlain(tiers) && !(team.maxTier in tiers)) return bad('a top tier that exists: ' + Object.keys(tiers).join(', '));
 }
@@ -186,7 +187,8 @@ function mergeUser(defaults, user, keybinds) {
     keybinds: { ...keybinds, ...(user.keybinds || {}) },
     backups: { ...defaults.backups, ...(user.backups || {}) },
     localModel: { ...defaults.localModel, ...(user.localModel || {}) },
-    team: { ...defaults.team, ...(user.team || {}), tiers: { ...defaults.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...defaults.team.budgets, ...(user.team?.budgets || {}) } },
+    team: { ...defaults.team, ...(user.team || {}), tiers: { ...defaults.team.tiers, ...(user.team?.tiers || {}) }, budgets: { ...defaults.team.budgets, ...(user.team?.budgets || {}) },
+      minutes: { ...defaults.team.minutes, ...(user.team?.minutes || {}) }, calls: { ...defaults.team.calls, ...(user.team?.calls || {}) } },
   };
 }
 

@@ -219,6 +219,8 @@ const DEFAULT_CONFIG = {
       max: { agent: 'claude', model: 'claude-opus-5-5', effort: 'max', use: 'the hardest problems: architecture, where getting it right matters more than cost' },
     },
     budgets: { free: 100000, xsmall: 150000, small: 300000, medium: 600000, high: 1200000, max: 2000000 }, // hard token limit per task (input + output + cache writes); 0 = no limit
+    minutes: { free: 15, xsmall: 20, small: 30, medium: 45, high: 60, max: 90 }, // elapsed minutes per task; 0 = no limit
+    calls: { free: 80, xsmall: 120, small: 200, medium: 300, high: 400, max: 600 }, // tool calls per task; 0 = no limit
     savingProgress: 'over',     // the save allowance at a limit: 'over' (on top of it) or 'inside' (taken out of it)
     dailyCap: 0,                // hard token cap per project per day; past it, the next task asks first · 0 = off
     maxWorkers: 4,
@@ -2014,8 +2016,12 @@ function noteStuckUse(sessionId, owner, name, input, toolId) {
   }
   const file = input && typeof input === 'object' ? (input.file_path ?? input.filePath ?? input.path) : null;
   if (EDIT_TOOLS.test(name) && typeof file === 'string') { st.edits.push(file); if (st.edits.length > 20) st.edits.shift(); }
-  if (EDIT_TOOLS.test(name)) st.tracker.onFileEdit();
-  else if (!isReadonlyOperantCall(input)) flagStuck(sessionId, owner, st, st.tracker.onTurn());
+  if (EDIT_TOOLS.test(name)) {
+    const inp = input && typeof input === 'object' ? input : {};
+    const one = e => ({ file, before: e.old_string ?? e.oldString, after: e.new_string ?? e.newString ?? e.content });
+    const edits = Array.isArray(inp.edits) ? inp.edits.map(one) : [inp.patch ?? inp.patchText ? { file, patch: inp.patch ?? inp.patchText } : one(inp)];
+    for (const e of edits.length ? edits : [{}]) flagStuck(sessionId, owner, st, st.tracker.onFileEdit(e));
+  } else if (!isReadonlyOperantCall(input)) flagStuck(sessionId, owner, st, st.tracker.onTurn());
 }
 
 ipcMain.on('stuck:reset', (_e, { sessionId }) => {

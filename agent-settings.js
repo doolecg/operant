@@ -37,6 +37,12 @@ const GROUPS = ['Who does the work', 'How much they may spend', 'When they get s
 const budgetMeta = t => ({ id: 'budget.' + t, path: 'budgets.' + t, group: GROUPS[1], label: `${TIER_NAME[t]} token limit`,
   does: `Stops a ${t} worker at this many tokens so one task cannot run away (you are told at 80%, it saves at 90%). 0 = no limit.`,
   when: 'Workers started after the change; a running worker keeps its limit', dev: `team.budgets.${t}` });
+const minutesMeta = t => ({ id: 'minutes.' + t, path: 'minutes.' + t, group: GROUPS[1], label: `${TIER_NAME[t]} time limit (minutes)`,
+  does: `Stops a ${t} worker after this many minutes on a task (you are told at 90%, and earlier when its pace says it will be passed). It asks you first; it never moves up by itself. 0 = no limit.`,
+  when: 'Workers started after the change; a running worker keeps its limit', dev: `team.minutes.${t}` });
+const callsMeta = t => ({ id: 'calls.' + t, path: 'calls.' + t, group: GROUPS[1], label: `${TIER_NAME[t]} tool-call limit`,
+  does: `Stops a ${t} worker after this many tool calls on a task (you are told at 90%, and earlier when its pace says it will be passed). It asks you first; it never moves up by itself. 0 = no limit.`,
+  when: 'Workers started after the change; a running worker keeps its limit', dev: `team.calls.${t}` });
 const tierMeta = t => ({ id: 'tier.' + t, group: GROUPS[0], adv: true, label: `${TIER_NAME[t]} tier: agent, model, effort`,
   does: `Which agent and model runs ${t} jobs, and what the lead is told this tier is for.`,
   when: 'The next worker the lead starts', dev: `team.tiers.${t}.agent, .model, .effort, .use` });
@@ -53,6 +59,8 @@ const META = [
     when: 'Live', dev: 'team.tiers.<tier>.fallbacks' },
   ...TIERS.map(tierMeta),
   ...TIERS.map(budgetMeta),
+  ...TIERS.map(minutesMeta),
+  ...TIERS.map(callsMeta),
   { id: 'suggest', group: GROUPS[1], label: 'Suggested limits', does: 'Limits worked out from your past tasks; nothing changes until you press Apply.',
     when: 'On the click', dev: 'team.budgets (90th percentile + 25%)' },
   { id: 'savingProgress', path: 'savingProgress', group: GROUPS[1], label: 'Saving progress at a limit', does: 'Whether the tokens a worker needs to save its notes come on top of its limit or out of it.',
@@ -89,6 +97,8 @@ function effective(cfg, id) {
     case 'askBeforeMoveUp': return 'On';
     default:
       if (m && m.path && m.path.startsWith('budgets.')) { const n = get(t, m.path) || 0; return n ? `${kTok(n)} tokens per task` : 'No limit'; }
+      if (m && m.path && m.path.startsWith('minutes.')) { const n = get(t, m.path) || 0; return n ? `${n} minutes per task` : 'No limit'; }
+      if (m && m.path && m.path.startsWith('calls.')) { const n = get(t, m.path) || 0; return n ? `${n} tool calls per task` : 'No limit'; }
       if (id.startsWith('tier.')) { const x = (t.tiers || {})[id.slice(5)] || {}; return [x.agent, x.model, x.effort].filter(Boolean).join(' · ') || 'Not set'; }
       return '';
   }
@@ -182,7 +192,7 @@ function matches(m, q) {
 // Team settings that differ from the defaults (defaults: cfg.team of the shipped config), as paths.
 function changedFrom(team, defaults) {
   const out = [];
-  for (const f of ['enabled', 'maxWorkers', 'maxTier', 'savingProgress', 'dailyCap', 'verifyBeforeReview', ...TIERS.map(x => 'budgets.' + x)]) {
+  for (const f of ['enabled', 'maxWorkers', 'maxTier', 'savingProgress', 'dailyCap', 'verifyBeforeReview', ...TIERS.map(x => 'budgets.' + x), ...TIERS.map(x => 'minutes.' + x), ...TIERS.map(x => 'calls.' + x)]) {
     if (!same(get(team, f), get(defaults, f))) out.push(f);
   }
   return out;

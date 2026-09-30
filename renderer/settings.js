@@ -525,6 +525,10 @@ const Panels = (() => {
       const id = it.sid.slice(7);
       return shell(`<input type="number" data-team-budget="${id}" min="0" step="10000" value="${team.budgets?.[id] ?? 0}">`, `<span class="hint">${esc(suggestionText(sugg && sugg[id]))}</span>`);
     }
+    if (it.sid.startsWith('minutes.') || it.sid.startsWith('calls.')) {
+      const [kind, id] = it.sid.split('.');
+      return shell(`<input type="number" data-team-limit="${kind}.${id}" min="0" step="${kind === 'minutes' ? 5 : 10}" value="${team[kind]?.[id] ?? 0}">`);
+    }
     return '';
   }
   // The top of Settings › Agents: what is set now in plain sentences (each with a Change link), and the presets.
@@ -817,6 +821,11 @@ const Panels = (() => {
         if (n && n < 20000 && cfg.team?.savingProgress === 'inside') { teamLimitMsg = `A ${el.dataset.teamBudget} limit under 20k leaves no room to save progress inside it. Nothing was changed.`; draw(); return; }
         teamLimitMsg = '';
         el.value = n; set('team', { ...(cfg.team || {}), budgets: { ...(cfg.team?.budgets || {}), [el.dataset.teamBudget]: n } });
+      });
+      pane.querySelectorAll('[data-team-limit]').forEach(el => el.onchange = () => {
+        const [kind, id] = el.dataset.teamLimit.split('.');
+        const n = Math.max(0, Math.round(+el.value || 0));
+        el.value = n; set('team', { ...(cfg.team || {}), [kind]: { ...(cfg.team?.[kind] || {}), [id]: n } });
       });
       pane.querySelectorAll('[data-team-saving]').forEach(el => el.onchange = () => {
         const small = Object.entries(cfg.team?.budgets || {}).filter(([, n]) => n && n < 20000).map(([k]) => k);

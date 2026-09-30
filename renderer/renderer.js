@@ -1325,7 +1325,9 @@
     + '<input class="board-ask-hint hidden" placeholder="Your hint for the worker, then Enter" spellcheck="false"></div>';
   // A new worker tile gets the task's limit; `inside` limits under 20k were refused before it started.
   function armLimit(w, t) {
-    w.limit = { taskId: t.id, tracker: TierGuard.createLimitTracker({ limit: tierBudget(t), saving: cfg.team?.savingProgress }) };
+    const x = t.budgetX || {};
+    w.limit = { taskId: t.id, tracker: TierGuard.createLimitTracker({ limit: tierBudget(t), saving: cfg.team?.savingProgress }),
+      budget: TierGuard.createBudgetTracker({ minutes: x.minutes ?? cfg.team?.minutes?.[t.tier], calls: x.calls ?? cfg.team?.calls?.[t.tier] }), startedAt: Date.now() };
     t.limitUse = null;
   }
   // The suggested limit for a tier (and task type) from past outcomes; the tier default when there is too little.
@@ -1340,10 +1342,12 @@
     const next = Board.escalation(t, allowedTierNames(t.cwd || lastCwd), cfg.team?.maxTier);
     const nextLimit = next ? await suggestionFor(next, TaskType.classifyTask(t.text)) : null;
     const limit = tierBudget(t);
+    const x = t.budgetX || {};
     const ask = TierGuard.makeAsk({ kind, reason: why, next, nextLimit, limit, raised: !!t.raised,
+      budgetLimits: kind === 'budget' ? { minutes: x.minutes ?? cfg.team?.minutes?.[t.tier] ?? 0, calls: x.calls ?? cfg.team?.calls?.[t.tier] ?? 0 } : null,
       evidence: TierGuard.evidence({ ...ev, tokens: taskUsed(t, w), limit }) });
     TierGuard.pause(t, ask);
-    if (w?.alive && w.ptyId && kind !== 'limit') { stopTile(w); if (w.sessionId) operant.stuckReset(w.sessionId); }
+    if (w?.alive && w.ptyId && kind !== 'limit' && kind !== 'budget') { stopTile(w); if (w.sessionId) operant.stuckReset(w.sessionId); }
     boardChanged();
     tell(t, `Task ${t.id} ${ask.why}: ${taskTldr(t)}`, `${ask.reason}. Paused until you answer on the board: ${ask.choices.map(c => c.label).join(' · ')}`);
     toast(`Task ${t.id} ${esc(ask.why)} · paused, answer on the Tasks board`, () => { if (openPanel() !== 'board') togglePanel('board'); }, 10000);
@@ -1362,7 +1366,7 @@
     } else if (r.do === 'raise') {
       await continueTask(t, w);
     } else {
-      if (ask.kind === 'limit') recordOutcome(t, 'blocked', w);
+      if (ask.kind === 'limit' || ask.kind === 'budget') recordOutcome(t, 'blocked', w);
       if (r.do === 'takeover') { if (w?.alive) { closePanels(); if (w.ws !== current) switchWorkspace(w.ws); focusWin(w); } }
       else if (w?.alive && w.tier && !board.tasks.some(x => x !== t && x.owner === w.id && Board.isOpen(x))) { t.free = !!w.tok?.free; closeWin(w); }
       boardChanged();
@@ -1372,7 +1376,7 @@
   async function continueTask(t, w) {
     t.tokens = addTok(t.tokens, w?.tok);
     if (w?.tok) t.segments = [...(t.segments || []), { model: t.model || null, tokens: addTok(null, w.tok) }];
-    t.failure = `Continue this task: the last worker stopped at its token limit. Its handback: ${oneLine(t.note || 'none')}`;
+    t.failure = `Continue this task: the last worker stopped at its ${t.lastAsk?.kind === 'budget' ? 'time or tool-call' : 'token'} limit. Its handback: ${oneLine(t.note || 'none')}`;
     t.owner = null;
     if (w?.alive) closeWin(w);
     boardChanged();
@@ -1393,6 +1397,34 @@
     if (st.plan && !st.plan.error) t.limitUse = { work: st.work, limit: st.plan.work, allowanceUsed: st.allowanceUsed, allowance: st.plan.allowance };
     if (ev) onLimitEvent(t, w, ev);
   }
+  // Elapsed minutes and tool calls (item 92), next to the token limit; the call count comes from the tile's session
+  // (Claude Code and OpenCode both feed it in main.js). Read every 15 seconds while a worker is live.
+  async function checkBudget(w) {
+    const L = w.limit, t = L && L.budget && L.budget.active() && board.tasks.find(x => x.id === L.taskId);
+    if (!t || t.owner !== w.id || !['doing', 'todo'].includes(t.status) || L.budgetBusy) return;
+    L.budgetBusy = true;
+    try {
+      const r = w.sessionId ? await operant.stuckRecent(w.sessionId).catch(() => null) : null;
+      const plan = L.tracker.state().plan;
+      const share = plan && !plan.error ? Math.min(1, L.tracker.state().used / plan.work) : 0;
+      for (const ev of L.budget.onProgress({ minutes: (Date.now() - L.startedAt) / 60000, calls: r?.calls || 0, share })) {
+        if (ev.type === 'stop') { await onBudgetStop(t, w, ev, r); break; }
+        Messaging.enqueue(msgState, { from: 'operant', to: w.id, text: TierGuard.budgetMessage(ev, { id: t.id }) });
+        deliver(w);
+        const what = ev.what === 'minutes' ? 'time' : 'tool-call';
+        tell(t, `Task ${t.id} ${ev.type === 'pace' ? `will pass its ${what} limit at this pace` : `is at 90% of its ${what} limit`}: ${taskTldr(t)}`,
+          `${Math.round(ev.used)} of ${Math.round(ev.limit)} ${ev.what === 'minutes' ? 'minutes' : 'tool calls'}`);
+      }
+    } finally { L.budgetBusy = false; }
+  }
+  async function onBudgetStop(t, w, ev, r) {
+    t.limitHit = true;
+    t.note = TierGuard.autoHandback({ ...(r || {}), used: ev.used, limit: ev.limit, what: ev.what });
+    if (t.status === 'doing' || t.status === 'todo') t.status = 'blocked';
+    endWorkerProcess(w);
+    await askUser(t, 'budget', `${ev.what === 'minutes' ? 'time' : 'tool-call'} limit ${Math.round(ev.limit)} ${ev.what === 'minutes' ? 'minutes' : 'tool calls'} reached`);
+  }
+  setInterval(() => { for (const w of wins.values()) if (w.alive && w.tier && w.limit) checkBudget(w); }, 15000);
   async function onLimitEvent(t, w, ev) {
     const st = w.limit.tracker.state();
     if (ev.type !== 'stop') {
@@ -5191,6 +5223,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             t.free = !!w.tok?.free; // the card keeps the free flag after the tile is gone
             closeWin(w);
           }
+          // Approving puts you back on the lead tile that owns the task.
+          const lead = wins.get(t.lead);
+          if (lead?.alive) focusWin(lead);
         }
         else if (args.sub === 'reject') {
           if (!args.note) throw new Error('--note "<why>" required');

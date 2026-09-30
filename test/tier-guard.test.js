@@ -188,3 +188,43 @@ test('each answer: up, hint, raise, take over, stop', () => {
   assert.strictEqual(t.status, 'cancelled');
   assert.match(t.note, /Stopped by you: was rejected twice/);
 });
+
+test('budget tracker: 0 is no limit; warns at 90% once, stops at the limit once, per limit', () => {
+  const none = g.createBudgetTracker({ minutes: 0, calls: 0 });
+  assert.strictEqual(none.active(), false);
+  assert.deepStrictEqual(none.onProgress({ minutes: 999, calls: 999 }), []);
+  const t = g.createBudgetTracker({ minutes: 30, calls: 100 });
+  assert.deepStrictEqual(t.onProgress({ minutes: 10, calls: 50 }), []);
+  assert.deepStrictEqual(t.onProgress({ minutes: 27, calls: 50 }), [{ type: 'warn', what: 'minutes', used: 27, limit: 30 }]);
+  assert.deepStrictEqual(t.onProgress({ minutes: 28, calls: 90 }), [{ type: 'warn', what: 'calls', used: 90, limit: 100 }]);
+  assert.deepStrictEqual(t.onProgress({ minutes: 30, calls: 90 }), [{ type: 'stop', what: 'minutes', used: 30, limit: 30 }]);
+  assert.deepStrictEqual(t.onProgress({ minutes: 40, calls: 100 }), [{ type: 'stop', what: 'calls', used: 100, limit: 100 }]);
+  assert.deepStrictEqual(t.onProgress({ minutes: 50, calls: 200 }), []);
+});
+
+test('budget tracker: the pace warning fires once when the token pace projects past the limit', () => {
+  const t = g.createBudgetTracker({ minutes: 30 });
+  assert.deepStrictEqual(t.onProgress({ minutes: 5, share: 0.1 }), [], 'too early in the tokens to project');
+  assert.deepStrictEqual(t.onProgress({ minutes: 10, share: 0.5 }), [], '20 minutes projected, under 30');
+  const ev = t.onProgress({ minutes: 15, share: 0.4 });
+  assert.strictEqual(ev.length, 1);
+  assert.strictEqual(ev[0].type, 'pace');
+  assert.strictEqual(ev[0].projected, 37.5);
+  assert.deepStrictEqual(t.onProgress({ minutes: 16, share: 0.4 }), []);
+  assert.match(g.budgetMessage(ev[0], { id: 7 }), /at this pace task 7 will pass its 30 minutes limit/);
+  assert.match(g.budgetMessage({ type: 'warn', what: 'calls', used: 90, limit: 100 }, { id: 7 }), /90 of its 100 tool calls limit \(90%\)/);
+});
+
+test('a budget stop asks the user, never moves up on its own, and raising doubles the limits once', () => {
+  const ask = g.makeAsk({ kind: 'budget', reason: 'time limit 30 minutes reached', next: 'medium', budgetLimits: { minutes: 30, calls: 200 } });
+  assert.strictEqual(ask.why, 'reached its time or tool-call limit');
+  assert.deepStrictEqual(ask.choices.map(c => c.id), ['raise', 'up', 'takeover', 'stop']);
+  assert.ok(!g.makeAsk({ kind: 'budget', budgetLimits: { minutes: 30, calls: 200 }, raised: true }).choices.some(c => c.id === 'raise'));
+  const task = { id: 3 };
+  g.pause(task, ask);
+  assert.strictEqual(task.status, 'paused');
+  assert.deepStrictEqual(g.answer(task, 'raise'), { do: 'raise', limit: null });
+  assert.deepStrictEqual(task.budgetX, { minutes: 60, calls: 400 });
+  assert.strictEqual(task.budget, undefined, 'the token limit is untouched');
+  assert.match(g.autoHandback({ used: 30, limit: 30, what: 'minutes' }), /minutes limit \(30 of 30\)/);
+});
