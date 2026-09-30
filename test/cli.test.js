@@ -80,7 +80,7 @@ test('the flag table is what the handlers read', () => {
     run: 'title cwd focus background inline', test: 'cwd idle timeout title focus', build: 'cwd idle timeout title focus',
     read: 'lines new errors grep digest', wait: 'idle timeout new errors grep digest lines',
     agent: 'agent tier budget model cwd title focus', ask: 'options detail', notify: 'title', task: 'for note status', board: 'full',
-    remember: 'type global about confidence supersedes', recall: 'about all note', usage: 'breakdown days', watch: 'errors grep off',
+    remember: 'type global about confidence supersedes source commit', recall: 'about all note', usage: 'breakdown days', watch: 'errors grep off',
     close: 'force', ws: 'name', view: 'focus', edit: 'focus', diff: 'focus', send: 'enter brief file new team',
   };
   for (const [name, c] of Object.entries(COMMANDS)) {

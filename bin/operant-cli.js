@@ -61,8 +61,8 @@ const COMMANDS = {
   msg: { group: 'agents & tasks', usage: 'operant msg <tile id or title> "<text>"', desc: 'message another agent tile (needs Settings › Agents › Team › Let agents message each other); it arrives between its steps, framed as from you, never as the user', examples: ['operant msg 7 "the API returns 404 for /users, can you check the route?"'], flags: [] },
   inbox: { group: 'agents & tasks', usage: 'operant inbox', desc: 'read and clear the messages other agents sent you (only for tiles that are not handed them automatically)', examples: ['operant inbox'], flags: [] },
 
-  remember: { group: 'memory', usage: 'operant remember "<fact>" [--type user|feedback|project|reference] [--global] [--about "<file|symbol>[,<more>]"] [--confidence verified|observed|inferred|stale] [--supersedes <id>]', desc: 'save (or update) one fact in this project\'s shared memory; --type user/--global for user-wide facts; --about links it to code (resolved through CodeGraph when indexed)', examples: ['operant remember "Ship on dev-<version>, fast-forward main at release" --type project', 'operant remember "Prefers plain commit messages" --type user', 'operant remember "recall() caps output around 2k tokens" --about memory.js,recall'], flags: ['type', 'global', 'about', 'confidence', 'supersedes'] },
-  recall: { group: 'memory', usage: 'operant recall ["query"] [--about "<file|symbol>"] [--all] | operant recall used <id> | wrong <id> [--note "<why>"]', desc: 'the memory index, matching facts for a query (best first; each has an id), or facts linked to a file/symbol; a fact whose linked file changed shows [stale]; --all includes superseded facts. Then tell memory which facts helped (used) or were wrong (wrong)', examples: ['operant recall', 'operant recall "release process"', 'operant recall --about main.js', 'operant recall used release-process', 'operant recall wrong release-process --note "we use main now"'], flags: ['about', 'all', 'note'] },
+  remember: { group: 'memory', usage: 'operant remember "<fact>" [--type user|feedback|project|reference] [--global] [--about "<file|symbol>[,<more>]"] [--confidence verified|observed|inferred|stale] [--supersedes <id>] [--source <session|agent>] [--commit <hash[,hash]>]', desc: 'save (or update) one fact in this project\'s shared memory; --type user/--global for user-wide facts; --about links it to code (resolved through CodeGraph when indexed)', examples: ['operant remember "Ship on dev-<version>, fast-forward main at release" --type project', 'operant remember "Prefers plain commit messages" --type user', 'operant remember "recall() caps output around 2k tokens" --about memory.js,recall'], flags: ['type', 'global', 'about', 'confidence', 'supersedes', 'source', 'commit'] },
+  recall: { group: 'memory', usage: 'operant recall ["query"] [--about "<file|symbol>"] [--all] | operant recall used <id> | wrong <id> [--note "<why>"] | delete <id>', desc: 'the memory index, matching facts for a query (best first; each has an id), or facts linked to a file/symbol; a fact whose linked file changed shows [stale]; --all includes superseded facts. Then tell memory which facts helped (used) or were wrong (wrong); delete removes one for good. Facts not recalled in 90 days are archived; facts that contradict each other are both kept and flagged', examples: ['operant recall', 'operant recall "release process"', 'operant recall --about main.js', 'operant recall used release-process', 'operant recall wrong release-process --note "we use main now"'], flags: ['about', 'all', 'note'] },
 
   usage: { group: 'context', usage: 'operant usage [--breakdown] [--days 1|7]', desc: "your tile's context size and the plan limits, or (--breakdown) where its project's tokens went", examples: ['operant usage', 'operant usage --breakdown', 'operant usage --breakdown --days 7'], flags: ['breakdown', 'days'] },
   compact: { group: 'context', usage: 'operant compact', desc: "queue a progress note + compact for your tile's next idle moment", examples: ['operant compact'], flags: [] },
@@ -377,7 +377,7 @@ function buildArgs(cmd, positionals, flags) {
     if (flags.file === true) args.file = true;
   }
   // recall / memory used|wrong <id>: feedback on a fact, not a query.
-  if (cmd === 'recall' && (positionals[0] === 'used' || positionals[0] === 'wrong') && positionals.length > 1) {
+  if (cmd === 'recall' && (positionals[0] === 'used' || positionals[0] === 'wrong' || positionals[0] === 'delete') && positionals.length > 1) {
     args.feedback = positionals[0]; args.id = positionals[1]; delete args.query;
   }
   // ask/ws's first positional is a question/index, not covered by JOIN_REST.
@@ -517,7 +517,8 @@ function formatResult(cmd, result, opts) {
       const prime = require('./operant-prime');
       return prime.formatPrime(result, prime.readLocal(result.tile?.project || process.cwd()));
     }
-    case 'remember': return `${result.name} [id: ${result.id}] (${result.type}${result.updated ? ', updated' : ''})`;
+    case 'remember': return `${result.name} [id: ${result.id}] (${result.type}${result.updated ? ', updated' : ''})`
+      + (result.conflicts ? `\nconflicts with ${result.conflicts.map(c => `${c.id} (prefer ${c.preferred})`).join(', ')}; both kept` : '');
     case 'recall': return (result.text || '') + (result.more ? `\n(${result.more} more matched, ${result.shown} of ${result.total} shown)` : '');
     case 'usage': {
       const lines = [result.max
@@ -538,6 +539,8 @@ function formatResult(cmd, result, opts) {
           + (g.tokensWith != null && g.tokensWithout != null ? `; tokens per task ${k(g.tokensWith)} with CodeGraph, ${k(g.tokensWithout)} without` : '')
           + (g.nudged ? `; nudged: ${g.nudged}` : '') + (g.degraded ? `; index degraded: ${g.degraded}` : ''));
       }
+      const providerLine = require('../context-providers').formatStats(result.contextProviders);
+      if (providerLine) lines.push(providerLine);
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }

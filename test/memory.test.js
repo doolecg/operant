@@ -306,3 +306,92 @@ test('remember outside a project saves to global memory and says so; recall stil
   assert.match(idx.text, /Legacy home fact/);
   assert.match(idx.text, /home folder/);
 });
+
+test('a new fact that contradicts an older one about the same subject keeps both and records the conflict', () => {
+  const cwd = tmpProj();
+  const userDataDir = tmpDir('user');
+  const a = memory.remember({ cwd, userDataDir, text: 'Release tags use the v prefix, like v1.2.1', confidence: 'observed' });
+  const b = memory.remember({ cwd, userDataDir, text: 'Release tags never use the v prefix, plain 1.2.1', confidence: 'verified' });
+  assert.equal(b.conflicts.length, 1);
+  assert.equal(b.conflicts[0].id, a.id);
+  assert.equal(b.conflicts[0].preferred, b.id, 'the verified one is preferred');
+  const facts = memory.listFacts(memory.projectMemoryDir(cwd));
+  assert.equal(facts.length, 2);
+  for (const f of facts) assert.equal(f.conflictsWith.length, 1);
+  const r = memory.recall({ cwd, userDataDir, query: 'release tags prefix' });
+  assert.match(r.text, /conflicts with/);
+  assert.ok(r.text.indexOf(b.name) < r.text.indexOf(a.name), 'the preferred fact ranks first');
+});
+
+test('unrelated or agreeing facts are not flagged; a newer fact wins at equal confidence', () => {
+  const cwd = tmpProj();
+  const userDataDir = tmpDir('user');
+  memory.remember({ cwd, userDataDir, text: 'The dev server listens on port 3000 in this project' });
+  const c = memory.remember({ cwd, userDataDir, text: 'Commit messages are plain, no attribution lines' });
+  assert.equal(c.conflicts, undefined);
+  const older = memory.listFacts(memory.projectMemoryDir(cwd)).find(f => /port 3000/.test(f.description));
+  const d = memory.remember({ cwd, userDataDir, text: 'The dev server listens on port 4000 in this project' });
+  assert.equal(d.conflicts[0].id, older.id);
+  assert.equal(d.conflicts[0].preferred, d.id);
+});
+
+test('source and commits are recorded, and repeat saves keep the union', () => {
+  const cwd = tmpProj();
+  const userDataDir = tmpDir('user');
+  memory.remember({ cwd, userDataDir, text: 'The parser trims headers first', source: 'agent:tile-4', commits: ['abc1234'], about: ['parser.js'] });
+  const r = memory.remember({ cwd, userDataDir, text: 'The parser trims headers first', commits: 'def5678,abc1234', about: ['parser.js'] });
+  const f = memory.listFacts(memory.projectMemoryDir(cwd)).find(x => x.id === r.id);
+  assert.equal(f.source, 'agent:tile-4');
+  assert.deepEqual(f.commits.sort(), ['abc1234', 'def5678']);
+  assert.deepEqual(f.about, ['parser.js']);
+});
+
+test('facts not recalled in 90 days are archived, not deleted, and leave the index', () => {
+  const cwd = tmpProj();
+  const userDataDir = tmpDir('user');
+  const old = memory.remember({ cwd, userDataDir, text: 'Old fact about the exporter pipeline' });
+  const fresh = memory.remember({ cwd, userDataDir, text: 'Fresh fact about the importer stage' });
+  const oldPath = path.join(old.dir, old.file);
+  const raw = fs.readFileSync(oldPath, 'utf8').replace(/updated: "[^"]+"/, 'updated: "2020-01-01T00:00:00.000Z"').replace(/created: "[^"]+"/, 'created: "2020-01-01T00:00:00.000Z"');
+  fs.writeFileSync(oldPath, raw);
+  const moved = memory.archiveStale({ cwd, userDataDir });
+  assert.deepEqual(moved, [old.id]);
+  assert.ok(fs.existsSync(path.join(old.dir, 'archive', old.file)), 'kept in archive/');
+  assert.ok(!fs.existsSync(oldPath));
+  assert.ok(fs.existsSync(path.join(fresh.dir, fresh.file)));
+  assert.doesNotMatch(fs.readFileSync(path.join(old.dir, 'MEMORY.md'), 'utf8'), /exporter/);
+  assert.deepEqual(memory.archiveStale({ cwd, userDataDir }), []);
+});
+
+test('a recent recall keeps an old fact from being archived', () => {
+  const cwd = tmpProj();
+  const userDataDir = tmpDir('user');
+  const old = memory.remember({ cwd, userDataDir, text: 'Exporter pipeline batches rows by fifty' });
+  const p = path.join(old.dir, old.file);
+  fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/updated: "[^"]+"/, 'updated: "2020-01-01T00:00:00.000Z"').replace(/created: "[^"]+"/, 'created: "2020-01-01T00:00:00.000Z"'));
+  memory.recall({ cwd, userDataDir, query: 'exporter pipeline' });
+  assert.deepEqual(memory.archiveStale({ cwd, userDataDir }), []);
+});
+
+test('recall delete <id> removes a fact (active or archived) and clears it from conflict records', () => {
+  const cwd = tmpProj();
+  const userDataDir = tmpDir('user');
+  const a = memory.remember({ cwd, userDataDir, text: 'Release tags use the v prefix, like v1.2.1' });
+  const b = memory.remember({ cwd, userDataDir, text: 'Release tags never use the v prefix, plain 1.2.1' });
+  const r = memory.recall({ cwd, userDataDir, feedback: 'delete', id: a.id });
+  assert.match(r.text, /deleted/);
+  assert.ok(!fs.existsSync(path.join(a.dir, a.file)));
+  const left = memory.listFacts(memory.projectMemoryDir(cwd)).find(f => f.id === b.id);
+  assert.deepEqual(left.conflictsWith, []);
+  assert.throws(() => memory.recall({ cwd, userDataDir, feedback: 'delete', id: 'nope' }), /no fact/);
+});
+
+test('recalls and uses are counted for the memory provider in .operant', () => {
+  const cwd = tmpProj();
+  const userDataDir = tmpDir('user');
+  const r = memory.remember({ cwd, userDataDir, text: 'Exporter pipeline batches rows by fifty' });
+  memory.recall({ cwd, userDataDir, query: 'exporter' });
+  memory.recall({ cwd, userDataDir, feedback: 'used', id: r.id });
+  const s = require('../context-providers.js').readStats(cwd);
+  assert.deepEqual([s.memory.called, s.memory.used], [1, 1]);
+});

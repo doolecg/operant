@@ -549,6 +549,8 @@ function startControlServer() {
           const r = await forwardControl(ownerForTile(tile), cmd, args, tile, 20000);
           if (!r.ok) return reply(400, r);
           const extra = { limits: await fetchLimits() };
+          const providers = r.result.dir ? require('./context-providers').readStats(r.result.dir) : {};
+          if (Object.keys(providers).length) extra.contextProviders = providers;
           if (args.breakdown) extra.breakdown = await usageBreakdown({ days: args.days === 7 ? 7 : 1, project: r.result.project || null });
           return reply(200, { ok: true, result: { ...r.result, ...extra }, warn: r.warn });
         }

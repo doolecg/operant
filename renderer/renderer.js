@@ -5162,7 +5162,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const codegraph = await operant.outcomeCodegraph().catch(() => null);
         return { id: self.id, tokens: ctx?.tokens ?? null, max: ctx?.max ?? null, ...(codegraph && codegraph.tasks ? { codegraph } : {}),
           pct: ctx && ctx.max ? Math.round((ctx.tokens / ctx.max) * 100) : null,
-          project: self.cwd ? baseName(self.cwd) : null };
+          project: self.cwd ? baseName(self.cwd) : null, dir: self.cwd ? projectDir(self.cwd) : null };
       }
       case 'compact': {
         if (!self) throw new Error('unknown tile');
@@ -5317,7 +5317,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       }
       case 'remember': {
         if (!args.text) throw new Error('text required');
-        const r = await operant.memory('remember', { cwd: projectDir(self?.cwd || lastCwd), text: args.text, type: args.type, global: !!args.global, confidence: args.confidence, supersedes: args.supersedes, about: args.about ? String(args.about).split(',').map(s => s.trim()).filter(Boolean) : [] });
+        const r = await operant.memory('remember', { cwd: projectDir(self?.cwd || lastCwd), text: args.text, type: args.type, global: !!args.global, confidence: args.confidence, supersedes: args.supersedes, source: args.source || (self ? `agent:tile-${self.id}` : 'session'), commits: args.commit ? String(args.commit).split(',').map(s => s.trim()).filter(Boolean) : [], about: args.about ? String(args.about).split(',').map(s => s.trim()).filter(Boolean) : [] });
         if (!r.ok) throw new Error(r.error);
         return r.result.note ? { ...r.result, type: r.result.note } : r.result;
       }

@@ -14,6 +14,8 @@ const { writeFileAtomic } = require('./atomic-write');
 const TYPES = ['user', 'feedback', 'project', 'reference'];
 const CONFIDENCE = ['verified', 'observed', 'inferred', 'stale'];
 const RECALL_LOG_MAX = 2 * 1024 * 1024;
+const ARCHIVE_DAYS = 90;
+const CONFIDENCE_RANK = { verified: 3, observed: 2, inferred: 1, stale: 0 };
 
 function slugify(s) {
   return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'fact';
@@ -101,6 +103,9 @@ function readFact(dir, file) {
     created: meta.created || '', updated: meta.updated || '', lastUsed: meta.lastUsed || '',
     recalls: int(meta.recalls), uses: int(meta.uses), rejects: int(meta.rejects),
     supersedes: meta.supersedes || '',
+    source: meta.source || '',
+    commits: Array.isArray(meta.commits) ? meta.commits : (meta.commits ? [meta.commits] : []),
+    conflictsWith: Array.isArray(meta.conflictsWith) ? meta.conflictsWith : (meta.conflictsWith ? [meta.conflictsWith] : []),
     body: body.trim(),
   };
 }
@@ -207,6 +212,31 @@ function staleAbout(cwd, fact) {
   return null;
 }
 
+// Two facts about the same subject that disagree: they share most of their words (or link the same file)
+// and one says "not/never/avoid" where the other doesn't, or they give different numbers.
+const NEGATION = /\b(not|never|no longer|don't|doesn't|isn't|aren't|won't|can't|cannot|without|avoid|stop|instead of)\b/i;
+function sameSubject(a, b) {
+  const ta = new Set(tokens(a.description).filter(w => w.length > 2)), tb = new Set(tokens(b.description).filter(w => w.length > 2));
+  const shared = [...ta].filter(w => tb.has(w)).length;
+  const files = new Set(a.about.map(aboutRel));
+  return (shared >= 3 && shared / Math.min(ta.size, tb.size) >= 0.5) || b.about.some(x => files.has(aboutRel(x)));
+}
+function disagree(a, b) {
+  if (norm(a.description) === norm(b.description)) return false;
+  const nums = t => new Set(String(t).match(/\d+(\.\d+)*/g) || []);
+  const na = nums(a.description), nb = nums(b.description);
+  const numbersDiffer = na.size && nb.size && [...na].some(n => !nb.has(n)) && [...nb].some(n => !na.has(n));
+  return NEGATION.test(a.description) !== NEGATION.test(b.description) || !!numbersDiffer;
+}
+const conflictsWith = (a, b) => a.id !== b.id && sameSubject(a, b) && disagree(a, b);
+// The fact to trust when two conflict: higher confidence (verified beats the rest), then the newer one.
+function preferred(a, b) {
+  const ra = CONFIDENCE_RANK[a.confidence], rb = CONFIDENCE_RANK[b.confidence];
+  if (ra !== rb) return ra > rb ? a : b;
+  return (Date.parse(a.updated || a.created) || 0) >= (Date.parse(b.updated || b.created) || 0) ? a : b;
+}
+const commaList = v => [...new Set([].concat(v || []).flatMap(x => String(x).split(',')).map(x => x.trim()).filter(Boolean))];
+
 function targetDir(cwd, userDataDir, type, global, homeDir) {
   const root = (global || type === 'user') ? null : memoryProjectDir(cwd, { homeDir });
   return root ? projectMemoryDir(root) : globalMemoryDir(userDataDir);
@@ -214,7 +244,7 @@ function targetDir(cwd, userDataDir, type, global, homeDir) {
 
 // Saves one fact, updating an existing one instead of adding a duplicate when its name or
 // description (normalized) matches a fact already in the same memory dir.
-function remember({ cwd, userDataDir, text, type = 'project', global = false, about = [], confidence, supersedes, homeDir }) {
+function remember({ cwd, userDataDir, text, type = 'project', global = false, about = [], confidence, supersedes, source, commits, homeDir }) {
   const fact = String(text || '').trim();
   if (!fact) throw new Error('text required');
   const kind = TYPES.includes(type) ? type : 'project';
@@ -248,12 +278,22 @@ function remember({ cwd, userDataDir, text, type = 'project', global = false, ab
     name, description: fact, type: kind, about: aboutList, aboutSig: aboutList.map(a => hashAbout(cwd, a)),
     confidence: conf, created: (existing && existing.created) || now, updated: now,
     supersedes: supId || (existing ? existing.supersedes : ''),
+    source: String(source || (existing && existing.source) || '').trim().slice(0, 80),
+    commits: commaList([...(existing ? existing.commits : []), ...[].concat(commits || [])]),
   };
+  // A new fact that contradicts one already saved keeps both, and each records the other; recall prefers
+  // the higher-confidence, then newer, of the two.
+  const id = file.replace(/\.md$/i, '');
+  const candidate = { id, description: fact, about: aboutList, confidence: conf, updated: now, created: meta.created };
+  const clash = listFacts(dir, userDataDir).filter(f => f.id !== id && conflictsWith(candidate, f));
+  if ((existing && existing.conflictsWith.length) || clash.length) meta.conflictsWith = [...new Set([...(existing ? existing.conflictsWith : []), ...clash.map(f => f.id)])];
   writeFileAtomic(path.join(dir, file), toFrontmatter(meta) + '\n' + fact + '\n');
+  for (const f of clash) if (!f.conflictsWith.includes(id)) patchFact(f, { conflictsWith: [...f.conflictsWith, id] });
   // An older fact's frontmatter counters move to the sidecar, since remember no longer writes them.
   if (existing && (existing.recalls || existing.uses || existing.rejects || existing.lastUsed)) updateStats(userDataDir, [[existing, {}]]);
   rebuildIndex(dir);
-  return { name, id: file.replace(/\.md$/i, ''), type: kind, file, dir, updated: !!existing,
+  return { name, id, type: kind, file, dir, updated: !!existing,
+    ...(clash.length ? { conflicts: clash.map(f => ({ id: f.id, preferred: preferred(candidate, f).id })) } : {}),
     ...(fellBack ? { note: `saved to your personal memory (${cwd} isn't a project)` } : {}) };
 }
 
@@ -270,9 +310,9 @@ function capOutput(entries, tokenCap = 2000) {
   return { text: out, shown, total: entries.length, more };
 }
 
-function formatFact(f, sourceLabel, stale) {
+function formatFact(f, sourceLabel, stale, conflict) {
   const about = f.about.length ? `\nabout: ${f.about.join(', ')}` : '';
-  const tags = (f.confidence !== 'observed' ? ` [${f.confidence}]` : '') + (stale ? ` [stale: ${stale} changed]` : '');
+  const tags = (f.confidence !== 'observed' ? ` [${f.confidence}]` : '') + (stale ? ` [stale: ${stale} changed]` : '') + (conflict ? ` [conflicts with ${conflict}]` : '');
   const where = [`id: ${f.id}`, sourceLabel].filter(Boolean).join(', ');
   return `## ${f.name} [${f.type}]${tags} (${where})${about}\n${f.body || f.description}`;
 }
@@ -407,18 +447,22 @@ function recallQuery({ cwd, userDataDir, query, tokenCap, homeDir, all }) {
     }
   }
   const hidden = all ? new Set() : supersededIds(writable);
+  // The losing side of a recorded conflict is halved and tagged, never hidden.
+  const byId = new Map(writable.map(f => [f.id, f]));
+  const conflictOf = f => f.conflictsWith.map(id => byId.get(id)).find(o => o && preferred(o, f) === o);
   const scores = bm25(cands.map(c => c.toks), tokens(query));
   const now = Date.now();
   const ranked = [];
   cands.forEach((c, i) => {
     if (c.fact && isSuperseded(c.fact, hidden)) return;
     if (!(scores[i] > 0) && !c.hay.includes(q)) return;
-    let stale = null, w = 1;
+    let stale = null, w = 1, lose = null;
     if (c.fact) {
       stale = staleAbout(cwd, c.fact);
-      w = weight(c.fact, now) * (stale || c.fact.confidence === 'stale' ? 0.5 : 1);
+      lose = conflictOf(c.fact);
+      w = weight(c.fact, now) * (stale || c.fact.confidence === 'stale' ? 0.5 : 1) * (lose ? 0.5 : 1);
     }
-    ranked.push({ score: (scores[i] > 0 ? scores[i] : 0.01) * w, fact: c.fact, text: c.text || formatFact(c.fact, c.label, stale) });
+    ranked.push({ score: (scores[i] > 0 ? scores[i] : 0.01) * w, fact: c.fact, text: c.text || formatFact(c.fact, c.label, stale, lose && lose.id) });
   });
   ranked.sort((a, b) => b.score - a.score);
   return finish(ranked, tokenCap, userDataDir, query) || { text: '(no facts match)', shown: 0, total: 0, more: 0 };
@@ -458,9 +502,67 @@ function feedback({ cwd, userDataDir, id, kind, note, homeDir }) {
   return { text: `${fact.id}: ${kind}`, shown: 0, total: 0, more: 0 };
 }
 
+// Facts nobody recalled (or updated) for `days` days move to an `archive/` folder beside the others: out of
+// recall and the index, still on disk. Facts with no date at all stay. Returns the archived ids.
+function archiveStale({ cwd, userDataDir, days = ARCHIVE_DAYS, now = Date.now(), homeDir }) {
+  const moved = [];
+  const dirs = [readableProjectMemoryDir(cwd, homeDir), globalMemoryDir(userDataDir)].filter(Boolean);
+  for (const dir of dirs) {
+    let any = false;
+    for (const f of listFacts(dir, userDataDir)) {
+      const t = Date.parse(f.lastUsed || f.updated || f.created || '');
+      if (!Number.isFinite(t) || now - t <= days * 86400000) continue;
+      try {
+        patchFact(f, { archived: new Date(now).toISOString() });
+        fs.mkdirSync(path.join(dir, 'archive'), { recursive: true });
+        fs.renameSync(f.path, path.join(dir, 'archive', f.file));
+        moved.push(f.id); any = true;
+      } catch { /* leave it where it is */ }
+    }
+    if (any) rebuildIndex(dir);
+  }
+  return moved;
+}
+
+// Deletes one fact for good (active or archived) by id, and drops it from other facts' conflict records.
+function forget({ cwd, userDataDir, id, homeDir }) {
+  const want = String(id || '').trim().replace(/\.md$/i, '');
+  if (!want) throw new Error('id required');
+  for (const dir of [readableProjectMemoryDir(cwd, homeDir), globalMemoryDir(userDataDir)].filter(Boolean)) {
+    for (const d of [dir, path.join(dir, 'archive')]) {
+      const fact = listFacts(d).find(f => f.id === want);
+      if (!fact) continue;
+      fs.unlinkSync(fact.path);
+      try {
+        const all = loadStats(userDataDir);
+        if (delete all[statsKey(fact.path)]) writeFileAtomic(path.join(userDataDir, 'memory-stats.json'), JSON.stringify(all));
+      } catch { /* best effort */ }
+      for (const o of listFacts(dir)) if (o.conflictsWith.includes(want)) patchFact(o, { conflictsWith: o.conflictsWith.filter(x => x !== want) });
+      rebuildIndex(dir);
+      return { text: `${want}: deleted`, shown: 0, total: 0, more: 0 };
+    }
+  }
+  throw new Error(`no fact "${want}"`);
+}
+
+// Counts a recall (or a fact used) on the memory provider for `operant usage`; best effort.
+function countProvider(cwd, homeDir, field) {
+  try {
+    const root = memoryProjectDir(cwd, { homeDir });
+    if (root) require('./context-providers')[field](root, 'memory');
+  } catch { /* counters are optional */ }
+}
+
 function recall(args) {
   const { cwd, userDataDir, query, about, tokenCap = 2000, homeDir, all } = args;
-  if (args.feedback) return feedback({ cwd, userDataDir, id: args.id, kind: args.feedback, note: args.note, homeDir });
+  if (args.feedback === 'delete') return forget({ cwd, userDataDir, id: args.id, homeDir });
+  if (args.feedback) {
+    const r = feedback({ cwd, userDataDir, id: args.id, kind: args.feedback, note: args.note, homeDir });
+    if (args.feedback === 'used') countProvider(cwd, homeDir, 'recordUse');
+    return r;
+  }
+  if (query || about) countProvider(cwd, homeDir, 'recordCall');
+  if (!query && !about) { try { archiveStale({ cwd, userDataDir, homeDir }); } catch { /* best effort */ } }
   if (about) return recallAbout({ cwd, userDataDir, about, tokenCap, homeDir, all });
   if (query) return recallQuery({ cwd, userDataDir, query, tokenCap, homeDir, all });
   return recallIndex({ cwd, userDataDir, tokenCap, homeDir, all });
@@ -478,7 +580,7 @@ function deleteFact({ dir, file }) {
 }
 
 module.exports = {
-  TYPES, remember, recall, listAll, deleteFact,
+  TYPES, remember, recall, listAll, deleteFact, archiveStale, forget, preferred,
   projectMemoryDir, memoryProjectDir, globalMemoryDir, claudeMemoryDir,
   // exported for tests
   slugify, shortName, weight, bm25, parseFrontmatter, toFrontmatter, listFacts, rebuildIndex, resolveAbout,
