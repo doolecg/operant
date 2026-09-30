@@ -324,6 +324,7 @@ const DEFAULT_CONFIG = {
   // Runaway guard: flags a tile whose agent may be stuck.
   typingGuardMode: 'hold',        // a message for a tile you are typing in: 'hold' until you stop | 'refuse' it
   typingGuardSeconds: 3,          // keystrokes within this many seconds count as typing · 0 = off
+  readyCheck: true,               // check a seat's tile is up, started and idle before sending it work (Settings > Agents)
   runawayGuard: 'warn',           // 'warn' (badge + notification) | 'stop' (also interrupts) | 'off'
   stuckTurns: 30,                 // a worker on a code task: this many tool calls with no file edit = stuck; 0 = off
   runawayLoopRepeats: 5,          // same tool + same input this many times in a tile's last 20 tool calls
@@ -596,7 +597,8 @@ function startControlServer() {
           const done = await bgTasks.settled(t.id, (Number(args.timeout) || 600) * 1000);
           return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
         }
-        if (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat', 'pods', 'pod'].includes(cmd) || (cmd === 'team' && args.sub)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
+        const boardOp = (cmd === 'team' && ['snapshot', 'restore'].includes(args.sub)) || (cmd === 'seat' && args.sub === 'adopt'); // needs the renderer's board and tiles
+        if (!boardOp && (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat', 'pods', 'pod'].includes(cmd) || (cmd === 'team' && args.sub))) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -1690,7 +1692,19 @@ ipcMain.handle('seats:op', (_e, { dir, op, seat, ...o }) => {
       const can = seatsLib.canFill(s, { userAsked: true, tierUpApproved: !!o.tierUpApproved });
       return { ok: true, result: { tier: seatsLib.tierFor(s, { tier: o.tier }), brief: seatsLib.launchBrief(st, seat), kind: s.kind, ...can } };
     }
+    // Snapshot and restore (seats.js): the renderer owns the board, so it passes its tasks in and applies the re-queued ones itself.
+    if (op === 'snapshot') {
+      const snap = seatsLib.snapshotOf(seatsLib.load(root), { name: o.name, tasks: o.tasks });
+      seatsLib.saveSnapshot(app.getPath('userData'), snap);
+      return { ok: true, result: { name: snap.name, seats: snap.seats.length, tasks: snap.tasks.length } };
+    }
+    if (op === 'restore') {
+      const snap = seatsLib.loadSnapshot(app.getPath('userData'), o.name);
+      const r = seatsLib.update(root, st => seatsLib.restoreSnapshot(st, snap, { boardTasks: o.tasks }));
+      return { ok: true, result: { ...r, text: seatsLib.formatRestore(snap.name || o.name, r) } };
+    }
     return { ok: true, result: seatsLib.update(root, st => {
+      if (op === 'adopt') return seatsLib.adopt(st, seat, o.tile, { userAsked: !!o.userAsked });
       if (op === 'take') return seatsLib.take(st, seat, { tileId: o.tileId, podId: o.podId });
       if (op === 'release') return seatsLib.release(st, seat, { task: o.task, reason: o.reason, empty: !!o.empty, extra: o.extra, tileId: o.tileId });
       if (op === 'keep') return seatsLib.keep(st, seat, { task: o.task, reason: o.reason, extra: o.extra });
@@ -1823,7 +1837,8 @@ async function opsCommand(cmd, args = {}) {
     const dir = memory.memoryProjectDir(args.cwd) || args.cwd, userDir = app.getPath('userData');
     try {
       if (args.sub === 'list') { const templates = seatsLib.loadTemplates(userDir); return { ok: true, result: { templates, text: seatsLib.formatTemplates(templates) } }; }
-      if (!args.name) return { ok: false, error: 'usage: operant team list | save <name> | start <name>' };
+      if (args.sub === 'snapshots') { const snapshots = seatsLib.listSnapshots(userDir); return { ok: true, result: { snapshots, text: seatsLib.formatSnapshots(snapshots) } }; }
+      if (!args.name) return { ok: false, error: 'usage: operant team list | save <name> | start <name> | snapshot <name> | restore <name> | snapshots' };
       if (!dir) return { ok: false, error: 'no project folder' };
       if (args.sub === 'save') {
         const t = seatsLib.saveTemplate(userDir, seatsLib.templateFromSeats(seatsLib.load(dir), String(args.name)));
@@ -1835,7 +1850,7 @@ async function opsCommand(cmd, args = {}) {
         const r = seatsLib.update(dir, st => seatsLib.startTemplate(st, t));
         return { ok: true, result: { ...r, text: `team "${t.name}": ready to fill: ${r.ready.join(', ') || '-'}${r.skipped.length ? `; skipped: ${r.skipped.join(', ')}` : ''} (nothing launched; fill a seat with operant agent --seat <id>)` } };
       }
-      return { ok: false, error: 'usage: operant team list | save <name> | start <name>' };
+      return { ok: false, error: 'usage: operant team list | save <name> | start <name> | snapshot <name> | restore <name> | snapshots' };
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (cmd === 'providers') {

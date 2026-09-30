@@ -1861,7 +1861,7 @@ async function contextBrief(t) {
   // Ready check (ready-check.js): a tile holding a seat gets a message only when its process is up, its agent started and it is idle; otherwise it stays queued with the reason.
   function notReadyReason(w) {
     if (!w.seatId) return null;
-    const r = ReadyCheck.readyCheck({ alive: w.alive, ptyId: w.ptyId, started: !!w.sessionId, working: String(w.sessionId || '').startsWith('oc:') ? w.ocBusy : isWorking(w), waitingPrompt: w.waitingPrompt || (isClaudeTile(w) && !!claudePromptInLast(w)) });
+    const r = ReadyCheck.readyCheck({ alive: w.alive, ptyId: w.ptyId, started: !!w.sessionId, working: String(w.sessionId || '').startsWith('oc:') ? w.ocBusy : isWorking(w), waitingPrompt: w.waitingPrompt || (isClaudeTile(w) && !!claudePromptInLast(w)) }, { enabled: cfg.readyCheck !== false });
     return r.ready ? null : r.reason;
   }
   async function deliver(w, force) {
@@ -5172,8 +5172,36 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { await seatTake(t, w); t.owner = w.id; traceDecision(t, w, routed, t.decision); if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(tier && routed?.route ? { route: routed.route.note } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}), ...(limitInfo || {}) };
       }
-      case 'team':
+      case 'team': {
+        // Snapshot and restore (seats.js): seats and their board tasks saved by name; restore re-queues unfinished tasks and launches nothing.
+        if (args.sub === 'snapshot' || args.sub === 'restore') {
+          if (!args.name) throw new Error(`usage: operant team ${args.sub} <name>`);
+          const dir = args.cwd || self?.cwd || lastCwd;
+          if (args.sub === 'snapshot') {
+            const r = await operant.seatOp({ dir, op: 'snapshot', name: String(args.name), tasks: board.tasks });
+            if (!r.ok) throw new Error(r.error);
+            return { ...r.result, text: `saved snapshot "${r.result.name}": ${r.result.seats} seat${r.result.seats === 1 ? '' : 's'}, ${r.result.tasks} task${r.result.tasks === 1 ? '' : 's'} (state only, no transcripts)` };
+          }
+          const r = await operant.seatOp({ dir, op: 'restore', name: String(args.name), tasks: board.tasks });
+          if (!r.ok) throw new Error(r.error);
+          for (const t of r.result.requeue) board.tasks.push({ ...t, id: board.nextTaskId++, owner: null, note: null, createdAt: Date.now() });
+          if (r.result.requeue.length) boardChanged();
+          return r.result;
+        }
         return teamInfo(self?.cwd || lastCwd);
+      }
+      // Adopt a running Claude Code or Codex tile into a seat: nothing is sent to it and it is not restarted. Closing the tile releases the seat.
+      case 'seat': {
+        if (args.sub !== 'adopt' || !args.id || args.tile == null) throw new Error('usage: operant seat adopt <seat> --tile <tile>');
+        const w = needTile(args.tile);
+        const agent = cfg.agents.find(a => a.id === w.agentConf);
+        const isAgent = w.kind === 'ai' && !!agent && /claude|codex/i.test(agent.command || '');
+        const r = await operant.seatOp({ dir: args.cwd || w.cwd || self?.cwd || lastCwd, op: 'adopt', seat: String(args.id), userAsked: !self?.tier,
+          tile: { id: w.id, alive: !!(w.alive && w.ptyId), agent: isAgent, seatId: w.seatId || null } });
+        if (!r.ok) throw new Error(r.error);
+        w.seatId = String(args.id);
+        return { id: w.id, seat: w.seatId, text: `tile ${w.id} now holds seat ${w.seatId} (nothing was sent to it)` };
+      }
       // The live context bin/operant-prime.js formats: sent by the SessionStart hook at every start
       // and compact (args.hook), and by `operant prime`. The hook path follows "Brief agents at launch".
       case 'prime': {

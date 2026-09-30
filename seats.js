@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('./atomic-write');
 const { readyCheck } = require('./ready-check');
+const { redactSecrets } = require('./redact');
 
 const SCHEMA = 1;
 const KINDS = ['normal', 'hard', 'master'];
@@ -336,11 +337,138 @@ function startTemplate(store, tpl) {
   for (const [id, text] of Object.entries(tpl.podBriefs || {})) { const p = findPod(store, id); if (p) p.brief = text.slice(0, CAPS.podBrief); }
   return { ready, skipped };
 }
+// ---- adopt: attach a tile that is already running to a seat, without restarting it or sending it anything.
+// tile: { id, alive, agent (a Claude Code or Codex tile), seatId }. userAsked: the user named the seat (a worker adopting a hard seat does not count).
+function adopt(store, id, tile, { userAsked = false, now = Date.now() } = {}) {
+  const s = need(store, id);
+  if (!tile || tile.id == null) throw new Error('a tile id is required (--tile <id>)');
+  if (!tile.alive) throw new Error(`tile ${tile.id} is not running`);
+  if (!tile.agent) throw new Error(`tile ${tile.id} is not a Claude Code or Codex tile`);
+  const held = tile.seatId || (seatOfTile(store, tile.id) || {}).id;
+  if (held) throw new Error(`tile ${tile.id} already holds seat ${held}`);
+  if (s.state === 'active' && s.tileId != null) throw new Error(`seat ${id} is already held by tile ${s.tileId}`);
+  const can = canFill(s, { userAsked });
+  if (!can.ok) throw new Error(can.reason);
+  s.state = 'active'; s.tileId = tile.id; s.podId = (podOf(store, id) || {}).id || null; delete s.readyFor;
+  log(s, 'adopted', { tileId: tile.id }, now);
+  return s;
+}
+
+// ---- snapshots: a team saved by name in the user data dir. State only: no transcripts, no prompt text, no tile ids.
+const SNAPSHOT_SCHEMA = 1;
+const UNFINISHED = ['todo', 'planning', 'doing', 'waiting', 'recovery', 'verifying', 'paused', 'blocked'];
+const snapshotDir = userDir => path.join(userDir, 'team-snapshots');
+const snapshotSlug = name => String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+function snapshotFile(userDir, name) {
+  const slug = snapshotSlug(name);
+  if (!slug) throw new Error('a snapshot needs a name');
+  return path.join(snapshotDir(userDir), `${slug}.json`);
+}
+const budgetOf = v => (typeof v === 'number' && v > 0 ? Math.floor(v) : v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : undefined);
+// tasks: the board's tasks; only those tied to a seat are kept. Keys and text that look like secrets are redacted (redact.js).
+function snapshotOf(store, { name, tasks = [], now = Date.now() } = {}) {
+  const blank = JSON.stringify(emptyTaskState());
+  const used = s => s.state !== 'empty' || s.readyFor || s.budget || JSON.stringify(s.taskState) !== blank;
+  const seats = store.seats.filter(used).map(s => {
+    const pod = podOf(store, s.id);
+    return { id: s.id, role: s.role, kind: s.kind, state: s.state, tier: s.tier, podId: pod ? pod.id : null,
+      ...(s.boost ? { boost: s.boost } : {}), ...(s.budget ? { budget: s.budget } : {}), ...(s.readyFor ? { readyFor: s.readyFor } : {}), taskState: s.taskState };
+  });
+  const ids = new Set(seats.map(s => s.id)), podIds = new Set(seats.map(s => s.podId).filter(Boolean));
+  const pods = (store.pods || []).filter(p => podIds.has(p.id) || p.brief).map(p => ({ id: p.id, name: p.name, brief: p.brief, seatIds: [...p.seatIds] }));
+  const kept = tasks.filter(t => t && t.seat && ids.has(t.seat)).map(t => {
+    const cp = t.checkpoint, b = budgetOf(t.budget);
+    return {
+      id: t.id, seat: t.seat, status: t.status, text: oneLine(t.text, 300), ...(t.tier ? { tier: t.tier } : {}), ...(b !== undefined ? { budget: b } : {}),
+      ...(cp ? { checkpointId: `${t.id}:${cp.at || 0}`, checkpoint: { decisions: cp.decisions || [], files: cp.files || [], next: cp.next || '', at: cp.at || 0 } } : {}),
+      ...((t.actions || []).length ? { actions: t.actions.map(a => ({ cmd: oneLine(a.cmd, 240), at: a.at || 0 })) } : {}),
+    };
+  });
+  return redactSecrets({ schema: SNAPSHOT_SCHEMA, name: oneLine(name, 60), at: now, seats, pods, tasks: kept });
+}
+function saveSnapshot(userDir, snap) {
+  const file = snapshotFile(userDir, snap.name);
+  fs.mkdirSync(snapshotDir(userDir), { recursive: true });
+  writeFileAtomic(file, JSON.stringify(snap, null, 2));
+  return file;
+}
+// An unknown or newer schema is refused with a clear message, never guessed at.
+function parseSnapshot(raw, label) {
+  if (!raw || typeof raw !== 'object' || !Number.isInteger(raw.schema) || raw.schema < 1 || !Array.isArray(raw.seats)) throw new Error(`snapshot ${label} has an unknown format and was not restored`);
+  if (raw.schema > SNAPSHOT_SCHEMA) throw new Error(`snapshot ${label} is schema ${raw.schema}, newer than this Operant understands (${SNAPSHOT_SCHEMA}); update Operant to restore it`);
+  return raw;
+}
+function loadSnapshot(userDir, name) {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(snapshotFile(userDir, name), 'utf8')); }
+  catch (e) { throw new Error(e.code === 'ENOENT' ? `no snapshot "${name}" (operant team snapshots)` : `snapshot "${name}" could not be read`); }
+  return parseSnapshot(raw, `"${name}"`);
+}
+function listSnapshots(userDir) {
+  let files = [];
+  try { files = fs.readdirSync(snapshotDir(userDir)).filter(f => f.endsWith('.json')); } catch {}
+  return files.map(f => {
+    const fallback = f.replace(/\.json$/, '');
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(snapshotDir(userDir), f), 'utf8'));
+      if (!raw || !Number.isInteger(raw.schema) || raw.schema < 1 || !Array.isArray(raw.seats)) return { name: fallback, unreadable: true };
+      return { name: raw.name || fallback, at: raw.at || 0, seats: raw.seats.length, tasks: (raw.tasks || []).length, ...(raw.schema > SNAPSHOT_SCHEMA ? { newer: true } : {}) };
+    } catch { return { name: fallback, unreadable: true }; }
+  }).sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+const formatSnapshots = list => (list.length
+  ? list.map(s => s.unreadable ? `${s.name}  (unreadable)` : `${s.name}  ${new Date(s.at).toISOString().slice(0, 16).replace('T', ' ')}  ${s.seats} seats, ${s.tasks} tasks${s.newer ? '  (newer format: cannot be restored here)' : ''}`).join('\n')
+  : '(no snapshots; operant team snapshot <name>)');
+// Rebuild the seats from a snapshot. Never launches a worker: a restored seat is idle-closed (or empty) and a hard seat is left for the
+// user to fill. Unfinished tasks come back as `requeue` (todo, no owner); a finished one, one in review, or one already on the board does not.
+// Destructive commands a task already ran travel with it, so the board's guard still blocks them.
+// -> { results: [{ seat, result: 'restored' | 'needs input' | 'failed', reason? }], requeue: [task] }
+function restoreSnapshot(store, snap, { boardTasks = [], now = Date.now() } = {}) {
+  parseSnapshot(snap, snap && snap.name ? `"${snap.name}"` : '');
+  const results = [], requeue = [], plural = n => `${n} task${n === 1 ? '' : 's'}`;
+  for (const pod of (snap.pods || []).filter(p => p && typeof p.id === 'string')) {
+    const cur = findPod(store, pod.id);
+    if (cur) cur.brief = String(pod.brief || '').trim().slice(0, CAPS.podBrief);
+    else store.pods = normalizePods([...(store.pods || []), pod], store.seats);
+  }
+  for (const e of snap.seats) {
+    if (!e || typeof e.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(e.id)) { results.push({ seat: e && e.id ? String(e.id) : '?', result: 'failed', reason: 'the saved seat has no valid id' }); continue; }
+    let s = find(store, e.id);
+    if (s && s.state === 'active' && s.tileId != null) { results.push({ seat: e.id, result: 'needs input', reason: `it is held by tile ${s.tileId} right now; release it first` }); continue; }
+    if (!s) { s = makeSeat([e.id, e.role || e.id, KINDS.includes(e.kind) ? e.kind : 'normal', 'small', ''], now); store.seats.push(s); }
+    if (TIERS.includes(e.tier)) s.tier = e.tier;
+    if (KINDS.includes(e.kind)) s.kind = e.kind;
+    s.taskState = capState({ ...emptyTaskState(), ...(e.taskState || {}) });
+    if (Number(e.budget) > 0) s.budget = Math.floor(Number(e.budget)); else delete s.budget;
+    if (e.boost && TIERS.includes(e.boost.tier)) s.boost = { tier: e.boost.tier, taskId: e.boost.taskId ?? null }; else delete s.boost;
+    s.podId = e.podId && findPod(store, e.podId) ? e.podId : null;
+    delete s.readyFor; if (typeof e.readyFor === 'string' && e.readyFor) s.readyFor = oneLine(e.readyFor, 60);
+    s.tileId = null; s.state = e.state === 'empty' ? 'empty' : 'idle-closed';
+    log(s, 'restored', {}, now);
+    const mine = (snap.tasks || []).filter(t => t && t.seat === e.id && UNFINISHED.includes(t.status));
+    let queued = 0;
+    for (const t of mine) {
+      const text = oneLine(t.text, 300), b = budgetOf(t.budget);
+      if (!text || boardTasks.some(x => x.seat === e.id && x.text === text && !['done', 'cancelled', 'failed'].includes(x.status)) || requeue.some(x => x.seat === e.id && x.text === text)) continue;
+      requeue.push({ text, seat: e.id, status: 'todo', ...(TIERS.includes(t.tier) ? { tier: t.tier } : {}), ...(b !== undefined ? { budget: b } : {}),
+        ...(t.checkpoint ? { checkpoint: { decisions: asList(t.checkpoint.decisions), files: asList(t.checkpoint.files), next: oneLine(t.checkpoint.next, 200), at: Number(t.checkpoint.at) || 0 } } : {}),
+        ...(Array.isArray(t.actions) && t.actions.length ? { actions: t.actions.map(a => ({ cmd: oneLine(a.cmd, 240), at: Number(a.at) || 0 })) } : {}) });
+      queued++;
+    }
+    if (s.kind === 'hard' && mine.length) results.push({ seat: e.id, result: 'needs input', reason: `hard-worker seat, not launched; ${plural(queued)} queued for when you fill it (operant agent --seat ${e.id})` });
+    else if (e.state === 'active') results.push({ seat: e.id, result: 'needs input', reason: `it had a worker when saved; ${plural(queued)} re-queued, fill it to carry on (operant agent --seat ${e.id})` });
+    else results.push({ seat: e.id, result: 'restored', ...(queued ? { reason: `${plural(queued)} re-queued` } : {}) });
+  }
+  return { results, requeue };
+}
+const formatRestore = (name, r) => [`restored "${name}":`, ...r.results.map(x => `  ${x.seat}: ${x.result}${x.reason ? ` - ${x.reason}` : ''}`), `${r.requeue.length} task${r.requeue.length === 1 ? '' : 's'} re-queued on the board (nothing launched)`].join('\n');
+
 const formatTemplates = list => list.map(t => `${t.name}  ${t.seats.map(e => `${e.seat} ${e.tier}${e.budget ? ` (${e.budget})` : ''}`).join(', ')}`).join('\n');
 
 module.exports = {
   SCHEMA, KINDS, STATES, TIERS, HISTORY_MAX, CAPS, DEFAULTS, defaultSeats, normalize, load, save, update, fileOf, find, need,
   DEFAULT_PODS, defaultPods, findPod, needPod, podOf, setPodBrief, launchBrief, formatPods, DEFAULT_TEMPLATES, templatesFile, normalizeTemplate,
   loadTemplates, findTemplate, saveTemplate, templateFromSeats, startTemplate, formatTemplates, readyCheck,
+  adopt, SNAPSHOT_SCHEMA, snapshotOf, saveSnapshot, loadSnapshot, listSnapshots, formatSnapshots, restoreSnapshot, formatRestore, snapshotFile,
   tierFor, canFill, boost, setTier, setGuidance, take, release, keep, taskStateFrom, seatOfTile, brief, formatTable, formatSeat, emptyTaskState,
 };

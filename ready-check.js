@@ -3,7 +3,9 @@
 // the app already tracks (process, session, working flag, permission prompt); no model call. A tile that is not ready keeps the
 // task queued on the board with the reason.
 // tile: { alive, ptyId, started, working, waitingPrompt }, or null when the seat holds no tile. -> { ready, reason? }
-function readyCheck(tile) {
+// enabled: false (Settings › Agents) skips the check, so every tile counts as ready.
+function readyCheck(tile, { enabled = true } = {}) {
+  if (!enabled) return { ready: true };
   if (!tile) return { ready: false, reason: 'the seat has no tile' };
   if (!tile.alive || tile.ptyId == null || tile.ptyId === '') return { ready: false, reason: 'its process is not running' };
   if (!tile.started) return { ready: false, reason: 'its agent has not started yet' };

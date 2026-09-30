@@ -108,6 +108,7 @@ const Panels = (() => {
       { key: 'typingGuardMode', label: 'Message for a tile you are typing in', hint: 'What `operant send` and `operant msg` do while you are typing in the target tile', type: 'select',
         options: [['hold', 'Hold it until I stop'], ['refuse', 'Refuse it']] },
       { key: 'typingGuardSeconds', label: 'Typing counts for', hint: 'Seconds after your last keystroke in a tile · 0 = off', type: 'number', min: 0, max: 60 },
+      { key: 'readyCheck', label: 'Check a tile is ready before sending it work', hint: 'A tile holding a seat gets a message only when its process is up, its agent started and it is idle · otherwise it stays queued with the reason', type: 'toggle' },
       { key: 'runawayGuard', label: 'Runaway guard', hint: 'A tile stuck in a loop, burning tokens or piling up subagents', type: 'select',
         options: [['warn', 'Warn me'], ['stop', 'Stop it'], ['off', 'Off']] },
       { key: 'stuckTurns', label: 'Tool calls without a file edit', hint: 'How many tool calls a team worker on a code task may make without editing a file before the task pauses and asks you (so does the same command failing again). 0 = off.', when: 'Workers started after the change', type: 'number', min: 0, max: 200 },
