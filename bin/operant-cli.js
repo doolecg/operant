@@ -16,7 +16,7 @@ const POSITIONAL = {
   summarize: ['target', 'question'], find: ['question'],
   remember: ['text'], recall: ['query'],
   msg: ['id', 'text'], inbox: [],
-  doctor: [], providers: [], models: [], components: ['sub', 'id'], history: ['sub'], stats: [], route: ['sub', 'id'], seats: [], seat: ['sub', 'id'], pods: [], pod: ['sub', 'id'],
+  doctor: [], providers: [], models: [], components: ['sub', 'id'], history: ['sub'], stats: [], route: ['sub', 'id'], seats: [], seat: ['sub', 'id'], pods: [], pod: ['sub', 'id'], norms: ['preset'],
 };
 // Positionals that should swallow the *rest* of the args as one space-joined string.
 const JOIN_REST = { run: 'command', agent: 'prompt', notify: 'text', title: 'text', send: 'text', test: 'command', build: 'command',
@@ -72,7 +72,8 @@ const COMMANDS = {
   seats: { group: 'operations', usage: 'operant seats', desc: 'the seats (named roles that outlive their worker): id, role, kind, default tier, state, tile', examples: ['operant seats'], flags: [] },
   pods: { group: 'operations', usage: 'operant pods', desc: 'the pods (seats that share one brief, stored once): id, seats, brief', examples: ['operant pods'], flags: [] },
   pod: { group: 'operations', usage: 'operant pod set <id> --brief "<text>"', desc: "set a pod's shared brief (project facts and rules); every seat in the pod gets it once per launch", examples: ['operant pod set feature --brief "Use CodeGraph first. Never commit."'], flags: ['brief'] },
-  seat: { group: 'operations', usage: 'operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]  |  operant seat adopt <id> --tile <tile>', desc: "one seat's details and history; set changes its default tier or standing guidance; adopt attaches a running Claude Code or Codex tile to the seat without restarting it or sending it anything", examples: ['operant seat planner', 'operant seat set explorer --tier free', 'operant seat adopt planner --tile 12'], flags: ['tier', 'guidance', 'tile'] },
+  norms: { group: 'operations', usage: 'operant norms [exploratory|trust-but-verify]', desc: "the project's team norms: exploratory (looser verification, cheapest tiers) or trust but verify (full verification, independent review on high risk; the default). With a preset, sets it for this project", examples: ['operant norms', 'operant norms exploratory'], flags: [] },
+  seat: { group: 'operations', usage: 'operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]  |  operant seat adopt <id> --tile <tile>  |  operant seat add <id> [--role r] [--tier t] [--kind normal|hard|master]  |  operant seat remove <id> [--force]', desc: "one seat's details and history; set changes its default tier or standing guidance; adopt attaches a running Claude Code or Codex tile to the seat without restarting it or sending it anything", examples: ['operant seat planner', 'operant seat set explorer --tier free', 'operant seat adopt planner --tile 12', 'operant seat add security --role security --tier small', 'operant seat remove security'], flags: ['tier', 'guidance', 'tile', 'role', 'kind', 'force'] },
   doctor: { group: 'operations', usage: 'operant doctor', desc: 'health of providers, credentials (present or not, never printed), versions, MCP, local model, the local store and context providers: healthy, degraded, unavailable, not configured or unknown', examples: ['operant doctor'], flags: [] },
   providers: { group: 'operations', usage: 'operant providers', desc: 'the configured agent CLIs: installed, credentials present, state', examples: ['operant providers'], flags: [] },
   models: { group: 'operations', usage: 'operant models', desc: 'each team tier with its model, recorded availability and latency, and state, then every known model with provider, cost tier, context window, tools and reasoning', examples: ['operant models'], flags: [] },
@@ -420,14 +421,14 @@ function buildArgs(cmd, positionals, flags) {
   // pod set <id> --brief; team list | save <name> | start <name> (a template name may be several words).
   if (cmd === 'pod') { args.sub = positionals[0]; args.id = positionals[1]; if (typeof flags.brief === 'string') args.brief = flags.brief; }
   if (cmd === 'team' && positionals.length) { args.sub = positionals[0]; args.name = positionals.slice(1).join(' '); }
-  if (cmd === 'seat' && args.sub !== 'set' && args.sub !== 'adopt') { if (args.sub != null) args.id = args.sub; delete args.sub; }
+  if (cmd === 'seat' && !['set', 'adopt', 'add', 'remove'].includes(args.sub)) { if (args.sub != null) args.id = args.sub; delete args.sub; }
   // Relative paths mean the shell's current folder, not the folder the tile started in.
   const path = require('path');
   for (const k of ['path', 'dir']) if (typeof args[k] === 'string' && args[k]) args[k] = path.resolve(args[k]);
   if (cmd === 'open' && typeof args.target === 'string' && require('fs').existsSync(args.target)) args.target = path.resolve(args.target);
   // So does where a new tile starts: after a cd into a subproject, or through the long-command reroute
   // hook, the tile's own starting folder would be the wrong one to test, build or work in.
-  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route', 'components', 'seats', 'seat', 'pods', 'pod', 'team'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
+  if (['run', 'test', 'build', 'agent', 'doctor', 'stats', 'route', 'components', 'seats', 'seat', 'pods', 'pod', 'team', 'norms'].includes(cmd)) args.cwd = path.resolve(typeof flags.cwd === 'string' && flags.cwd ? flags.cwd : process.cwd());
   return args;
 }
 
@@ -589,7 +590,7 @@ function formatResult(cmd, result, opts) {
       if (result.breakdown) lines.push('', fmtBreakdown(result.breakdown));
       return lines.join('\n');
     }
-    case 'doctor': case 'seats': case 'seat': case 'pods': case 'pod': case 'providers': case 'models': case 'components': case 'history': case 'stats': case 'route': return result.text || 'ok';
+    case 'doctor': case 'seats': case 'seat': case 'pods': case 'pod': case 'norms': case 'providers': case 'models': case 'components': case 'history': case 'stats': case 'route': return result.text || 'ok';
     default: return result === undefined || result === null || result === '' || Object.keys(result || {}).length === 0
       ? 'ok' : JSON.stringify(result);
   }

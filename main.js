@@ -30,6 +30,7 @@ const routeHealthLib = require('./route-health');
 const analytics = require('./analytics');
 const ops = require('./ops');
 const seatsLib = require('./seats');
+const normsLib = require('./norms');
 const registry = require('./registry');
 const routingLib = require('./routing');
 const tierGuard = require('./tier-guard');
@@ -324,6 +325,8 @@ const DEFAULT_CONFIG = {
   // Runaway guard: flags a tile whose agent may be stuck.
   typingGuardMode: 'hold',        // a message for a tile you are typing in: 'hold' until you stop | 'refuse' it
   typingGuardSeconds: 3,          // keystrokes within this many seconds count as typing · 0 = off
+  seatIdleMinutes: 15,            // a seat's worker idle this long is closed to stop costing tokens; the seat reopens from stored state · 0 = never (Settings > Agents)
+  teamNorms: 'trust-but-verify',  // default working style for projects with no norms of their own: 'exploratory' | 'trust-but-verify'
   readyCheck: true,               // check a seat's tile is up, started and idle before sending it work (Settings > Agents)
   runawayGuard: 'warn',           // 'warn' (badge + notification) | 'stop' (also interrupts) | 'off'
   stuckTurns: 30,                 // a worker on a code task: this many tool calls with no file edit = stuck; 0 = off
@@ -598,7 +601,7 @@ function startControlServer() {
           return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
         }
         const boardOp = (cmd === 'team' && ['snapshot', 'restore'].includes(args.sub)) || (cmd === 'seat' && args.sub === 'adopt'); // needs the renderer's board and tiles
-        if (!boardOp && (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat', 'pods', 'pod'].includes(cmd) || (cmd === 'team' && args.sub))) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
+        if (!boardOp && (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat', 'pods', 'pod', 'norms'].includes(cmd) || (cmd === 'team' && args.sub))) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -1690,7 +1693,8 @@ ipcMain.handle('seats:op', (_e, { dir, op, seat, ...o }) => {
     if (op === 'plan') { // may this seat be filled, at which tier, with which brief? nothing is changed
       const st = seatsLib.load(root), s = seatsLib.need(st, seat);
       const can = seatsLib.canFill(s, { userAsked: true, tierUpApproved: !!o.tierUpApproved });
-      return { ok: true, result: { tier: seatsLib.tierFor(s, { tier: o.tier }), brief: seatsLib.launchBrief(st, seat), kind: s.kind, ...can } };
+      const norms = normsLib.profile(normsLib.load(root, config.teamNorms));
+      return { ok: true, result: { tier: seatsLib.tierFor(s, { tier: o.tier, norms }), brief: seatsLib.launchBrief(st, seat), kind: s.kind, ...can } };
     }
     // Snapshot and restore (seats.js): the renderer owns the board, so it passes its tasks in and applies the re-queued ones itself.
     if (op === 'snapshot') {
@@ -1703,12 +1707,27 @@ ipcMain.handle('seats:op', (_e, { dir, op, seat, ...o }) => {
       const r = seatsLib.update(root, st => seatsLib.restoreSnapshot(st, snap, { boardTasks: o.tasks }));
       return { ok: true, result: { ...r, text: seatsLib.formatRestore(snap.name || o.name, r) } };
     }
+    if (op === 'list') { // read-only: seats and pods as stored, with the tier each would start on (nothing is changed)
+      const st = seatsLib.load(root), norms = normsLib.profile(normsLib.load(root, config.teamNorms));
+      return { ok: true, result: { root, seats: st.seats.map(s => ({ ...s, effTier: seatsLib.tierFor(s, { norms }), pinnedMedium: s.tier === 'medium' || (!!s.boost && s.boost.tier === 'medium') })), pods: st.pods, norms: { id: norms.id, label: norms.label, preferCheap: norms.preferCheap } } };
+    }
+    if (op === 'norms') { const preset = normsLib.load(root, config.teamNorms); return { ok: true, result: { preset, ...normsLib.profile(preset) } }; }
     return { ok: true, result: seatsLib.update(root, st => {
+      if (op === 'delegate') { // a master's task created with --for or --seat: recorded on the master seat that tile holds
+        const m = seatsLib.seatOfTile(st, o.tileId);
+        if (!m || m.kind !== 'master') return null;
+        return seatsLib.delegate(st, m.id, { seatId: seat || (o.forTile != null && (seatsLib.seatOfTile(st, o.forTile) || {}).id) || null, taskId: o.taskId });
+      }
       if (op === 'adopt') return seatsLib.adopt(st, seat, o.tile, { userAsked: !!o.userAsked });
       if (op === 'take') return seatsLib.take(st, seat, { tileId: o.tileId, podId: o.podId });
-      if (op === 'release') return seatsLib.release(st, seat, { task: o.task, reason: o.reason, empty: !!o.empty, extra: o.extra, tileId: o.tileId });
+      if (op === 'release') {
+        const before = seatsLib.need(st, seat), stays = o.tileId != null && before.tileId !== o.tileId; // a replaced worker closing later changes nothing
+        const s = seatsLib.release(st, seat, { task: o.task, reason: o.reason, empty: !!o.empty, extra: o.extra, tileId: o.tileId });
+        return stays ? s : { ...s, dropBack: seatsLib.dropBack(s) };
+      }
       if (op === 'keep') return seatsLib.keep(st, seat, { task: o.task, reason: o.reason, extra: o.extra });
       if (op === 'boost') return seatsLib.boost(st, seat, o.tier, o.taskId);
+      if (op === 'unboost') { const s = seatsLib.need(st, seat); delete s.boost; return s; } // back to the seat default
       throw new Error(`unknown seat op "${op}"`);
     }) };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -1808,6 +1827,16 @@ async function opsCommand(cmd, args = {}) {
     if (!dir) return { ok: false, error: 'no project folder' };
     try {
       if (cmd === 'seats') { const store = seatsLib.load(dir); return { ok: true, result: { seats: store.seats, text: seatsLib.formatTable(store) } }; }
+      if (args.sub === 'add') {
+        if (!args.id) return { ok: false, error: 'usage: operant seat add <id> [--role r] [--tier t] [--kind normal|hard|master]' };
+        const seat = seatsLib.update(dir, st => seatsLib.addSeat(st, { id: String(args.id), role: args.role === true ? undefined : args.role, tier: args.tier === true ? undefined : args.tier, kind: args.kind === true ? undefined : args.kind }));
+        return { ok: true, result: { seat, text: `added seat ${seat.id} (${seat.kind}, ${seat.tier})` } };
+      }
+      if (args.sub === 'remove') {
+        if (!args.id) return { ok: false, error: 'usage: operant seat remove <id> [--force]' };
+        const seat = seatsLib.update(dir, st => seatsLib.removeSeat(st, String(args.id), { force: !!args.force }));
+        return { ok: true, result: { seat, text: `removed seat ${seat.id}` } };
+      }
       if (args.sub === 'set') {
         if (!args.id) return { ok: false, error: 'usage: operant seat set <id> [--tier t] [--guidance "text"]' };
         if (args.tier == null && args.guidance == null) return { ok: false, error: 'give --tier or --guidance' };
@@ -1821,6 +1850,15 @@ async function opsCommand(cmd, args = {}) {
       if (!args.id) return { ok: false, error: 'usage: operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]' };
       const seat = seatsLib.need(seatsLib.load(dir), String(args.id));
       return { ok: true, result: { seat, text: seatsLib.formatSeat(seat) } };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (cmd === 'norms') {
+    const dir = memory.memoryProjectDir(args.cwd) || args.cwd;
+    if (!dir) return { ok: false, error: 'no project folder' };
+    try {
+      if (args.preset) normsLib.save(dir, args.preset);
+      const preset = normsLib.load(dir, config.teamNorms), p = normsLib.profile(preset);
+      return { ok: true, result: { preset, text: `${args.preset ? 'set: ' : ''}${p.id}: ${p.text} (presets: ${normsLib.PRESETS.join(', ')})` } };
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (cmd === 'pods' || cmd === 'pod') {

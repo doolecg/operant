@@ -420,6 +420,29 @@ body.anim-off .win::before,
 .tier-dot.t1 { background: #f0883e; }
 .tier-dot.t2 { background: #f85149; }
 .tbar .tier:empty { display: none; }
+.tbar .seat { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.tbar .seat[hidden] { display: none; }
+/* Seat state colours, defined once: tile badge, board Seats view and the office view all read these. */
+:root { --seat-active: #3fb950; --seat-idle: #948f84; --seat-needs: #f0883e; --seat-restored: #58a6ff; --seat-empty: #6e6a62; }
+.seat-badge { flex: none; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; line-height: 1.5; color: var(--seat-c); background: color-mix(in srgb, var(--seat-c) 16%, transparent); }
+.seat-active { --seat-c: var(--seat-active); }
+.seat-idle { --seat-c: var(--seat-idle); }
+.seat-needs { --seat-c: var(--seat-needs); }
+.seat-restored { --seat-c: var(--seat-restored); }
+.seat-empty { --seat-c: var(--seat-empty); }
+.seat-name { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seat-mark { flex: none; width: 12px; height: 12px; color: var(--accent); }
+.seat-card { margin: 0 0 6px; padding: 8px 9px; border-radius: 9px; background: rgba(var(--ink-rgb), .04); display: flex; flex-direction: column; gap: 3px; }
+.seat-dim { opacity: .72; }
+.seat-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; }
+.seat-role { font-weight: 600; color: var(--text); }
+.seat-tier { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--dim); }
+.seat-replaced, .seat-shared { padding: 1px 7px; border-radius: 99px; font-size: 10.5px; background: var(--accent-tint); color: var(--accent-soft); text-transform: none; letter-spacing: 0; }
+.seat-why { font-style: italic; }
+.seat-task { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 3px 0 0 8px; font-size: 12px; border-left: 2px solid var(--inactive); }
+.seat-task .board-note { width: auto; }
+.seat-proj { margin: 8px 0 6px; font-size: 11px; color: var(--dim); word-break: break-all; }
+@media (prefers-reduced-motion: no-preference) { .seat-badge, .seat-card { transition: opacity .2s, background-color .2s; } }
 .tbar .tier { display: flex; align-items: center; }
 .board-group { margin: 0 0 16px; }
 .board-group h3 { margin: 0 0 6px; font: 600 10.5px 'Segoe UI', sans-serif; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }

@@ -189,7 +189,7 @@ function suggestAll(entries, tierNames, limits, defaults = {}) {
 
 // ------------------------------------------------------------------ asking before moving up (item 91)
 
-const ASK_WHY = { stuck: 'is stuck', failed: 'failed twice on this tier', rejected: 'was rejected twice', limit: 'reached its token limit', budget: 'reached its time or tool-call limit' };
+const ASK_WHY = { stuck: 'is stuck', failed: 'failed twice on this tier', rejected: 'was rejected twice', limit: 'reached its token limit', budget: 'reached its time or tool-call limit', higher: 'was asked to run on a higher tier' };
 
 // What the card and the notification say: last failing command, tool calls, tokens so far.
 function evidence({ command, error, calls, tokens, limit } = {}) {

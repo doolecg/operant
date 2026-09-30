@@ -297,7 +297,7 @@
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '❯'))}</span>
-      <span class="title"></span><span class="tier"></span><span class="waiting"></span><span class="held" hidden><span class="held-t">message held, you are typing</span><button class="held-release" title="Deliver now">Release</button><button class="held-discard" title="Drop the held messages">Discard</button></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div>${IBAR}<div class="term"></div></div>`;
+      <span class="title"></span><span class="tier"></span><span class="seat" hidden></span><span class="waiting"></span><span class="held" hidden><span class="held-t">message held, you are typing</span><button class="held-release" title="Deliver now">Release</button><button class="held-discard" title="Drop the held messages">Discard</button></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div>${IBAR}<div class="term"></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
@@ -1215,12 +1215,14 @@
         + (sig ? `<span class="board-note" title="Suggestion only: nothing moves until you choose">${esc(sig)}</span>` : '')
         + (t.status === 'paused' && t.ask ? askCard(t) : '') + '</div>';
     };
+    $('#board-view').textContent = boardBySeat ? 'By status' : 'By seat';
+    if (boardBySeat) { renderSeatsView(); return; }
     $('#board-body').innerHTML = groups.map(([k, label]) => {
       const items = board.tasks.filter(t => t.status === k);
       return `<div class="board-group"><h3>${label} (${items.length})</h3>${items.length ? items.map(row).join('') : '<div class="board-empty">—</div>'}</div>`;
     }).join('');
   }
-  function boardChanged() { renderBoard(); saveSession(); }
+  function boardChanged() { renderBoard(); paintSeatBadges(); saveSession(); }
   // Seats (seats.js): a task that names a seat keeps that seat's state across workers. Plain data over IPC, no model calls.
   const seatTask = t => t && ({ status: t.status, note: t.note, failure: t.failure, check: t.check, checkpoint: t.checkpoint, constraints: t.constraints });
   const seatDirOf = (t, w) => t?.cwd || w?.cwd || lastCwd;
@@ -1228,13 +1230,92 @@
     if (!t?.seat || !w) return;
     w.seatId = t.seat;
     await operant.seatOp({ dir: seatDirOf(t, w), op: 'take', seat: t.seat, tileId: w.id }).catch(() => {});
+    refreshSeats(seatDirOf(t, w));
+  }
+  // Seat state on screen (seat-view.js): one colour set (--seat-* in style.css) for the tile badge and the Seats view. Records come from
+  // `seatOp list` (a small file read, no model); they are refreshed when a seat changes hands and when the Seats view is drawn.
+  let boardBySeat = false, seatsToken = 0;
+  const seatKinds = new Map(); // seat id -> kind, for the tile marker
+  const SEAT_MARK = {
+    hard: '<svg class="seat-mark hard" viewBox="0 0 12 12" aria-label="hard-worker seat"><title>Hard-worker seat: pinned to the medium tier</title><path d="M4 1h4l-.6 3.2L9 6H6.6V10L6 11l-.6-1V6H3l1.6-1.8z" fill="currentColor"/></svg>',
+    master: '<svg class="seat-mark master" viewBox="0 0 12 12" aria-label="master seat"><title>Master seat: takes the work and hands it out</title><path d="M1.5 9.5l-.5-6 2.7 2.3L6 2l2.3 3.8L11 3.5l-.5 6z" fill="currentColor"/></svg>',
+  };
+  const seatChip = state => `<span class="seat-badge seat-${state}">${SeatView.STATE_LABEL[state]}</span>`;
+  function paintSeatBadges() {
+    for (const w of wins.values()) {
+      const el = w.el?.querySelector('.tbar .seat');
+      if (!el) continue;
+      if (!w.seatId) { el.hidden = true; el.innerHTML = ''; continue; }
+      const needs = !!w.waitingPrompt || board.tasks.some(t => t.owner === w.id && t.status === 'paused');
+      el.hidden = false;
+      el.innerHTML = `<span class="seat-name">${esc(w.seatId)}</span>${SEAT_MARK[seatKinds.get(w.seatId)] || ''}${seatChip(SeatView.seatState({ state: 'active', history: [] }, { needsInput: needs }))}`;
+    }
+  }
+  async function refreshSeats(dir) {
+    const r = await operant.seatOp({ dir: dir || lastCwd, op: 'list' }).catch(() => null);
+    if (!r?.ok) return null;
+    for (const s of r.result.seats) seatKinds.set(s.id, s.kind);
+    paintSeatBadges();
+    return r.result;
+  }
+  const seatCard = c => {
+    const s = c.seat, tier = s.effTier || s.tier, owner = s.state === 'active' && s.tileId != null ? fmtOwner(s.tileId) : null;
+    const needs = c.open.some(t => t.status === 'paused' && t.ask);
+    const n = SeatView.replacedCount(s);
+    const row = t => {
+      const next = Board.escalation(t, allowedTierNames(t.cwd || lastCwd), cfg.team?.maxTier);
+      const boosted = s.boost && (s.boost.taskId == null || s.boost.taskId === t.id);
+      return `<div class="seat-task" data-task="${t.id}"><span class="board-id">#${t.id}</span>${tierDot(t.tier)}<span class="board-text" title="${esc(t.text)}">${esc(taskTldr(t))}</span><span class="board-note seat-tstat">${esc(t.status)}</span>`
+        + (t.status !== 'paused' && next && !s.pinnedMedium ? '<button class="link seat-up" title="Asks you first: nothing moves until you choose">Use higher for this task</button>' : '')
+        + (boosted ? '<button class="link seat-default" title="The next worker on this seat starts on the default tier again">Back to default</button>' : '') + '</div>';
+    };
+    return `<div class="seat-card${s.state === 'active' ? '' : ' seat-dim'}"><div class="seat-head"><span class="seat-role">${esc(s.role)}</span><span class="board-id">${esc(s.id)}</span>${SEAT_MARK[s.kind] || ''}`
+      + seatChip(SeatView.seatState(s, { needsInput: needs }))
+      + `<span class="seat-tier">${tierDot(tier)}${esc(tier)}${s.boost ? ' (boosted)' : ''}</span></div>`
+      + `<div class="board-note">${owner ? `worker: <button class="board-owner" data-owner="${owner.id}">${esc(owner.title)}</button>` : 'no worker'}${n ? ` <span class="seat-replaced" title="A new worker took over this seat; it started from the stored seat state, not the old conversation">worker replaced${n > 1 ? ` x${n}` : ''}</span>` : ''}</div>`
+      + `<div class="board-note seat-why">${esc(SeatView.tierWhy(s))}</div>`
+      + c.open.map(row).join('') + (c.closed ? `<div class="board-note">${c.closed} finished or closed</div>` : '') + '</div>';
+  };
+  async function renderSeatsView() {
+    const token = ++seatsToken, body = $('#board-body');
+    const dirs = [...new Set([lastCwd, ...board.tasks.filter(t => t.seat).map(t => t.cwd || lastCwd)].filter(Boolean))];
+    const roots = new Map();
+    for (const d of dirs) { const r = await refreshSeats(d); if (r && !roots.has(r.root)) roots.set(r.root, r); }
+    if (token !== seatsToken || !boardBySeat || openPanel() !== 'board') return;
+    if (!roots.size) { body.innerHTML = '<div class="board-note">No seats yet for this project.</div>'; return; }
+    body.innerHTML = [...roots.values()].map(r => {
+      const mine = board.tasks.filter(t => t.seat && r.seats.some(s => s.id === t.seat) && (roots.size === 1 || String(t.cwd || lastCwd).startsWith(r.root)));
+      const idle = c => c.seat.state === 'empty' && !c.open.length;
+      return (roots.size > 1 ? `<h3 class="seat-proj">${esc(r.root)}</h3>` : '') + SeatView.groupBySeat(r, mine, Board.isOpen).map(g => {
+        const empty = g.cards.filter(idle);
+        return `<div class="board-group seat-pod"><h3>${g.pod ? esc(g.pod.name) : 'No pod'}${g.pod?.brief ? ' <span class="seat-shared" title="One brief stored once and shared by these seats; each seat keeps its own context window">shared brief</span>' : ''} (${g.cards.length})</h3>`
+          + g.cards.filter(c => !idle(c)).map(seatCard).join('')
+          + (empty.length ? `<div class="board-note seat-empty">Empty: ${empty.map(c => esc(c.seat.id)).join(', ')}</div>` : '') + '</div>';
+      }).join('');
+    }).join('');
+  }
+  // A seat's higher-tier request goes through the same ask-first card as any tier-up; the card names the seat.
+  function seatUp(t) {
+    if (t?.seat) askUser(t, 'higher', `seat ${t.seat}: you asked for a higher tier for this task`);
+  }
+  async function seatBackToDefault(t) {
+    const r = await operant.seatOp({ dir: seatDirOf(t), op: 'unboost', seat: t.seat }).catch(() => null);
+    toast(r?.ok ? `Seat ${esc(t.seat)} is back on its default tier for its next worker` : esc(r?.error || 'could not reset the seat'));
+    renderBoard();
   }
   // The worker ended (closed, finished, token stop): the seat keeps its state and goes idle-closed.
   function seatRelease(t, w, reason, extra) {
     const id = w?.seatId || t?.seat;
     if (!id) return;
     if (w) w.seatId = null;
-    operant.seatOp({ dir: seatDirOf(t, w), op: 'release', seat: id, task: seatTask(t), reason, extra, tileId: w?.id }).catch(() => {});
+    paintSeatBadges();
+    operant.seatOp({ dir: seatDirOf(t, w), op: 'release', seat: id, task: seatTask(t), reason, extra, tileId: w?.id }).then(r => {
+      const s = r?.ok && r.result;
+      if (!s || s.kind !== 'hard' || !['finished', 'blocked', 'failed', 'rejected'].includes(reason)) return;
+      // A hard seat is empty again: the hard part's follow-up drops back down, and its worker tile is closed once the handback has been read.
+      if (t && s.dropBack) { t.dropBack = s.dropBack; boardChanged(); }
+      if (w?.alive) setTimeout(() => { if (w.alive && !w.busySince) closeWin(w); }, 4000);
+    }).catch(() => {});
   }
   // Escalation and downgrade signals (routing.js): suggestions only, shown on the review card and in `operant task show`.
   function signalsOf(t) {
@@ -1395,7 +1476,7 @@ async function contextBrief(t) {
   // Tokens a task has used on its current tier: earlier tiles on this tier plus the live one (input + output + cache writes).
   const taskUsed = (t, w) => TierGuard.counted(t.tokens) - (t.limitBase || 0) + TierGuard.counted(w?.tok);
   const limitLine = u => `limit: ${fmtK(u.work)} of ${fmtK(u.limit)}` + (u.allowanceUsed ? ` · saving allowance ${fmtK(u.allowanceUsed)} of ${fmtK(u.allowance)}` : '');
-  const askCard = t => `<div class="board-ask" data-ask="${t.id}"><div class="board-ask-why">Paused: ${esc(t.ask.why)}${t.ask.reason ? ` · ${esc(t.ask.reason)}` : ''}. Nothing runs until you choose.</div>`
+  const askCard = t => `<div class="board-ask" data-ask="${t.id}"><div class="board-ask-why">${t.seat ? `Seat ${esc(t.seat)} · ` : ''}Paused: ${esc(t.ask.why)}${t.ask.reason ? ` · ${esc(t.ask.reason)}` : ''}. Nothing runs until you choose.</div>`
     + (t.ask.evidence.length ? `<div class="board-note">${t.ask.evidence.map(esc).join(' · ')}</div>` : '')
     + `<div class="board-ask-btns">${t.ask.choices.map(c => `<button class="btn" data-choice="${c.id}">${esc(c.label)}</button>`).join('')}</div>`
     + '<input class="board-ask-hint hidden" placeholder="Your hint for the worker, then Enter" spellcheck="false"></div>';
@@ -1423,9 +1504,9 @@ async function contextBrief(t) {
       budgetLimits: kind === 'budget' ? { minutes: x.minutes ?? cfg.team?.minutes?.[t.tier] ?? 0, calls: x.calls ?? cfg.team?.calls?.[t.tier] ?? 0 } : null,
       evidence: TierGuard.evidence({ ...ev, tokens: taskUsed(t, w), limit }) });
     TierGuard.pause(t, ask);
-    if (w?.alive && w.ptyId && kind !== 'limit' && kind !== 'budget') { stopTile(w); if (w.sessionId) operant.stuckReset(w.sessionId); }
+    if (w?.alive && w.ptyId && kind !== 'limit' && kind !== 'budget' && kind !== 'higher') { stopTile(w); if (w.sessionId) operant.stuckReset(w.sessionId); }
     boardChanged();
-    tell(t, `Task ${t.id} ${ask.why}: ${taskTldr(t)}`, `${ask.reason}. Paused until you answer on the board: ${ask.choices.map(c => c.label).join(' · ')}`);
+    tell(t, `${t.seat ? `Seat ${t.seat}, task` : 'Task'} ${t.id} ${ask.why}: ${taskTldr(t)}`, `${ask.reason}. Paused until you answer on the board: ${ask.choices.map(c => c.label).join(' · ')}`);
     toast(`Task ${t.id} ${esc(ask.why)} · paused, answer on the Tasks board`, () => { if (openPanel() !== 'board') togglePanel('board'); }, 10000);
   }
   // The user's choice on the board card.
@@ -1436,6 +1517,7 @@ async function contextBrief(t) {
     if (r.do === 'up') {
       if (r.limit) t.budget = r.limit; else delete t.budget;
       await escalateTask(t, ask.reason || ask.why);
+      if (t.seat && t.tier) operant.seatOp({ dir: seatDirOf(t), op: 'boost', seat: t.seat, tier: t.tier, taskId: t.id }).catch(() => {}); // one-off: cleared when the seat closes
     } else if (r.do === 'retry') {
       t.note = `Your hint: ${r.hint}`;
       Board.noteChange(t, { kind: 'context', text: oneLine(r.hint).slice(0, 240) });
@@ -1572,7 +1654,14 @@ async function contextBrief(t) {
     if (swap) closeWin(w);
     try { await startWorker(t, t.tier); } catch (e) { failTask(t, `could not start a ${t.tier} worker: ${e.message || e}`); }
   }
+  $('#board-view').onclick = () => { boardBySeat = !boardBySeat; renderBoard(); };
   $('#board-body').addEventListener('click', e => {
+    const su = e.target.closest('.seat-up, .seat-default');
+    if (su) {
+      const t = board.tasks.find(x => x.id === Number(su.closest('[data-task]').dataset.task));
+      if (t) { if (su.classList.contains('seat-up')) seatUp(t); else seatBackToDefault(t); }
+      return;
+    }
     const c = e.target.closest('[data-choice]');
     if (c) {
       const card = c.closest('[data-ask]'), t = board.tasks.find(x => x.id === Number(card.dataset.ask));
@@ -2342,6 +2431,9 @@ async function contextBrief(t) {
   setInterval(() => {
     const now = Date.now();
     for (const w of [...wins.values()]) {
+      // A seat's worker idle past the timeout is closed to stop costing tokens; its seat keeps its state and reopens with operant agent --seat.
+      if (w.seatId && w.alive && !w.master && !(w.busySince) && !board.tasks.some(x => x.owner === w.id && Board.isOpen(x))
+        && ReadyCheck.idleDue({ busy: isWorking(w), since: w.lastActivity, minutes: cfg.seatIdleMinutes, now })) { closeWin(w); continue; }
       if (w.unchecked && onScreen(w)) { w.unchecked = false; touch(w); updateBadge(w); }
       const limit = idleLimit(w);
       const isFocused = w.ws === current && workspaces[w.ws].focused === w.id;
@@ -5200,6 +5292,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           tile: { id: w.id, alive: !!(w.alive && w.ptyId), agent: isAgent, seatId: w.seatId || null } });
         if (!r.ok) throw new Error(r.error);
         w.seatId = String(args.id);
+        refreshSeats(args.cwd || w.cwd || self?.cwd || lastCwd);
         return { id: w.id, seat: w.seatId, text: `tile ${w.id} now holds seat ${w.seatId} (nothing was sent to it)` };
       }
       // The live context bin/operant-prime.js formats: sent by the SessionStart hook at every start
@@ -5373,6 +5466,8 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const seat = args.seat ? String(args.seat) : null;
           if (seat) { const sp = await operant.seatOp({ dir: self?.cwd || lastCwd, op: 'plan', seat }); if (!sp.ok) { board.nextTaskId--; throw new Error(sp.error); } if (!sp.result.ok) { board.nextTaskId--; throw new Error(sp.result.reason); } }
           board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null, createdAt: Date.now(), ...(seat ? { seat } : {}) });
+          // A master seat's delegation: recorded on the master when its tile creates a task for a worker or a seat.
+          if ((seat || args.for != null) && self?.seatId) operant.seatOp({ dir: self.cwd || lastCwd, op: 'delegate', seat, tileId: self.id, forTile: args.for != null ? Number(args.for) : null, taskId: id }).catch(() => {});
           boardChanged();
           return { id, sub: 'add' };
         }
@@ -5388,7 +5483,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             askText: TierGuard.askText(t) || null,
             plan: PlanCheck.lines(PlanCheck.check(t.text, t.profile)), checkpoint: t.checkpoint || null, actions: (t.actions || []).map(a => a.cmd),
             failureClass: ['failed', 'blocked', 'paused', 'review'].includes(t.status) ? FailureClass.classify({ note: t.note, failure: t.failure, check: t.check }) : null,
-            changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: TaskType.reviewAdvice(t.profile),
+            changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: (await operant.seatOp({ dir: t.cwd || lastCwd, op: 'norms' }).catch(() => null))?.result?.independentReview === false ? null : TaskType.reviewAdvice(t.profile),
             signals: (() => { const s = signalsOf(t); return s.up.length || s.down.length ? { suggestionOnly: true, up: s.up.map(x => x.text), down: s.down.map(x => x.text) } : null; })() };
         }
         if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; await seatTake(t, self); }
@@ -5400,12 +5495,13 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const from = n?.alive ? n : self;
           Board.handback(t, status, args.note);
           let verify = null, extras = [];
+          const norms = (await operant.seatOp({ dir: t.cwd || from?.cwd || lastCwd, op: 'norms' }).catch(() => null))?.result;
           if (status === 'done' && cfg.team?.verifyBeforeReview !== false && TaskType.needsVerification(t)) {
             const cwd = t.cwd || from?.cwd || lastCwd;
             verify = await detectProjectCommand(cwd, 'test') || await detectProjectCommand(cwd, 'build');
             if (verify) {
               t.status = 'verifying';
-              if (cfg.team?.verifyTypesLint !== false) {
+              if (cfg.team?.verifyTypesLint !== false && norms?.extraChecks !== false) {
                 let pkg = null; try { pkg = JSON.parse((await operant.readFile(resolvePath(cwd, 'package.json'))).text || 'null'); } catch {}
                 const list = await operant.listDir(cwd).catch(() => []);
                 extras = TaskType.extraChecks(pkg, Array.isArray(list) ? list.map(f => f.name) : []).map(c => c.command).filter(c => c !== verify);

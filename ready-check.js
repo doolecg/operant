@@ -14,6 +14,11 @@ function readyCheck(tile, { enabled = true } = {}) {
   return { ready: true };
 }
 
-const api = { readyCheck };
+// A seat's worker that has done nothing for `minutes` (0 = never) and is not busy is due to be closed, so it stops costing tokens.
+function idleDue({ busy, since, minutes, now = Date.now() } = {}) {
+  return minutes > 0 && !busy && since > 0 && now - since >= minutes * 60000;
+}
+
+const api = { readyCheck, idleDue };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.ReadyCheck = api;
 })();

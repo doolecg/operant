@@ -1,3 +1,29 @@
+# Operant 2.6.0
+
+Team mode gets seats: named roles that outlive their worker, with pods, team templates, norms and a ready check, plus a guard against messages landing while you type.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.6.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.6.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.6.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.6.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.6.0-linux-amd64.deb` (`sudo apt install ./Operant-2.6.0-linux-amd64.deb`).
+
+## New
+- **Seats:** a seat is a named role (planner, explorer, and so on) with a default tier, standing guidance and a history. It outlives the worker in it: when a worker closes, the seat keeps its state and the next worker picks up from it. See them with `operant seats` and `operant seat <id>`; change one with `operant seat set`, add or remove with `operant seat add` and `operant seat remove`, and attach a running Claude Code or Codex tile to a seat with `operant seat adopt <id> --tile <tile>`, without restarting it.
+- **Pods and team templates:** seats in a pod share one brief, stored once (`operant pod set <id> --brief "..."`). `operant team save`, `start` and `list` keep and reuse a whole team, and snapshot and restore bring a team and its queued work back.
+- **Team norms:** `operant norms exploratory` (looser verification, cheapest tiers) or `operant norms trust-but-verify` (full verification, independent review on high-risk tasks; the default) sets the working style per project. The default for other projects is in ⚙ Settings › Agents › Team norms.
+- **Seats on the board:** a seat badge on tiles and a Seats view on the board, showing each seat's state and why it starts on its tier.
+- **Close an idle seat:** a seat's worker that has done nothing for a while is closed so it stops costing tokens, and reopens from the stored state when you fill the seat again (⚙ Settings › Agents › Close an idle seat after, 15 minutes by default, 0 = never).
+- **Ready check:** a tile holding a seat gets work only when its process is up, its agent started and it is idle; otherwise the work stays queued with the reason (⚙ Settings › Agents).
+
+## Changed
+- **Asking for a higher tier is explained:** the prompt now says the task was asked to run on a higher tier.
+
+## Fixed
+- **Typing guard:** a message for a tile you are typing in is held until you stop (or refused, your choice in ⚙ Settings › Agents) instead of landing in the middle of your sentence.
+- **Packaging:** the installer now includes every module the app needs at startup.
+
+---
+
 # Operant 2.5.0
 
 Team mode now watches its own cost and reliability: smarter context, routing that learns from past results, safer retries and stops, and a health dashboard.

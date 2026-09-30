@@ -14,6 +14,8 @@ const KINDS = ['normal', 'hard', 'master'];
 const STATES = ['empty', 'active', 'idle-closed'];
 const TIERS = ['free', 'xsmall', 'small', 'medium', 'high', 'max'];
 const HISTORY_MAX = 20;
+const DELEGATIONS_MAX = 30;
+const DROP_BACK_TIER = 'small'; // where follow-up work goes after a hard (medium) part
 const CAPS = { decisions: [6, 160], constraints: [6, 160], files: [12, 120], verification: 300, lastError: 400, note: 300, guidance: 600, podBrief: 1500, podName: 60 };
 
 // id, role, kind, tier, guidance
@@ -27,6 +29,7 @@ const DEFAULTS = [
   ['hard-1', 'hard worker', 'hard', 'medium', 'Only the hard part; hand follow-up work back down.'],
   ['hard-2', 'hard worker', 'hard', 'medium', 'Only the hard part; hand follow-up work back down.'],
   ['lead', 'lead', 'master', 'small', 'Split the work, hand parts to seats, review what comes back.'],
+  ['master-opencode', 'OpenCode master', 'master', 'free', 'Take the work for OpenCode, hand parts to seats on the cheapest tier that fits.'],
 ];
 
 // Pods (2.7): seats that share one brief (project facts, rules), stored once here and referenced by id.
@@ -43,18 +46,28 @@ const asList = v => (Array.isArray(v) ? v : v == null || v === '' ? [] : String(
 const capList = (v, [n, len]) => [...new Set(asList(v).map(x => x.slice(0, len)))].slice(-n);
 
 function makeSeat([id, role, kind, tier, guidance], now = Date.now()) {
-  return { id, role, kind, tier, guidance, state: 'empty', tileId: null, podId: null, history: [], taskState: emptyTaskState(), createdAt: now };
+  return { id, role, kind, tier, guidance, state: 'empty', tileId: null, podId: null, history: [], taskState: emptyTaskState(), ...(kind === 'master' ? { delegations: [] } : {}), createdAt: now };
 }
-const defaultSeats = (now = Date.now()) => ({ schema: SCHEMA, seats: DEFAULTS.map(d => makeSeat(d, now)), pods: defaultPods() });
+// A master's delegations: the seats and tasks it handed work to, newest kept.
+function normalizeDelegations(raw) {
+  const out = [];
+  for (const d of Array.isArray(raw) ? raw : []) {
+    if (!d || d.taskId == null || out.some(x => x.taskId === d.taskId)) continue;
+    out.push({ seatId: typeof d.seatId === 'string' && d.seatId ? d.seatId : null, taskId: d.taskId });
+  }
+  return out.slice(-DELEGATIONS_MAX);
+}
+const defaultSeats = (now = Date.now()) => ({ schema: SCHEMA, seats: DEFAULTS.map(d => makeSeat(d, now)), pods: defaultPods(), removed: [] });
 
 // Tolerant of a hand-edited or older file: bad fields fall back, unknown seats are kept, missing defaults are added back.
 function normalize(data, now = Date.now()) {
   const base = defaultSeats(now);
   if (!data || typeof data !== 'object' || !Array.isArray(data.seats)) return base;
   if (data.schema > SCHEMA) throw new Error(`seats.json is schema ${data.schema}, newer than this Operant understands (${SCHEMA})`);
-  const seats = [];
+  const seats = [], removed = (Array.isArray(data.removed) ? data.removed : []).filter(x => typeof x === 'string');
   for (const raw of data.seats) {
     if (!raw || typeof raw.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(raw.id)) continue;
+    if (removed.includes(raw.id)) continue;
     const d = DEFAULTS.find(x => x[0] === raw.id);
     const s = makeSeat(d || [raw.id, raw.role || raw.id, 'normal', 'small', ''], Number(raw.createdAt) || now);
     if (KINDS.includes(raw.kind)) s.kind = raw.kind;
@@ -70,10 +83,11 @@ function normalize(data, now = Date.now()) {
     if (typeof raw.readyFor === 'string' && raw.readyFor && s.state !== 'active') s.readyFor = oneLine(raw.readyFor, 60);
     if (Number(raw.budget) > 0) s.budget = Math.floor(Number(raw.budget));
     if (raw.boost && TIERS.includes(raw.boost.tier)) s.boost = { tier: raw.boost.tier, taskId: raw.boost.taskId ?? null };
+    if (s.kind === 'master') s.delegations = normalizeDelegations(raw.delegations); else delete s.delegations;
     seats.push(s);
   }
-  for (const s of base.seats) if (!seats.some(x => x.id === s.id)) seats.push(s);
-  return { schema: SCHEMA, seats, pods: normalizePods(data.pods, seats) };
+  for (const s of base.seats) if (!seats.some(x => x.id === s.id) && !removed.includes(s.id)) seats.push(s);
+  return { schema: SCHEMA, seats, pods: normalizePods(data.pods, seats), removed: removed.filter(id => !seats.some(x => x.id === id)) };
 }
 
 // Pods: bad entries dropped, a member that is no seat dropped, the default pods added back when missing.
@@ -133,9 +147,18 @@ function log(seat, event, extra, now) {
 
 // ---- tier rule
 // The tier a seat starts a worker on: the user's --tier, else a one-off boost the user approved, else the seat default.
-function tierFor(seat, { tier } = {}) {
+// norms (norms.js profile, optional): "exploratory" prefers the cheapest tier for ordinary seats; it never touches a hard seat or a seat the user set.
+function tierFor(seat, { tier, norms } = {}) {
   if (tier) { if (!TIERS.includes(tier)) throw new Error(`unknown tier "${tier}"`); return tier; }
-  return seat.boost ? seat.boost.tier : seat.tier;
+  if (seat.boost) return seat.boost.tier;
+  return norms && norms.preferCheap && seat.kind === 'normal' && seat.tier === 'small' ? 'xsmall' : seat.tier;
+}
+// A seat is pinned to medium when its default is medium (every hard seat) or a boost put it there.
+const isPinnedMedium = seat => seat.tier === 'medium' || (!!seat.boost && seat.boost.tier === 'medium');
+// Follow-up after a hard part goes back down: a suggestion recorded on the task, never a silent continue on medium.
+function dropBack(seat) {
+  if (seat.kind !== 'hard' && !isPinnedMedium(seat)) return null;
+  return `drop back: the hard part is done; do follow-up work (tests, docs, cleanup) on ${DROP_BACK_TIER}, not medium (seat ${seat.id} is empty again)`;
 }
 // A hard seat is filled only when the user names it (--seat hard-1 counts) or a tier-up was approved; a normal or
 // master seat is fine to fill by name. -> { ok, reason }
@@ -214,6 +237,7 @@ function release(store, id, { task, reason = 'closed', empty = false, extra, til
   const s = need(store, id);
   if (tileId != null && s.tileId !== tileId) return s;
   const was = s.tileId;
+  if (s.kind === 'hard') empty = true; // a hard seat returns to empty (idle cost zero) once its part is done
   if (task || extra) s.taskState = taskStateFrom(task, s.taskState, extra);
   s.state = empty ? 'empty' : 'idle-closed'; s.tileId = null;
   delete s.boost; // a one-off boost returns to the seat default
@@ -229,6 +253,40 @@ function keep(store, id, { task, reason = 'compacted', extra, now = Date.now() }
 }
 // The seat a tile holds, if any.
 const seatOfTile = (store, tileId) => store.seats.find(s => s.state === 'active' && s.tileId === tileId) || null;
+
+// A master seat handed a task to a seat (or, with none named, to a worker or subagent): recorded on the master. Only master seats keep them.
+function delegate(store, masterId, { seatId = null, taskId } = {}) {
+  const m = need(store, masterId);
+  if (m.kind !== 'master') throw new Error(`seat ${masterId} is not a master seat`);
+  if (taskId == null) throw new Error('a task id is required');
+  m.delegations = normalizeDelegations([...(m.delegations || []).filter(d => d.taskId !== taskId), { seatId, taskId }]);
+  return m;
+}
+
+// ---- grow and shrink: add a seat, remove one (a removed default stays gone), close the ones idle too long.
+const SEAT_ID = /^[a-z0-9][a-z0-9-]*$/;
+function addSeat(store, { id, role, tier, kind = 'normal', now = Date.now() } = {}) {
+  if (!id || !SEAT_ID.test(id)) throw new Error('a seat id is lowercase letters, digits and dashes (operant seat add <id> --role <role> --tier <tier> --kind <kind>)');
+  if (find(store, id)) throw new Error(`seat "${id}" already exists`);
+  if (!KINDS.includes(kind)) throw new Error(`unknown kind "${kind}" (${KINDS.join(', ')})`);
+  const t = tier || (kind === 'hard' ? 'medium' : 'small');
+  if (!TIERS.includes(t)) throw new Error(`unknown tier "${t}" (${TIERS.join(', ')})`);
+  const seat = makeSeat([id, role ? oneLine(role, 60) : id, kind, t, ''], now);
+  store.seats.push(seat);
+  store.removed = (store.removed || []).filter(x => x !== id);
+  return seat;
+}
+// Refuses a seat that is active. A hard or master default goes only with force. Its delegations and pod memberships go with it.
+function removeSeat(store, id, { force = false } = {}) {
+  const s = need(store, id);
+  if (s.state === 'active') throw new Error(`seat ${id} is active${s.tileId != null ? ` in tile ${s.tileId}` : ''}: close its worker first`);
+  if (!force && DEFAULTS.some(d => d[0] === id && d[2] !== 'normal')) throw new Error(`seat ${id} is a default ${s.kind} seat: removing it needs --force`);
+  store.seats = store.seats.filter(x => x.id !== id);
+  for (const p of store.pods || []) p.seatIds = p.seatIds.filter(x => x !== id);
+  for (const m of store.seats) if (m.delegations) m.delegations = m.delegations.filter(d => d.seatId !== id);
+  if (DEFAULTS.some(d => d[0] === id)) store.removed = [...new Set([...(store.removed || []), id])];
+  return s;
+}
 
 // The short brief a fresh worker starts from: standing guidance plus the kept state, no transcript.
 function brief(seat) {
@@ -251,7 +309,7 @@ function brief(seat) {
 // ---- CLI text
 const pad = (s, n) => String(s).padEnd(n);
 function formatTable(store) {
-  const rows = store.seats.map(s => [s.id, s.role, s.kind, s.boost ? `${s.tier}>${s.boost.tier}` : s.tier, s.state, s.tileId == null ? '-' : String(s.tileId)]);
+  const rows = store.seats.map(s => [s.id, s.role, s.kind, (s.boost ? `${s.tier}>${s.boost.tier}` : s.tier) + (isPinnedMedium(s) ? ' (pinned)' : ''), s.state, s.tileId == null ? '-' : String(s.tileId)]);
   const head = ['id', 'role', 'kind', 'tier', 'state', 'tile'];
   const w = head.map((h, i) => Math.max(h.length, ...rows.map(r => r[i].length)));
   const line = r => r.map((c, i) => pad(c, w[i])).join('  ').trimEnd();
@@ -259,8 +317,9 @@ function formatTable(store) {
 }
 function formatSeat(seat) {
   const ts = seat.taskState;
-  const L = [`${seat.id}  ${seat.role}  ${seat.kind}  tier ${seat.tier}${seat.boost ? ` (boosted to ${seat.boost.tier} for task ${seat.boost.taskId ?? '-'})` : ''}  ${seat.state}${seat.tileId != null ? ` in tile ${seat.tileId}` : ''}`];
+  const L = [`${seat.id}  ${seat.role}  ${seat.kind}  tier ${seat.tier}${isPinnedMedium(seat) ? ' (pinned to medium)' : ''}${seat.boost ? ` (boosted to ${seat.boost.tier} for task ${seat.boost.taskId ?? '-'})` : ''}  ${seat.state}${seat.tileId != null ? ` in tile ${seat.tileId}` : ''}`];
   L.push(`guidance: ${seat.guidance || '-'}`);
+  if (seat.kind === 'master') L.push(`delegates to: ${(seat.delegations || []).map(d => `${d.seatId || 'worker'} (task ${d.taskId})`).join(', ') || '-'}`);
   L.push(`decisions: ${ts.decisions.join('; ') || '-'}`, `constraints: ${ts.constraints.join('; ') || '-'}`, `files: ${ts.files.join(', ') || '-'}`);
   L.push(`verification: ${ts.verification || '-'}`, `last error: ${ts.lastError ? ts.lastError.replace(/\n/g, ' | ') : '-'}`, `note: ${ts.note || '-'}`);
   L.push('history:');
@@ -469,6 +528,6 @@ module.exports = {
   SCHEMA, KINDS, STATES, TIERS, HISTORY_MAX, CAPS, DEFAULTS, defaultSeats, normalize, load, save, update, fileOf, find, need,
   DEFAULT_PODS, defaultPods, findPod, needPod, podOf, setPodBrief, launchBrief, formatPods, DEFAULT_TEMPLATES, templatesFile, normalizeTemplate,
   loadTemplates, findTemplate, saveTemplate, templateFromSeats, startTemplate, formatTemplates, readyCheck,
-  adopt, SNAPSHOT_SCHEMA, snapshotOf, saveSnapshot, loadSnapshot, listSnapshots, formatSnapshots, restoreSnapshot, formatRestore, snapshotFile,
+  adopt, addSeat, removeSeat, delegate, dropBack, isPinnedMedium, DROP_BACK_TIER, DELEGATIONS_MAX, SNAPSHOT_SCHEMA, snapshotOf, saveSnapshot, loadSnapshot, listSnapshots, formatSnapshots, restoreSnapshot, formatRestore, snapshotFile,
   tierFor, canFill, boost, setTier, setGuidance, take, release, keep, taskStateFrom, seatOfTile, brief, formatTable, formatSeat, emptyTaskState,
 };
