@@ -233,7 +233,31 @@ function findCodegraphPromptHookCommand() {
   return null;
 }
 
-const CODEGRAPH_PLUGIN_SRC = path.join(__dirname, 'hooks', 'codegraph-prompt.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+// `codegraph install` (and every update) registers a UserPromptSubmit hook that attaches ~15 KB of
+// code to every message, relevant or not. Agents query the index through its MCP tool instead, so
+// this removes that one hook and leaves the rest of the settings file untouched. Returns whether it changed anything.
+function removeCodegraphPromptHook(file = claudeSettingsPath()) {
+  let settings;
+  try { settings = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return false; }
+  const submit = settings && settings.hooks && settings.hooks.UserPromptSubmit;
+  if (!Array.isArray(submit)) return false;
+  const isCg = h => h && h.type === 'command' && /codegraph[^"]*prompt-hook/i.test(String(h.command || ''));
+  let changed = false;
+  const kept = [];
+  for (const group of submit) {
+    const hooks = [].concat((group && group.hooks) || []);
+    const rest = hooks.filter(h => !isCg(h));
+    if (rest.length !== hooks.length) changed = true;
+    if (rest.length) kept.push({ ...group, hooks: rest }); else if (rest.length === hooks.length) kept.push(group);
+  }
+  if (!changed) return false;
+  if (kept.length) settings.hooks.UserPromptSubmit = kept; else delete settings.hooks.UserPromptSubmit;
+  if (!Object.keys(settings.hooks).length) delete settings.hooks;
+  try { require('./atomic-write').writeFileAtomic(file, JSON.stringify(settings, null, 2) + '\n'); } catch { return false; }
+  return true;
+}
+
+const CODEGRAPH_PLUGIN_SRC =path.join(__dirname, 'hooks', 'codegraph-prompt.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 
 // Returns the plugin's file path (as OpenCode's `plugin` array wants it) only when the main
 // agent's config actually runs a codegraph prompt hook, and the plugin file exists.
@@ -460,7 +484,7 @@ module.exports = {
   getClaudeMcpServers, getOpenCodeOwnMcpServers, mcpForOpenCodeTiles,
   claudeExtraArgs, writeClaudeMcpConfigFile, mainAgentId,
   findPluginSkillDirs, syncPluginSkillsMirror,
-  findCodegraphPromptHookCommand, codegraphPluginEntry,
+  findCodegraphPromptHookCommand, removeCodegraphPromptHook, codegraphPluginEntry,
   buildOpencodeConfigContent, workerAllowRules, workerToolsText, opencodeWorkerPermission, opencodeConfigFiles,
   isOperantSkillFile, removeLegacySkillCopies, pluginDirsEnv, opencodeSkillPaths,
   probeClaudePluginDir, probeOpencodeSkillPaths,

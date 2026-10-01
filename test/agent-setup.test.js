@@ -275,3 +275,15 @@ test('workerToolsText lists the allowed commands and says the rest asks', () => 
   assert.match(t, /operant task\|board/);
   assert.match(t, /asks the user/);
 });
+
+test('removeCodegraphPromptHook drops only the CodeGraph prompt hook', () => {
+  const file = path.join(root, 'cg-settings.json');
+  const other = { hooks: [{ type: 'command', command: 'other' }] };
+  fs.writeFileSync(file, JSON.stringify({ a: 1, hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'codegraph.cmd prompt-hook' }] }, other] } }));
+  assert.equal(setup.removeCodegraphPromptHook(file), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { a: 1, hooks: { UserPromptSubmit: [other] } });
+  assert.equal(setup.removeCodegraphPromptHook(file), false);
+  fs.writeFileSync(file, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'codegraph prompt-hook' }] }] } }));
+  setup.removeCodegraphPromptHook(file);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), {});
+});

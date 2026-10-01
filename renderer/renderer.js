@@ -3374,7 +3374,7 @@ Click to open the setup card`;
         + `<div class="uc-status">${!known ? 'Checking…' : cgVersion ? 'Installed' : 'Not installed'}</div></div>`
         + `<button class="btn" data-cg="install">${cgVersion ? 'Update' : 'Install'} CodeGraph</button>`
         + `<button class="btn" data-cg="index"${cgVersion ? '' : ' disabled'}>Index all projects</button></div>`
-        + '<div class="cg-note">A code index your agents query instead of grepping. Installing runs <code>codegraph install</code>, which connects it to your agents. Index a project with ◇ in the sidebar.</div>';
+        + '<div class="cg-note">A code index your agents query instead of grepping. Installing runs <code>codegraph install</code>, which connects it to your agents; Operant then removes its per-message prompt hook, so agents query the index only when they need code. Index a project with ◇ in the sidebar.</div>';
       el.querySelector('[data-cg="install"]').onclick = () => {
         closePanels(false); cgVersion = undefined;
         const install = 'npm i -g @colbymchenry/codegraph@latest';

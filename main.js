@@ -1021,6 +1021,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // The operant skill, for this session only.
     const pluginArgs = isClaude(agent) && config.installSkill && pluginReady() && await agentCan(agent, 'pluginDir') ? ['--plugin-dir', PLUGIN_DIR] : [];
     // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
+    if (isClaude(agent) && !process.env.OPERANT_USER_DATA) agentSetup.removeCodegraphPromptHook(); // dev/test profiles leave ~/.claude alone
     const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
     // Team mode picks the agent and passes its model straight through (Claude Code --model, the others -m),
     // with its effort where the CLI has a flag for it (Claude Code --effort, Codex -c model_reasoning_effort; OpenCode's is below).
