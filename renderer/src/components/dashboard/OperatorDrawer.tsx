@@ -23,7 +23,7 @@ export function OperatorDrawer({ operator, crewName, onClose }: { operator: Oper
                 </SheetTitle>
                 <SheetDescription className="text-xs">
                   {agentLabel[operator.agent]}
-                  {operator.agent !== 'shell' && ` · ${operator.model}`}
+                  {operator.agent !== 'shell' && operator.model && ` · ${operator.model}`}
                 </SheetDescription>
               </div>
               <Badge variant="outline" className="mr-8 font-normal">

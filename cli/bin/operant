@@ -1,0 +1,14 @@
+#!/bin/sh
+# Runs the operant CLI with the Operant app binary as Node (OPERANT_NODE), or plain node.
+# ELECTRON_RUN_AS_NODE is set only for that process, never in the operator's shell.
+self=$(readlink -f -- "$0" 2>/dev/null) || self=$0
+[ -n "$self" ] || self=$0
+dir=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)
+cli="$dir/operant.cjs"
+[ -f "$cli" ] || cli="$dir/../../out/cli/operant.cjs"
+if [ -n "$OPERANT_NODE" ]; then
+  ELECTRON_RUN_AS_NODE=1
+  export ELECTRON_RUN_AS_NODE
+  exec "$OPERANT_NODE" "$cli" "$@"
+fi
+exec node "$cli" "$@"

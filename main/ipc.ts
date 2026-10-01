@@ -1,6 +1,7 @@
-import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
-import type { Operant } from '../core/operant'
-import { CORE_CHANNELS, type IpcApi, type IpcEventName, type IpcEvents, type MainChannel } from '../shared/ipc'
+import { app, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { ipcErrorOf, type Operant } from '../core/operant'
+import { CORE_CHANNELS, encodeIpcError, type IpcApi, type IpcEventName, type IpcEvents, type MainChannel } from '../shared/ipc'
+import { isTrustedSender, type AppOrigin } from './guard'
 import type { createUpdater } from './updater'
 
 type MainHandlers = { [C in MainChannel]: (...a: Parameters<IpcApi[C]>) => ReturnType<IpcApi[C]> | Promise<ReturnType<IpcApi[C]>> }
@@ -9,10 +10,23 @@ export function registerIpc(
   operant: Operant,
   updater: ReturnType<typeof createUpdater>,
   getWindow: () => BrowserWindow | null,
+  origin: AppOrigin,
 ): void {
+  // Only the main window showing the app may call; anything else (a dropped file, a navigated page) is refused.
+  const trusted = (e: IpcMainInvokeEvent) => isTrustedSender(e, getWindow()?.webContents.id, origin)
+  const refuse = () => new Error(encodeIpcError('FORBIDDEN', 'Not allowed from this page'))
   for (const channel of CORE_CHANNELS) {
     const handler = operant.handlers[channel] as (...a: unknown[]) => unknown
-    ipcMain.handle(channel, (_e, ...args: unknown[]) => handler(...args))
+    // Electron passes only an error's message to the renderer, so the code travels inside it.
+    ipcMain.handle(channel, async (e, ...args: unknown[]) => {
+      if (!trusted(e)) throw refuse()
+      try {
+        return await handler(...args)
+      } catch (err) {
+        const { code, message } = ipcErrorOf(err)
+        throw new Error(encodeIpcError(code, message))
+      }
+    })
   }
 
   const mainHandlers: MainHandlers = {
@@ -34,7 +48,10 @@ export function registerIpc(
     'update:install': () => updater.installNow(),
   }
   for (const [channel, handler] of Object.entries(mainHandlers)) {
-    ipcMain.handle(channel, (_e, ...args: unknown[]) => (handler as (...a: unknown[]) => unknown)(...args))
+    ipcMain.handle(channel, (e, ...args: unknown[]) => {
+      if (!trusted(e)) throw refuse()
+      return (handler as (...a: unknown[]) => unknown)(...args)
+    })
   }
 
   const forward = <E extends IpcEventName>(name: E) =>
@@ -42,8 +59,16 @@ export function registerIpc(
   forward('event')
   forward('operator:data')
   forward('operator:status')
+  forward('operator:config')
+  forward('scratch:data')
+  forward('scratch:exit')
   forward('index:status')
   forward('usage')
+  forward('caps')
+  forward('message')
+  forward('unread')
+  forward('job')
+  forward('purge')
   forward('settings')
 }
 

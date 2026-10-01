@@ -1,0 +1,12 @@
+// Domain files register their live handlers when imported, so every one is imported here.
+export * from './core'
+export * from './crews'
+export * from './operators'
+export * from './jobs'
+export * from './messages'
+export * from './usage'
+export * from './presets'
+export * from './settings'
+export * from './scratch'
+export * from './graph'
+export * from './update'

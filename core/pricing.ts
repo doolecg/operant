@@ -8,6 +8,7 @@ interface Rate {
 
 const RATES: Array<[prefix: string, rate: Rate]> = [
   ['claude-fable-5', { input: 10, output: 50, cacheRead: 0.25 }],
+  ['claude-fable-5-1', { input: 10, output: 50, cacheRead: 0.25 }],
   ['claude-mythos-5', { input: 10, output: 50, cacheRead: 0.25 }],
   ['claude-opus-5-5', { input: 4, output: 20, cacheRead: 0.2 }],
   ['claude-opus-5', { input: 5, output: 25 }],
@@ -16,6 +17,7 @@ const RATES: Array<[prefix: string, rate: Rate]> = [
   ['claude-sonnet-5', { input: 2, output: 10 }],
   ['claude-sonnet-4', { input: 3, output: 15 }],
   ['claude-haiku-4', { input: 1, output: 5 }],
+  ['claude-haiku-4-5', { input: 1, output: 5, cacheRead: 0.1 }],
 ]
 
 export interface TokenUsage {
@@ -33,9 +35,20 @@ export function rateFor(model: string): Rate | null {
   return best?.[1] ?? null
 }
 
+// Models with no row are priced at the most expensive known family so caps still fire; callers show
+// `isPriced` as an "unpriced model" flag.
+const FALLBACK_RATE: Rate = { input: 10, output: 50, cacheRead: 0.25 }
+
+export function isPriced(model: string): boolean {
+  return rateFor(model) !== null
+}
+
+export function rateOrFallback(model: string): Rate {
+  return rateFor(model) ?? FALLBACK_RATE
+}
+
 export function costUsd(model: string, u: TokenUsage): number {
-  const r = rateFor(model)
-  if (!r) return 0
+  const r = rateOrFallback(model)
   const cacheRead = r.cacheRead ?? r.input * 0.1
   return (
     (u.inputTokens * r.input +

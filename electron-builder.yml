@@ -6,8 +6,12 @@ directories:
   buildResources: build
 
 files:
-  - out/**
+  # Only what the app loads: the main and preload bundles and the renderer. The CLI ships through
+  # extraResources; demo and e2e screenshots and source maps stay out of the installer.
+  - out/main/*.cjs
+  - out/renderer/**
   - package.json
+  - "!**/*.map"
   # CodeGraph's platform bundle is copied by build/after-pack.cjs instead (its own Node runtime is left
   # out: the embedded library runs on Electron's Node).
   - "!node_modules/@colbymchenry/codegraph-*/**"
@@ -16,6 +20,11 @@ extraResources:
   # The operant skill plugin that operators load with --plugin-dir.
   - from: plugin
     to: plugin
+  # The agents' `operant` CLI and its wrappers, run with the app binary as Node.
+  - from: out/cli
+    to: cli
+  - from: cli/bin
+    to: cli
 
 # Native modules must be real files on disk.
 asarUnpack:

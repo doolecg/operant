@@ -1,33 +1,25 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, Loader2, Network, Plus } from 'lucide-react'
+import { FolderOpen, Loader2, MoreHorizontal, Network, Plus } from 'lucide-react'
 import type { Operator } from '@shared/types'
-import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
-import { CostPanel } from '@/components/dashboard/CostPanel'
-import { AddSquadDialog, AddOperatorDialog, NewCrewDialog } from '@/components/dashboard/Dialogs'
+import { AddSquadDialog, AddOperatorDialog, DeleteCrewDialog, EditCrewDialog, NewCrewDialog } from '@/components/dashboard/Dialogs'
 import { OperatorDrawer } from '@/components/dashboard/OperatorDrawer'
 import { Sidebar } from '@/components/dashboard/Sidebar'
-import { StatStrip } from '@/components/dashboard/StatStrip'
-import { TasksPanel } from '@/components/dashboard/TasksPanel'
-import { Topology } from '@/components/dashboard/Topology'
 import { SettingsPage } from '@/components/settings/SettingsPage'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { closeDialog, useOpenDialog } from '@/lib/dialogs'
 import { matches } from '@/lib/keys'
-import {
-  useAction,
-  useEvents,
-  useIndexStatus,
-  useLiveUpdates,
-  useCrews,
-  useOperatorContexts,
-  useSettings,
-  useSpendSeries,
-  useSummary,
-  useTasks,
-  useTopology,
-} from '@/lib/queries'
+import { useAction, useCrews, useIndexStatus, useLiveUpdates, useMaster, useSetCrewView, useSettings, useTopology } from '@/lib/queries'
+import { cn } from '@/lib/utils'
+import { CREW_VIEWS, DEFAULT_VIEW, DIALOGS, PANEL_TABS, type PanelTab } from '@/registry'
 
 const LAST_CREW = 'operant.lastCrew'
 
@@ -46,10 +38,11 @@ export function App() {
   const [crewId, setCrewId] = useState<number | null>(readLastCrew)
   const [newCrew, setNewCrew] = useState(false)
   const [addSquad, setAddSquad] = useState(false)
+  const [crewDialog, setCrewDialog] = useState<'edit' | 'delete' | null>(null)
   const [operatorSquad, setOperatorSquad] = useState<number | null>(null)
   const [openOperatorId, setOpenOperatorId] = useState<number | null>(null)
-  const [view, setView] = useState<'dashboard' | 'settings'>('dashboard')
-  const [tab, setTab] = useState('activity')
+  const [page, setPage] = useState<'dashboard' | 'settings'>('dashboard')
+  const [tab, setTab] = useState(PANEL_TABS[0]!.id)
 
   // Fall back to the first crew when the remembered one is gone.
   useEffect(() => {
@@ -67,14 +60,16 @@ export function App() {
   }, [crewId])
 
   const topology = useTopology(crewId)
-  const tasks = useTasks(crewId)
   const index = useIndexStatus(crewId)
-  const events = useEvents()
-  const summary = useSummary()
-  const contexts = useOperatorContexts()
-  const spend = useSpendSeries(crewId)
   const runIndex = useAction('index:run')
+  const setView = useSetCrewView()
   const settings = useSettings()
+  const master = useMaster(crewId)
+
+  const crew = topology.data
+  const viewId = crew?.view ?? DEFAULT_VIEW
+  const view = CREW_VIEWS.find((v) => v.id === viewId) ?? CREW_VIEWS[0]!
+  const View = view.component
 
   // Rebindable shortcuts from Settings; dialogs and the key recorder take keys first.
   useEffect(() => {
@@ -82,15 +77,17 @@ export function App() {
     if (!binds) return
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
-      const dash = () => setView('dashboard')
+      const dash = () => setPage('dashboard')
       const actions: Array<[string, () => void]> = [
         [binds.newCrew, () => (dash(), setNewCrew(true))],
         [binds.addSquad, () => crewId != null && (dash(), setAddSquad(true))],
         [binds.indexCrew, () => crewId != null && runIndex.mutate([crewId])],
-        [binds.tabActivity, () => (dash(), setTab('activity'))],
-        [binds.tabTasks, () => (dash(), setTab('tasks'))],
-        [binds.tabCost, () => (dash(), setTab('cost'))],
-        [binds.openSettings, () => setView((v) => (v === 'settings' ? 'dashboard' : 'settings'))],
+        [binds.openSettings, () => setPage((v) => (v === 'settings' ? 'dashboard' : 'settings'))],
+        ...PANEL_TABS.map((t): [string, () => void] => [binds[t.keybind], () => (dash(), setTab(t.id))]),
+        ...CREW_VIEWS.map((v): [string, () => void] => [
+          binds[v.keybind],
+          () => crewId != null && (dash(), setView.mutate([crewId, v.id])),
+        ]),
       ]
       const hit = actions.find(([accel]) => matches(e, accel))
       if (!hit) return
@@ -99,26 +96,26 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [settings.data?.keybinds, crewId, runIndex])
+  }, [settings.data?.keybinds, crewId, runIndex, setView])
 
-  const crew = topology.data
   const operators: Operator[] = crew?.squads.flatMap((p) => p.operators) ?? []
-  const openOperator = operators.find((s) => s.id === openOperatorId) ?? null
+  // The Master Terminal lives in the hidden system squad, so it is looked up apart from the topology.
+  const openOperator = [...operators, ...(master.data ? [master.data] : [])].find((s) => s.id === openOperatorId) ?? null
 
   return (
     <TooltipProvider>
       <div className="flex h-full">
         <Sidebar
           crews={crews.data ?? []}
-          selected={view === 'dashboard' ? crewId : null}
-          settingsOpen={view === 'settings'}
-          onSelect={(id) => (setCrewId(id), setView('dashboard'))}
+          selected={page === 'dashboard' ? crewId : null}
+          settingsOpen={page === 'settings'}
+          onSelect={(id) => (setCrewId(id), setPage('dashboard'))}
           onNewCrew={() => setNewCrew(true)}
-          onOpenSettings={() => setView('settings')}
+          onOpenSettings={() => setPage('settings')}
         />
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {view === 'settings' ? (
+          {page === 'settings' ? (
             <SettingsPage />
           ) : crews.data && crews.data.length === 0 ? (
             <Welcome onNewCrew={() => setNewCrew(true)} />
@@ -132,6 +129,23 @@ export function App() {
                     {crew?.folder}
                   </p>
                 </div>
+                <div role="group" aria-label="Crew view" className="bg-muted flex rounded-md p-0.5">
+                  {CREW_VIEWS.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      aria-pressed={v.id === view.id}
+                      disabled={crewId == null}
+                      onClick={() => crewId != null && setView.mutate([crewId, v.id])}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors',
+                        v.id === view.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      <v.icon className="size-3.5" /> {v.label}
+                    </button>
+                  ))}
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
@@ -144,57 +158,49 @@ export function App() {
                 <Button size="sm" onClick={() => setAddSquad(true)} disabled={crewId == null}>
                   <Plus /> Squad
                 </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" aria-label={`Actions for crew ${crew?.name ?? ''}`} disabled={!crew}>
+                      <MoreHorizontal />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => setCrewDialog('edit')}>Edit crew</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onSelect={() => setCrewDialog('delete')}>
+                      Delete crew
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </header>
 
               <div className="flex min-h-0 flex-1">
-                <ScrollArea className="min-w-0 flex-1">
-                  <div className="space-y-6 p-6">
-                    <StatStrip summary={summary.data} index={index.data} />
-                    {crew && (
-                      <Topology
-                        crewName={crew.name}
-                        squads={crew.squads}
-                        tasks={tasks.data ?? []}
-                        contexts={contexts.data ?? {}}
-                        onOpenOperator={(s) => setOpenOperatorId(s.id)}
-                        onAddOperator={setOperatorSquad}
-                        onAddSquad={() => setAddSquad(true)}
-                      />
-                    )}
-                  </div>
-                </ScrollArea>
+                <div className="min-w-0 flex-1">
+                  {crewId != null && crew && (
+                    <View
+                      crewId={crewId}
+                      crew={crew}
+                      onOpenOperator={(o) => setOpenOperatorId(o.id)}
+                      onAddOperator={setOperatorSquad}
+                      onAddSquad={() => setAddSquad(true)}
+                    />
+                  )}
+                </div>
 
                 <aside className="flex w-80 shrink-0 flex-col border-l xl:w-96">
                   <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
                     <div className="border-b px-3 py-2">
                       <TabsList className="w-full">
-                        <TabsTrigger value="activity">Activity</TabsTrigger>
-                        <TabsTrigger value="tasks">
-                          Tasks
-                          {!!tasks.data?.filter((t) => t.state !== 'done').length && (
-                            <span className="text-muted-foreground tabular-nums">
-                              {tasks.data.filter((t) => t.state !== 'done').length}
-                            </span>
-                          )}
-                        </TabsTrigger>
-                        <TabsTrigger value="cost">Cost</TabsTrigger>
+                        {PANEL_TABS.map((t) => (
+                          <TabTrigger key={t.id} tab={t} crewId={crewId} />
+                        ))}
                       </TabsList>
                     </div>
-                    <TabsContent value="activity" className="min-h-0 flex-1">
-                      <ScrollArea className="h-full">
-                        <ActivityFeed events={events.data ?? []} crewId={crewId} />
-                      </ScrollArea>
-                    </TabsContent>
-                    <TabsContent value="tasks" className="min-h-0 flex-1">
-                      <ScrollArea className="h-full">
-                        {crewId != null && <TasksPanel crewId={crewId} tasks={tasks.data ?? []} operators={operators} />}
-                      </ScrollArea>
-                    </TabsContent>
-                    <TabsContent value="cost" className="min-h-0 flex-1">
-                      <ScrollArea className="h-full">
-                        <CostPanel series={spend.data ?? []} operators={operators} />
-                      </ScrollArea>
-                    </TabsContent>
+                    {PANEL_TABS.map((t) => (
+                      <TabsContent key={t.id} value={t.id} className="min-h-0 flex-1">
+                        {crewId != null && <t.component crewId={crewId} operators={operators} />}
+                      </TabsContent>
+                    ))}
                   </Tabs>
                 </aside>
               </div>
@@ -204,6 +210,10 @@ export function App() {
       </div>
 
       <NewCrewDialog open={newCrew} onOpenChange={setNewCrew} onCreated={setCrewId} />
+      {crew && crewDialog === 'edit' && <EditCrewDialog crew={crew} open onOpenChange={(o) => !o && setCrewDialog(null)} />}
+      {crew && crewDialog === 'delete' && (
+        <DeleteCrewDialog crewId={crew.id} crewName={crew.name} open onOpenChange={(o) => !o && setCrewDialog(null)} />
+      )}
       {crewId != null && <AddSquadDialog crewId={crewId} open={addSquad} onOpenChange={setAddSquad} />}
       <AddOperatorDialog
         squads={crew?.squads ?? []}
@@ -212,8 +222,26 @@ export function App() {
         onOpenChange={(o) => !o && setOperatorSquad(null)}
       />
       <OperatorDrawer operator={openOperator} crewName={crew?.name ?? ''} onClose={() => setOpenOperatorId(null)} />
+      <DialogsHost />
     </TooltipProvider>
   )
+}
+
+function TabTrigger({ tab, crewId }: { tab: PanelTab; crewId: number | null }) {
+  const badge = tab.useBadge?.(crewId)
+  return (
+    <TabsTrigger value={tab.id}>
+      {tab.label}
+      {!!badge && <span className="text-muted-foreground tabular-nums">{badge}</span>}
+    </TabsTrigger>
+  )
+}
+
+// Renders whichever registered dialog openDialog(id, payload) asked for.
+function DialogsHost() {
+  const open = useOpenDialog()
+  const Dialog = open ? DIALOGS[open.id] : undefined
+  return Dialog ? <Dialog payload={open!.payload} onClose={closeDialog} /> : null
 }
 
 function Welcome({ onNewCrew }: { onNewCrew: () => void }) {

@@ -60,6 +60,29 @@ describe('transcripts', () => {
     })
   })
 
+  it('flags a tool_use content block', () => {
+    const line = (content: unknown) =>
+      JSON.stringify({ type: 'assistant', message: { id: 'm', model: 'claude-opus-5-5', usage: { input_tokens: 1 }, content } })
+    expect(parseLine(line([{ type: 'text', text: 'hi' }]))!.toolUse).toBe(false)
+    expect(parseLine(line([{ type: 'tool_use', id: 't', name: 'Bash', input: {} }]))!.toolUse).toBe(true)
+    expect(parseLine(line(undefined))!.toolUse).toBe(false)
+    expect(parseLine(line('plain'))!.toolUse).toBe(false)
+  })
+
+  it('keeps all five kinds apart and sums context from input, reads and writes only', () => {
+    const u = parseLine(
+      assistant('k', {
+        input_tokens: 10,
+        output_tokens: 99,
+        cache_read_input_tokens: 1_000,
+        cache_creation_input_tokens: 60,
+        cache_creation: { ephemeral_5m_input_tokens: 20, ephemeral_1h_input_tokens: 40 },
+      }),
+    )!
+    expect([u.inputTokens, u.outputTokens, u.cacheReadTokens, u.cacheWrite5mTokens, u.cacheWrite1hTokens]).toEqual([10, 99, 1_000, 20, 40])
+    expect(u.contextTokens).toBe(1_070)
+  })
+
   it('ignores non-assistant, synthetic and malformed lines', () => {
     expect(parseLine(JSON.stringify({ type: 'user', message: { content: 'hi' } }))).toBeNull()
     expect(parseLine(assistant('m', { input_tokens: 1 }, '<synthetic>'))).toBeNull()

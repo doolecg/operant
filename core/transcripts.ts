@@ -1,7 +1,7 @@
 import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { claudeProjectsDir, type PathEnv } from './paths'
-import { costUsd, type TokenUsage } from './pricing'
+import { costUsd, isPriced, type TokenUsage } from './pricing'
 
 // Claude Code stores a session at projects/<cwd with every non-alphanumeric char as "-">/<session id>.jsonl.
 export function encodeProjectDir(cwd: string): string {
@@ -25,8 +25,13 @@ export interface MessageUsage extends TokenUsage {
   model: string
   at: number
   costUsd: number
+  // No price row for the model: the cost is the conservative fallback.
+  unpriced: boolean
   // Tokens the model saw on this turn: roughly how full the context window is.
   contextTokens: number
+  // True when this line's content block is a tool call. Each block of one message is its own line, so
+  // callers OR the flag across lines that share a messageId.
+  toolUse: boolean
 }
 
 interface RawUsage {
@@ -40,7 +45,11 @@ interface RawUsage {
 // One API message is written as several lines (one per content block) that repeat the same usage,
 // so callers key on messageId.
 export function parseLine(line: string): MessageUsage | null {
-  let o: { type?: string; timestamp?: string; message?: { id?: string; model?: string; usage?: RawUsage } }
+  let o: {
+    type?: string
+    timestamp?: string
+    message?: { id?: string; model?: string; usage?: RawUsage; content?: unknown }
+  }
   try {
     o = JSON.parse(line)
   } catch {
@@ -65,7 +74,9 @@ export function parseLine(line: string): MessageUsage | null {
     model: m.model,
     at: o.timestamp ? Date.parse(o.timestamp) : Date.now(),
     costUsd: costUsd(m.model, tokens),
+    unpriced: !isPriced(m.model),
     contextTokens: tokens.inputTokens + tokens.cacheReadTokens + write,
+    toolUse: Array.isArray(m.content) && m.content.some((c: { type?: string } | null) => c?.type === 'tool_use'),
   }
 }
 

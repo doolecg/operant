@@ -1,3 +1,4 @@
+@import '@xyflow/react/dist/style.css';
 @import 'tailwindcss';
 
 @custom-variant dark (&:is(.dark *));
@@ -83,4 +84,22 @@
     @apply bg-background text-foreground antialiased;
     font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Ubuntu', sans-serif;
   }
+}
+
+/* Graph view: React Flow takes the app's tokens (its own dark palette is overridden). */
+.react-flow {
+  --xy-background-color: var(--background);
+  --xy-node-color: var(--card-foreground);
+  --xy-node-border: 1px solid var(--border);
+  --xy-edge-stroke: var(--muted-foreground);
+  --xy-minimap-background-color: var(--card);
+  --xy-minimap-mask-background-color: oklch(0 0 0 / 45%);
+  --xy-controls-button-background-color: var(--card);
+  --xy-controls-button-background-color-hover: var(--accent);
+  --xy-controls-button-color: var(--foreground);
+  --xy-controls-button-color-hover: var(--foreground);
+  --xy-controls-button-border-color: var(--border);
+  --xy-handle-background-color: var(--muted-foreground);
+  --xy-handle-border-color: var(--background);
+  --xy-attribution-background-color: transparent;
 }

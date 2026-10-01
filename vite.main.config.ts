@@ -14,7 +14,24 @@ const external = [
 // Main and preload are bundled as CommonJS for Electron; the renderer has its own config.
 // The preload is built on its own (--mode preload) because a sandboxed preload can't
 // require shared chunks, so it must be a single self-contained file.
+// The agents' `operant` CLI (--mode cli) is one self-contained file run by the app binary as Node.
 export default defineConfig(({ mode }) => {
+  if (mode === 'cli') {
+    return {
+      build: {
+        outDir: resolve(import.meta.dirname, 'out/cli'),
+        emptyOutDir: true,
+        target: 'node24',
+        minify: false,
+        lib: {
+          entry: resolve(import.meta.dirname, 'cli/operant.ts'),
+          formats: ['cjs'],
+          fileName: () => 'operant.cjs',
+        },
+        rollupOptions: { external },
+      },
+    }
+  }
   const preload = mode === 'preload'
   return {
     resolve: {

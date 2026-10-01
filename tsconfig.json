@@ -19,5 +19,5 @@
       "@core/*": ["./core/*"]
     }
   },
-  "include": ["core", "main", "shared", "renderer/src", "*.config.ts"]
+  "include": ["core", "main", "shared", "cli", "renderer/src", "*.config.ts"]
 }

@@ -3,7 +3,7 @@ import type { Crew } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { bridge } from '@/lib/bridge'
-import { useUpdateStatus } from '@/lib/queries'
+import { useUnread, useUpdateStatus } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -13,6 +13,19 @@ interface Props {
   onNewCrew: () => void
   settingsOpen: boolean
   onOpenSettings: () => void
+}
+
+function CrewUnread({ crewId }: { crewId: number }) {
+  const count = useUnread(crewId).data?.user ?? 0
+  if (count <= 0) return null
+  return (
+    <span
+      aria-label={`${count} unread messages`}
+      className="bg-primary text-primary-foreground inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold tabular-nums"
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  )
 }
 
 export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, onOpenSettings }: Props) {
@@ -50,7 +63,8 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
               )}
             >
               <FolderGit2 className="size-4 shrink-0" />
-              <span className="truncate">{crew.name}</span>
+              <span className="min-w-0 flex-1 truncate">{crew.name}</span>
+              <CrewUnread crewId={crew.id} />
             </button>
           ))}
           {crews.length === 0 && <p className="text-muted-foreground px-2.5 py-2 text-xs">No crews yet.</p>}
