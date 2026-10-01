@@ -4,15 +4,18 @@
 
 Run crews of coding agents from one dashboard.
 
-A **crew** is a team working in one project folder. Its **operators** (Claude Code, Codex or shell sessions) are grouped into **squads**, and each has a stable address like `lead@shop`. Operant 2 starts and stops them, shows their live status, context use, tasks and spend, and gives every Claude Code operator the same `operant` skill, so the whole crew follows one set of rules.
+A **crew** is a team working in one project folder. Its **operators** (Claude Code, Codex or shell sessions) are grouped into **squads**, and each has a stable address like `lead@shop`. Operant 2 starts and stops them, shows their live status, context use, jobs and spend, lets them message each other and share a job board, and gives every Claude Code operator a short role text and the same `operant` skill, so the whole crew follows one set of rules.
 
 ## Features
 
-- Live dashboard of every crew, squad and operator, with a terminal for each operator
-- Activity feed, task board, and per-operator spend estimated from Claude Code transcripts
-- A daily budget with a warning when it's reached
+- Crews, squads and operators, with a live dashboard in four views: Cards, List, Graph and Tiles
+- A job board operators use themselves (atomic claims, dependencies, project manager review) and an `operant` command for messaging and jobs
+- Role presets (project manager, researcher, designer, implementor, senior implementor, tester, reviewer), editable, with model and effort changeable on each card
+- A Master Terminal per crew
+- Token use kept low: context caps, per-role models, spend caps, and a Cost tab with cache hit ratio and waste signals
+- Everything you add can be edited and deleted
 - CodeGraph indexing of a crew's project, used by operators before they search files
-- Settings for models, shell, updates and keyboard shortcuts, applied live
+- Settings for models, shell, budgets, updates and keyboard shortcuts, applied live
 - Automatic updates from GitHub releases on Windows, macOS and Linux
 
 ## Install

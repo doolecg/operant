@@ -15,8 +15,9 @@ const ROLES = [
   'tester',
   'reviewer'
 ]
-const read = (name: string): string => readFileSync(join(rolesDir, `${name}.md`), 'utf8')
-const skill = readFileSync(join(plugin, 'skills', 'operant', 'SKILL.md'), 'utf8')
+const lf = (s: string): string => s.replace(/\r\n/g, '\n')
+const read = (name: string): string => lf(readFileSync(join(rolesDir, `${name}.md`), 'utf8'))
+const skill = lf(readFileSync(join(plugin, 'skills', 'operant', 'SKILL.md'), 'utf8'))
 
 describe('role files', () => {
   it('ships exactly the common file and the seven roles', () => {

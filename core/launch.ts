@@ -220,7 +220,8 @@ function settingsFile(name: string, allow: string[], deny: string[], ctx: Launch
 }
 
 function roleFile(key: string, text: string, ctx: LaunchContext, p: typeof posix): LaunchFile {
-  const content = `${ctx.commonRoleText.trimEnd()}\n\n${text.trim()}\n`
+  const lf = (s: string): string => s.replace(/\r\n/g, '\n')
+  const content = `${lf(ctx.commonRoleText).trimEnd()}\n\n${lf(text).trim()}\n`
   const hash = createHash('sha256').update(content).digest('hex').slice(0, 12)
   return { path: p.join(ctx.rolesDir, `${key}-${hash}.md`), content }
 }

@@ -205,6 +205,17 @@ describe('role files', () => {
     expect(ra.path).toMatch(/^\/data\/roles\/implementor-[0-9a-f]{12}\.md$/)
   })
 
+  it('gives CRLF and LF role text the same content and file name', () => {
+    const p = presetOf('implementor')
+    const lf = roleOf(buildClaudeLaunch(operatorOf(p), p, { ...posixCtx, commonRoleText: 'A\nB', presetRoleText: 'C\nD' }).files)
+    const crlf = roleOf(
+      buildClaudeLaunch(operatorOf(p), p, { ...posixCtx, commonRoleText: 'A\r\nB', presetRoleText: 'C\r\nD' }).files,
+    )
+    expect(crlf.path).toBe(lf.path)
+    expect(crlf.content).toBe(lf.content)
+    expect(crlf.content).not.toContain('\r')
+  })
+
   it('changes the name when the text changes', () => {
     const p = presetOf('implementor')
     const a = roleOf(buildClaudeLaunch(operatorOf(p), p, posixCtx).files)
