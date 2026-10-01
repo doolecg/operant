@@ -1,6 +1,6 @@
 # Operant
 
-A Hyprland-style tiling window manager for terminal AI agents on Windows, macOS and Linux. Run **Claude Code**, **OpenCode** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a desktop notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
+A Hyprland-style tiling window manager for terminal AI agents on Windows, macOS and Linux. Run **Claude Code**, **OpenCode**, **Codex**, **Gemini CLI** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a desktop notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
 
 ## Saving tokens
 Operant is built so agents don't have to read their own noise. A few things do that work:
@@ -10,7 +10,7 @@ Operant is built so agents don't have to read their own noise. A few things do t
 - **Auto compact and usage:** when context hits a threshold (default 80%, configurable in Settings › Agents), Operant runs `/compact` at the next idle moment. Agents can request it themselves with `operant compact` at a clean stopping point. Check `operant usage` to see your context and plan limits.
 - **Tile info bar** under every tile: an agent's model, context size, tokens used since the tile opened and a cache-cold mark when idle; the folder and branch for every tile; an image's size and zoom; the changes tile's count.
 - **Launch brief** starts every agent with the essentials: use CodeGraph before grep/reading, read `.operant/progress.md` if it exists, run long commands through `operant run`/`wait`.
-- **The Operant skill loads itself** into every Claude Code and OpenCode session, so agents use `operant run`/`wait`/`read` without being told to. `operant help [cmd]` shows the full command reference.
+- **The Operant skill loads itself** into every Claude Code and OpenCode session (Codex and Gemini tiles get a short launch brief instead), so agents use `operant run`/`wait`/`read` without being told to. `operant help [cmd]` shows the full command reference.
 - **Optional "Reroute long commands" hook** (Settings › Agents, on by default, never auto-approves) moves test, build and install commands from the agent's shell into tiles automatically, so savings don't depend on remembering the skill.
 - **CodeGraph:** agents query a code index instead of grepping and reading whole files. Indexing runs on startup for projects that changed.
 - **Context size on every agent tile,** like `ctx 84k`, orange at 60% and red at 85%, so you can see when to `/compact` or start a fresh session before a big context starts costing you on every message.
@@ -24,12 +24,12 @@ operant wait 7 --errors
 
 ## What your agents get
 - **The Operant skill and live context.** Operant loads its skill into each Claude Code and OpenCode session itself, so nothing is written to your home folder. At session start and after every compact, `operant prime` hands the agent the current state, so it doesn't have to rediscover it.
-- **Team mode and tiers.** A lead agent hands work to tiers of its own CLI: Haiku, Sonnet and Opus on Claude Code, or OpenCode's free and paid models. A team never mixes CLIs; a tier falls back only to another route on the same CLI. Workers finish with `operant task done --status done|blocked|failed --note "<files, open issues>"`.
+- **Team mode and tiers.** A lead agent hands work to tiers of its own CLI: Haiku, Sonnet and Opus on Claude Code, OpenCode's free and paid models, or Codex or Gemini CLI models (there those tiers are worker tiles under a lead master, since neither has a subagent tool). A team never mixes CLIs; a tier falls back only to another route on the same CLI. Workers finish with `operant task done --status done|blocked|failed --note "<files, open issues>"`.
 - **Tiers picked from results.** Every team task's outcome is recorded. `operant agent` without a tier picks the cheapest one that has passed most tasks of that kind, says why, says "insufficient data" when there isn't enough history, and now and then tries a cheaper tier.
 - **Review, escalation and budgets.** A worker's result waits for approval. A failed task is retried once, then moved up a tier. A worker that is stuck (the same command failing again, or 30 tool calls without an edit on a code task) moves up on its own. Per-tier token budgets (Settings › Agents › Team, or `--budget`) stop a worker and escalate it.
 - **Checks before review.** When a code task comes back, Operant runs the project's tests (else build) and shows the result and diff size on the review card. A failure goes back to the worker once. Toggle: Settings › Agents › Team.
 - **Memory that knows when it's stale.** `operant remember` and `operant recall` keep facts with confidence, dates and the code they describe; a fact whose code changed shows as stale. Recall ranks by relevance, usefulness and age, and `operant recall used|wrong <id>` feeds that back.
-- **Messaging, opt-in.** With it on (Settings › Agents › Team), agents can send each other short messages with `operant msg <tile> "<text>"` and read them with `operant inbox`, Claude Code and OpenCode included. Repeats are dropped and each pair is rate limited.
+- **Messaging, opt-in.** With it on (Settings › Agents › Team), agents can send each other short messages with `operant msg <tile> "<text>"` and read them with `operant inbox`, in Claude Code, OpenCode, Codex and Gemini tiles (a custom agent or shell tile can't receive them). Repeats are dropped and each pair is rate limited.
 - **Refine, then hand off.** Say "refine this" to the agent you are talking to (OpenCode on a free model, say): the `refine` skill turns your words into a short brief with the files from CodeGraph, shows it, and after your yes sends it with `operant send --file <brief>` to a Claude Code tile (`--new` for a fresh one, `--team` as team work). A busy tile is never interrupted; the brief waits until it is idle. Settings › Agents › *Refined prompts go to* sets the default.
 
 ## Install
@@ -67,6 +67,23 @@ You need the agent CLIs themselves installed and on your `PATH`, for example:
 |---|---|---|
 | Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` |
 | OpenCode | `opencode` | `npm i -g opencode-ai` |
+| Codex | `codex` | `npm i -g @openai/codex` |
+| Gemini CLI | `gemini` | `npm i -g @google/gemini-cli` |
+
+### What works with each CLI
+| | Claude Code | OpenCode | Codex | Gemini CLI | Custom agents |
+|---|---|---|---|---|---|
+| Launch with prompt and model | yes | yes | yes | yes | prompt only |
+| Operant brief | yes | yes | yes | yes | no |
+| `operant` command | yes | yes | yes | yes | no |
+| Idle and finished notifications | yes | yes | yes (output based) | yes (output based) | no |
+| Permission-prompt detection | yes | yes | no | no | no |
+| Token and context counts | yes | yes (plan limits: no) | no | no | no |
+| Subagent tiles | yes | yes | no | no | no |
+| Long-command rerouting hooks | yes | yes | no | no | no |
+| Compact (`operant compact`, auto compact) | yes | yes | yes (`/compact`) | yes (`/compress`) | no |
+| Messaging | yes | yes | yes | yes | no |
+| Team workers | yes | yes | yes | yes | no |
 
 **Explorer integration (Windows):** right-click any folder, the empty space inside one, or a drive, and choose **Open in Operant**. It opens your default agent in that folder. If Operant is already running, the folder opens as a new tile in that window. You can turn this off in Settings. On macOS, a folder dropped on the Dock icon, or opened with Operant from Finder's *Open With*, opens the same way.
 
@@ -97,7 +114,7 @@ The first time Operant starts, it asks which agent you'd like to use. That agent
 In **Settings › Agents** you can add any command that runs in a terminal (Aider, Goose, Amp, a local model wrapper), give it a name, icon and arguments, and choose the default. Each agent runs through the shell set in Settings: PowerShell on Windows, your login shell on macOS and Linux (zsh or bash; fish and others work too). If it exits with an error, the tile stays open so you can read it. The `operant` command works the same in every shell.
 
 ## Team mode
-A team runs on one CLI: the project's, which you pick in its sidebar menu (**Claude Code team** or **OpenCode team**; by default its default agent's). Its tiers, routing, escalation, workers and new agent tiles all stay on that CLI.
+A team runs on one CLI: the project's, which you pick in its sidebar menu (**Claude Code team**, **OpenCode team**, **Codex team** or **Gemini CLI team**; by default its default agent's). Its tiers, routing, escalation, workers and new agent tiles all stay on that CLI.
 
 - **Local-model fallback:** an OpenCode team's lowest tier runs Big Pickle first. When Big Pickle is busy or out of free use, it falls back to a local model (Gemma via Ollama), installed in the background from Settings › Agents › Team.
 - **Long commands:** tests, builds and installs run inline and move to the Backrooms after 5 seconds (a setting).

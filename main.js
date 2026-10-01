@@ -1026,7 +1026,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // with its effort where the CLI has a flag for it (Claude Code --effort, Codex -c model_reasoning_effort; OpenCode's is below).
     // Custom agents don't get a model flag.
     const modelArgs = model ? [...cliRegistry.flag(cli, 'model', model), ...cliRegistry.flag(cli, 'effort', effort)] : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...pluginArgs, ...setupArgs, ...modelArgs, ...cliRegistry.flag(cli, resuming ? 'resume' : 'session', sessionId), ...cliRegistry.flag(cli, 'port', ocPort), ...promptArgs].map(sh ? unix.sq : q).join(' ');
+    const quoted = [...[].concat(agent.args || []), ...extra, ...(cliRegistry.get(cli)?.launch || []), ...briefArgs, ...hookArgs, ...pluginArgs, ...setupArgs, ...modelArgs, ...cliRegistry.flag(cli, resuming ? 'resume' : 'session', sessionId), ...cliRegistry.flag(cli, 'port', ocPort), ...promptArgs].map(sh ? unix.sq : q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -1052,6 +1052,8 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     OPERANT: '1',
     OPERANT_API: `http://127.0.0.1:${controlPort}`,
     OPERANT_TOKEN: controlToken,
+    // Same value, named so Codex's and Gemini's env filters (which drop TOKEN/KEY/SECRET names) let it through.
+    OPERANT_AUTH: controlToken,
     OPERANT_TILE: String(tileId ?? ''),
     OPERANT_EXE: process.execPath,
     // A tile opened as a team worker can't itself start workers (operant-cli.js checks this).

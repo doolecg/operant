@@ -27,7 +27,7 @@ async function call(cmd, args) {
   if (!api || process.env.OPERANT !== '1') return null;
   const res = await fetch(`${api}/v1`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPERANT_TOKEN || ''}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPERANT_TOKEN || process.env.OPERANT_AUTH || ''}` },
     body: JSON.stringify({ cmd, args, tile: process.env.OPERANT_TILE }),
     signal: AbortSignal.timeout(API_TIMEOUT),
   });

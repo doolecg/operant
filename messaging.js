@@ -70,13 +70,15 @@ const REASONS = {
 // work, refused (never turned into a plain send) while team mode is off. `env` is the app's side: state, teamEnabled, agents,
 // agentKind(id), agentMode(dir), messageTarget(ref), deliver(tile), flatLine(text), cwdOf(tile), projectOf(dir), tiles(),
 // open(agentId, dir, prompt, near) -> tile; notReady(tile) -> why a seat tile could not take it yet, or null (optional).
+const LABELS = { claude: 'Claude Code', opencode: 'OpenCode', codex: 'Codex', gemini: 'Gemini CLI' };
 async function sendBrief(args, self, env) {
   if (!self) throw new Error('unknown tile');
   const text = String(args.text ?? '').trim();
   if (!text) throw new Error('the brief is empty: give --file <path> or --brief "<text>"');
   const dir = env.cwdOf(self), project = env.projectOf(dir);
   if (args.team && !env.teamEnabled) throw new Error('team mode is off, so nothing was sent: turn on team mode (Settings › Agents › Team), then send again');
-  const kind = args.team && env.agentMode(dir) === 'opencode' ? 'opencode' : 'claude', label = kind === 'claude' ? 'Claude Code' : 'OpenCode';
+  const mode = args.team ? env.agentMode(dir) : null;
+  const kind = ['opencode', 'codex', 'gemini'].includes(mode) ? mode : 'claude', label = LABELS[kind];
   const body = args.team ? teamBrief(text) : text;
   const from = { from: self.id, fromAgent: self.agentName, fromRole: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell', kind: 'brief' };
   const sameKind = w => w.alive && w.kind === 'ai' && !w.tier && w.id !== self.id && env.agentKind(w.agentConf) === kind;

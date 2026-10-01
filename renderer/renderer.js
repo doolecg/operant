@@ -503,6 +503,7 @@
     w.ptyId = info.id;
     w.sessionId = info.sessionId;
     w.cwd = info.cwd;
+    if (prompt) { w.typed = true; w.lastInput = Date.now(); w.busySince = Date.now(); } // a launch prompt is work too: idle and finished notifications need it
     if (info.sessionId) sessionWin.set(info.sessionId, w);
     updateBadge(w);
     setTitle(w, name);
@@ -687,6 +688,9 @@
     setTimeout(() => { if (w.alive && w.ptyId) operant.writePty(w.ptyId, '\r'); }, 150);
   }
 
+  // The compact command each CLI understands (OpenCode's summarize API is tried first); null for a CLI with none.
+  const COMPACT_CMD = { claude: '/compact', opencode: '/compact', codex: '/compact', gemini: '/compress' };
+  const compactCommand = w => COMPACT_CMD[agentKind(w.agentConf)] || null;
   async function runCompact(w) {
     if (!w.alive || !w.ptyId) return;
     const t = openTaskOf(w);
@@ -697,7 +701,7 @@
       const r = await operant.summarizeOpenCode(w.ptyId).catch(() => null);
       if (r && r.ok) return;
     }
-    sendLine(w, '/compact');
+    sendLine(w, compactCommand(w));
   }
 
   // After a compact settles, the worker gets its checkpoint back (and the split advice on the second one).
@@ -1917,13 +1921,15 @@ async function contextBrief(t) {
     const r = ReadyCheck.readyCheck({ alive: w.alive, ptyId: w.ptyId, started: !!w.sessionId, working: String(w.sessionId || '').startsWith('oc:') ? w.ocBusy : isWorking(w), waitingPrompt: w.waitingPrompt || (isClaudeTile(w) && !!claudePromptInLast(w)) }, { enabled: cfg.readyCheck !== false });
     return r.ready ? null : r.reason;
   }
+  // Tiles whose CLI takes typed input: every registry CLI (Claude, OpenCode, Codex, Gemini); a custom command or a shell can't.
+  const canReceive = w => w.kind === 'ai' && CliRegistry.IDS.includes(agentKind(w.agentConf));
   async function deliver(w, force) {
     if (!w.alive || !w.ptyId || w.delivering || !Messaging.pending(msgState, w.id)) return false;
     w.notReady = notReadyReason(w);
     if (w.notReady) return false;
     if (!force && guardAction(w) !== 'deliver') { w.typingHeld = true; setHeldLine(w, true); return false; }
     const oc = String(w.sessionId || '').startsWith('oc:');
-    if (!oc && !isClaudeTile(w)) return false;
+    if (!canReceive(w)) return false;
     if (oc ? w.ocBusy : isWorking(w)) return false;
     // Never typed onto a permission prompt: the text plus Enter could answer it.
     if (w.waitingPrompt || (!oc && claudePromptInLast(w))) return false;
@@ -5338,6 +5344,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (!self) throw new Error('unknown tile');
         if (!cfg.messaging) throw new Error(MESSAGING_OFF);
         const w = messageTarget(args.id);
+        if (!canReceive(w)) throw new Error(`${w.agentName || w.title || 'tile ' + w.id} tiles can't receive messages`);
         refuseIfTyping(w);
         const r = Messaging.enqueue(msgState, { from: self.id, to: w.id, text: args.text, fromAgent: self.agentName, fromRole: self.tier ? 'worker' : self.kind === 'ai' ? 'lead' : 'shell' });
         if (!r.ok) throw new Error(`not sent to tile ${w.id}: ${Messaging.REASONS[r.reason]}`);
@@ -5371,6 +5378,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'compact': {
         if (!self) throw new Error('unknown tile');
         if (!self.ptyId) throw new Error('tile has no terminal to compact');
+        if (!compactCommand(self)) throw new Error(`compact is not supported for ${self.agentName || 'this'} tiles`);
         queueCompact(self);
         return {};
       }

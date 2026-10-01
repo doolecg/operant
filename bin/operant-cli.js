@@ -605,7 +605,7 @@ function post(api, payload, signal) {
     const data = JSON.stringify(payload);
     const req = require('http').request(`${api}/v1`, {
       method: 'POST', agent: false, signal,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), Authorization: `Bearer ${process.env.OPERANT_TOKEN || ''}` },
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), Authorization: `Bearer ${process.env.OPERANT_TOKEN || process.env.OPERANT_AUTH || ''}` },
     }, res => {
       let text = '';
       res.setEncoding('utf8');

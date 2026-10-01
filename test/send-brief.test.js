@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const M = require('../messaging');
 
-const AGENTS = [{ id: 'claude', command: 'claude' }, { id: 'opencode', command: 'opencode' }];
+const AGENTS = [{ id: 'claude', command: 'claude' }, { id: 'opencode', command: 'opencode' }, { id: 'codex', command: 'codex' }, { id: 'gemini', command: 'gemini' }];
 const tile = (id, over = {}) => ({ id, alive: true, kind: 'ai', agentConf: 'claude', cwd: '/proj', lastActivity: 0, ...over });
 const SELF = tile(7, { agentConf: 'opencode', agentName: 'OpenCode' });
 
@@ -113,4 +113,17 @@ test('the same brief twice in a row is dropped as a duplicate', async () => {
 test('frame leaves notes as they were and only briefs get the on-behalf framing', () => {
   assert.match(M.frame({ from: 3, text: 'hi', fromAgent: 'Claude Code', fromRole: 'lead' }), /^Message from tile 3/);
   assert.match(M.frame({ from: 3, text: 'hi', kind: 'brief' }), /^Brief from tile 3 \(agent, agent\), sent on the user's behalf:\nhi\n/);
+});
+
+test('a Codex or Gemini team sends team briefs to a tile of its own CLI, not Claude', async () => {
+  for (const [mode, label] of [['codex', 'Codex'], ['gemini', 'Gemini CLI']]) {
+    const w = world({ tiles: [tile(3), tile(4, { agentConf: mode })], mode });
+    const r = await send(w, { team: true });
+    assert.equal(r.to, 4);
+    assert.match(r.text, new RegExp(`^sent to ${label} tile 4 as team work`));
+    const w2 = world({ tiles: [tile(3)], mode });
+    const r2 = await send(w2, { team: true });
+    assert.equal(w2.opened[0].agentId, mode);
+    assert.match(r2.text, new RegExp(`^started ${label} tile`));
+  }
 });

@@ -1,3 +1,24 @@
+# Operant 2.7.3
+
+Codex and Gemini tiles now take messages and briefs, compact properly and notify when they finish.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.7.3-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt.
+- **macOS:** `Operant-2.7.3-mac-arm64.dmg` (Apple Silicon) or `Operant-2.7.3-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux (x64):** `Operant-2.7.3-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04), `Operant-2.7.3-linux-amd64.deb` (`sudo apt install ./Operant-2.7.3-linux-amd64.deb`), `Operant-2.7.3-linux-x86_64.rpm` (`sudo dnf install ./Operant-2.7.3-linux-x86_64.rpm`) or `Operant-2.7.3-linux-x64.tar.gz`. On Ubuntu 24.04 and later the AppImage and tarball need an AppArmor profile or `OPERANT_NO_SANDBOX=1 ./Operant-2.7.3-linux-x86_64.AppImage`; the README explains.
+
+## New
+- **Messaging and briefs for Codex and Gemini:** `operant msg` types into Codex and Gemini tiles like Claude ones, and a Codex or Gemini team sends its briefs to its own CLI instead of Claude. A custom agent or shell tile is refused straight away ("can't receive messages") rather than queued.
+- **`operant` command in Codex and Gemini tiles:** it now works inside them.
+- **Per-CLI compact:** `/compact` for Claude Code and Codex, `/compress` for Gemini, OpenCode as before. `operant compact` says plainly when a CLI has no compact command.
+- **README compatibility table:** what works with each CLI, and install lines for Codex and Gemini.
+
+## Fixed
+- **Tiles started with a prompt** now trigger idle and finished notifications and the worker idle nudge, which they used to miss or send late.
+- The README no longer says a team can only be Claude Code or OpenCode.
+
+---
+
 # Operant 2.7.2
 
 Linux gets proper packages and a desktop entry, notifications are configurable, updates are verified, and the app is hardened and easier to use with a keyboard and screen reader.

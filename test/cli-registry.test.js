@@ -81,3 +81,25 @@ test('the old detection helpers go through the registry', () => {
   assert.equal(isOpenCode({ command: 'claude' }), false);
   assert.equal(isOpenCode(undefined), false);
 });
+
+test('flag replaces {} and {toml} in one pass, so a literal {} in the text survives', () => {
+  assert.deepEqual(R.flag('codex', 'brief', 'use {} here'), ['-c', 'developer_instructions="use {} here"']);
+  assert.deepEqual(R.flag('claude', 'prompt', 'a {toml} b {}'), ['a {toml} b {}']);
+});
+
+test('kindOfCommand sees through npx, bunx and pnpm dlx wrappers and .cmd/.exe suffixes', () => {
+  const k = R.kindOfCommand;
+  assert.equal(k('npx @openai/codex'), 'codex');
+  assert.equal(k('npx -y @google/gemini-cli@latest --x'), 'gemini');
+  assert.equal(k('bunx opencode-ai'), 'opencode');
+  assert.equal(k('pnpm dlx @openai/codex'), 'codex');
+  assert.equal(k('C:\\Users\\a b\\AppData\\Roaming\\npm\\NPX.CMD @openai/codex'), 'codex');
+  assert.equal(k('C:\\npm\\Codex.CMD'), 'codex');
+  assert.equal(k('C:\\npm\\GEMINI.exe --yolo'), 'gemini');
+  assert.equal(k('npx cowsay'), 'other');
+  assert.equal(k('npm install'), 'other');
+});
+
+test('Codex launches keep Operant env vars in the shell tool', () => {
+  assert.ok(R.CLIS.codex.launch.includes('shell_environment_policy.ignore_default_excludes=true'));
+});

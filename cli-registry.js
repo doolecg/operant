@@ -21,6 +21,8 @@ const CLIS = {
   codex: {
     id: 'codex', label: 'Codex', command: 'codex', install: 'npm i -g @openai/codex',
     flags: { prompt: ['{}'], model: ['-m', '{}'], effort: ['-c', 'model_reasoning_effort={}'], session: null, resume: null, brief: ['-c', 'developer_instructions={toml}'] },
+    // Codex's shell tool drops env vars named like KEY/SECRET/TOKEN by default; keep Operant's (OPERANT_AUTH) for the `operant` command.
+    launch: ['-c', 'shell_environment_policy.inherit=all', '-c', 'shell_environment_policy.ignore_default_excludes=true'],
     brief: 'developer-instructions', skill: 'brief', busy: 'output', adopt: true,
     tiers: {
       xsmall: { model: 'gpt-5.1-codex-mini', effort: 'medium' },
@@ -51,8 +53,25 @@ const IDS = Object.keys(CLIS);
 
 // 'claude', 'opencode', 'codex', 'gemini' from a command line's program ("C:\x\claude.exe --foo" -> claude), else 'other'.
 // The whole command is tried first, so a path with spaces in it still counts.
+const PACKAGES = { '@openai/codex': 'codex', '@google/gemini-cli': 'gemini', 'opencode-ai': 'opencode', '@anthropic-ai/claude-code': 'claude' };
+// "npx -y @openai/codex@latest --x" / "pnpm dlx opencode-ai" -> the CLI the runner starts, else ''.
+function kindOfRunner(s) {
+  const m = /(?:^|[\\/\s])(npx|bunx|pnpm|yarn|npm|bun)(?:\.(?:exe|cmd|ps1))?\s+(.*)$/i.exec(s);
+  if (!m) return '';
+  const t = m[2].split(/\s+/);
+  let i = 0;
+  if (m[1].toLowerCase() !== 'npx' && m[1].toLowerCase() !== 'bunx') {
+    if (!/^(dlx|exec|x)$/i.test(t[i] || '')) return '';
+    i++;
+  }
+  while (i < t.length && t[i].startsWith('-')) i++;
+  const pkg = String(t[i] || '').replace(/^(@?[^@]+)@.*$/, '$1').toLowerCase();
+  return PACKAGES[pkg] || '';
+}
 function kindOfCommand(command) {
   const s = String(command || '').trim();
+  const viaRunner = kindOfRunner(s);
+  if (viaRunner) return viaRunner;
   for (const exe of [s, s.split(/\s+/)[0]]) {
     const m = /(?:^|[\\/])([^\\/]+?)(?:\.(?:exe|cmd|ps1))?$/i.exec(exe);
     const name = m ? m[1].toLowerCase() : '';
@@ -71,7 +90,7 @@ const labelOf = id => (get(id) ? CLIS[id].label : String(id || 'an agent'));
 function flag(id, name, value) {
   if (value == null || value === '') return [];
   const t = get(id) ? CLIS[id].flags[name] : name === 'prompt' ? ['{}'] : null;
-  return t ? t.map(p => p.replace('{toml}', () => JSON.stringify(String(value))).replace('{}', () => String(value))) : [];
+  return t ? t.map(p => p.replace(/\{toml\}|\{\}/g, m => (m === '{}' ? String(value) : JSON.stringify(String(value))))) : [];
 }
 
 // The CLI a project's team runs on: the project's saved choice (projectDefaults.agents), else the CLI of its
