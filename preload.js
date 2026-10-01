@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('operant', {
   gitDiff: opts => ipcRenderer.invoke('git:diff', opts),
   git: (op, arg) => ipcRenderer.invoke('git:' + op, arg), // commit | push | pull | rollback | branches | checkout | last-message
   ask: opts => ipcRenderer.invoke('ask', opts),
+  installCli: () => ipcRenderer.invoke('cli:install'),
+  cliStatus: () => ipcRenderer.invoke('cli:status'),
   editorName: () => ipcRenderer.invoke('editor:name'),
   openPath: p => ipcRenderer.send('fs:open', p),
   reveal: p => ipcRenderer.send('fs:reveal', p),

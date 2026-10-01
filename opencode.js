@@ -128,7 +128,7 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTo
       sendTo(t.owner, 'opencode:busy', { ptyId, busy: p.status?.type === 'busy' });
       return;
     }
-    // A permission prompt on the tile's own session (plan item 44); subagent prompts aren't surfaced.
+    // A permission prompt on the tile's own session; subagent prompts aren't surfaced.
     if (e.type === 'permission.asked' && t.roots.has(p.sessionID)) {
       sendTo(t.owner, 'oc-permission', { ptyId, id: p.id, permission: p.permission, patterns: p.patterns, always: p.always, metadata: p.metadata });
       return;
@@ -234,10 +234,10 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTo
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
-  // The tile's root session id once OpenCode has announced it (item 54 tags usage by it); null before.
+  // The tile's root session id once OpenCode has announced it; null before.
   const rootSession = ptyId => { const t = tiles.get(ptyId); return t && [...t.roots][0] || null; };
 
-  // Agent messages (plan item 53): a new prompt on the tile's root session, through the async endpoint
+  // Agent messages: a new prompt on the tile's root session, through the async endpoint
   // (204, returns at once). Never throws; { ok: false } tells the caller to type it into the terminal.
   async function prompt(ptyId, text) {
     const t = tiles.get(ptyId);

@@ -447,7 +447,7 @@ function footer(result) {
   return `\n(showing ${shown} of ${total} lines)`;
 }
 
-// Digest (plan item 34): runner/summary line, then each failure as "file:line  title — message",
+// Digest: runner/summary line, then each failure as "file:line  title — message",
 // with the stack frame on its own line when it differs from the file:line already shown.
 function fmtDigest(d) {
   if (!d) return '(no digest recognised for this output; try --errors)';
@@ -461,7 +461,7 @@ function fmtDigest(d) {
   return lines.join('\n');
 }
 
-// operant usage --breakdown (item 39): a compact version of Settings > Usage > "Where tokens go",
+// operant usage --breakdown: a compact version of Settings > Usage > "Where tokens go",
 // scoped to the calling tile's project. All Claude Code usage, so it's all "paid" (subscription).
 function fmtTok(n) { return n >= 1e6 ? +(n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(n); }
 function fmtBreakdown(b) {
@@ -484,7 +484,7 @@ function fmtBreakdown(b) {
 }
 
 const kTok = n => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
-// `operant agent` with a tier: the task's hard token limit and the suggestion from past tasks (item 92).
+// `operant agent` with a tier: the task's hard token limit and the suggestion from past tasks.
 function fmtLimit(r) {
   if (!r.tier || r.limit == null) return '';
   const s = r.suggestion;
@@ -675,7 +675,7 @@ async function main() {
   // A Backrooms task runs in the folder the agent is in.
   if (cmd === 'run' && args.background && args.cwd == null) args.cwd = process.cwd();
 
-  // Item 33 guardrail: a tile opened as a team worker (env set in main.js's pty:create) can't start
+  // A tile opened as a team worker (env set in main.js's pty:create) can't start
   // its own workers - checked here, before any request, since it's this process's own env.
   if (cmd === 'agent' && process.env.OPERANT_WORKER === '1') {
     console.error("operant: workers can't start workers");

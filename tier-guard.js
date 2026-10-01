@@ -1,5 +1,5 @@
 (function () {
-// Items 91 and 92, pure. A worker never moves up a tier by itself: a stuck guard, a second failure or rejection, or
+// Pure. A worker never moves up a tier by itself: a stuck guard, a second failure or rejection, or
 // a spent token limit pauses the task and asks the user. And each task has a hard token limit (input + output +
 // cache writes) with a separate allowance for saving progress; nothing raises a limit by itself, 0 = no limit.
 
@@ -13,7 +13,7 @@ const fmtTok = n => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math
 const oneLine = s => String(s || '').replace(/\s+/g, ' ').trim();
 const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
 
-// ------------------------------------------------------------------ limits (item 92)
+// ------------------------------------------------------------------ limits
 
 // A limit and the Saving progress setting ('over', the default: the save allowance comes on top; 'inside': it is taken
 // out of the limit) -> null for no limit, { error } for one that leaves no room, else
@@ -105,7 +105,7 @@ function dailyCap(used, cap) {
   return { over: (+used || 0) >= cap, used: +used || 0, cap };
 }
 
-// ------------------------------------------------------------------ time and tool-call limits (item 92)
+// ------------------------------------------------------------------ time and tool-call limits
 
 const BUDGET_WARN = 0.9, PACE_MIN_SHARE = 0.2, PACE_MIN_USED = 0.1;
 const BUDGET_UNIT = { minutes: 'minutes', calls: 'tool calls' };
@@ -150,7 +150,7 @@ function budgetMessage(ev, { id }) {
   return '';
 }
 
-// ------------------------------------------------------------------ suggestions (item 92)
+// ------------------------------------------------------------------ suggestions
 
 const roundUp = n => Math.max(10000, Math.ceil(n / 10000) * 10000);
 function percentile(values, p) {
@@ -187,7 +187,7 @@ function suggestAll(entries, tierNames, limits, defaults = {}) {
   return out;
 }
 
-// ------------------------------------------------------------------ asking before moving up (item 91)
+// ------------------------------------------------------------------ asking before moving up
 
 const ASK_WHY = { stuck: 'is stuck', failed: 'failed twice on this tier', rejected: 'was rejected twice', limit: 'reached its token limit', budget: 'reached its time or tool-call limit', higher: 'was asked to run on a higher tier' };
 

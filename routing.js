@@ -1,5 +1,5 @@
 (function () {
-// Routing from outcomes (item 59): pick the cheapest tier whose recorded results for this kind of task hold up.
+// Routing from outcomes: pick the cheapest tier whose recorded results for this kind of task hold up.
 // Pure; stats is outcomes.summarize() over the recent window, tiers run cheap to expensive and are already capped.
 const MIN_N = 5, MIN_RATE = 0.8, EXPLORE_EVERY = 10;
 const classify = p => (typeof TaskType !== 'undefined' ? TaskType : require('./task-type')).classifyTask(p);

@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self' http: https:; child-src 'self' http: https:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self' http://localhost:* http://127.0.0.1:*; child-src 'self' http://localhost:* http://127.0.0.1:*">
   <title>Operant</title>
   <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="style.css">
@@ -12,22 +12,22 @@
 
   <header id="bar">
     <div class="bar-left">
-      <button class="icon-btn" id="btn-sidebar"><svg viewBox="0 0 16 16"><path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9A1.5 1.5 0 0 1 2.5 2zm0 1.3a.2.2 0 0 0-.2.2v9c0 .1.1.2.2.2H6V3.3zm4.8 0v9.4h6.2a.2.2 0 0 0 .2-.2v-9a.2.2 0 0 0-.2-.2z"/></svg></button>
+      <button class="icon-btn" id="btn-sidebar" title="Toggle sidebar" aria-label="Toggle sidebar"><svg viewBox="0 0 16 16"><path d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9A1.5 1.5 0 0 1 2.5 2zm0 1.3a.2.2 0 0 0-.2.2v9c0 .1.1.2.2.2H6V3.3zm4.8 0v9.4h6.2a.2.2 0 0 0 .2-.2v-9a.2.2 0 0 0-.2-.2z"/></svg></button>
       <button class="brand-btn" id="btn-about" title="About Operant"><span class="logo">◈</span><span class="brand">Operant</span></button>
       <div id="workspaces"></div>
-      <button class="icon-btn" id="btn-basement" title="Backrooms: tests, builds and installs running in the background"><svg viewBox="0 0 16 16"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m4.5 6 2 2-2 2M8 10.2h3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="icon-btn" id="btn-basement" title="Backrooms: tests, builds and installs running in the background" aria-label="Backrooms"><svg viewBox="0 0 16 16"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m4.5 6 2 2-2 2M8 10.2h3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <div id="media" class="hidden">
         <img id="media-art" alt="">
         <div class="media-text"><span id="media-title"><span></span></span><span id="media-artist"></span></div>
         <div class="media-btns">
-          <button class="media-btn" id="media-shuffle" title="Shuffle"><svg viewBox="0 0 16 16"><path d="M13.15 1.4a.75.75 0 0 1 1.06 0l1.4 1.4a.75.75 0 0 1 0 1.06l-1.4 1.4a.75.75 0 1 1-1.06-1.06l.12-.12h-.9a2.75 2.75 0 0 0-2.23 1.14L6.9 10.9a4.25 4.25 0 0 1-3.45 1.77H.75a.75.75 0 0 1 0-1.5h2.7a2.75 2.75 0 0 0 2.23-1.14L9.02 5.36a4.25 4.25 0 0 1 3.45-1.77h.9l-.22-.22a.75.75 0 0 1 0-1.06zM.75 4.1h2.7c1.1 0 2.13.43 2.9 1.15l-.93 1.3a2.75 2.75 0 0 0-1.97-.95H.75a.75.75 0 0 1 0-1.5zm9.6 5.76.93-1.3c.52.5 1.2.8 1.95.84h.14l-.22-.22a.75.75 0 1 1 1.06-1.06l1.4 1.4a.75.75 0 0 1 0 1.06l-1.4 1.4a.75.75 0 1 1-1.06-1.06l.12-.12h-.04a4.24 4.24 0 0 1-2.88-.94z"/></svg></button>
-          <button class="media-btn" id="media-prev" title="Previous"><svg viewBox="0 0 16 16"><path d="M3.3 1a.7.7 0 0 1 .7.7v5.15l9.95-5.74a.7.7 0 0 1 1.05.6v12.58a.7.7 0 0 1-1.05.6L4 9.15v5.15a.7.7 0 0 1-1.4 0V1.7a.7.7 0 0 1 .7-.7z"/></svg></button>
-          <button class="media-btn play" id="media-play" title="Play"><svg viewBox="0 0 16 16"><path class="i-play" d="M4.5 2.3a.7.7 0 0 1 1.05-.6l8.5 5.1a.7.7 0 0 1 0 1.2l-8.5 5.1a.7.7 0 0 1-1.05-.6z"/><path class="i-pause" d="M3.5 2h3v12h-3zm6 0h3v12h-3z"/></svg></button>
-          <button class="media-btn" id="media-next" title="Next"><svg viewBox="0 0 16 16"><path d="M12.7 1a.7.7 0 0 0-.7.7v5.15L2.05 1.11A.7.7 0 0 0 1 1.71v12.58a.7.7 0 0 0 1.05.6L12 9.15v5.15a.7.7 0 0 0 1.4 0V1.7a.7.7 0 0 0-.7-.7z"/></svg></button>
+          <button class="media-btn" id="media-shuffle" title="Shuffle" aria-label="Shuffle"><svg viewBox="0 0 16 16"><path d="M13.15 1.4a.75.75 0 0 1 1.06 0l1.4 1.4a.75.75 0 0 1 0 1.06l-1.4 1.4a.75.75 0 1 1-1.06-1.06l.12-.12h-.9a2.75 2.75 0 0 0-2.23 1.14L6.9 10.9a4.25 4.25 0 0 1-3.45 1.77H.75a.75.75 0 0 1 0-1.5h2.7a2.75 2.75 0 0 0 2.23-1.14L9.02 5.36a4.25 4.25 0 0 1 3.45-1.77h.9l-.22-.22a.75.75 0 0 1 0-1.06zM.75 4.1h2.7c1.1 0 2.13.43 2.9 1.15l-.93 1.3a2.75 2.75 0 0 0-1.97-.95H.75a.75.75 0 0 1 0-1.5zm9.6 5.76.93-1.3c.52.5 1.2.8 1.95.84h.14l-.22-.22a.75.75 0 1 1 1.06-1.06l1.4 1.4a.75.75 0 0 1 0 1.06l-1.4 1.4a.75.75 0 1 1-1.06-1.06l.12-.12h-.04a4.24 4.24 0 0 1-2.88-.94z"/></svg></button>
+          <button class="media-btn" id="media-prev" title="Previous" aria-label="Previous"><svg viewBox="0 0 16 16"><path d="M3.3 1a.7.7 0 0 1 .7.7v5.15l9.95-5.74a.7.7 0 0 1 1.05.6v12.58a.7.7 0 0 1-1.05.6L4 9.15v5.15a.7.7 0 0 1-1.4 0V1.7a.7.7 0 0 1 .7-.7z"/></svg></button>
+          <button class="media-btn play" id="media-play" title="Play" aria-label="Play"><svg viewBox="0 0 16 16"><path class="i-play" d="M4.5 2.3a.7.7 0 0 1 1.05-.6l8.5 5.1a.7.7 0 0 1 0 1.2l-8.5 5.1a.7.7 0 0 1-1.05-.6z"/><path class="i-pause" d="M3.5 2h3v12h-3zm6 0h3v12h-3z"/></svg></button>
+          <button class="media-btn" id="media-next" title="Next" aria-label="Next"><svg viewBox="0 0 16 16"><path d="M12.7 1a.7.7 0 0 0-.7.7v5.15L2.05 1.11A.7.7 0 0 0 1 1.71v12.58a.7.7 0 0 0 1.05.6L12 9.15v5.15a.7.7 0 0 0 1.4 0V1.7a.7.7 0 0 0-.7-.7z"/></svg></button>
         </div>
         <div class="media-vol">
-          <button class="media-btn" id="media-mute" title="Mute"><svg viewBox="0 0 16 16"><path d="M9.74 2.07A.75.75 0 0 1 10 2.64v10.72a.75.75 0 0 1-1.21.59L4.74 10.8H1.75A.75.75 0 0 1 1 10.05v-4.1a.75.75 0 0 1 .75-.75h2.99l4.05-3.15a.75.75 0 0 1 .95.02z"/><path class="i-wave" d="M11.5 5.2a3.8 3.8 0 0 1 0 5.6l-.95-1.05a2.4 2.4 0 0 0 0-3.5zm1.9-2.1a6.6 6.6 0 0 1 0 9.8l-.95-1.05a5.2 5.2 0 0 0 0-7.7z"/><path class="i-muted" d="m11.2 5.6 1.3 1.3 1.3-1.3.9.9-1.3 1.3 1.3 1.3-.9.9-1.3-1.3-1.3 1.3-.9-.9 1.3-1.3-1.3-1.3z"/></svg></button>
-          <input type="range" id="media-volume" min="0" max="1" step="0.01" value="1">
+          <button class="media-btn" id="media-mute" title="Mute" aria-label="Mute"><svg viewBox="0 0 16 16"><path d="M9.74 2.07A.75.75 0 0 1 10 2.64v10.72a.75.75 0 0 1-1.21.59L4.74 10.8H1.75A.75.75 0 0 1 1 10.05v-4.1a.75.75 0 0 1 .75-.75h2.99l4.05-3.15a.75.75 0 0 1 .95.02z"/><path class="i-wave" d="M11.5 5.2a3.8 3.8 0 0 1 0 5.6l-.95-1.05a2.4 2.4 0 0 0 0-3.5zm1.9-2.1a6.6 6.6 0 0 1 0 9.8l-.95-1.05a5.2 5.2 0 0 0 0-7.7z"/><path class="i-muted" d="m11.2 5.6 1.3 1.3 1.3-1.3.9.9-1.3 1.3 1.3 1.3-.9.9-1.3-1.3-1.3 1.3-.9-.9 1.3-1.3-1.3-1.3z"/></svg></button>
+          <input type="range" id="media-volume" aria-label="Volume" min="0" max="1" step="0.01" value="1">
         </div>
         <div id="media-progress" class="hidden"><i></i></div>
       </div>
@@ -39,16 +39,16 @@
     <div class="bar-right">
       <button class="pill update hidden" id="update-pill"></button>
       <button class="pill local hidden" id="local-pill"></button>
-      <button class="pill health" id="health-pill" title="Health"><i class="hdot"></i></button>
+      <button class="pill health" id="health-pill" title="Health" aria-label="Health"><i class="hdot"></i></button>
       <button class="pill tokens hidden" id="usage-pill"></button>
       <span class="pill" id="stat-agents" title="Agents working / idle, subagents finished"></span>
-      <button class="icon-btn" id="btn-new" title="New agent (Alt+N)">＋</button>
-      <button class="icon-btn" id="btn-notifs" title="Notifications (Alt+I)"><svg viewBox="0 0 16 16"><path d="M8 1.3a4.3 4.3 0 0 0-4.3 4.3v2.1c0 .5-.2 1-.5 1.5l-.9 1.2a.9.9 0 0 0 .7 1.4h9.9a.9.9 0 0 0 .7-1.4l-.9-1.2a2.6 2.6 0 0 1-.5-1.5V5.6A4.3 4.3 0 0 0 8 1.3z" fill="currentColor"/><path d="M6.3 12.8a1.7 1.7 0 0 0 3.4 0z" fill="currentColor"/></svg><span class="badge hidden" id="notif-badge"></span></button>
-      <button class="icon-btn" id="btn-gear" title="Quick menu">⚙</button>
+      <button class="icon-btn" id="btn-new" title="New agent (Alt+N)" aria-label="New agent">＋</button>
+      <button class="icon-btn" id="btn-notifs" title="Notifications (Alt+I)" aria-label="Notifications"><svg viewBox="0 0 16 16"><path d="M8 1.3a4.3 4.3 0 0 0-4.3 4.3v2.1c0 .5-.2 1-.5 1.5l-.9 1.2a.9.9 0 0 0 .7 1.4h9.9a.9.9 0 0 0 .7-1.4l-.9-1.2a2.6 2.6 0 0 1-.5-1.5V5.6A4.3 4.3 0 0 0 8 1.3z" fill="currentColor"/><path d="M6.3 12.8a1.7 1.7 0 0 0 3.4 0z" fill="currentColor"/></svg><span class="badge hidden" id="notif-badge"></span></button>
+      <button class="icon-btn" id="btn-gear" title="Quick menu" aria-label="Quick menu">⚙</button>
       <div class="wc">
-        <button id="wc-min" title="Minimize">─</button>
-        <button id="wc-max" title="Maximize">□</button>
-        <button id="wc-close" title="Close">✕</button>
+        <button id="wc-min" title="Minimize" aria-label="Minimize">─</button>
+        <button id="wc-max" title="Maximize" aria-label="Maximize">□</button>
+        <button id="wc-close" title="Close" aria-label="Close">✕</button>
       </div>
     </div>
   </header>
@@ -56,11 +56,11 @@
   <aside id="sidebar">
     <div class="side-head">
       <span class="side-title">Projects</span>
-      <button class="side-btn" id="side-add" title="Add a project folder">＋</button>
-      <button class="side-btn" id="side-group" title="New project group">▣</button>
-      <button class="side-btn" id="side-cg" title="Index all projects with CodeGraph">◇</button>
-      <button class="side-btn" id="side-refresh" title="Refresh">⟳</button>
-      <button class="side-btn" id="side-hide" title="Hide sidebar">«</button>
+      <button class="side-btn" id="side-add" title="Add a project folder" aria-label="Add a project folder">＋</button>
+      <button class="side-btn" id="side-group" title="New project group" aria-label="New project group">▣</button>
+      <button class="side-btn" id="side-cg" title="Index all projects with CodeGraph" aria-label="Index all projects with CodeGraph">◇</button>
+      <button class="side-btn" id="side-refresh" title="Refresh" aria-label="Refresh">⟳</button>
+      <button class="side-btn" id="side-hide" title="Hide sidebar" aria-label="Hide sidebar">«</button>
     </div>
     <div class="side-body" id="side-body"></div>
     <div class="side-grip" id="side-grip"></div>
@@ -71,9 +71,9 @@
 
   <main id="desktop"></main>
 
-  <div id="toasts"></div>
+  <div id="toasts" aria-live="polite" role="status"></div>
 
-  <div id="keys" class="overlay hidden">
+  <div id="keys" role="dialog" aria-modal="true" aria-label="Keybinds" class="overlay hidden">
     <div class="card">
       <div class="card-head"><h2><span class="logo">◈</span> Keybinds</h2><span class="sub">Hover a row: + adds a key, ✕ removes one</span></div>
       <div class="card-body" id="keys-body"></div>
@@ -85,7 +85,7 @@
     </div>
   </div>
 
-  <div id="quickmenu" class="overlay anchor hidden">
+  <div id="quickmenu" role="dialog" aria-modal="true" aria-label="Quick menu" class="overlay anchor hidden">
     <div class="card qm-card">
       <div class="card-body qm-body">
         <div class="qm-tiles">
@@ -105,28 +105,28 @@
     </div>
   </div>
 
-  <div id="notifications" class="overlay anchor hidden">
+  <div id="notifications" role="dialog" aria-modal="true" aria-label="Notifications" class="overlay anchor hidden">
     <div class="card qm-card notif-card">
       <div class="card-head notif-head"><h2>Notifications</h2><button class="link" id="notif-clear">Clear all</button></div>
       <div class="card-body" id="notif-body"></div>
     </div>
   </div>
 
-  <div id="health" class="overlay anchor hidden">
+  <div id="health" role="dialog" aria-modal="true" aria-label="Health" class="overlay anchor hidden">
     <div class="card qm-card notif-card health-card">
       <div class="card-head notif-head"><h2>Health</h2><button class="link" id="health-refresh">Check again</button></div>
       <div class="card-body" id="health-body"></div>
     </div>
   </div>
 
-  <div id="basement" class="overlay anchor hidden">
+  <div id="basement" role="dialog" aria-modal="true" aria-label="Backrooms" class="overlay anchor hidden">
     <div class="card qm-card notif-card board-card basement-card">
       <div class="card-head notif-head"><h2>Backrooms</h2></div>
       <div class="card-body" id="basement-body"></div>
     </div>
   </div>
 
-  <div id="hub" class="overlay anchor hidden">
+  <div id="hub" role="dialog" aria-modal="true" aria-label="Tidy agents" class="overlay anchor hidden">
     <div class="card qm-card notif-card board-card hub-card">
       <div class="card-head notif-head"><h2>Tidy agents</h2><button class="link hidden" id="hub-all">Select all</button><button class="link" id="hub-view">Details</button><button class="link hidden" id="hub-undo">Undo last apply</button></div>
       <div class="card-body" id="hub-body"></div>
@@ -134,7 +134,7 @@
     </div>
   </div>
 
-  <div id="tour" class="overlay hidden">
+  <div id="tour" role="dialog" aria-modal="true" aria-label="Tour" class="overlay hidden">
     <div class="card narrow">
       <div class="card-head"><h2><span class="logo">◈</span> <span class="t"></span></h2><span class="sub"></span></div>
       <div class="card-body"></div>
@@ -147,7 +147,7 @@
     </div>
   </div>
 
-  <div id="settings" class="overlay hidden">
+  <div id="settings" role="dialog" aria-modal="true" aria-label="Settings" class="overlay hidden">
     <div class="card">
       <div class="card-head"><h2><span class="logo">◈</span> Settings</h2><span class="sub">Changes apply and save immediately</span></div>
       <div class="card-body" id="settings-body"></div>
@@ -160,7 +160,7 @@
     </div>
   </div>
 
-  <div id="usage" class="overlay hidden">
+  <div id="usage" role="dialog" aria-modal="true" aria-label="Token usage" class="overlay hidden">
     <div class="card">
       <div class="card-head"><h2><span class="logo">◈</span> Token usage</h2>
         <div class="seg" id="usage-range"><button data-range="5h">5 hours</button><button data-range="24h">24 hours</button><button data-range="7d">7 days</button><button data-range="30d">30 days</button></div>
@@ -173,15 +173,15 @@
     </div>
   </div>
 
-  <div id="picker" class="overlay top hidden">
+  <div id="picker" role="dialog" aria-modal="true" aria-label="Picker" class="overlay top hidden">
     <div class="card narrow picker-card">
-      <div class="picker-head"><input id="picker-input" spellcheck="false" autocomplete="off"></div>
+      <div class="picker-head"><input id="picker-input" aria-label="Search" spellcheck="false" autocomplete="off"></div>
       <div class="card-body" id="picker-body"></div>
       <div class="card-foot"><span class="grow" id="picker-foot"></span><button class="btn" data-close>Close</button></div>
     </div>
   </div>
 
-  <div id="startpick" class="overlay hidden">
+  <div id="startpick" role="dialog" aria-modal="true" aria-label="Where do you want to work" class="overlay hidden">
     <div class="card narrow">
       <div class="card-head"><h2><span class="logo">◈</span> Where do you want to work?</h2><span class="sub">Pick a folder to open an agent in</span></div>
       <div class="card-body" id="startpick-body"></div>
@@ -192,7 +192,7 @@
     </div>
   </div>
 
-  <div id="about" class="overlay hidden">
+  <div id="about" role="dialog" aria-modal="true" aria-label="About Operant" class="overlay hidden">
     <div class="card narrow">
       <div class="card-head"><h2><span class="logo">◈</span> Operant</h2><span class="sub" id="about-ver"></span></div>
       <div class="card-body tour-step" id="about-body">
@@ -208,7 +208,7 @@
     </div>
   </div>
 
-  <div id="launcher" class="overlay hidden">
+  <div id="launcher" role="dialog" aria-modal="true" aria-label="New agent" class="overlay hidden">
     <div class="card narrow">
       <div class="card-head"><h2><span class="logo">◈</span> <span id="launcher-title">New agent</span></h2><span class="sub" id="launcher-sub"></span></div>
       <div class="card-body" id="launcher-body"></div>
@@ -219,7 +219,7 @@
     </div>
   </div>
 
-  <div id="savequit" class="overlay hidden">
+  <div id="savequit" role="dialog" aria-modal="true" aria-label="Saving and quitting" class="overlay hidden">
     <div class="card narrow">
       <div class="card-head"><h2><span class="logo">◈</span> Saving and quitting</h2><span class="sub">Waiting for working agents to reach a safe point</span></div>
       <div class="card-body" id="savequit-body"></div>
@@ -252,6 +252,7 @@
   <script src="seat-view.js"></script>
   <script src="../hooks/long-commands.js"></script>
   <script src="platform.js"></script>
+  <script src="quiet-hours.js"></script>
   <script src="themes.js"></script>
   <script src="render-agent.js"></script>
   <script src="md-view.js"></script>

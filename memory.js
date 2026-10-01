@@ -1,4 +1,4 @@
-// Item 45: shared memory across agents. One memory per project, at `.operant/memory/`, that every
+// Shared memory across agents. One memory per project, at `.operant/memory/`, that every
 // agent in that project reads and adds to; user-wide facts (--type user / --global) live in
 // Operant's own userData `memory/` instead. Each fact is a small Markdown file with frontmatter
 // (name, description, type, optional about) plus a one-line entry in an index, `MEMORY.md`. The
@@ -29,7 +29,7 @@ function norm(text) {
 }
 
 // Claude Code's own project-memory folder: the cwd with every non-alphanumeric character (each
-// one, not collapsed) turned into "-", e.g. F:\PROGRAMMING\REPOS\Operant -> F--PROGRAMMING-REPOS-Operant.
+// one, not collapsed) turned into "-", e.g. C:\proj\operant -> C--proj-operant.
 function claudeMemoryDir(cwd, homeDir = os.homedir()) {
   const mangled = String(cwd).replace(/[^A-Za-z0-9]/g, '-');
   return path.join(homeDir, '.claude', 'projects', mangled, 'memory');
@@ -391,7 +391,7 @@ function bm25(docs, qTokens, k1 = 1.2, b = 0.75) {
 }
 
 // How much a fact has earned its place: feedback ratio, and a 14-day half-life since it was last
-// used or updated (floor 0.2). Facts with no dates (written before item 58) don't decay.
+// used or updated (floor 0.2). Facts with no dates don't decay.
 function weight(f, now = Date.now()) {
   const useful = Math.max(0.05, (f.uses - f.rejects + 1) / (f.recalls + 2));
   const t = Date.parse(f.lastUsed || f.updated || f.created || '');

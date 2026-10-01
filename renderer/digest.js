@@ -1,4 +1,4 @@
-// Test/build output digests (plan item 34): spot the runner in a tile's plain-text output (ANSI
+// Test/build output digests: spot the runner in a tile's plain-text output (ANSI
 // already stripped by the caller) and boil it down to one summary line plus each failure's
 // title, file:line, short message and first project stack frame. Everything else — passing
 // tests, framework banners, full stack traces through node_modules/stdlib — stays in the tile.

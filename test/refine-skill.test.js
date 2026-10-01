@@ -1,4 +1,4 @@
-// The refine skill (item 97): valid frontmatter, and the steps the plan asks for are in its text.
+// The refine skill: valid frontmatter, and the steps the plan asks for are in its text.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -42,6 +42,6 @@ test('it shows the brief and waits for a yes, then sends with operant send, neve
   assert.match(body, /can't approve|cannot approve/);
 });
 
-test('no Terminal, refiner service or prompt box wording (item 93)', () => {
+test('no Terminal, refiner service or prompt box wording', () => {
   assert.doesNotMatch(text, /terminal|refiner|prompt box/i);
 });

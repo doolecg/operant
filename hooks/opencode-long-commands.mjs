@@ -1,4 +1,4 @@
-// Item 37 follow-up: the same long-command reroute as hooks/long-commands.js (Claude Code's
+// The same long-command reroute as hooks/long-commands.js (Claude Code's
 // PreToolUse hook), but as an OpenCode plugin using tool.execute.before, which can rewrite a tool
 // call's args before it runs. Reuses classify/rewriteCommand from long-commands.js rather than
 // duplicating the regexes.

@@ -1,4 +1,4 @@
-// Item 95: the setup card's logic (local-setup.js, pure) and the worker (local-model.js) against a fake Ollama and a fake winget,
+// The setup card's logic (local-setup.js, pure) and the worker (local-model.js) against a fake Ollama and a fake winget,
 // once for every state a part can reach and once for every failure.
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -204,12 +204,12 @@ function createUsage({ projectsDir, send, onContext, onToolUse, onToolResult, on
   return { start, stop, summary, todayFor, series, refresh: scan, addEvent, breakdown: opts => computeBreakdown(projectsDir, opts) };
 }
 
-// ------------------------------------------------------------ item 39: "where the tokens go"
+// ------------------------------------------------------------ "where the tokens go"
 // A fresh, on-demand read of the JSONL (not the running scan above): per project and per tile
 // (Claude Code session, subagents folded into their parent) totals, the biggest single turns with
 // the tool call that likely caused them, files read more than 3 times in a session, and each
 // session's fixed first-turn overhead. Claude Code transcripts carry no free/paid flag (unlike
-// OpenCode's free Zen models), so Claude rows are all "paid". Item 54 adds OpenCode's database events
+// OpenCode's free Zen models), so Claude rows are all "paid". The pricing table adds OpenCode's database events
 // (free Zen models count as free), a price per model (pricing.js) and rows per model, tier and task.
 
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');

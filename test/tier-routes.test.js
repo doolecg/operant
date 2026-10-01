@@ -1,4 +1,4 @@
-// Tier routes (item 96): a tier lists fallback routes; each skipped route keeps its reason. No app, no network:
+// Tier routes: a tier lists fallback routes; each skipped route keeps its reason. No app, no network:
 // failures are faked per reason (busy, out of free use, failed this kind of task before, not set up).
 const test = require('node:test');
 const assert = require('node:assert/strict');

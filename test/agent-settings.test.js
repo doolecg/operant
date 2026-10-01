@@ -1,4 +1,4 @@
-// Item 94: the plain-language text, presets and warnings behind Settings > Agents.
+// The plain-language text, presets and warnings behind Settings > Agents.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -89,7 +89,7 @@ test('every setting has a label, a one-line what-it-does, when it applies and a 
   assert.strictEqual(new Set(A.META.map(m => m.id)).size, A.META.length);
 });
 
-test('items 91/92/96 are all there: ask before moving up, limits, suggestions, saving, daily cap, routes', () => {
+test('all of these are there: ask before moving up, limits, suggestions, saving, daily cap, routes', () => {
   for (const id of ['askBeforeMoveUp', 'budget.free', 'suggest', 'savingProgress', 'dailyCap', 'routing']) assert.ok(A.byId[id], id);
 });
 

@@ -88,7 +88,7 @@ test('the 1.18.0 frontmatter, with ": " in an unquoted description, does not par
   }
 });
 
-// Item 89: team mode is a skill. The Team section is the whole workflow, gated on `operant team`.
+// Team mode is a skill. The Team section is the whole workflow, gated on `operant team`.
 test('the Team mode section carries the whole workflow and only acts when team mode is on', parsed, () => {
   const i = skill.body.indexOf('## Team mode');
   assert.ok(i >= 0, 'no "## Team mode" section');

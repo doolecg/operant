@@ -112,7 +112,7 @@ test('installKind: the installer each kind of install can apply', () => {
   assert.equal(installKind({ platform: 'win32', env: {}, execPath: 'C:\\Program Files\\Operant\\Operant.exe' }), 'msi');
   assert.equal(installKind({ platform: 'darwin', env: {}, execPath: '/Applications/Operant.app/Contents/MacOS/Operant' }), 'dmg');
   assert.equal(installKind({ platform: 'linux', env: { APPIMAGE: '/home/u/Operant.AppImage' }, execPath: '/tmp/.mount_Operanx/operant' }), 'appimage');
-  assert.equal(installKind({ platform: 'linux', env: {}, execPath: '/opt/Operant/operant' }), 'deb');
+  assert.equal(installKind({ platform: 'linux', env: {}, execPath: '/opt/Operant/operant', owner: () => 'deb' }), 'deb');
   assert.equal(installKind({ platform: 'linux', env: {}, execPath: '/home/u/Operant-linux-x64/operant' }), null);
   assert.equal(installKind({ platform: 'linux', env: {}, execPath: '/opt/Operant-dev/operant' }), null);
   assert.equal(installKind({ platform: 'linux', env: { APPIMAGE: '' }, execPath: '/tmp/x/operant' }), null);

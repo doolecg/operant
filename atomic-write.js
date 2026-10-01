@@ -17,10 +17,13 @@ function renameRetry(from, to) {
 }
 
 function writeFileAtomic(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   try {
-    const fd = fs.openSync(tmp, 'w');
+    // New files are private (0600); an existing file keeps the mode it has.
+    let mode = 0o600;
+    try { mode = fs.statSync(file).mode & 0o777; } catch {}
+    const fd = fs.openSync(tmp, 'w', mode);
     try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     renameRetry(tmp, file);
   } catch (e) {
@@ -40,4 +43,17 @@ function readJsonSafe(file, fallback) {
   }
 }
 
-module.exports = { writeFileAtomic, readJsonSafe };
+// Checks for paths and git refs that come from the renderer or the control CLI.
+const EXEC_EXT = new Set(['.exe', '.bat', '.cmd', '.com', '.ps1', '.msi', '.scr', '.lnk', '.sh', '.desktop', '.appimage', '.jar']);
+// Would opening this file run it? By type everywhere, and on unix by the executable bit (a directory is fine).
+function isExecutableTarget(file, platform = process.platform) {
+  if (EXEC_EXT.has(path.extname(String(file)).toLowerCase())) return true;
+  if (platform === 'win32') return false;
+  try { const st = fs.statSync(file); return !st.isDirectory() && (st.mode & 0o111) !== 0; } catch { return false; }
+}
+// A branch or ref name git must not read as an option.
+function isSafeRef(ref) {
+  return typeof ref === 'string' && ref.length > 0 && !ref.startsWith('-') && !/[\0\r\n]/.test(ref);
+}
+
+module.exports = { writeFileAtomic, readJsonSafe, isExecutableTarget, isSafeRef };

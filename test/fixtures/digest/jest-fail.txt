@@ -17,7 +17,7 @@ FAIL src/math.test.js
       9 |   });
       10 |
 
-      at Object.<anonymous> (F:\PROGRAMMING\REPOS\Operant\src\math.test.js:8:20)
+      at Object.<anonymous> (C:\proj\operant\src\math.test.js:8:20)
       at Promise.then.completed (node_modules/jest-circus/build/utils.js:298:28)
 
 Test Suites: 1 failed, 1 total

@@ -17,7 +17,7 @@ const skillsBackup = require('./backup');
 const stateBackup = require('./state-backup');
 const { createMedia } = require('./media');
 const { createUsage, contextMax } = require('./usage');
-const { writeFileAtomic } = require('./atomic-write');
+const { writeFileAtomic, isExecutableTarget, isSafeRef } = require('./atomic-write');
 const configMigrate = require('./config-migrate');
 const installState = require('./install-state');
 const { redactText, redactSecrets, redactValues } = require('./redact');
@@ -71,6 +71,14 @@ if (process.env.OPERANT_USER_DATA) app.setPath('userData', process.env.OPERANT_U
 const installed = app.isPackaged && !process.env.OPERANT_USER_DATA;
 // Windows only shows toast notifications for an app with an AppUserModelID (the installer's shortcut carries the same one).
 if (process.platform === 'win32') app.setAppUserModelId('com.doolecg.operant');
+if (process.platform === 'linux') {
+  // Wayland when the session is one, X11 otherwise; the desktop name and window class match the .desktop file, so the taskbar groups the window with it.
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+  app.commandLine.appendSwitch('class', 'Operant');
+  app.setDesktopName('operant.desktop');
+  // Ubuntu 24.04+ restricts the Chromium sandbox (AppArmor), and a chrome-sandbox without SUID can't start: an explicit way out.
+  if (process.env.OPERANT_NO_SANDBOX === '1' || process.argv.includes('--no-sandbox')) app.commandLine.appendSwitch('no-sandbox');
+}
 // macOS and Linux: Operant's own calls (git, codegraph, agent CLIs) find what a terminal would.
 if (process.platform !== 'win32') unix.freshPath(process.env.PATH).then(p => { if (p) process.env.PATH = p; });
 
@@ -98,6 +106,9 @@ function logLine(msg) {
     }
   } catch {}
 }
+// The profile folder holds configs, sessions and logs: private to this user (no-ops on Windows).
+try { fs.mkdirSync(app.getPath('userData'), { recursive: true, mode: 0o700 }); if (process.platform !== 'win32') fs.chmodSync(app.getPath('userData'), 0o700); }
+catch (e) { logLine(`could not make ${app.getPath('userData')} private: ${e.message || e}`); }
 app.on('child-process-gone', (_e, d) => logLine(`child-process-gone type=${d.type} reason=${d.reason} exitCode=${d.exitCode} serviceName=${d.serviceName || ''} name=${d.name || ''}`));
 process.on('uncaughtException', err => logLine(`uncaughtException ${err?.stack || err}`));
 process.on('unhandledRejection', err => logLine(`unhandledRejection ${err?.stack || err}`));
@@ -105,10 +116,10 @@ process.on('unhandledRejection', err => logLine(`unhandledRejection ${err?.stack
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 // Lives in %APPDATA%/Operant so it survives updates (the install dir is replaced).
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
-// The file OpenCode's per-process `instructions` config points at (item 43); Claude Code gets the
+// The file OpenCode's per-process `instructions` config points at; Claude Code gets the
 // same text inline via --append-system-prompt.
 const BRIEF_PATH = agentBrief.briefPath(app.getPath('userData'));
-// Item 37: the PreToolUse hook that reroutes long-running commands (test/build/install)
+// The PreToolUse hook that reroutes long-running commands (test/build/install)
 // through `operant test`/`operant build`/`operant run`+`wait` instead of the agent's own shell.
 // On by default (Settings > Agents); wired into Claude Code's args via --settings when config.longCommandHook is on
 // (see below, next to the --append-system-prompt brief). Written unconditionally at startup, like
@@ -222,7 +233,7 @@ const DEFAULT_CONFIG = {
   // Operant's own state backups (Settings > Data > Backups; state-backup.js). location '' is userData/backups; keepDays keeps the newest of each of that many days.
   backups: { enabled: true, everyHours: 24, keepLast: 10, keepDays: 7, location: '', beforeUpdate: true, beforeMigration: true },
   compactBeforeCold: false,        // compact big idle agents just before their cache goes cold (Settings > Agents)
-  refineTo: 'claude',             // where a refined prompt goes on "send it": 'claude' (a Claude tile) or 'team' (team work; item 97, Settings > Agents)
+  refineTo: 'claude',             // where a refined prompt goes on "send it": 'claude' (a Claude tile) or 'team' (team work; Settings > Agents)
   messaging: false,               // agents can message each other with operant msg / inbox (Settings > Agents > Team)
   team: {                         // Settings > Agents > Team: a lead agent hands tasks to cheaper workers in their own tiles
     enabled: false,
@@ -303,7 +314,7 @@ const DEFAULT_CONFIG = {
   contextBadge: true,             // show context size in the agent tile info bar (needs tileTokens on)
   tileTokens: true,               // the info bar under every tile: folder, branch, and an agent's model, context and tokens since it opened
   usageSeries: ['input', 'output', 'cacheWrite'], // what the pill and graph count; cache reads would swamp the rest
-  planLimits: true,               // Claude plan limits (5-hour session, week) in the token pill's tooltip
+  planLimits: false,              // Claude plan limits (5-hour session, week) in the token pill's tooltip
   planLimitAlerts: true,          // a notification at 80% and 95% of the 5-hour session, and its ring on the pill
   tokenBudget: 0,                // counted tokens a day; the pill turns orange near it and red past it · 0 = off
   clockFormat: 'auto',            // the bar's clock: 'auto' (from Windows) | '24' | '12'
@@ -320,11 +331,22 @@ const DEFAULT_CONFIG = {
   codegraphButtons: true,        // "Index with CodeGraph" buttons in the sidebar
   codegraphOnStartup: 'changed',  // index pinned projects when Operant starts: 'changed' (lots of changes) | 'all' | 'off'
   codegraphChangedFiles: 20,      // files added, changed or removed since the last index that count as lots
-  // Windows notifications
+  // Desktop notifications
   notifications: true,
   notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long is waiting for you
   notifySubagents: true,          // a Claude subagent finished
   notifyOnlyUnfocused: true,      // skip it when you're already looking at that tile
+  notifyWaiting: true,            // an agent is waiting for you
+  notifyApprovals: true,          // an agent needs an approval
+  notifyTasks: true,              // a task finished
+  notifyRunaway: true,            // the runaway guard flagged a tile
+  notifyBell: true,               // a tile rang the terminal bell
+  notifyWatch: true,              // a watched command finished
+  notifySound: true,              // play the OS notification sound
+  notifyMinWorkSeconds: 2.5,      // an agent must have worked this long before 'waiting' fires
+  notifyQuietFrom: '',            // HH:MM (24h): with notifyQuietTo, no toasts in that window (still logged in the bell panel)
+  notifyQuietTo: '',
+  notifyOnlyBackground: false,    // toast only when Operant's window is not focused at all
   // Runaway guard: flags a tile whose agent may be stuck.
   typingGuardMode: 'hold',        // a message for a tile you are typing in: 'hold' until you stop | 'refuse' it
   typingGuardSeconds: 3,          // keystrokes within this many seconds count as typing · 0 = off
@@ -360,7 +382,7 @@ try { user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')
 {
   const m = configMigrate.migrate(user);
   if (!configLoad.broken && !configLoad.missing) Object.assign(configLoad, m.future ? { future: true, from: m.from } : m.error ? { error: String(m.error.message || m.error) } : m.changed ? { migrated: true, from: m.from } : {});
-  if (m.future) console.log(`config.json is version ${m.from}, newer than this Operant (${configMigrate.CURRENT}): used as is`);
+  if (m.future) logLine(`config.json is version ${m.from}, newer than this Operant (${configMigrate.CURRENT}): used as is`);
   else if (m.error) console.error('config migration failed, config left as is', m.error);
   else if (m.changed) {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -534,6 +556,7 @@ async function controlOpen(args = {}) {
     catch (e) { return { ok: false, error: e.message }; }
   }
   const full = args.cwd && !path.isAbsolute(target) ? path.join(args.cwd, target) : target;
+  if (isExecutableTarget(full)) return { ok: false, error: 'Operant does not open programs or scripts' };
   const err = await shell.openPath(full);
   return err ? { ok: false, error: err } : { ok: true, result: {} };
 }
@@ -566,7 +589,7 @@ function startControlServer() {
         if (cmd === 'open') { const r = await controlOpen(args); return reply(r.ok ? 200 : 400, r); }
         if (cmd === 'usage') {
           // The renderer knows the calling tile's own context size and project; main owns the Claude
-          // plan limits and (item 39) computes the token breakdown from the transcripts on demand.
+          // plan limits and computes the token breakdown from the transcripts on demand.
           const r = await forwardControl(ownerForTile(tile), cmd, args, tile, 20000);
           if (!r.ok) return reply(400, r);
           const extra = { limits: await fetchLimits() };
@@ -575,7 +598,7 @@ function startControlServer() {
           if (args.breakdown) extra.breakdown = await usageBreakdown({ days: args.days === 7 ? 7 : 1, project: r.result.project || null });
           return reply(200, { ok: true, result: { ...r.result, ...extra }, warn: r.warn });
         }
-        // Item 35: cheap readers run a hidden child process, no tile, no forward to the renderer's
+        // Cheap readers run a hidden child process, no tile, no forward to the renderer's
         // command switch (only a couple of small side-calls into it, for the caller's cwd/tile output).
         if (cmd === 'summarize' || cmd === 'find') { const r = await controlSummarize(cmd, args, tile); return reply(r.ok ? 200 : 400, r); }
         // `operant run "<cmd>" --background`: a long command started detached, its output kept for the Backrooms page.
@@ -619,7 +642,7 @@ const ptys = new Map(); // id -> pty (each also carries .owner, its window)
 
 ipcMain.handle('config', () => config);
 
-// Item 45: shared memory. cwd is the calling tile's project folder (resolved by the renderer,
+// Shared memory. cwd is the calling tile's project folder (resolved by the renderer,
 // same as diff/status); userDataDir is always Operant's own, for --type user / --global facts.
 ipcMain.handle('memory', (_e, { op, args = {} }) => {
   const userDataDir = app.getPath('userData');
@@ -635,16 +658,18 @@ ipcMain.handle('memory', (_e, { op, args = {} }) => {
 
 // A folder passed on the command line (e.g. from the Explorer right-click entry).
 // Dev runs also pass the app's own folder (`electron .`), and Chromium can put its flags first.
-function folderArg(argv) {
+// Every folder on the command line (a file manager's %F can pass several).
+function folderArgs(argv, cwd = process.cwd()) {
   const appDir = path.resolve(app.getAppPath()).toLowerCase();
-  const args = argv.slice(1).filter(a => !a.startsWith('-'));
-  for (const a of args) {
-    const dir = path.resolve(a.replace(/"/g, ''));
+  const dirs = [];
+  for (const a of argv.slice(1).filter(a => !a.startsWith('-'))) {
+    const dir = path.resolve(cwd, a.replace(/"/g, '').replace(/^file:\/\//i, ''));
     if (!app.isPackaged && dir.toLowerCase() === appDir) continue;
-    try { if (fs.statSync(dir).isDirectory()) return dir; } catch {}
+    try { if (fs.statSync(dir).isDirectory() && !dirs.includes(dir)) dirs.push(dir); } catch {}
   }
-  return null;
+  return dirs;
 }
+const folderArg = argv => folderArgs(argv)[0] || null;
 const startDirs = new Map(); // webContents id -> folder that window was opened for
 ipcMain.handle('startup-folder', e => startDirs.get(e.sender.id) || null);
 
@@ -705,7 +730,7 @@ async function scanInstalled() {
 
 // execFile('opencode', ...) with a `cwd` option set fails ENOENT on Windows for PATH-only (shim)
 // executables - a real Node/libuv quirk, not a missing-PATH problem (works fine with no cwd, or
-// with the full path). Resolve to the full path first so item 35's cwd-scoped run doesn't hit it.
+// with the full path). Resolve to the full path first so that cwd-scoped runs don't hit PATH-only shims.
 async function resolveExe(cmd) {
   if (path.isAbsolute(cmd) || process.platform !== 'win32') return cmd;
   const r = await run('where.exe', [cmd]);
@@ -841,7 +866,7 @@ const hasTranscript = id => {
   try { return fs.readdirSync(PROJECTS_DIR).some(p => fs.existsSync(path.join(PROJECTS_DIR, p, id + '.jsonl'))); } catch { return false; }
 };
 
-// Item 35: cheap readers. Runs the team's xsmall tier agent non-interactively, in a hidden child
+// Cheap readers. Runs the team's xsmall tier agent non-interactively, in a hidden child
 // process (no tile), and hands back its answer only - never the file/log/page itself. The four
 // registry CLIs are supported (each has a non-interactive print mode); custom agents are not.
 async function controlSummarize(cmd, args, tile) {
@@ -910,7 +935,7 @@ async function controlSummarize(cmd, args, tile) {
 
 // The editor tile's program: Settings › Projects › Files › Editor, or the first one found. Git for Windows brings
 // vim and nano without putting them on PATH, so its usr\bin is looked in too.
-const GIT_BIN = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin');
+const GIT_BIN = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin') : '';
 let editorFound = null; // { at, key, value: Promise<string|null> }
 function editorCommand() {
   if (config.editor === 'custom') return Promise.resolve((config.editorCommand || '').trim() || null);
@@ -964,7 +989,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   }
   let ocPort = null;
   const isOc = agent && isOpenCode(agent);
-  if (isOc) { try { ocPort = await opencode.freePort(); } catch {} }
+  if (isOc) { try { ocPort = await opencode.freePort(); } catch (e) { logLine(`opencode: no free port (${e.message || e})`); } }
   if (agent) {
     // PowerShell single-quoted string: '' escapes a literal quote, and newlines pass through as-is.
     // Windows PowerShell (not pwsh 7.3+) hands a native exe its args without escaping embedded double
@@ -979,7 +1004,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // Each CLI's own flags (cli-registry.js): Claude Code and Codex take the prompt positionally, OpenCode as --prompt,
     // Gemini as -i; anything else (a custom agent) also gets it positional, appended after the other args.
     const cli = cliRegistry.kindOf(agent);
-    // Item 43: Claude Code gets the brief on every launch, including resumed/reopened tiles —
+    // Claude Code gets the brief on every launch, including resumed/reopened tiles —
     // --append-system-prompt combines fine with --resume/--session-id. Codex gets it as developer instructions
     // (-c developer_instructions), Gemini ahead of its first prompt, OpenCode through its own env below; other agents are skipped.
     // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
@@ -988,7 +1013,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     const briefArgs = cliRegistry.flag(cli, 'brief', briefText);
     const firstPrompt = cliRegistry.get(cli)?.brief === 'prompt-prefix' && briefText ? agentBrief.withBriefPrompt(briefText, prompt) : prompt;
     const promptArgs = cliRegistry.flag(cli, 'prompt', firstPrompt);
-    // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
+    // Same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
     // A team worker's file also has its Stop hook. Claude Code takes one --settings flag, so it's one file.
     const hookFile = isClaude(agent) ? hookSettingsFile({ reroute: config.longCommandHook, worker: !!worker, messaging: !!config.messaging }) : null;
@@ -997,7 +1022,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     const pluginArgs = isClaude(agent) && config.installSkill && pluginReady() && await agentCan(agent, 'pluginDir') ? ['--plugin-dir', PLUGIN_DIR] : [];
     // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
     const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
-    // Item 33: team mode picks the agent and passes its model straight through (Claude Code --model, the others -m),
+    // Team mode picks the agent and passes its model straight through (Claude Code --model, the others -m),
     // with its effort where the CLI has a flag for it (Claude Code --effort, Codex -c model_reasoning_effort; OpenCode's is below).
     // Custom agents don't get a model flag.
     const modelArgs = model ? [...cliRegistry.flag(cli, 'model', model), ...cliRegistry.flag(cli, 'effort', effort)] : [];
@@ -1029,7 +1054,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     OPERANT_TOKEN: controlToken,
     OPERANT_TILE: String(tileId ?? ''),
     OPERANT_EXE: process.execPath,
-    // Item 33: a tile opened as a team worker can't itself start workers (operant-cli.js checks this).
+    // A tile opened as a team worker can't itself start workers (operant-cli.js checks this).
     ...(worker ? { OPERANT_WORKER: '1' } : {}),
   });
   // A `claude` started by hand in a shell tile, or by another agent, gets the operant skill from the
@@ -1040,8 +1065,8 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
   // Selects the operant.json theme (renderer/themes.js) for just this OpenCode process, without
   // touching the user's own ~/.config/opencode/tui.json.
   if (isOc && config.opencodeTheme) envBase.OPENCODE_TUI_CONFIG = opencodeTheme.TUI_CONFIG_PATH;
-  // Item 43: the brief as an `instructions` file, through OpenCode's own per-process config env var
-  // (merged with the user's real opencode.json/opencode.jsonc, never replacing it). Item 37: the same
+  // The brief as an `instructions` file, through OpenCode's own per-process config env var
+  // (merged with the user's real opencode.json/opencode.jsonc, never replacing it). Same
   // env var also carries the long-command reroute plugin when that setting is on, merged into the
   // same object rather than a second env var. The operant skill goes in as a skills.paths entry, after the
   // user's own (OpenCode replaces that array).
@@ -1272,6 +1297,7 @@ ipcMain.handle('git:filecount', async (_e, dir) => {
 });
 // A folder's git state for "did the worker change anything": HEAD, the porcelain status, and the diffstat since `base` (default HEAD).
 ipcMain.handle('git:snapshot', async (_e, { dir, base } = {}) => {
+  if (base && !isSafeRef(base)) return null;
   const head = await run('git', ['-C', dir, 'rev-parse', 'HEAD']);
   if (head.code !== 0) return null;
   const st = await run('git', ['-C', dir, 'status', '--porcelain', '-uall']);
@@ -1334,19 +1360,26 @@ ipcMain.handle('git:branches', async (_e, root) => {
   const r = await git(root, ['branch', '--format=%(refname:short)']);
   return r.ok ? r.out.split(/\r?\n/).filter(Boolean) : [];
 });
-ipcMain.handle('git:checkout', (_e, { root, branch, create }) => git(root, create ? ['switch', '-c', branch] : ['switch', branch]));
+ipcMain.handle('git:checkout', (_e, { root, branch, create }) => isSafeRef(branch)
+  ? git(root, create ? ['switch', '-c', branch] : ['switch', branch])
+  : { ok: false, out: 'Not a valid branch name' });
 ipcMain.handle('git:last-message', async (_e, root) => (await git(root, ['log', '-1', '--format=%B'])).out);
 
 // A question with buttons, as a Windows dialog over the window that asks. Resolves to the button's index.
 ipcMain.handle('ask', (e, { message, detail, buttons, cancelId }) =>
   dialog.showMessageBox(winOf(e), { type: 'question', title: 'Operant', message, detail, buttons, defaultId: 0, cancelId, noLink: true }).then(r => r.response));
-ipcMain.on('fs:open', (_e, p) => shell.openPath(p));
+// Never opens a program or script: the path comes from the renderer, and opening an executable runs it.
+ipcMain.on('fs:open', (_e, p) => {
+  if (typeof p !== 'string' || !p) return;
+  if (isExecutableTarget(p)) { logLine(`fs:open refused an executable: ${p}`); return; }
+  shell.openPath(p);
+});
 ipcMain.on('fs:reveal', (_e, p) => shell.showItemInFolder(p));
 // Where the IDE presets install when their launcher isn't on PATH (JetBrains never adds itself). Newest version first.
 const inDirs = (parent, prefix, rel) => { try {
   return fs.readdirSync(parent).filter(n => n.startsWith(prefix)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map(n => path.join(parent, n, rel));
 } catch { return []; } };
-const LOCAL = process.env.LOCALAPPDATA || '', PF = process.env.ProgramFiles || 'C:\\Program Files';
+const LOCAL = process.platform === 'win32' ? process.env.LOCALAPPDATA || '' : '', PF = process.platform === 'win32' ? process.env.ProgramFiles || 'C:\\Program Files' : '';
 const IDE_PATHS = {
   code: () => [path.join(LOCAL, 'Programs', 'Microsoft VS Code', 'bin', 'code.cmd'), path.join(PF, 'Microsoft VS Code', 'bin', 'code.cmd')],
   cursor: () => [path.join(LOCAL, 'Programs', 'cursor', 'resources', 'app', 'bin', 'cursor.cmd')],
@@ -1364,8 +1397,11 @@ async function ideCommand() {
   const found = paths[cmd]().find(p => fs.existsSync(p));
   return found ? `"${found}"` : cmd;
 }
+// codegraph is an npm .cmd shim on Windows, which needs a shell; an argument that could break out of the command line is refused there.
+const CMD_UNSAFE = /["&|<>^%\r\n]/;
+const needsShell = process.platform === 'win32';
 const codegraphVersion = async () => {
-  const r = await run('codegraph', ['--version'], { shell: true, env: await freshEnv() });
+  const r = await run('codegraph', ['--version'], { shell: needsShell, env: await freshEnv() });
   return r.code === 0 && r.stdout.trim() || null;
 };
 ipcMain.handle('codegraph:version', codegraphVersion);
@@ -1375,7 +1411,8 @@ ipcMain.handle('codegraph:version', codegraphVersion);
 let codegraphStartupDone = false;
 const codegraphPending = async dir => { const env = await freshEnv(); return new Promise(resolve => {
   let out = '';
-  const p = spawn('codegraph', ['status', '--json', `"${dir}"`], { shell: true, env, windowsHide: true });
+  if (needsShell && CMD_UNSAFE.test(dir)) return resolve(0);
+  const p = spawn('codegraph', ['status', '--json', needsShell ? `"${dir}"` : dir], { shell: needsShell, env, windowsHide: true });
   const timer = setTimeout(() => { try { p.kill(); } catch {} resolve(0); }, 30000);
   p.stdout.on('data', d => { out += d; });
   p.on('error', () => { clearTimeout(timer); resolve(0); });
@@ -1397,17 +1434,59 @@ ipcMain.handle('codegraph:startup', async () => {
   return indexed.filter((_, i) => counts[i] >= Math.max(1, config.codegraphChangedFiles || 1));
 });
 // Runs the IDE through cmd so .cmd launchers like code and cursor work. Resolves to an error message, or null.
-ipcMain.handle('ide:open', async (_e, dir) => { const cmd = await ideCommand(); return new Promise(resolve => {
+ipcMain.handle('ide:open', async (_e, dir) => { const cmd = await ideCommand(); const env = await freshEnv(); return new Promise(resolve => {
   if (!cmd) return resolve('Set a custom IDE command in Settings › Projects › Sidebar');
   let child;
-  const arg = process.platform === 'win32' ? `"${dir}"` : unix.sq(dir);
-  try { child = spawn(`${cmd} ${arg}`, { shell: true, cwd: dir, detached: true, stdio: 'ignore', windowsHide: true }); }
-  catch (err) { return resolve(err.message); }
+  try {
+    if (needsShell) { // .cmd launchers like code and cursor need cmd
+      if (CMD_UNSAFE.test(dir)) return resolve('That folder name has characters a Windows command line cannot pass safely');
+      child = spawn(`${cmd} "${dir}"`, { shell: true, cwd: dir, detached: true, stdio: 'ignore', windowsHide: true });
+    } else {
+      const [file, ...rest] = (cmd.match(/"[^"]*"|\S+/g) || []).map(t => t.replace(/^"|"$/g, ''));
+      child = spawn(file, [...rest, dir], { cwd: dir, detached: true, stdio: 'ignore', env });
+    }
+  } catch (err) { return resolve(err.message); }
   // Launchers hand off and exit 0 at once; "not recognized" exits non-zero. A GUI exe that keeps running is fine.
   const timer = setTimeout(() => { child.unref(); resolve(null); }, 4000);
   child.on('error', err => { clearTimeout(timer); resolve(err.message); });
   child.on('exit', code => { clearTimeout(timer); resolve(code ? `"${cmd}" didn't start (exit ${code}). Is it installed and on PATH?` : null); });
 }); });
+
+// Settings: an `operant` command in ~/.local/bin for macOS and Linux (Windows' installer puts it on PATH). A small
+// wrapper script runs this app's executable, which answers as the control CLI inside a tile and opens a folder elsewhere.
+const CLI_MARK = '# Operant launcher (written by Operant)';
+const cliLauncherPath = () => path.join(os.homedir(), '.local', 'bin', 'operant');
+function cliLauncherBody() {
+  const exe = process.env.APPIMAGE || process.execPath;
+  const appArg = app.isPackaged ? '' : ` ${unix.sq(path.resolve(app.getAppPath()))}`;
+  return `#!/bin/sh\n${CLI_MARK}\nexec ${unix.sq(exe)}${appArg} "$@"\n`;
+}
+async function cliState(message) {
+  const file = cliLauncherPath();
+  const onPath = ((await freshEnv()).PATH || '').split(path.delimiter).some(d => d && path.resolve(d) === path.dirname(file));
+  let body = null;
+  try { body = fs.readFileSync(file, 'utf8'); } catch {}
+  const ok = body === cliLauncherBody();
+  return { ok, path: file, onPath, message: message || (ok ? (onPath ? `${file} is installed` : `${file} is installed, but ~/.local/bin is not on your PATH`) : body === null ? 'Not installed' : 'Needs refreshing') };
+}
+ipcMain.handle('cli:status', async () => process.platform === 'win32' ? { ok: true, path: '', onPath: true, message: 'Installed by the installer' } : cliState());
+ipcMain.handle('cli:install', async () => {
+  if (process.platform === 'win32') return { ok: false, path: '', onPath: true, message: 'Installed by the installer' };
+  const file = cliLauncherPath();
+  try {
+    let existing = null;
+    try { existing = fs.lstatSync(file).isSymbolicLink() ? '' : fs.readFileSync(file, 'utf8'); } catch {}
+    if (existing && !existing.includes(CLI_MARK)) return { ...(await cliState()), ok: false, message: `${file} exists and was not made by Operant; move it aside and try again` };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.rmSync(file, { force: true });
+    fs.writeFileSync(file, cliLauncherBody(), { mode: 0o755 });
+    const st = await cliState();
+    return { ...st, message: st.onPath ? `Installed ${file}` : `Installed ${file}. Add ~/.local/bin to your PATH to use it` };
+  } catch (e) {
+    logLine(`cli:install failed: ${e.message || e}`);
+    return { ...(await cliState()), ok: false, message: `Could not install: ${e.message || e}` };
+  }
+});
 
 // A click anywhere in a window brings it to the front, also where Windows leaves it behind (a touch, as
 // from a remote desktop app on a phone). Test runs (OPERANT_BACKGROUND) stay behind.
@@ -1427,6 +1506,8 @@ ipcMain.on('devtools', e => winOf(e)?.webContents.toggleDevTools());
 // that Windows hands to Operant (see second-instance); in dev the click event does it.
 const ICON = path.join(__dirname, 'build', 'icon.png').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 const protocolReady = process.platform === 'win32' && installed && app.setAsDefaultProtocolClient('operant');
+// Linux: the .deb's desktop entry already claims x-scheme-handler/operant; this covers installs that lack it (not an AppImage, whose path is a temporary mount).
+if (process.platform === 'linux' && installed && !process.env.APPIMAGE) { try { app.setAsDefaultProtocolClient('operant'); } catch (e) { logLine(`operant:// registration failed: ${e.message || e}`); } }
 const liveNotes = new Set(); // a Notification that gets garbage-collected never reports its click
 
 function focusTile(wcId, tileId) {
@@ -1443,13 +1524,14 @@ function toastXml(title, body, launch) {
     + '</binding></visual></toast>';
 }
 
-ipcMain.on('notify', (e, { title, body, tileId }) => {
+ipcMain.on('notify', (e, { title, body, tileId, silent }) => {
   const w = winOf(e);
   if (!w || !config.notifications || !Notification.isSupported()) return;
   const wcId = w.webContents.id;
+  const quiet = typeof silent === 'boolean' ? silent : !config.notifySound;
   const n = new Notification(protocolReady
-    ? { toastXml: toastXml(title, body, `operant://focus/${wcId}/${tileId}`) }
-    : { title, body, icon: ICON });
+    ? { toastXml: toastXml(title, body, `operant://focus/${wcId}/${tileId}`), silent: quiet }
+    : { title, body, icon: ICON, silent: quiet });
   liveNotes.add(n);
   if (liveNotes.size > 50) liveNotes.delete(liveNotes.values().next().value);
   n.on('click', () => focusTile(wcId, tileId));
@@ -1461,6 +1543,12 @@ function focusLink(argv) {
   const m = argv.map(a => /^operant:\/\/focus\/(\d+)\/(\d+)/i.exec(a)).find(Boolean);
   return m ? { wcId: +m[1], tileId: +m[2] } : null;
 }
+// macOS hands a clicked operant:// link over this way, not through argv.
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  const link = focusLink([url]);
+  if (link) focusTile(link.wcId, link.tileId);
+});
 ipcMain.handle('win:focused', e => { const w = winOf(e); return !!w && w.isFocused() && !w.isMinimized(); });
 
 // ------------------------------------------------------------------ updates
@@ -1504,7 +1592,7 @@ async function offerRollback(win) {
   const r = await dialog.showMessageBox(win, { type: 'question', title: 'Operant', message: `Operant ${entry.to} didn't start properly twice. Reinstall ${entry.from} and restore your settings from before the update?`,
     detail: 'Your settings and memory from before the update come back, and Operant restarts on the older version.',
     buttons: [`Reinstall ${entry.from}`, 'Keep this version'], defaultId: 0, cancelId: 1, noLink: true });
-  if (r.response !== 0) { try { updater.history.updateLast(e => { e.result = 'failed-to-start'; }); } catch {} return; }
+  if (r.response !== 0) { try { updater.history.updateLast(e => { e.result = 'failed-to-start'; }); } catch (e) { logLine(`update history not saved: ${e.message || e}`); } return; }
   const dir = app.getPath('userData');
   const res = await updater.rollback(entry, () => {
     updater.history.updateLast(e => { e.result = 'failed-to-start'; }); // before the reinstall adds its own entry
@@ -1539,7 +1627,7 @@ function hubMemoryDirs() {
   try {
     const root = path.join(HUB_CLAUDE_DIR, 'projects');
     for (const d of fs.readdirSync(root)) dirs.push({ dir: path.join(root, d, 'memory'), writable: false });
-  } catch {}
+  } catch (e) { if (e.code !== 'ENOENT') logLine(`hub: could not list ${HUB_CLAUDE_DIR}/projects (${e.message || e})`); }
   return dirs;
 }
 const hubArgs = () => ({ claudeDir: HUB_CLAUDE_DIR, hubDir: HUB_DIR, memoryDirs: hubMemoryDirs() });
@@ -1639,7 +1727,7 @@ ipcMain.handle('backups:restore', async (e, id) => {
   setTimeout(() => { app.relaunch(); app.exit(0); }, 200);
   return { ok: true };
 });
-ipcMain.on('backups:open-folder', () => { const d = stateBackup.backupsRoot(app.getPath('userData'), bkCfg().location); fs.mkdirSync(d, { recursive: true }); shell.openPath(d); });
+ipcMain.on('backups:open-folder', () => { const d = stateBackup.backupsRoot(app.getPath('userData'), bkCfg().location); fs.mkdirSync(d, { recursive: true, mode: 0o700 }); shell.openPath(d); });
 
 // -------------------------------------------------------------------- media
 
@@ -1685,7 +1773,7 @@ ipcMain.handle('basement:run', async (_e, { command, cwd, title, timeoutMs }) =>
   return { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: true, digest: digestText }) };
 });
 ipcMain.handle('usage:summary', () => usage.summary());
-// Item 92: a project's counted tokens today (input + output + cache writes), for its daily cap.
+// A project's counted tokens today (input + output + cache writes), for its daily cap.
 // Seat binding for the renderer (renderer/renderer.js): op 'take' | 'release' | 'keep' | 'boost' | 'plan' on the project's seats file.
 ipcMain.handle('seats:op', (_e, { dir, op, seat, ...o }) => {
   try {
@@ -1737,7 +1825,7 @@ ipcMain.handle('usage:projectToday', (_e, cwd) => usage.todayFor(cwd ? path.base
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 
 
-// Item 54: which tier and task a session's tokens belong to. Persisted for a month so the cost views can
+// Which tier and task a session's tokens belong to. Persisted for a month so the cost views can
 // group by them; a Claude session is tagged by its id, an OpenCode tile by its root session (asked of opencode.js).
 const USAGE_TAGS_PATH = path.join(app.getPath('userData'), 'usage-tags.json');
 const USAGE_TAGS_KEEP = 31 * 86400e3;
@@ -1753,13 +1841,13 @@ ipcMain.handle('usage:tag', (_e, { sessionId, ptyId, tier, taskId, tile, cwd }) 
   if (!id) return { ok: false };
   if (tier) cgArm(id, cwd);
   loadUsageTags()[id] = { tier: tier || null, taskId: taskId ?? null, tile: tile ?? null, at: Date.now() };
-  try { writeFileAtomic(USAGE_TAGS_PATH, JSON.stringify(usageTags)); } catch {}
+  try { writeFileAtomic(USAGE_TAGS_PATH, JSON.stringify(usageTags)); } catch (e) { logLine(`usage tags not saved: ${e.message || e}`); }
   return { ok: true };
 });
-// Item 57: one line per finished or escalated board task, kept 90 days.
+// One line per finished or escalated board task, kept 90 days.
 const OUTCOMES_PATH = path.join(app.getPath('userData'), 'outcomes.jsonl');
 const OUTCOMES_KEEP = config.retentionDays * 86400e3;
-try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch {}
+try { outcomes.trimOutcomes(OUTCOMES_PATH, OUTCOMES_KEEP); } catch (e) { logLine(`outcomes not trimmed: ${e.message || e}`); }
 // 2.5: the versioned local database (store.js); a store that will not open leaves the app running without it.
 const STORE_DIR = path.join(app.getPath('userData'), 'store');
 let db = null;
@@ -1912,7 +2000,7 @@ async function opsCommand(cmd, args = {}) {
   }
   if (cmd === 'components') {
     const file = path.join(app.getPath('userData'), 'component-records.json');
-    let records = {}; try { records = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+    let records = {}; try { records = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch (e) { if (e.code !== 'ENOENT') logLine(`component records unreadable: ${e.message || e}`); }
     if (args.sub === 'set') {
       if (!args.id) return { ok: false, error: 'usage: operant components set <id> [--decision adopted|optional|evaluating|rejected] [--reason "..."] [--security "..."] [--capabilities a,b]' };
       try { records = registry.withRecord(records, String(args.id), args); } catch (e) { return { ok: false, error: e.message }; }
@@ -1966,7 +2054,7 @@ ipcMain.handle('outcome:record', async (_e, o) => {
     return { ok: true };
   } catch { return { ok: false }; }
 });
-// Item 59: summary of the last 30 days, at most the 20 most recent entries per type and tier.
+// Summary of the last 30 days, at most the 20 most recent entries per type and tier.
 function outcomeStats() {
   try {
     const recent = outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 }).filter(e => e.kind !== 'orchestration').sort((a, b) => b.t - a.t);
@@ -1977,7 +2065,7 @@ function outcomeStats() {
 }
 ipcMain.handle('outcome:stats', async () => outcomeStats());
 ipcMain.handle('agent:workerTools', () => agentSetup.workerToolsText());
-// Item 92: suggested limits per tier (and task type, when given) from the outcomes file; never applied here.
+// Suggested limits per tier (and task type, when given) from the outcomes file; never applied here.
 ipcMain.handle('outcome:limits', async (_e, { tiers, tier, type, current, fallback } = {}) => {
   try {
     const entries = outcomes.readOutcomes(OUTCOMES_PATH);
@@ -1985,7 +2073,7 @@ ipcMain.handle('outcome:limits', async (_e, { tiers, tier, type, current, fallba
     return tierGuard.suggestAll(entries, tiers || Object.keys(config.team?.budgets || {}), config.team?.budgets || {}, DEFAULT_CONFIG.team.budgets);
   } catch { return null; }
 });
-// Item 96: how each task type went per route (last 20 of each in 30 days), so a route that keeps failing a type stops getting it.
+// How each task type went per route (last 20 of each in 30 days), so a route that keeps failing a type stops getting it.
 ipcMain.handle('outcome:routes', async () => {
   try {
     const recent = outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 }).filter(e => e.kind !== 'orchestration' && e.model).sort((a, b) => b.t - a.t);
@@ -1994,7 +2082,7 @@ ipcMain.handle('outcome:routes', async () => {
     return outcomes.summarizeRoutes(kept);
   } catch { return {}; }
 });
-// Item 96: this week's tasks per tier and route, tokens, cost saved against the tier's paid route, and why a task went to a fallback.
+// This week's tasks per tier and route, tokens, cost saved against the tier's paid route, and why a task went to a fallback.
 ipcMain.handle('outcome:routeUse', async () => {
   try {
     const tiers = config.team?.tiers || {}, order = Object.keys(tiers);
@@ -2004,7 +2092,7 @@ ipcMain.handle('outcome:routeUse', async () => {
     return { order, use: outcomes.summarizeRouteUse(outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 7 * 86400e3 }), priceOf, paid), paid };
   } catch { return { order: [], use: {}, paid: {} }; }
 });
-// Item 90: the CodeGraph measurements of the last 30 days, for `operant usage`.
+// The CodeGraph measurements of the last 30 days, for `operant usage`.
 ipcMain.handle('outcome:codegraph', async () => {
   try { return outcomes.summarizeCodegraph(outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 })); } catch { return null; }
 });
@@ -2012,12 +2100,13 @@ ipcMain.handle('outcome:codegraph', async () => {
 ipcMain.handle('outcome:parallel', async () => {
   try { return outcomes.summarizeGroups(outcomes.readOutcomes(OUTCOMES_PATH, { sinceMs: Date.now() - 30 * 86400e3 })); } catch { return null; }
 });
-// Item 90: before a worker starts on a code task, Operant checks the index (syncing it when stale) and runs
+// Before a worker starts on a code task, Operant checks the index (syncing it when stale) and runs
 // `codegraph explore` for the symbols the task names; the renderer adds the capped result to the worker's brief.
 ipcMain.handle('codegraph:prepare', async (_e, { cwd, task, isCode }) => {
   try {
     const env = await freshEnv();
-    const exec = (args, o = {}) => run('codegraph', args, { shell: true, env, cwd, timeout: o.timeout || 30000 });
+    const exec = (args, o = {}) => needsShell && args.some(a => CMD_UNSAFE.test(a)) ? Promise.resolve({ code: -1, stdout: '', stderr: '' })
+      : run('codegraph', args, { shell: needsShell, env, cwd, timeout: o.timeout || 30000 });
     const r = await cgFirst.prepareBrief({ cwd, task, isCode: isCode !== false, exists: fs.existsSync, exec });
     if (r.explored) { const cp = require('./context-providers'); cp.recordFor(cwd, 'codegraph', 'called'); cp.recordFor(cwd, 'codegraph', 'used'); }
     return r;
@@ -2275,9 +2364,9 @@ function isReadonlyOperantCall(input) {
   return typeof c === 'string' && READONLY_OPERANT.test(c);
 }
 
-// Stuck evidence (plan item 60): stuck.js per session, fed each tool call, its result, and file edits.
+// Stuck evidence: stuck.js per session, fed each tool call, its result, and file edits.
 // A signal goes to the renderer as `stuck { sessionId, reason, kind }`, once per reason per session.
-// Item 91: it also keeps the evidence the ask shows (last failing command, tool calls) and, for item 92's handback
+// It also keeps the evidence the ask shows (last failing command, tool calls) and, for the handback
 // when a worker is stopped before it saved, its last steps and the files it edited.
 const stuckTrackers = new Map(); // sessionId -> { tracker, calls: Map<toolId, command|null>, sent: Set<reason>, count, lastFail, recent, edits }
 const EDIT_TOOLS = /^(edit|multiedit|write|notebookedit|patch|apply_patch)$/i;
@@ -2324,13 +2413,13 @@ ipcMain.on('stuck:reset', (_e, { sessionId }) => {
   const st = stuckTrackers.get(sessionId);
   if (st) { st.tracker.reset(); st.calls.clear(); st.sent.clear(); }
 });
-// Item 92: what the tile did last, for the handback Operant writes when a worker is stopped before it saved.
+// What the tile did last, for the handback Operant writes when a worker is stopped before it saved.
 ipcMain.handle('stuck:recent', (_e, { sessionId }) => {
   const st = stuckTrackers.get(sessionId);
   return st ? { ...stuckEvidence(st), recent: [...st.recent], edits: [...st.edits] } : { calls: 0, recent: [], edits: [] };
 });
 
-// Item 90: per session, was the first code action a CodeGraph query, how many files were read before and after,
+// Per session, was the first code action a CodeGraph query, how many files were read before and after,
 // and a one-time nudge (same 'stuck' channel, kind 'codegraph') for a worker reading or grepping without it.
 const cgTrackers = new Map(); // sessionId -> { tracker, seen: Set<toolId>, index: 'fresh'|'stale'|'degraded'|'off' }
 function cgOf(sessionId) {
@@ -2391,7 +2480,7 @@ function checkSubagents(sessionId, owner, count) {
   if (config.runawaySubagents && count >= config.runawaySubagents) flagRunaway(sessionId, owner, 'subagents', `${count} subagents running`);
 }
 
-// Tokens each tile has used since it opened (item 42): sessionId -> running { input, output,
+// Tokens each tile has used since it opened: sessionId -> running { input, output,
 // cacheWrite, cacheRead, free }, sent to the tile as a 'tokens' event. A resumed Claude session's
 // history before the tile reopened is skipped (t is the transcript entry's own timestamp);
 // OpenCode tiles pass t = null since they're watched fresh from the moment the tile opens.
@@ -2551,7 +2640,12 @@ function startWatcher() {
 
 const SESSION_PATH = path.join(app.getPath('userData'), 'session.json');
 let session = { restoreNext: false };
-try { session = JSON.parse(fs.readFileSync(SESSION_PATH, 'utf8')); } catch {}
+try { session = JSON.parse(fs.readFileSync(SESSION_PATH, 'utf8')); } catch (e) {
+  if (e.code !== 'ENOENT') {
+    try { fs.copyFileSync(SESSION_PATH, SESSION_PATH.replace(/\.json$/, '.broken.json')); } catch {}
+    logLine(`session.json unreadable, copied to session.broken.json (${e.message || e})`);
+  }
+}
 const snapshots = new Map(); // webContents id -> snapshot, in window order
 const restoreFor = new Map(); // webContents id -> snapshot that window starts with
 const toRestore = config.restoreSession !== 'never' && (session.restoreNext || config.restoreSession === 'always')
@@ -2593,10 +2687,21 @@ function createWindow(startDir = null, restore = null) {
     backgroundColor: (THEMES[config.theme] || THEMES.obsidian).bg,
     title: 'Operant',
     icon: path.join(__dirname, 'build', 'icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     ...(process.env.OPERANT_BACKGROUND ? { show: false } : {}),
   });
   const wcId = w.webContents.id;
+  // The window only ever shows the app's own page: links open in the browser, and nothing navigates away.
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  const pageUrl = require('url').pathToFileURL(path.join(__dirname, 'renderer', 'index.html')).href;
+  w.webContents.on('will-navigate', (e, url) => { if (url.split('#')[0] !== pageUrl) e.preventDefault(); });
+  if (process.platform === 'linux') {
+    const icon = fs.existsSync(ICON) ? ICON : path.join(__dirname, 'build', 'icon.png');
+    if (fs.existsSync(icon)) w.setIcon(icon);
+  }
   // Run from source the process is electron.exe, whose icon the taskbar would show; point it at Operant's.
   if (process.platform === 'win32' && !app.isPackaged) {
     w.setAppDetails({ appId: 'com.doolecg.operant', appIconPath: path.join(__dirname, 'build', 'icon.ico'), appIconIndex: 0, relaunchDisplayName: 'Operant' });
@@ -2724,10 +2829,12 @@ app.on('open-file', (e, p) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', (_e, argv) => {
+  app.on('second-instance', (_e, argv, cwd) => {
     const link = focusLink(argv);
     if (link) return focusTile(link.wcId, link.tileId);
-    openFolder(folderArg(argv));
+    const dirs = folderArgs(argv, cwd || undefined);
+    if (!dirs.length) openFolder(null);
+    for (const d of dirs) openFolder(d);
   });
   app.whenReady().then(() => {
     if (mac) mac.setAppMenu(); else Menu.setApplicationMenu(null);
@@ -2751,8 +2858,10 @@ if (!app.requestSingleInstanceLock()) {
     probeAgents(); // in the background: what the installed CLIs take, before the first tile needs to know
     opencodeTheme.writeTheme(config);
     editorCommand(); // warms the PATH and editor lookups before the first tile needs them
-    createWindow(openAtStart || folderArg(process.argv), toRestore[0]);
+    const startDirsArg = folderArgs(process.argv);
+    createWindow(openAtStart || startDirsArg[0] || null, toRestore[0]);
     for (const s of toRestore.slice(1)) createWindow(null, s);
+    for (const d of startDirsArg.slice(1)) createWindow(d);
     // Restore once after an update; the next start is a normal one.
     if (session.restoreNext) { session.restoreNext = false; writeSession(); }
     setJumpList();

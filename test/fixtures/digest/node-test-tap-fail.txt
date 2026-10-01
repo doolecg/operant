@@ -15,7 +15,7 @@ not ok 2 - subtracts numbers
     1 !== 2
   code: 'ERR_ASSERTION'
   stack: |-
-    TestContext.<anonymous> (file:///F:/PROGRAMMING/REPOS/Operant/test/math.test.js:10:10)
+    TestContext.<anonymous> (file:///C:/proj/operant/test/math.test.js:10:10)
     Test.run (node:internal/test_runner/test:900:9)
   ---
 1..2

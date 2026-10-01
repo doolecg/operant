@@ -1,4 +1,4 @@
-   Compiling operant-core v0.1.0 (F:\PROGRAMMING\REPOS\Operant)
+   Compiling operant-core v0.1.0 (C:\proj\operant)
     Finished test [unoptimized + debuginfo] target(s) in 0.85s
      Running unittests src/lib.rs
 

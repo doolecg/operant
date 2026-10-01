@@ -17,6 +17,6 @@ test at test\sample.test.js:8:1
 
   2 !== 3
 
-      at TestContext.<anonymous> (F:\PROGRAMMING\REPOS\Operant\test\sample.test.js:9:10)
+      at TestContext.<anonymous> (C:\proj\operant\test\sample.test.js:9:10)
       at Test.runInAsyncScope (node:async_hooks:227:14)
       at Test.run (node:internal/test_runner/test:1382:25)

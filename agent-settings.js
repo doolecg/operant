@@ -1,5 +1,5 @@
 (function () {
-// Settings > Agents in plain words (item 94). Pure: the text of every team setting (label, what it does for you,
+// Settings > Agents in plain words. Pure: the text of every team setting (label, what it does for you,
 // when it applies, its developer term), the plain-language summary, the three presets with their preview and
 // custom detection, and the inline warnings. settings.js only draws what this returns.
 const TIERS = ['free', 'xsmall', 'small', 'medium', 'high', 'max'];

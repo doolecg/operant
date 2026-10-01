@@ -1,5 +1,5 @@
 (function () {
-// Coarse kind of a board task from its prompt, for outcome records (item 57) and routing (item 59).
+// Coarse kind of a board task from its prompt, for outcome records and routing.
 // First matching rule wins, so the order is part of the behaviour.
 const RULES = [
   ['fix', /\b(fix(es|ed|ing)?|bugs?|broken|errors?|crash(es|ed|ing)?|fail(s|ed|ing|ure|ures)?|regression|not working|doesn'?t work)\b/i],
@@ -19,7 +19,7 @@ function classifyTask(text) {
 // Code tasks get the project's checks run before review; docs, lookups and the rest don't.
 const needsVerification = task => ['fix', 'feature', 'refactor', 'test'].includes(classifyTask(task && task.text));
 
-// Item 39/78: a deterministic profile of a task (no model): how big, how risky, what language, how much context,
+// A deterministic profile of a task (no model): how big, how risky, what language, how much context,
 // and how much checking it needs. `env` is what the caller knows about the project: { files, language }.
 const HIGH_RISK = /\b(delet(e|es|ing)|drop|remove all|migrat(e|es|ion|ions)|auth(entication|orization)?|security|secrets?|credentials?|passwords?|tokens?|payments?|billing|schema|database|production|prod|deploy|release|force[- ]push|rm -rf|irreversible|encrypt(ion)?)\b/i;
 const MED_RISK = /\b(refactor(ing)?|rewrite|restructure|rename|concurren(t|cy)|race|config(uration)?|dependenc(y|ies)|upgrade|public api|breaking)\b/i;
@@ -52,7 +52,7 @@ function describeTask(text, env = {}) {
   return { type, complexity, risk, repoSize, language, context, verification };
 }
 
-// Item 40/77: the type-check and lint commands a project has, read from its package.json (parsed, or null) and the
+// The type-check and lint commands a project has, read from its package.json (parsed, or null) and the
 // names of the files at its root. Nothing is invented: a project with neither gets none.
 function extraChecks(pkg, rootFiles) {
   const files = new Set(rootFiles || []), scripts = (pkg && pkg.scripts) || {}, deps = { ...(pkg && pkg.dependencies), ...(pkg && pkg.devDependencies) };

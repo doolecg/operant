@@ -1,4 +1,4 @@
-// Item 97: `operant send --file|--brief` with a fake Claude tile: idle, busy and no-tile cases, --new, --team, the framing.
+// `operant send --file|--brief` with a fake Claude tile: idle, busy and no-tile cases, --new, --team, the framing.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const M = require('../messaging');

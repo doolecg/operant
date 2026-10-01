@@ -5,7 +5,7 @@
 
     1 !== 2
 
-        at TestContext.<anonymous> (F:\PROGRAMMING\REPOS\Operant\test\math.test.js:10:10)
+        at TestContext.<anonymous> (C:\proj\operant\test\math.test.js:10:10)
         at Test.run (node:internal/test_runner/test:900:9)
 ▶ math (2ms)
 

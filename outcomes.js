@@ -1,5 +1,5 @@
-// Task outcomes (item 57): one JSON line per finished or escalated board task, kept for 90 days, as data
-// for routing from outcomes (item 59) and benchmarks.
+// Task outcomes: one JSON line per finished or escalated board task, kept for 90 days, as data
+// for routing from outcomes and benchmarks.
 const fs = require('fs');
 const { redactValues } = require('./redact');
 const { writeFileAtomic } = require('./atomic-write');
@@ -54,7 +54,7 @@ function summarize(entries) {
   return out;
 }
 
-// Item 90: outcomes carry `codegraph` (first code action, files read before/after the first CodeGraph call, nudge, index state) -> what `operant usage` shows.
+// Outcomes carry `codegraph` (first code action, files read before/after the first CodeGraph call, nudge, index state) -> what `operant usage` shows.
 // { tasks, firstCodegraph (0..1), avgFilesBefore, avgFilesAfter, nudged, degraded, tokensWith, tokensWithout }
 function summarizeCodegraph(entries) {
   const total = t => t ? (t.input || 0) + (t.output || 0) + (t.cacheWrite || 0) : 0;
@@ -113,7 +113,7 @@ function summarizeGroups(entries, { gapMs = 30 * 60000 } = {}) {
   return { groups: out.length, workers: sum('workers'), tokens: sum('tokens'), avgTask, extraTokens: sum('extraTokens'), wallMs: sum('wallMs'), serialMs: sum('serialMs'), latest: out[out.length - 1] };
 }
 
-// Item 96: how each kind of task went on each route (model), for the routing that stops sending a task type to a route
+// How each kind of task went on each route (model), for the routing that stops sending a task type to a route
 // that keeps failing there. -> { "<type>": { "<model>": { n, passed } } }
 function summarizeRoutes(entries) {
   const out = {};
@@ -126,7 +126,7 @@ function summarizeRoutes(entries) {
   return out;
 }
 
-// Item 96: per tier, which route its tasks ran on, for Settings. priceFn(model, tokens) -> { usd }; paid[tier] is the model
+// Per tier, which route its tasks ran on, for Settings. priceFn(model, tokens) -> { usd }; paid[tier] is the model
 // of the paid route a free one saved money against. -> { "<tier>": [{ route, free, tasks, tokens, usd, savedUsd, why: { "<reason>": n } }] }
 function summarizeRouteUse(entries, priceFn, paid = {}) {
   const out = {};

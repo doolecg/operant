@@ -80,6 +80,7 @@ const Panels = (() => {
         hint: 'Gives Claude Code and OpenCode tiles the Operant skill each session; nothing is written to their own folders.', when: 'New tiles', type: 'toggle' },
       { key: 'briefAgents', label: 'Brief agents at launch', hint: 'A short first message in every agent tile so the rules apply from the start.', when: 'New tiles', type: 'toggle' },
       { key: 'longCommandHook', label: 'Reroute long commands', hint: 'Tests, builds and installs run through Operant so only the failures reach the agent; end a command with # raw to skip it.', when: 'New tiles', type: 'toggle' },
+      { type: 'cli', nix: true, group: 'What they use', label: 'Install the operant command cli path terminal' },
       { key: 'backgroundAfterSeconds', label: 'Run in the Backrooms after', hint: 'A rerouted command still running after this many seconds moves to the Backrooms page and the agent waits for its errors only. 0 = always at once.', when: 'The next rerouted command', type: 'number', min: 0, max: 600 },
       { key: 'autoCompact', label: 'Auto compact at', hint: 'When a tile\'s context passes this percent: waits for it to go idle, asks it to save a progress note, then compacts it (Claude Code: /compact · OpenCode: its own summarize, falling back to /compact) · 0 = off',
         type: 'number', min: 0, max: 100 },
@@ -90,10 +91,21 @@ const Panels = (() => {
         hint: 'Rules, MCP servers and skills from your default agent reach every agent you launch, for that process only.', when: 'New tiles', type: 'toggle' },
     ]],
     ['Notifications', [
-      { key: 'notifications', label: IS_WIN ? 'Windows notifications' : 'Notifications', type: 'toggle' },
+      { key: 'notifications', label: 'Desktop notifications', type: 'toggle' },
+      { key: 'notifyWaiting', label: 'Tell me when an agent is waiting', type: 'toggle' },
       { key: 'notifyWhenIdleSeconds', label: 'Agent is waiting for you', hint: 'Notify when a working agent goes quiet for this many seconds · 0 = off', type: 'number', min: 0, max: 600 },
+      { key: 'notifyApprovals', label: 'Tell me when an agent needs approval', type: 'toggle' },
+      { key: 'notifyTasks', label: 'Tell me when a task is ready for review', type: 'toggle' },
+      { key: 'notifyRunaway', label: 'Tell me when an agent may be running away', type: 'toggle' },
+      { key: 'notifyWatch', label: 'Tell me when a long command or watch matches', type: 'toggle' },
+      { key: 'notifyBell', label: 'Tell me when a bell rings in a terminal', type: 'toggle' },
+      { key: 'notifySound', label: 'Notification sound', hint: 'Off makes the desktop notification silent', type: 'toggle' },
       { key: 'notifySubagents', label: 'Claude subagent finished', type: 'toggle' },
       { key: 'notifyOnlyUnfocused', label: 'Only when I\'m not looking at it', hint: 'Skip it for the focused tile while Operant is in front', type: 'toggle' },
+      { key: 'notifyOnlyBackground', label: 'Only when Operant is in the background', hint: 'No desktop notification while the Operant window has focus', type: 'toggle' },
+      { key: 'notifyMinWorkSeconds', label: 'Minimum work time before "waiting" (seconds)', hint: 'An agent that worked for less than this is not reported as waiting', type: 'number', min: 0, max: 600, step: 0.5 },
+      { key: 'notifyQuietFrom', label: 'Quiet hours from', hint: 'No desktop notifications between the two times (the bell panel still logs them) · leave empty for none', type: 'time' },
+      { key: 'notifyQuietTo', label: 'Quiet hours to', type: 'time' },
     ]],
     ['Tiles & subagents', [
       { key: 'confirmClose', label: 'Confirm closing a window with terminals running', type: 'toggle' },
@@ -210,14 +222,14 @@ const Panels = (() => {
     ['Updates', [
       { type: 'updates', label: 'Check for updates version release' },
       { key: 'autoUpdate', label: 'Update automatically', hint: 'Checks at startup and on the schedule below, downloads in the background, installs when you click the pill or quit · ' + RESTART, type: 'toggle' },
-      { key: 'updateChannel', label: 'Update channel', hint: 'Stable is releases only · Beta also offers prereleases · takes effect at the next check', type: 'select',
+      { key: 'updateChannel', label: 'Update channel', hint: 'Stable is releases only · Beta also offers beta releases · takes effect at the next check', type: 'select',
         options: [['stable', 'Stable'], ['beta', 'Beta']] },
       { key: 'updateCheckHours', label: 'Check for updates every', hint: 'Hours, 1-24 · 0 = only at startup and when you click Check for updates', type: 'number', min: 0, max: 24 },
     ]],
-  // Rows flagged `win` exist only on Windows; a group left with none goes too.
-  ].map(([t, items]) => [t, items.filter(it => IS_WIN || !it.win)]).filter(([, items]) => items.length);
+  // Rows flagged `win` exist only on Windows, `nix` only on Linux and macOS; a group left with none goes too.
+  ].map(([t, items]) => [t, items.filter(it => (IS_WIN || !it.win) && (!IS_WIN || !it.nix))]).filter(([, items]) => items.length);
 
-  // Item 88: the groups above as 8 tabs. Every row keeps its group as a heading (`sub`); the rarely changed ones (`adv`)
+  // The groups above as 8 tabs. Every row keeps its group as a heading (`sub`); the rarely changed ones (`adv`)
   // sit under a collapsed Advanced at the foot of the tab. Search still finds every row.
   const TABS = [
     ['General', ['Startup', 'Notifications', 'Updates']],
@@ -242,6 +254,7 @@ const Panels = (() => {
   const ADVANCED = new Set(['borderAnimationSeconds', 'animations', 'blur', 'rounding', 'borderSize', 'gapsIn', 'gapsOut',
     'lineHeight', 'cursorStyle', 'cursorBlink', 'scrollback', 'gpuTerminals', 'hardwareAcceleration', 'clockSeconds', 'clockDate', 'barTitle', 'mediaSize',
     'shell', 'explorerOpensIn', 'linkBrowserCommand', 'secondBrowser', 'secondBrowserCommand', 'notifySubagents', 'notifyOnlyUnfocused',
+    'notifyBell', 'notifyWatch', 'notifyRunaway', 'notifySound', 'notifyOnlyBackground', 'notifyMinWorkSeconds', 'notifyQuietFrom', 'notifyQuietTo',
     'updateChannel', 'updateCheckHours', 'opencodeTheme', 'installSkill', 'briefAgents', 'longCommandHook', 'shareSetup',
     'masterRatio', 'maxTilesPerWorkspace', 'moveFollowsTile', 'updateWhenIdle', 'saveQuitWaits', 'showExternalAgents',
     'idleCloseTerminalMinutes', 'agentLookbackSeconds', 'stuckTurns', 'typingGuardSeconds', 'runawayLoopRepeats', 'runawayTokens', 'runawayMinutes', 'runawaySubagents',
@@ -263,7 +276,8 @@ const Panels = (() => {
     switch (it.type) {
       case 'range': return `<input type="range" data-key="${it.key}" min="${it.min}" max="${it.max}" step="${it.step}" value="${v}"><span class="val">${esc(it.fmt(v))}</span>`;
       case 'number': return `<input type="number" data-key="${it.key}" min="${it.min}" max="${it.max}" step="${it.step || 1}" value="${v}">`;
-      case 'toggle': return `<button class="toggle${v ? ' on' : ''}" data-key="${it.key}"></button>`;
+      case 'time': return `<input type="time" data-key="${it.key}" value="${esc(v || '')}">`;
+      case 'toggle': return `<button class="toggle${v ? ' on' : ''}" data-key="${it.key}" role="switch" aria-checked="${!!v}" aria-label="${esc(it.label)}"></button>`;
       case 'select': return `<select data-key="${it.key}">${(typeof it.options === 'function' ? it.options(cfg) : it.options).map(([o, n]) => `<option value="${esc(o)}"${o === v ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
       case 'tokens': return `<input type="text" data-key="${it.key}" value="${v ? esc(fmtTokens(v)) : '0'}" spellcheck="false">`;
       case 'list': return `<input type="text" data-key="${it.key}" value="${esc([].concat(v).join(' '))}">`;
@@ -389,8 +403,8 @@ const Panels = (() => {
       + '</div><div class="set-row"><div class="lbl"><span class="hint">The agent is used by ＋ in the sidebar, Alt+Enter and new tiles in that folder. The startup command runs in ' + (IS_WIN ? 'PowerShell' : 'your shell') + ' before the agent or shell starts. Applies to new tiles.</span></div></div>';
   }
 
-  // Settings › Agents › Team (item 33): enable toggle, one row per tier (agent, model, "use for"), max workers.
-  // Settings > Agents > Team > Local model (item 95): a guided card, one row per part of the setup with its own state
+  // Settings › Agents › Team: enable toggle, one row per tier (agent, model, "use for"), max workers.
+  // Settings > Agents > Team > Local model: a guided card, one row per part of the setup with its own state
   // (local-setup.js words them), the go-ahead question before anything downloads, Cancel/Resume/Retry while it runs,
   // and Test it / Remove once it is in place. State comes from main.js through ext.localModelState().
   const LOCAL_MODELS = ['gemma4:e4b', 'gemma4:e2b', 'gemma4:12b'];
@@ -462,7 +476,7 @@ const Panels = (() => {
     bindLocalCard(holder, cfg, set, ext);
     return true;
   }
-  // Items 91/92: the limits' suggestions from past tasks (ext.limitSuggestions(): null until read), and a refused change.
+  // The limits' suggestions from past tasks (ext.limitSuggestions(): null until read), and a refused change.
   let teamLimitMsg = '';
   const kTok = n => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
   function suggestionText(s) {
@@ -470,7 +484,7 @@ const Panels = (() => {
     if (!s.enough) return `Suggestion: not enough history (${s.n} of 5 finished tasks), so the tier default`;
     return `Suggested ${kTok(s.tokens)} from ${s.n} passed tasks${s.direction ? ` (${s.direction}: ${s.reason})` : ` (${s.reason})`}`;
   }
-  // Item 96: per tier, its routes in order and how this week's tasks went on each (ext.routeUse(): null until read).
+  // Per tier, its routes in order and how this week's tasks went on each (ext.routeUse(): null until read).
   function routesBlock(cfg, ext) {
     const d = ext.routeUse ? ext.routeUse() : null;
     const usd = n => '$' + (n || 0).toFixed(2);
@@ -488,7 +502,7 @@ const Panels = (() => {
       <span class="hint">${lines.length ? lines.join('<br>') : (d ? 'No tasks this week yet' : 'Reading this week…')}</span></div></div>`;
   }
   const TeamRouteLabel = id => (typeof TierRoutes !== 'undefined' ? TierRoutes.labelOf({ model: id }) : id);
-  // Item 94: the team settings, one row each, worded by agent-settings.js. Every row: short label, what it does for
+  // The team settings, one row each, worded by agent-settings.js. Every row: short label, what it does for
   // you, the value in effect and when it applies, its warnings, a Reset when it differs from the default, and its
   // developer term (config key) only under Advanced.
   let presetPreview = null;
@@ -620,6 +634,9 @@ const Panels = (() => {
   }
 
   function rowHtml(it, cfg, ext) {
+    if (it.type === 'cli') {
+      return typeof operant.installCli === 'function' ? `<div class="set-row"><div class="lbl"><span>Install the operant command</span><span class="hint">Puts operant on your PATH so any terminal can run it</span></div><div class="ctl"><button class="btn" data-install-cli>Install</button></div></div>` : '';
+    }
     if (it.type === 'clearHistory') {
       return confirmingClear
         ? `<div class="set-row"><div class="lbl"><span>Delete store, outcomes and traces?</span><span class="hint">This cannot be undone</span></div><div class="ctl"><button class="btn primary" data-clear-history="yes">Yes</button><button class="btn" data-clear-history="no">Cancel</button></div></div>`
@@ -803,6 +820,7 @@ const Panels = (() => {
         await refreshBackups();
       });
       if (Date.now() - updateHistoryAt > 2000 && pane.querySelector('[data-uh]')) { updateHistoryAt = Date.now(); ext.updateHistory().then(l => { updateHistory = l; draw(); }); }
+      pane.querySelectorAll('[data-install-cli]').forEach(b => b.onclick = async () => { b.disabled = true; try { await ext.installCli(); } finally { b.disabled = false; } });
       pane.querySelectorAll('[data-clear-history]').forEach(b => b.onclick = async () => {
         const a = b.dataset.clearHistory;
         if (a === 'yes') { const r = await ext.clearHistory(); clearMsg = r && r.ok ? `Deleted ${r.removed} files` : 'Could not clear history'; }
@@ -888,7 +906,7 @@ const Panels = (() => {
         if (it.type === 'range') { el.onchange = draw; return el.oninput = () => { set(it.key, +el.value); el.nextElementSibling.textContent = it.fmt(+el.value); }; }
         el.onchange = () => {
           if (it.type === 'number') {
-            const n = Math.min(it.max, Math.max(it.min, Math.round(+el.value || 0)));
+            const n = Math.min(it.max, Math.max(it.min, it.step < 1 ? Math.round((+el.value || 0) / it.step) * it.step : Math.round(+el.value || 0)));
             el.value = n; set(it.key, n);
           } else if (it.type === 'tokens') {
             const n = parseTokens(el.value);

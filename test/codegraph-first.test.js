@@ -1,4 +1,4 @@
-// Item 90: CodeGraph-first helpers (codegraph-first.js) and their outcome summary (outcomes.js).
+// CodeGraph-first helpers (codegraph-first.js) and their outcome summary (outcomes.js).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const cg = require('../codegraph-first.js');

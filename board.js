@@ -188,7 +188,7 @@ function failureNote(task, why) {
   return `Attempt ${attempts(task)} on the ${task.tier || 'previous'} tier did not work: ${clean(why)}\nThe repo may hold its partial changes: check them, do not repeat the same approach.`;
 }
 
-// Item 41/11: the task's state for the next worker on a tier change, built from what the board knows:
+// The task's state for the next worker on a tier change, built from what the board knows:
 // decisions (the stated retry changes), constraints (the profile's risk), files (diff stat) and
 // verification (the last check). One line. It replaces the failure note, unless it has nothing to add or is longer.
 function handoff(task, why) {

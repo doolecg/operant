@@ -1,4 +1,4 @@
-// Tests for renderer/digest.js (plan item 34): one realistic fixture per supported runner,
+// Tests for renderer/digest.js: one realistic fixture per supported runner,
 // checking the detected runner, the summary line, and the first failure's file:line.
 const test = require('node:test');
 const assert = require('node:assert/strict');

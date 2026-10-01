@@ -116,7 +116,7 @@ function teamBlock(d) {
 function reviewBlock(d) {
   const rows = (d.review || []).slice(0, 5).map(r => `Waiting for your review: task ${r.id}${r.tier ? ` (${r.tier})` : ''}: ${clean(clip(r.tldr, 80))} — operant task approve ${r.id} | reject ${r.id} --note "<why>"`);
   const more = (d.review || []).length - rows.length;
-  // Items 91/92: paused tasks wait for the user, never for the lead.
+  // Paused tasks wait for the user, never for the lead.
   const paused = (d.paused || []).slice(0, 5).map(p => `Paused, waiting for the user: task ${p.id}${p.tier ? ` (${p.tier})` : ''} ${clean(p.why || '')}: ${clean(clip(p.tldr, 60))} — operant task show ${p.id}; do not move it up or restart it`);
   const out = [...rows, ...(more > 0 ? [`(+${more} more in review, \`operant board\`)`] : []), ...paused];
   return out.length ? out.join('\n') : null;

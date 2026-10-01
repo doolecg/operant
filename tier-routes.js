@@ -1,5 +1,5 @@
 (function () {
-// Tier routes (item 96): a tier is a model, and can list fallback routes (`fallbacks`: more { agent, model, effort }
+// Tier routes: a tier is a model, and can list fallback routes (`fallbacks`: more { agent, model, effort }
 // entries, or { local: true } for the local Ollama model). A route is skipped, with the reason kept, when it was
 // busy or out of free use lately (health, remembered for a cooldown) or when this kind of task kept failing on it
 // (learned from outcomes). Pure; main.js owns the health instance, the renderer picks per task.

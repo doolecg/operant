@@ -1,4 +1,4 @@
-// Item 90: CodeGraph almost always. Pure helpers, no Electron: what counts as a CodeGraph call, a per-session
+// CodeGraph almost always. Pure helpers, no Electron: what counts as a CodeGraph call, a per-session
 // tracker (first code action, files read before and after the first CodeGraph call, a one-time nudge), the
 // symbols a task names, the size-capped result put in a worker's brief, and the index check before a handoff.
 const path = require('path');

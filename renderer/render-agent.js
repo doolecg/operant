@@ -11,7 +11,7 @@ const AgentRender = (() => {
   };
   const nl = s => String(s).replace(/\r?\n/g, '\r\n');
 
-  // Claude names a project's folder after its path: F--PROGRAMMING-REPOS-Operant, -Users-me-proj.
+  // Claude names a project's folder after its path: -home-me-proj, -home-other-work.
   const projectPath = p => IS_WIN ? p.replace(/--/g, ':\\').replace(/-/g, ' ') : p.replace(/-/g, '/');
 
   function header(info) {

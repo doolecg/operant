@@ -1,3 +1,34 @@
+# Operant 2.7.2
+
+Linux gets proper packages and a desktop entry, notifications are configurable, updates are verified, and the app is hardened and easier to use with a keyboard and screen reader.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.7.2-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt.
+- **macOS:** `Operant-2.7.2-mac-arm64.dmg` (Apple Silicon) or `Operant-2.7.2-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux (x64):** `Operant-2.7.2-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04), `Operant-2.7.2-linux-amd64.deb` (`sudo apt install ./Operant-2.7.2-linux-amd64.deb`), `Operant-2.7.2-linux-x86_64.rpm` (`sudo dnf install ./Operant-2.7.2-linux-x86_64.rpm`) or `Operant-2.7.2-linux-x64.tar.gz`. On Ubuntu 24.04 and later the AppImage and tarball need an AppArmor profile or `OPERANT_NO_SANDBOX=1 ./Operant-2.7.2-linux-x86_64.AppImage`; the README explains.
+
+## New
+- **Linux packages:** an `.rpm` and a `.tar.gz` join the AppImage and `.deb` (x64 only). Each release also has a `SHA256SUMS` file.
+- **Linux desktop entry:** Operant shows up in the Development and Utility menus and can open folders from your file manager.
+- **Linux: Wayland and the `operant` command:** Operant runs natively on Wayland, and Settings can install the `operant` command into `~/.local/bin`.
+- **Notification options:** a switch for each kind (waiting, approvals, tasks, runaway, bell, watch), a sound, quiet hours, only when Operant is in the background, and a minimum working time.
+- **Privacy and network section** in the README lists every host Operant talks to.
+- **Apache License 2.0.**
+
+## Changed
+- **Updates are verified:** Operant installs an update only if it matches the SHA-256 digest GitHub publishes for it, and refuses one without a digest.
+- **The plan-limits pill is off by default.** When you turn it on, it uses Claude Code's own login to ask Anthropic's usage endpoint, and nothing else.
+- **Subagents and new tiles open on the master's workspace.** Workers, agents and runs started by an agent land beside the master, not on whichever workspace you happen to be viewing.
+- **Shell tiles show a `>_` terminal icon** instead of a dot.
+- **Accessibility:** better keyboard focus and labels for screen readers.
+- **Security hardening** of the control server, file opening and the updater.
+- Notifications say "desktop notification" instead of Windows-only wording.
+
+## Fixed
+- **Tests and docs no longer carry a developer's local paths.**
+
+---
+
 # Operant 2.7.1
 
 Finished subagents close again, tile and status colours show what each agent is doing, file paths in terminals open on Ctrl+click, the image viewer has zoom buttons, and Settings is tidier.

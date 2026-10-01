@@ -1,4 +1,4 @@
-// Item 43: the brief every agent tile gets in its system prompt (master, `operant agent` workers,
+// The brief every agent tile gets in its system prompt (master, `operant agent` workers,
 // reopened/resumed agents), so Operant's rules don't depend on the model deciding to load the skill.
 // Only the pointer lives here: the live part (role, team tiers while team mode is on, board task,
 // progress note, memory, CodeGraph) comes from `operant prime`, injected at every start and compact

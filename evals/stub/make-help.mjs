@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const i = process.argv.indexOf('--repo');
-const repo = (i > 0 && process.argv[i + 1]) || process.env.OPERANT_EVAL_REPO || 'F:\\PROGRAMMING\\REPOS\\Operant';
+const repo = (i > 0 && process.argv[i + 1]) || process.env.OPERANT_EVAL_REPO || path.resolve(here, '..', '..');
 const cli = path.join(repo, 'bin', 'operant-cli.js');
 
 // Help never talks to the app, but strip OPERANT_* anyway so this can't reach one by accident.

@@ -44,11 +44,34 @@ function pickRelease(releases, channel) {
 
 const EXT = { msi: 'msi', dmg: 'dmg', appimage: 'AppImage', deb: 'deb' };
 
-// The installer this copy can apply to itself, or null (an unpacked or tarball run can't).
-function installKind({ platform = process.platform, env = process.env, execPath = process.execPath } = {}) {
+// Downloads come from GitHub only: the release page host, and the hosts its asset links redirect to.
+function allowedDownloadUrl(url) {
+  return /^https:\/\/(github\.com|objects\.githubusercontent\.com|github-releases\.githubusercontent\.com)\//.test(String(url));
+}
+
+// Where a system package puts the app: /opt/Operant, /usr/lib/operant, /usr/share/operant (any letter case).
+const SYSTEM_DIR = /^\/(opt|usr\/lib|usr\/share)\/operant\//i;
+// Which package manager owns this file: 'rpm' | 'deb' | null (neither tool exists, or neither knows it: a tar.gz unpacked there).
+function packageOwner(file) {
+  const owns = (cmd, args) => { const r = spawnSync(cmd, args, { stdio: 'ignore' }); return !r.error && r.status === 0; };
+  const has = cmd => { const r = spawnSync('/bin/sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return r.status === 0; };
+  if (has('rpm') && owns('rpm', ['-qf', file])) return 'rpm';
+  if (has('dpkg') && owns('dpkg', ['-S', file])) return 'deb';
+  return null;
+}
+
+// The installer this copy can apply to itself, or null (an unpacked run can't). 'rpm' and 'tar' installs are
+// announced only: the release link is shown and the update is left to the package manager or the user.
+function installKind({ platform = process.platform, env = process.env, execPath = process.execPath, owner = packageOwner } = {}) {
   if (platform === 'win32') return 'msi';
   if (platform === 'darwin') return 'dmg';
-  if (platform === 'linux') return env.APPIMAGE ? 'appimage' : execPath.startsWith('/opt/Operant/') ? 'deb' : null;
+  if (platform === 'linux') {
+    if (env.APPIMAGE) return 'appimage';
+    if (!SYSTEM_DIR.test(execPath)) return null;
+    const o = owner(execPath);
+    if (o === 'rpm') return 'rpm';
+    return o === 'deb' ? 'deb' : 'tar'; // no package owns it: a tar.gz unpacked into a system folder
+  }
   return null;
 }
 
@@ -134,14 +157,24 @@ function appImageInstallScript({ pid, appImage, target, log, relaunch }) {
   ].join('\n');
 }
 
-function debInstallScript({ pid, deb, exe, log, relaunch }) {
+// The command to give the user when pkexec is missing or fails (apt reads a path as a file, and resolves dependencies).
+const debInstallCommand = deb => `sudo apt install ${/^[\w@%+=:,./-]+$/.test(deb) ? deb : shQuote(deb)}`;
+
+// sha256: the digest GitHub listed, checked again right before pkexec (the file sat on disk since the download).
+function debInstallScript({ pid, deb, exe, log, relaunch, sha256 }) {
   return [
     ...workerHead(pid, log),
     `deb=${shQuote(deb)}`,
     `exe=${shQuote(exe)}`,
+    ...(sha256 ? [
+      `got=$(sha256sum "$deb" 2>/dev/null | cut -d' ' -f1)`,
+      `if [ "$got" != ${shQuote(String(sha256).toLowerCase())} ]; then say "the downloaded file changed, not installing it"; exit 1; fi`,
+    ] : []),
     `say "installing $deb"`,
     `pkexec dpkg -i "$deb"`,
-    `say "dpkg exited with $?"`,
+    `rc=$?`,
+    `say "dpkg exited with $rc"`,
+    `if [ "$rc" -ne 0 ]; then say ${shQuote(`To install it yourself, run: ${debInstallCommand(deb)}`)}; fi`,
     ...(relaunch ? [`nohup "$exe" >/dev/null 2>&1 &`] : []),
   ].join('\n');
 }
@@ -182,7 +215,11 @@ function healthState(history, version) {
 
 // getSettings() -> { updateChannel, updateCheckHours }. fetch, downloadDir, statfs and target are injection points for tests.
 function createUpdater({ send, onInstall, beforeInstall, log = () => {}, historyFile, currentVersion = app.getVersion(), getSettings = () => ({}),
-  fetch = (...a) => net.fetch(...a), downloadDir = os.tmpdir(), statfs = fs.statfsSync, target = null }) {
+  fetch = (url, ...a) => {
+    // Only GitHub's API and download hosts are ever contacted.
+    if (!allowedDownloadUrl(url) && !/^https:\/\/api\.github\.com\//.test(String(url))) return Promise.reject(new Error(`refusing to download from ${url}`));
+    return net.fetch(url, ...a);
+  }, downloadDir = null, statfs = fs.statfsSync, target = null }) {
   const history = historyStore(historyFile || path.join(app.getPath('userData'), 'update-history.json'));
   let ready = null;      // { version, file, notes, url, kind }
   let busy = false;
@@ -205,15 +242,29 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
 
   // Downloads an asset to the temp folder (reusing a finished copy of ours), checks its size and, when GitHub
   // lists one, its sha256; a bad file is deleted.
+  // A .deb is installed as root, so it goes in a private folder (0700) under userData, not the shared temp folder.
+  function dirFor(kind) {
+    if (downloadDir) return downloadDir;
+    if (kind !== 'deb') return os.tmpdir();
+    const dir = path.join(app.getPath('userData'), 'updates');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    return dir;
+  }
+
   async function fetchAsset(asset, version, kind, onDownload) {
-    const file = path.join(downloadDir, `Operant-${version}.${EXT[kind]}`);
+    // Nothing is installed that GitHub did not publish a checksum for.
+    if (!/^sha256:[0-9a-f]{64}$/i.test(String(asset.digest || ''))) throw new Error(`${asset.name} has no sha256 checksum on its GitHub release, so Operant won't install it automatically. Download it from the releases page instead.`);
+    const dir = dirFor(kind);
+    const file = path.join(dir, `Operant-${version}.${EXT[kind]}`);
     if (!downloaded(file, asset.size)) {
-      checkDiskSpace(downloadDir, asset.size, version);
+      checkDiskSpace(dir, asset.size, version);
       onDownload?.();
       const tmp = file + '.part';
       try {
         const dl = await fetch(asset.browser_download_url, { headers: { 'User-Agent': 'operant' } });
         if (!dl.ok) throw new Error(`download ${dl.status}`);
+        if (dl.url && !allowedDownloadUrl(dl.url)) throw new Error('the download was redirected away from GitHub');
         await pipeline(Readable.fromWeb(dl.body), fs.createWriteStream(tmp));
         if (fs.statSync(tmp).size !== asset.size) throw new Error('download size mismatch');
         fs.renameSync(tmp, file);
@@ -245,6 +296,11 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
       if (!newer(version, currentVersion)) { report({ state: 'current', version: currentVersion, notes: version === currentVersion ? rel.body || '' : '' }); return; }
       const { platform, arch, kind } = targetNow();
       if (!kind) { report({ state: 'error', message: `${version} is out, get it from the releases page` }); return; }
+      // An rpm or tar.gz install is updated by its owner, not by Operant: announce the release and link it.
+      if (kind === 'rpm' || kind === 'tar') {
+        report({ state: 'error', url: rel.html_url, message: `${version} is out. ${kind === 'rpm' ? 'Update with your package manager (for example sudo dnf install the new .rpm)' : 'Download the new .tar.gz and unpack it over this install'}: ${rel.html_url}` });
+        return;
+      }
       // Keep checking once one is downloaded: a stale ready update must not be installed over a newer release.
       // The download is fetched again if the temp folder lost it (macOS clears it after a few days).
       if (ready && !newer(version, ready.version) && fs.existsSync(ready.file)) { report({ state: 'ready', version: ready.version, notes: ready.notes, url: ready.url }); return; }
@@ -252,7 +308,7 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
       if (!asset) { report({ state: 'error', message: `${version} has no installer for this system yet, try again in a few minutes` }); return; }
 
       const { file, digestChecked } = await fetchAsset(asset, version, kind, () => report({ state: 'downloading', version, notes: rel.body || '' }));
-      ready = { version, file, notes: rel.body || '', url: rel.html_url, kind, asset: asset.name, digestChecked };
+      ready = { version, file, notes: rel.body || '', url: rel.html_url, kind, asset: asset.name, digestChecked, digest: asset.digest };
       report({ state: 'ready', version, notes: ready.notes, url: rel.html_url });
     } catch (e) {
       report({ state: 'error', message: String(e.message || e) });
@@ -282,8 +338,15 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
       script = appImageInstallScript({ pid: process.pid, appImage: file, target, log, relaunch });
     } else {
       if (!relaunch) return false; // dpkg needs a password, which mustn't be asked for after the app has gone
-      if (spawnSync('/bin/sh', ['-c', 'command -v pkexec'], { stdio: 'ignore' }).status !== 0) return fail(`pkexec not found, install ${file} with your package manager`);
-      script = debInstallScript({ pid: process.pid, deb: file, exe: process.execPath, log, relaunch });
+      if (spawnSync('/bin/sh', ['-c', 'command -v pkexec'], { stdio: 'ignore' }).status !== 0) return fail(`pkexec not found. Install it yourself by running: ${debInstallCommand(file)}`);
+      // Right now, too: a file that no longer matches is deleted and not offered again.
+      const want = /^sha256:([0-9a-f]{64})$/i.exec(String(ready.digest || ''))?.[1];
+      if (!want || crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') !== want.toLowerCase()) {
+        try { fs.unlinkSync(file); } catch {}
+        ready = null;
+        return fail('The downloaded update no longer matches its checksum, so it was deleted. Check for updates again');
+      }
+      script = debInstallScript({ pid: process.pid, deb: file, exe: process.execPath, log, relaunch, sha256: want });
     }
     const child = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' });
     child.on('error', e => report({ state: 'error', message: `couldn't start the installer (${e.message})` }));
@@ -355,14 +418,14 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
     busy = true;
     try {
       const kind = installKind();
-      if (!kind) throw new Error(`${from} has to be reinstalled from the releases page`);
+      if (!kind || kind === 'rpm' || kind === 'tar') throw new Error(`${from} has to be reinstalled from the releases page`);
       const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/tags/${from}`, { headers: { 'User-Agent': 'operant', Accept: 'application/vnd.github+json' } });
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
       const rel = await res.json();
       const asset = pickAsset(rel.assets, { platform: process.platform, arch: process.arch, kind });
       if (!asset) throw new Error(`${from} has no installer for this system`);
       const { file, digestChecked } = await fetchAsset(asset, from, kind);
-      ready = { version: from, file, notes: rel.body || '', url: rel.html_url, kind, asset: asset.name, digestChecked };
+      ready = { version: from, file, notes: rel.body || '', url: rel.html_url, kind, asset: asset.name, digestChecked, digest: asset.digest };
       restore?.();
       if (!install(true, { skipBackup: true, from: to })) throw new Error('could not start the installer');
       return { ok: true };
@@ -396,4 +459,4 @@ function createUpdater({ send, onInstall, beforeInstall, log = () => {}, history
   return { start, check, reschedule, rollback, history, install: () => install(true), get ready() { return ready; }, get status() { return status; } };
 }
 
-module.exports = { createUpdater, pickRelease, checkIntervalMs, DEFAULT_CHECK_HOURS, verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript };
+module.exports = { createUpdater, pickRelease, checkIntervalMs, DEFAULT_CHECK_HOURS, verifyDigest, historyStore, trimHistory, healthState, HISTORY_MAX, newer, pickAsset, installKind, shQuote, macInstallScript, appImageInstallScript, debInstallScript, debInstallCommand, allowedDownloadUrl, packageOwner };

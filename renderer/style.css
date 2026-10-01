@@ -313,6 +313,7 @@ body.anim-off .win::before,
 .pdot.attention { background: #f85149; }
 @keyframes sdotpulse { 50% { opacity: .35; } }
 .win.ai .ico { color: var(--accent); }
+.win.shell .ico { font-family: var(--mono, monospace); font-weight: 700; letter-spacing: -1px; }
 .win.shell .ico { color: var(--dim); }
 .win.master .tbar .badge { color: var(--accent); background: var(--accent-tint); }
 .win.agent .ico { color: var(--agent); }
@@ -345,7 +346,7 @@ body.anim-off .win::before,
 @container tbar (max-width: 270px) { .win.diff .view-acts, .win.view [data-v="source"], .tbar .badge, .tbar .waiting, .tbar .runaway { display: none; } }
 @container tbar (max-width: 190px) { .win.view .view-acts { display: none; } .tbar .title { min-width: 0; } }
 
-/* The info bar under every tile's title (item 42): model, context, tokens since it opened,
+/* The info bar under every tile's title: model, context, tokens since it opened,
    folder and branch on agent tiles; folder and branch on shell, editor and viewer tiles (plus an image's size
    and zoom); folder and changed count on the changes tile. Never overlaps: pieces hide one at a time, least
    important first, when it's tight (layoutIbar in renderer.js). */
@@ -997,7 +998,7 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 .basement-failed { color: var(--danger, #e5484d); }
 .basement-out { margin: 6px 0 0; padding: 8px; max-height: 320px; overflow: auto; font: 11.5px/1.4 var(--mono, monospace); white-space: pre-wrap; color: var(--dim); }
 
-/* Settings > Agents (item 94): the plain summary, the presets, and what each row says about itself. */
+/* Settings > Agents: the plain summary, the presets, and what each row says about itself. */
 .ag-summary, .ag-presets { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: rgba(var(--ink-rgb), .05); border: 1px solid rgba(var(--ink-rgb), .07); }
 .ag-title { font-weight: 600; margin-bottom: 6px; }
 .ag-title .hint { font-weight: 400; color: var(--dim); font-size: 11.5px; margin-left: 6px; }
@@ -1056,3 +1057,8 @@ body.split-v, body.split-v * { cursor: row-resize !important; user-select: none;
 .ops-hrow { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
 .ops-hname { min-width: 190px; }
 .hdot.not-configured, .hdot.unknown { background: var(--dim); }
+
+/* Keyboard focus ring. The inputs above that drop the browser outline get it back here. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, .view-page:focus-visible, #media-volume:focus-visible { outline: 2px solid var(--accent) !important; outline-offset: 1px; }
+.xterm-helper-textarea:focus-visible { outline: none !important; }

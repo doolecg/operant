@@ -1,4 +1,4 @@
-// Tests for memory.js (plan item 45): save, dedupe/update, recall by query and --about, index
+// Tests for memory.js: save, dedupe/update, recall by query and --about, index
 // format, and the read-only fold-in of the main agent's own (Claude Code) memory folder.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -151,14 +151,14 @@ test('deleteFact removes the file and rebuilds the index', () => {
   assert.equal(index.trim(), '');
 });
 
-// Item 58: confidence, staleness, ranking, supersedes, feedback.
+// Confidence, staleness, ranking, supersedes, feedback.
 const facts = (cwd, u) => memory.listFacts(memory.projectMemoryDir(cwd), u);
 function patch(cwd, id, edit) {
   const f = path.join(memory.projectMemoryDir(cwd), `${id}.md`);
   fs.writeFileSync(f, edit(fs.readFileSync(f, 'utf8')));
 }
 
-test('a fact written before item 58 (no new fields) is still recalled', () => {
+test('a fact written before the new fields existed is still recalled', () => {
   const cwd = tmpProj(), userDataDir = tmpDir('user');
   const dir = memory.projectMemoryDir(cwd);
   fs.mkdirSync(dir, { recursive: true });

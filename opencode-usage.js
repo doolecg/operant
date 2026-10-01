@@ -1,4 +1,4 @@
-// OpenCode usage from its database (item 54): one event per assistant message. Only assistant messages
+// OpenCode usage from its database: one event per assistant message. Only assistant messages
 // count; their step-finish parts repeat the same numbers. Opened read-only and closed again.
 
 const path = require('path');

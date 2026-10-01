@@ -1,4 +1,4 @@
-// Item 37: a Claude Code PreToolUse hook that reroutes long-running shell commands
+// A Claude Code PreToolUse hook that reroutes long-running shell commands
 // (test/build/install runners) through `operant run --background --inline` instead of the agent's own
 // Bash tool, so the raw output never floods the agent's context. The command runs as a Backrooms task: one
 // that finishes within Settings > Agents > "Run in the Backrooms after" (5 s) returns its result at once,

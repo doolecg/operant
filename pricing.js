@@ -1,4 +1,4 @@
-// Token prices (item 54): USD per million tokens by model id. A model that isn't in the table prices as
+// Token prices: USD per million tokens by model id. A model that isn't in the table prices as
 // unknown (usd: null), never a guess. OpenCode records its own cost per message and that wins when it's above 0.
 
 const SOURCE = 'Anthropic pricing (claude-api skill)';

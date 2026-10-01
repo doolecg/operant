@@ -42,10 +42,24 @@ Download the file for your system from the [latest release](https://github.com/d
 | macOS, Intel | `Operant-<version>-mac-x64.dmg` | The same. |
 | Linux, any distro | `Operant-<version>-linux-x86_64.AppImage` | `chmod +x Operant-<version>-linux-x86_64.AppImage`, then run it. AppImages need FUSE 2, which Ubuntu 22.04 and later leave out: `sudo apt install libfuse2t64` (`libfuse2` on 22.04). |
 | Linux, Debian and Ubuntu | `Operant-<version>-linux-amd64.deb` | `sudo apt install ./Operant-<version>-linux-amd64.deb` |
+| Linux, Fedora and openSUSE | `Operant-<version>-linux-x86_64.rpm` | `sudo dnf install ./Operant-<version>-linux-x86_64.rpm` |
+| Linux, any distro | `Operant-<version>-linux-x64.tar.gz` | Unpack it anywhere and run `./operant`. |
 
 The builds aren't code-signed or notarized, so Windows and macOS warn the first time you open one:
 - **Windows:** SmartScreen may warn. Choose *More info → Run anyway*.
 - **macOS:** Gatekeeper blocks the first launch. Open Operant once, then choose *Open Anyway* in System Settings › Privacy & Security. Or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once, before opening it.
+
+### Linux
+Formats: AppImage, `.deb`, `.rpm` and `.tar.gz`, for **x64 only**. There is no arm64 build yet: the terminal library (`@lydell/node-pty`) has no prebuilt binary for it.
+
+- **AppImage:** `chmod +x` it and run it. It needs FUSE 2 (see the table).
+- **Ubuntu 24.04 and later (AppArmor):** these block the unprivileged user namespaces Chromium's sandbox needs for an AppImage or an unpacked `.tar.gz`, so it fails to start with a sandbox error. The `.deb` and `.rpm` avoid this: their `chrome-sandbox` is installed setuid root. For the others, the proper fix is an AppArmor profile for the binary that grants `userns`. The quick workaround turns the sandbox off, so use it knowingly: `OPERANT_NO_SANDBOX=1 ./Operant.AppImage` (or pass `--no-sandbox`).
+- **Wayland:** it runs natively on Wayland (Electron's ozone platform is picked automatically) and on X11.
+- **Where things live:** settings and state are in `$XDG_CONFIG_HOME/Operant` (`~/.config/Operant` by default).
+- **The `operant` command:** install it from Settings (it goes in `~/.local/bin`; make sure that is on your `PATH`), which is how AppImage users get it. Tiles already have it on their `PATH`.
+- **Desktop entry:** Operant registers as a handler for folders, so a file manager's *Open With* works.
+- **Updates:** an AppImage replaces itself. A `.deb` is downloaded and installed through `pkexec` (a password prompt) when you click *Update*, never on quit; if that can't run, Operant shows the `sudo` command to run by hand. On a tiling window manager with no polkit agent, start one (for example `polkit-gnome-authentication-agent-1`), or use the manual command. A `.rpm` or `.tar.gz` install isn't updated by Operant: download the new file from the releases page.
+- **No tray icon**, and the media widget and the Explorer context menu are Windows only.
 
 You need the agent CLIs themselves installed and on your `PATH`, for example:
 
@@ -59,6 +73,16 @@ You need the agent CLIs themselves installed and on your `PATH`, for example:
 **Auto-updates:** the app checks this repo's latest release at startup and every 3 hours, then downloads the new installer for your system in the background. When it's ready, an *Update* pill appears in the top bar. Click it to install and restart, or it installs when you quit. You can turn this off in Settings.
 - **macOS:** the new app replaces the old one in place, so Operant has to be in a folder you can write to, like Applications, not run from the DMG. If macOS says Operant was prevented from modifying apps, allow it under System Settings › Privacy & Security › App Management.
 - **Linux:** an AppImage replaces itself, in a folder you can write to. A `.deb` install downloads the new `.deb` and installs it through a password prompt when you click *Update*, never on quit.
+
+## Privacy and network
+Operant has no telemetry and no account. It talks to these hosts only:
+- `api.github.com` and GitHub's release downloads, to check for and download updates. Turn this off with *Update automatically* in Settings.
+- `api.anthropic.com`, only if you turn on the plan-limits pill.
+- `localhost`, only for Ollama, OpenCode and Operant's own control server (`127.0.0.1`, random port and token, used by the `operant` CLI).
+
+Your agents' own traffic (Claude Code, OpenCode and so on) is theirs, not Operant's.
+
+The builds are **not code-signed**. An update is installed only if the file matches the SHA-256 digest GitHub publishes for that release asset; the updater refuses an install without one. Each release also carries a `SHA256SUMS` file you can check a download against.
 
 ## Backups and updates
 Operant backs up its own state (config, personal memory, board, usage tags, outcomes) daily, checks each backup by reading it back, and tests a restore weekly. It also backs up before every update and config upgrade. Secrets are left out. Manage them in Settings › Data › Backups. Restoring upgrades and health-checks the backup, and refuses one from a newer Operant.
@@ -82,12 +106,12 @@ A team runs on one CLI: the project's, which you pick in its sidebar menu (**Cla
 The Operant Terminal (2.2 and 2.3) was removed in 2.3.1; its settings migrate automatically.
 
 ## Notifications
-Operant sends a Windows notification when:
+Operant sends a desktop notification when:
 - an agent that was working goes quiet (it finished, or it's asking you something),
 - an agent rings the terminal bell,
 - a Claude subagent finishes.
 
-Click the notification, or click it later in the Action Center, and Operant comes to the front on that tile. It switches to the right window and workspace if it needs to. By default you don't get one for the tile you're looking at. **Settings › General › Notifications** has the switches and the quiet time.
+Click the notification, or click it later in the Action Center, and Operant comes to the front on that tile. It switches to the right window and workspace if it needs to. By default you don't get one for the tile you're looking at. **Settings › General › Notifications** has the switches and the quiet time: a toggle for each kind (waiting, approvals, tasks, runaway, bell, watch), a sound, quiet hours, *only when Operant is in the background* and a minimum working time before a "finished" one fires (`notifyWaiting`, `notifyApprovals`, `notifyTasks`, `notifyRunaway`, `notifyBell`, `notifyWatch`, `notifySound`, `notifyQuietFrom`/`notifyQuietTo`, `notifyOnlyBackground`, `notifyMinWorkSeconds`).
 
 ## Claude Code subagents
 Claude Code writes each subagent's transcript to
@@ -131,7 +155,7 @@ The Claude numbers come from Claude Code's own transcripts in `~/.claude/project
 
 The usage panel also breaks tokens and cost down by model, tier, task and project, with the cache hit rate. Each price shows its source, and a model with no known price stays unknown instead of guessed. Claude's cost is the API-equivalent figure, not what your plan charges. OpenCode usage is read from OpenCode's own database.
 
-Plan limits use Claude Code's login. On macOS that login is in the Keychain, so macOS asks once whether Operant may read it: choose *Always Allow* and it stops asking.
+Plan limits (the 5-hour and weekly bars) are **off by default**. Turn them on in Settings › Usage and Operant reads Claude Code's own OAuth token from `~/.claude/.credentials.json` (on macOS, from the Keychain, which asks once whether Operant may read it: choose *Always Allow*) and calls Anthropic's usage endpoint at `api.anthropic.com` with it. The token is used for that call and nothing else.
 
 ## Settings and themes
 `Alt+,` (or the ⚙ in the top bar) opens **Settings**, with a tab for each area down the left and a search box that finds any setting. It reopens on the tab you used last. Changes apply straight away and are saved. You can change:
@@ -177,13 +201,18 @@ npm install
 npm start            # run from source
 npm run dist         # Windows: dist/Operant-<version>-windows-x64.msi
 npm run dist:mac     # on a Mac: both DMGs, Apple Silicon and Intel
-npm run dist:linux   # on Linux: the AppImage and the .deb
+npm run dist:linux   # on Linux: the AppImage, .deb, .rpm and .tar.gz
 node test/smoke.mjs node_modules/electron/dist/electron.exe .   # launch from a checkout and check the shell, CLI and agents
 ```
 `node test/smoke.mjs <app executable> [args]` starts any built app on a throwaway profile and checks a shell tile, the `operant` CLI, `operant run` and agent launches. From a checkout the executable is `node_modules/electron/dist/electron.exe` on Windows, `node_modules/electron/dist/Electron.app/Contents/MacOS/Electron` on macOS and `node_modules/electron/dist/electron` on Linux. `SMOKE_SHELL=<path to bash>` runs the tiles in bash, so Git Bash on Windows exercises the macOS and Linux shell code.
 
+The `.rpm` target needs `rpm` (`rpmbuild`) installed on the build machine (`sudo apt install rpm` on Debian and Ubuntu); electron-builder fetches `fpm` itself.
+
 `dist:mac` builds both chips, but npm installs the terminal library (`@lydell/node-pty-darwin-*`) only for your own Mac's chip, so the other app needs the other one installed first: see the `mac` job in `.github/workflows/release.yml`.
 
-To ship a release: bump the version in `package.json`, add its section to the top of `RELEASE_NOTES.md`, then push a plain version tag (`git tag 1.0.1 && git push origin refs/tags/1.0.1`). The `release` workflow builds and tests the Windows, macOS and Linux installers in parallel and, only when all of them pass, publishes the five files as one GitHub release with those notes, so installed copies update themselves (run it by hand from the Actions tab to build and test everything without publishing).
+To ship a release: bump the version in `package.json`, add its section to the top of `RELEASE_NOTES.md`, then push a plain version tag (`git tag 1.0.1 && git push origin refs/tags/1.0.1`). The `release` workflow builds and tests the Windows, macOS and Linux installers in parallel and, only when all of them pass, publishes the installers (and a `SHA256SUMS` file) as one GitHub release with those notes, so installed copies update themselves (run it by hand from the Actions tab to build and test everything without publishing).
 
 Operant started as a generic version of [Claude Agent Viewer](https://github.com/doolecg/claude-agent-viewer).
+
+## License
+Copyright 2026 doolecg. Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -1,5 +1,5 @@
 {
-  "generatedFrom": "F:\\PROGRAMMING\\REPOS\\Operant",
+  "generatedFrom": "operant repository",
   "list": "operant <cmd> [args] [--flag value] [--json]\n\n  tiles: tiles, status, focus, close, ws, title\n  terminals: run, test, build, read, send, wait, stop\n  files: view, edit, diff, open\n  browser: browse\n  agents & tasks: agent, ask, notify, plan, task, board, team, summarize, find\n  memory: remember, recall\n  context: usage, compact\n  operations: doctor, providers, models, stats, route\n  misc: ports, watch\n\n  operant help <cmd> for flags and examples.\n  --json prints the raw JSON result instead of formatted text.\n  read/wait: --new only output since your last read, --errors only error/warning lines with context, --grep <pattern> only matching lines, --digest a test/build summary+failures.",
   "commands": {
     "tiles": "operant tiles\n\n  list this window's tiles\n\nExamples:\n  operant tiles",

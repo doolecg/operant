@@ -1,5 +1,5 @@
 # Push a version tag (plain, like 1.2.1) to build the installers for Windows (MSI), macOS (DMG for Apple
-# Silicon and Intel) and Linux (AppImage and .deb), then publish them together as one GitHub release, with
+# Silicon and Intel) and Linux (AppImage, .deb, .rpm and .tar.gz), then publish them together as one GitHub release, with
 # the top section of RELEASE_NOTES.md as its body. Installed copies pick it up via updater.js.
 # Run it by hand (workflow_dispatch) to build and smoke-test every installer without publishing: they're
 # attached to the run as artifacts.
@@ -88,6 +88,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # The .rpm target shells out to rpmbuild.
+      - run: sudo apt-get install -y rpm
       - run: npm run dist:linux
       # The .deb the way a user gets it: apt resolves its dependencies and it brings the sandbox's AppArmor profile.
       - run: sudo apt-get install -y ./dist/*.deb
@@ -105,6 +107,8 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
           if-no-files-found: error
 
   publish:
@@ -124,6 +128,9 @@ jobs:
           v="$(node -p "require('./package.json').version")"
           tag="$GITHUB_REF_NAME"
           awk '/^---[[:space:]]*$/ { exit } { print }' RELEASE_NOTES.md > notes.md
+          # SHA256SUMS for people checking a download by hand. GitHub also computes a sha256 digest for every
+          # uploaded asset by itself, which is what updater.js verifies, so keep uploading the files as they are.
+          (cd dist && sha256sum * > SHA256SUMS)
           ls -l dist
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber

@@ -15,7 +15,7 @@ const MIGRATIONS = [
   } },
   // Gemma 3 can't call tools in Ollama, so it can't run a tier: a saved gemma3 local model goes back to the default.
   { to: 3, run(user) { if (/^gemma3(:|$)/.test(user.localModel?.model || '')) delete user.localModel.model; } },
-  // Item 96 offered an xsmall tier on a paid model "Use Big Pickle" first. That put an OpenCode route in front of a
+  // An xsmall tier on a paid model "Use Big Pickle" was offered first. That put an OpenCode route in front of a
   // Claude tier, and a team now runs on one CLI only, so the offer is gone (version 5 drops the saved offers list).
   { to: 4, run() {} },
   // Single-CLI teams: a project's team runs on one CLI. 'both' is gone; such a project follows its default agent's CLI.
@@ -73,6 +73,7 @@ const RANGES = {
   autoCompact: { min: 0, max: 100, int: true, unit: 'percent' },
   cacheTtlMinutes: { min: 1, max: 120, int: true, unit: 'minutes' },
   notifyWhenIdleSeconds: { min: 0, max: 600, int: true, unit: 'seconds' },
+  notifyMinWorkSeconds: { min: 0, max: 600, unit: 'seconds' },
   typingGuardSeconds: { min: 0, max: 60, int: true, unit: 'seconds' },
   autoCloseDoneAgentsSeconds: { min: 0, max: 86400, int: true, unit: 'seconds' },
   idleCloseTerminalMinutes: { min: 0, max: 1440, int: true, unit: 'minutes' },
@@ -142,6 +143,7 @@ function validatePatch(patch, defaults, opts = {}) {
     if (en && !en.includes(v)) { bad(key, 'one of ' + en.join(', ')); continue; }
     if (key === 'defaultCwd' && !isDir(v)) { bad(key, 'a folder that exists'); continue; }
     if (key === 'accent' && v !== '' && !/^#[0-9a-f]{6}$/i.test(v)) { bad(key, 'empty or a color like #d97757'); continue; }
+    if ((key === 'notifyQuietFrom' || key === 'notifyQuietTo') && v !== '' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(v)) { bad(key, 'empty or a time like 22:30'); continue; }
     if (key === 'usageSeries' && (!v.length || v.some(s => !USAGE_SERIES.includes(s)))) { bad(key, 'at least one of ' + USAGE_SERIES.join(', ')); continue; }
     if (key === 'projects' && v.some(p => typeof p !== 'string')) { bad(key, 'a list of folder paths'); continue; }
     if (key === 'agents') {

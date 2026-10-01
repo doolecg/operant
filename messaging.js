@@ -1,5 +1,5 @@
 (function () {
-// Agent-to-agent messages (plan item 53), pure over a state object { queues: { tileId: [msg] }, sent: [] }.
+// Agent-to-agent messages, pure over a state object { queues: { tileId: [msg] }, sent: [] }.
 // A message waits in the recipient's queue until it can be delivered; the limits keep two agents from
 // talking each other into a loop.
 const MAX_TEXT = 2000;
@@ -24,7 +24,7 @@ function frame(msg) {
 }
 const frameAll = msgs => msgs.map(frame).join('\n\n');
 
-// A refined brief handed over by `operant send`: --team asks the receiver to run it as team work (item 89).
+// A refined brief handed over by `operant send`: --team asks the receiver to run it as team work.
 const TEAM_LEAD = 'Run this as team work: split it into numbered parts, each on the cheapest tier that fits (`operant team`), '
   + 'and run the parts as subagents with `operant agent --tier <t> "<numbered parts>"`, independent ones in parallel. '
   + 'Review each with `operant read` and `operant test`, then `operant task approve <id>` or `reject <id> --note "<why>"`.\n\nBrief:\n';
@@ -64,7 +64,7 @@ const REASONS = {
   full: 'that tile already has too many unread messages',
 };
 
-// Item 97, `operant send --file|--brief`: a refined prompt handed to a Claude Code tile as its next message, framed as from
+// `operant send --file|--brief`: a refined prompt handed to a Claude Code tile as its next message, framed as from
 // another agent on the user's behalf. It goes to the tile named, else the project's lead tile, else a new one (--new: always
 // a new one). A busy tile is never interrupted: the brief waits in its queue until deliver() finds it idle. --team is team
 // work, refused (never turned into a plain send) while team mode is off. `env` is the app's side: state, teamEnabled, agents,
