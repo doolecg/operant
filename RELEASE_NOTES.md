@@ -1,3 +1,17 @@
+# Operant 2.7.4
+
+Claude Code messages no longer carry CodeGraph's automatic code attachment, which saves tokens on every turn.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.7.4-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt.
+- **macOS:** `Operant-2.7.4-mac-arm64.dmg` (Apple Silicon) or `Operant-2.7.4-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux (x64):** `Operant-2.7.4-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04), `Operant-2.7.4-linux-amd64.deb` (`sudo apt install ./Operant-2.7.4-linux-amd64.deb`), `Operant-2.7.4-linux-x86_64.rpm` (`sudo dnf install ./Operant-2.7.4-linux-x86_64.rpm`) or `Operant-2.7.4-linux-x64.tar.gz`. On Ubuntu 24.04 and later the AppImage and tarball need an AppArmor profile or `OPERANT_NO_SANDBOX=1 ./Operant-2.7.4-linux-x86_64.AppImage`; the README explains.
+
+## Changed
+- **CodeGraph's per-message hook is removed:** `codegraph install` and its updates add a hook to `~/.claude/settings.json` that attaches about 15 KB of code to every message you send, relevant or not. Operant now removes that one hook whenever it starts a Claude Code tile, leaving your other hooks alone. Agents still query the index through CodeGraph's tool when they need code. OpenCode tiles, which copied that hook, now use the tool the same way.
+
+---
+
 # Operant 2.7.3
 
 Codex and Gemini tiles now take messages and briefs, compact properly and notify when they finish.
