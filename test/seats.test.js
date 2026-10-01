@@ -12,7 +12,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'seats-'));
 
 test('defaults: six normal seats, two hard seats on medium, two masters', () => {
   const st = fresh();
-  assert.deepEqual(st.seats.map(s => s.id), ['planner', 'implementer', 'reviewer', 'explorer', 'docs', 'tester', 'hard-1', 'hard-2', 'lead', 'master-opencode']);
+  assert.deepEqual(st.seats.map(s => s.id), ['planner', 'implementer', 'reviewer', 'explorer', 'docs', 'tester', 'hard-1', 'hard-2', 'lead']);
   const by = id => S.find(st, id);
   for (const id of ['explorer', 'docs', 'tester']) assert.equal(by(id).tier, 'xsmall');
   for (const id of ['planner', 'implementer', 'reviewer', 'lead']) assert.equal(by(id).tier, 'small');
@@ -25,7 +25,7 @@ test('load creates defaults on first use, save/load round-trips, schema version 
   const dir = tmp();
   try {
     const a = S.load(dir);
-    assert.equal(a.seats.length, 10);
+    assert.equal(a.seats.length, 9);
     S.update(dir, st => S.setGuidance(st, 'planner', 'plan small'));
     const raw = JSON.parse(fs.readFileSync(S.fileOf(dir), 'utf8'));
     assert.equal(raw.schema, S.SCHEMA);
@@ -40,7 +40,7 @@ test('normalize repairs bad data, restores missing defaults, refuses a newer sch
   assert.equal(p.tileId, 5);
   assert.equal(p.history.length, S.HISTORY_MAX);
   assert.ok(S.find(st, 'custom') && S.find(st, 'hard-2') && !S.find(st, 'BAD ID'));
-  assert.equal(S.normalize(null, T0).seats.length, 10);
+  assert.equal(S.normalize(null, T0).seats.length, 9);
   assert.equal(S.find(S.normalize({ schema: 1, seats: [{ id: 'docs', state: 'idle-closed', tileId: 9 }] }, T0), 'docs').tileId, null);
   assert.throws(() => S.normalize({ schema: 99, seats: [] }), /newer/);
 });
@@ -159,7 +159,7 @@ test('tables: the seats table and one seat with history', () => {
   S.take(st, 'explorer', { tileId: 12, now: T0 });
   const table = S.formatTable(st).split('\n');
   assert.match(table[0], /^id\s+role\s+kind\s+tier\s+state\s+tile$/);
-  assert.equal(table.length, 11);
+  assert.equal(table.length, 10);
   assert.match(table.find(l => l.startsWith('explorer')), /xsmall\s+active\s+12$/);
   assert.match(table.find(l => l.startsWith('hard-1')), /hard\s+medium \(pinned\)\s+empty\s+-$/);
   const one = S.formatSeat(S.find(st, 'explorer'));

@@ -129,7 +129,7 @@ test('adopt: a running agent tile takes the seat with no restart, and the seat t
 test('adopt refuses a dead tile, a non-agent tile, a tile already seated, a held seat and an unnamed hard seat', () => {
   const st = fresh();
   assert.throws(() => S.adopt(st, 'reviewer', { id: 1, alive: false, agent: true }), /not running/);
-  assert.throws(() => S.adopt(st, 'reviewer', { id: 1, alive: true, agent: false }), /not a Claude Code or Codex tile/);
+  assert.throws(() => S.adopt(st, 'reviewer', { id: 1, alive: true, agent: false }), /not a Claude Code, Codex or Gemini CLI tile/);
   assert.throws(() => S.adopt(st, 'reviewer', { id: 1, alive: true, agent: true, seatId: 'planner' }), /already holds seat planner/);
   S.adopt(st, 'planner', { id: 2, alive: true, agent: true });
   assert.throws(() => S.adopt(st, 'reviewer', { id: 2, alive: true, agent: true }), /already holds seat planner/);

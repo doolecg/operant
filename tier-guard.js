@@ -254,7 +254,7 @@ function askText(task) {
   if (!a) return '';
   return [`paused: ${a.why}${a.reason ? ` (${a.reason})` : ''}; waiting for the user`,
     ...a.evidence.map(e => `  ${e}`),
-    `  choices (the user picks, on the board): ${a.choices.map(c => c.label).join(' | ')}`].join('\n');
+    `  choices (the user picks on the card Operant shows): ${a.choices.map(c => c.label).join(' | ')}`].join('\n');
 }
 
 const api = {

@@ -379,7 +379,7 @@ test('agent prints the token limit and the suggestion behind it; task show print
   assert.equal(formatResult('agent', { id: 3, tier: 'small', taskId: 9, limit: 300000, suggestion: { tokens: 300000, n: 2, enough: false } }),
     'tile 3  [small]  task 9\ntoken limit 300k; suggestion: not enough history (2 of 5 tasks), using the tier default');
   const out = formatResult('task', { sub: 'show', id: 40, status: 'paused', tier: 'xsmall', attempts: 1, text: 'Fix it', owner: { id: 22, title: 'fix' }, tokens: 48000, limit: 150000, note: null, askText: 'paused: is stuck; waiting for the user' });
-  assert.equal(out, '40  paused  xsmall  22 fix\nFix it\ntokens 48k · limit 150k\npaused: is stuck; waiting for the user\nOnly the user answers this, on the board. Do not move the task up or restart it yourself.');
+  assert.equal(out, '40  paused  xsmall  22 fix\nFix it\ntokens 48k · limit 150k\npaused: is stuck; waiting for the user\nOnly the user answers this, on the card Operant shows. Do not move the task up or restart it yourself.');
 });
 
 test('run says the tile only started, and how to get the outcome; --json and the other tile commands are unchanged', async () => {

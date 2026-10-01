@@ -11,11 +11,14 @@ const LEARN_MIN_N = 5, LEARN_MIN_RATE = 0.5;
 const REASON_TEXT = { busy: 'was busy', quota: 'was out of free use', failed: 'failed this kind of task before', unavailable: 'is not set up' };
 
 const QUOTA = /quota|usage limit|limit (reached|exceeded)|free (usage|tier|use)|insufficient|exhausted|out of (free )?(use|credits)/i;
-const BUSY = /\b(429|502|503|504|529)\b|rate.?limit|too many requests|overload|capacity|timed? ?out|timeout|exceeded|unavailable|busy/i;
+const BUSY = /\b(429|500|502|503|504|529)\b|rate.?limit|too many requests|overload|capacity|timed? ?out|timeout|exceeded|unavailable|busy|server_error/i;
+// OpenAI (Codex) and Gemini quota errors that come with a 429: the plan or the day's quota is used up, not a short rate limit.
+const PLAN_QUOTA = /insufficient_quota|exceeded your current quota|hit your usage limit|usage limit reached|daily quota|quota exceeded for quota metric.*per ?day|per day per/i;
 // Error text -> 'quota' (free use used up), 'busy' (rate limited, overloaded, timed out) or null (not a route problem).
 function classifyFailure(text) {
   const s = String(text || '');
-  if (/rate.?limit|too many requests|429/i.test(s) && !/free (usage|use|tier)/i.test(s)) return 'busy';
+  if (PLAN_QUOTA.test(s)) return 'quota';
+  if (/rate.?limit|too many requests|\b429\b|RESOURCE_EXHAUSTED/i.test(s) && !/free (usage|use|tier)/i.test(s)) return 'busy';
   if (QUOTA.test(s)) return 'quota';
   return BUSY.test(s) ? 'busy' : null;
 }
@@ -54,6 +57,7 @@ function createHealth({ now = Date.now, cooldownMs = COOLDOWN_MS } = {}) {
 }
 
 // A tier's routes in order: its own model first, then the fallbacks. The local route takes the local model's name.
+// Routes stay on the tier's CLI: team-tiers.js cliTiers has already left out fallbacks on another CLI.
 function routesOf(tier, localModel) {
   if (!tier) return [];
   const own = { agent: tier.agent, model: tier.model, ...(tier.effort ? { effort: tier.effort } : {}) };
@@ -124,21 +128,13 @@ function overlay(tiers, ctx) {
   for (const [name, t] of Object.entries(tiers)) out[name] = t && t.model ? resolve(t, ctx) : t;
   return out;
 }
-// The same for a { claude, opencode } map of per-mode results ({ tiers, removed, empty }).
+// The same for a { claude, opencode, ... } map of per-CLI results ({ tiers, removed, empty }).
 function overlayModes(modes, ctx) {
   const out = {};
   for (const [k, m] of Object.entries(modes || {})) out[k] = m && m.tiers ? { ...m, tiers: overlay(m.tiers, ctx) } : m;
   return out;
 }
 
-// The one-click change offered by config-migrate.js: the tier runs Big Pickle first and keeps what it ran before as its fallback.
-function useBigPickle(tier, agentId = 'opencode') {
-  if (!tier || tier.model === FREE_MODEL) return tier;
-  const before = { agent: tier.agent, model: tier.model, ...(tier.effort ? { effort: tier.effort } : {}) };
-  const { effort, ...rest } = tier;
-  return { ...rest, agent: agentId, model: FREE_MODEL, fallbacks: [before, ...(tier.fallbacks || []).filter(r => r.model !== tier.model)] };
-}
-
-const api = { useBigPickle, FREE_MODEL, COOLDOWN_MS, REASON_TEXT, classifyFailure, isFreeRoute, keyOf, labelOf, createHealth, routesOf, failedBefore, resolve, forTask, overlay, overlayModes };
+const api = { FREE_MODEL, COOLDOWN_MS, REASON_TEXT, classifyFailure, isFreeRoute, keyOf, labelOf, createHealth, routesOf, failedBefore, resolve, forTask, overlay, overlayModes };
 if (typeof module !== 'undefined') module.exports = api; else globalThis.TierRoutes = api;
 })();

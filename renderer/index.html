@@ -44,7 +44,6 @@
       <span class="pill" id="stat-agents" title="Agents working / idle, subagents finished"></span>
       <button class="icon-btn" id="btn-new" title="New agent (Alt+N)">＋</button>
       <button class="icon-btn" id="btn-notifs" title="Notifications (Alt+I)"><svg viewBox="0 0 16 16"><path d="M8 1.3a4.3 4.3 0 0 0-4.3 4.3v2.1c0 .5-.2 1-.5 1.5l-.9 1.2a.9.9 0 0 0 .7 1.4h9.9a.9.9 0 0 0 .7-1.4l-.9-1.2a2.6 2.6 0 0 1-.5-1.5V5.6A4.3 4.3 0 0 0 8 1.3z" fill="currentColor"/><path d="M6.3 12.8a1.7 1.7 0 0 0 3.4 0z" fill="currentColor"/></svg><span class="badge hidden" id="notif-badge"></span></button>
-      <button class="icon-btn" id="btn-board" title="Tasks"><svg viewBox="0 0 16 16"><path d="M3 2.5h10a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm1.5 3v1.4h7V5.5zm0 3v1.4h7V8.5zm0 3v.9h4v-.9z" fill="currentColor"/></svg><span class="badge hidden" id="board-badge"></span></button>
       <button class="icon-btn" id="btn-gear" title="Quick menu">⚙</button>
       <div class="wc">
         <button id="wc-min" title="Minimize">─</button>
@@ -117,13 +116,6 @@
     <div class="card qm-card notif-card health-card">
       <div class="card-head notif-head"><h2>Health</h2><button class="link" id="health-refresh">Check again</button></div>
       <div class="card-body" id="health-body"></div>
-    </div>
-  </div>
-
-  <div id="board" class="overlay anchor hidden">
-    <div class="card qm-card notif-card board-card">
-      <div class="card-head notif-head"><h2>Tasks</h2><button class="link" id="board-view" title="Group tasks by status or by seat">By seat</button><button class="link" id="board-clear-done">Clear done</button><button class="link" id="board-clear">Clear all</button></div>
-      <div class="card-body" id="board-body"></div>
     </div>
   </div>
 
@@ -242,6 +234,7 @@
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+  <script src="../cli-registry.js"></script>
   <script src="../team-tiers.js"></script>
   <script src="../tier-routes.js"></script>
   <script src="../agent-settings.js"></script>

@@ -73,7 +73,7 @@ const COMMANDS = {
   pods: { group: 'operations', usage: 'operant pods', desc: 'the pods (seats that share one brief, stored once): id, seats, brief', examples: ['operant pods'], flags: [] },
   pod: { group: 'operations', usage: 'operant pod set <id> --brief "<text>"', desc: "set a pod's shared brief (project facts and rules); every seat in the pod gets it once per launch", examples: ['operant pod set feature --brief "Use CodeGraph first. Never commit."'], flags: ['brief'] },
   norms: { group: 'operations', usage: 'operant norms [exploratory|trust-but-verify]', desc: "the project's team norms: exploratory (looser verification, cheapest tiers) or trust but verify (full verification, independent review on high risk; the default). With a preset, sets it for this project", examples: ['operant norms', 'operant norms exploratory'], flags: [] },
-  seat: { group: 'operations', usage: 'operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]  |  operant seat adopt <id> --tile <tile>  |  operant seat add <id> [--role r] [--tier t] [--kind normal|hard|master]  |  operant seat remove <id> [--force]', desc: "one seat's details and history; set changes its default tier or standing guidance; adopt attaches a running Claude Code or Codex tile to the seat without restarting it or sending it anything", examples: ['operant seat planner', 'operant seat set explorer --tier free', 'operant seat adopt planner --tile 12', 'operant seat add security --role security --tier small', 'operant seat remove security'], flags: ['tier', 'guidance', 'tile', 'role', 'kind', 'force'] },
+  seat: { group: 'operations', usage: 'operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]  |  operant seat adopt <id> --tile <tile>  |  operant seat add <id> [--role r] [--tier t] [--kind normal|hard|master]  |  operant seat remove <id> [--force]', desc: "one seat's details and history; set changes its default tier or standing guidance; adopt attaches a running Claude Code, Codex or Gemini CLI tile to the seat without restarting it or sending it anything", examples: ['operant seat planner', 'operant seat set explorer --tier free', 'operant seat adopt planner --tile 12', 'operant seat add security --role security --tier small', 'operant seat remove security'], flags: ['tier', 'guidance', 'tile', 'role', 'kind', 'force'] },
   doctor: { group: 'operations', usage: 'operant doctor', desc: 'health of providers, credentials (present or not, never printed), versions, MCP, local model, the local store and context providers: healthy, degraded, unavailable, not configured or unknown', examples: ['operant doctor'], flags: [] },
   providers: { group: 'operations', usage: 'operant providers', desc: 'the configured agent CLIs: installed, credentials present, state', examples: ['operant providers'], flags: [] },
   models: { group: 'operations', usage: 'operant models', desc: 'each team tier with its model, recorded availability and latency, and state, then every known model with provider, cost tier, context window, tools and reasoning', examples: ['operant models'], flags: [] },
@@ -140,11 +140,11 @@ const TOPICS = {
     'Keep .operant/progress.md current (done, next, open questions); operant prime hands it back after a compact.',
   ].join('\n'),
   'fan-out': [
-    'Hand out work as one master worker per CLI (Claude, OpenCode), not one tile per task: it runs the parts',
-    'as its own subagents in parallel. Keep to about 4 worker tiles unless the user asks for more.',
+    'A team runs on one CLI, the project\'s: hand out work as one worker of that CLI, not one tile per task;',
+    'it runs the parts as its own subagents in parallel. Keep to about 4 worker tiles unless the user asks.',
     '',
     '  operant agent "<brief>" --tier <name> --title "<3-5 words>"   a worker on that tier, its board task added',
-    '  operant agent "<brief>" --title w1    no tier: pick the agent or model with --agent <id> or --model <id>',
+    '  operant agent "<brief>" --title w1    no tier: --agent <id> or --model <id>, on the team\'s CLI only',
     '  operant task add "<text>"    puts work on the board for the user to see; operant board lists it',
     'A worker knows only its brief, so make it self-contained:',
     '  - the goal, and the files it owns (and any it must leave alone)',
@@ -155,7 +155,7 @@ const TOPICS = {
     'operant read <id> --new to check, operant stop <id> if it is off task, and tell the user.',
     'A worker done waits in review: check it (operant diff, the files), then operant task approve <id>',
     'or operant task reject <id> --note "<why>". A reject or failure gets one retry in the same tile, then',
-    'the task is paused and the user asked on the board (move up, retry with a hint, take over, stop);',
+    'the task is paused and the user asked on screen (move up, retry with a hint, take over, stop);',
     'a stuck worker or a spent token limit (--budget) pauses it too. operant task show <id> says why.',
     'Never move a task up or restart it yourself.',
     'After approving, operant close <id>. Never restart a stopped worker.',
@@ -184,11 +184,13 @@ const TOPICS = {
     '(agent, model, what it is for) and the workers running.',
     '',
     '  Use only the tiers listed (the user sets the top one with the slider); do only what fits no tier yourself.',
-    '  A tier on your own CLI (Claude Code on a claude tier, OpenCode on an opencode tier): use your own',
-    '  subagents with that model, not a tile (Claude Code: the Agent tool, model set to an alias such as sonnet).',
-    '  A tier on the other CLI: operant agent "<self-contained task>" --tier <name> --title "<3-5 words>".',
-    '  One call per CLI (one master worker), with all of its tasks as one numbered prompt, each with its tier,',
-    '  told to run each task as its own subagent in parallel and to start its note with a TL;DR.',
+    '  Every tier is on your own CLI (the project\'s team CLI; a team never mixes CLIs): use your own',
+    '  subagents with that model, not a tile (Claude Code: the Agent tool, model set to an alias such as sonnet;',
+    '  OpenCode: the tier-<name> subagent). Codex and Gemini CLI have no subagent tool: the lead is the one master',
+    '  and gives each numbered part one worker tile, operant agent --tier <name> --title "<n>/<total> <words>".',
+    '  A task that needs its own tile and board task:',
+    '  operant agent "<self-contained task>" --tier <name> --title "<3-5 words>", one worker of the same CLI',
+    '  for all of them, told to run each as its own subagent in parallel and to start its note with a TL;DR.',
     '  Big reads and searches: operant summarize <file|tile-id|url> "<question>" or operant find "<question>"',
     '  hand them to the xsmall tier and return only the answer, so you never load it yourself.',
     '  Check each worker result before you accept it, then operant close <id>.',
@@ -503,7 +505,7 @@ function fmtTaskShow(r) {
   if (r.failureClass) lines.push(`failure: ${r.failureClass.kind} (${r.failureClass.evidence})`);
   for (const c of r.changes || []) lines.push(`retry ${c.attempt}: changed ${c.kind}: ${c.text}`);
   if (r.signals) lines.push(`signals (suggestion only, moving up always asks the user): ${[r.signals.up.length ? 'consider a higher tier: ' + r.signals.up.join('; ') : '', r.signals.down.length ? 'could run on a lower tier: ' + r.signals.down.join('; ') : ''].filter(Boolean).join(' · ')}`);
-  if (r.askText) lines.push(r.askText, 'Only the user answers this, on the board. Do not move the task up or restart it yourself.');
+  if (r.askText) lines.push(r.askText, 'Only the user answers this, on the card Operant shows. Do not move the task up or restart it yourself.');
   return lines.join('\n');
 }
 
@@ -526,7 +528,7 @@ function formatResult(cmd, result, opts) {
       if (!result.enabled) return 'team mode: disabled (Settings › Agents › Team)';
       const lines = [`team mode: enabled  ·  ${result.workers}/${result.maxWorkers} workers running`];
       for (const [name, t] of Object.entries(result.tiers || {})) lines.push(`  ${name}: ${t.agent} ${t.model}${t.effort ? ` (${t.effort} effort)` : ''}${t.fallback ? ` (${t.fallback})` : ''}${Array.isArray(t.routes) ? ` [routes: ${t.routes.join(' > ')}]` : ''}  —  ${t.use}`);
-      if (result.askBeforeMoveUp) lines.push('a task never moves up a tier by itself: a stuck worker, a second failure or rejection, or a spent limit pauses it until the user answers on the board');
+      if (result.askBeforeMoveUp) lines.push('a task never moves up a tier by itself: a stuck worker, a second failure or rejection, or a spent limit pauses it until the user answers on the card Operant shows');
       return lines.join('\n');
     }
     case 'test': case 'build': return result.digest ? fmtDigest(result.digest) : sq(result.text || '(no output)');

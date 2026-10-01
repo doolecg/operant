@@ -129,3 +129,13 @@ test('every validation range and enum names a real setting, and its default pass
     assert.deepStrictEqual(validatePatch({ [k]: defaults[k] }, defaults), [], k + ' default must be valid');
   }
 });
+
+// Every CLI in cli-registry.js is a built-in agent, so Settings' tier rows (which list cfg.agents) offer all four,
+// and nothing strips Codex or Gemini from a saved config any more.
+test('the default agents are the registry CLIs, each with its install command, and none is stripped on load', () => {
+  const reg = require('../cli-registry.js');
+  const from = defText.indexOf('\n  agents:'), agents = defText.slice(from, defText.indexOf('\n  ],', from));
+  for (const id of reg.IDS) assert.ok(agents.includes(`id: '${id}'`) && agents.includes(`install: '${reg.CLIS[id].install}'`), id);
+  assert.doesNotMatch(mainSrc, /dropRemoved/);
+  assert.match(settingsSrc, /data-team-f="\$\{id\}\.agent">\$\{cfg\.agents\.map/);
+});

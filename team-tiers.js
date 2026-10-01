@@ -1,6 +1,7 @@
 (function () {
-// Team tiers follow the default agent. Claude Code (and any other agent) uses the tiers set in
-// Settings › Agents › Team. OpenCode builds its own from the models it can reach: the free Zen
+const Reg = typeof module !== 'undefined' ? require('./cli-registry') : globalThis.CliRegistry;
+// Team tiers follow the team's CLI. Claude Code (and any other agent) uses the tiers set in
+// Settings › Agents › Team that run on it. OpenCode builds its own from the models it can reach: the free Zen
 // models have no effort variants, so they give one tier; a paid Zen or OpenAI model with variants
 // (low … xhigh) adds a tier per variant.
 const FREE_MODEL = 'opencode/big-pickle';
@@ -28,7 +29,8 @@ function reasoningModel(models) {
 
 function opencodeTiers(models, base, agentId) {
   const use = n => base[n]?.use || '';
-  const own = base.xsmall?.agent === agentId && base.xsmall.model;
+  // xsmall keeps a model of OpenCode's own that it can reach (models null = unknown, so assume it can).
+  const own = base.xsmall?.agent === agentId && (!models || models.some(m => `${m.providerID}/${m.id}` === base.xsmall.model)) && base.xsmall.model;
   // Fallback routes that OpenCode itself can run (the local model, or another of its models) carry over.
   const keep = n => { const f = (base[n]?.fallbacks || []).filter(r => r.local || (r.agent || base[n].agent) === agentId); return f.length ? { fallbacks: f } : {}; };
   const tiers = {};
@@ -44,87 +46,70 @@ function opencodeTiers(models, base, agentId) {
   return tiers;
 }
 
-// Which of the configured tiers can run right now. `installed` maps agent id -> CLI found on PATH
-// (missing or true = assume it is); `models` is OpenCode's model list once read (null = unknown).
-// An OpenCode tier whose CLI or model is missing falls back to the nearest Claude tier of equal or
-// higher rank; a Claude tier with Claude missing falls back to OpenCode's derived tier for that slot,
-// or is dropped. A fallback tier carries `fallback: 'reason'`.
-function availableTiers({ base, agents, isOpenCode, isClaude, installed, models }) {
-  const names = Object.keys(base);
-  const agentOf = t => (agents || []).find(a => a.id === t.agent);
-  const has = t => !installed || installed[t.agent] !== false;
-  const kind = t => { const a = agentOf(t); return a && isOpenCode(a) ? 'oc' : a && isClaude && isClaude(a) ? 'cl' : 'other'; };
-  const ocModelIds = models ? new Set(models.map(m => `${m.providerID}/${m.id}`)) : null;
-  const problem = t => {
-    if (!has(t)) return kind(t) === 'oc' ? 'OpenCode not installed' : kind(t) === 'cl' ? 'Claude Code not installed' : `${t.agent} not installed`;
-    if (kind(t) === 'oc' && ocModelIds && t.model && !ocModelIds.has(t.model)) return `${t.model} not available in OpenCode`;
-    return null;
-  };
-  const ocAgent = (agents || []).find(a => isOpenCode(a) && installed?.[a.id] !== false);
-  const derived = ocAgent && (!models || models.length) ? opencodeTiers(models, base, ocAgent.id) : null;
-  const out = {};
-  let changed = false;
-  names.forEach((name, i) => {
-    const t = base[name], why = problem(t);
-    if (!why) { out[name] = t; return; }
-    changed = true;
-    if (kind(t) === 'oc') {
-      for (const n of names.slice(i)) {
-        const c = base[n];
-        if (kind(c) === 'cl' && !problem(c)) { out[name] = { ...c, use: t.use, fallback: why }; return; }
-      }
-    } else if (kind(t) === 'cl' && derived?.[name]) out[name] = { ...derived[name], fallback: why };
-  });
-  return changed ? out : base;
+// Codex and Gemini start from the tier table in cli-registry.js (a model, and for Codex an effort, per tier), with
+// the `use` text of the configured tiers.
+function registryTiers(cli, base, agentId) {
+  const tiers = {};
+  for (const [name, t] of Object.entries(Reg.get(cli)?.tiers || {})) tiers[name] = { agent: agentId, ...t, use: base[name]?.use || '' };
+  return tiers;
 }
 
-function activeTiers({ team, agents, defaultAgent, isOpenCode, isClaude, models, installed }) {
-  const base = team?.tiers || {};
-  const agent = (agents || []).find(a => a.id === defaultAgent) || (agents || [])[0];
-  if (agent && isOpenCode(agent)) return opencodeTiers(models, base, agent.id);
-  return availableTiers({ base, agents, isOpenCode, isClaude, installed, models });
-}
-
-// Per-project agent choice (item 82): mode is 'both' (default), 'claude' or 'opencode'. `tiers` are the tiers that
-// can run now (availableTiers output); isClaude(tier) / isOpenCode(tier) say which CLI a tier runs on. A tier the mode
-// rules out is swapped for the nearest tier of equal or higher rank on the allowed CLI (carrying its `use` and a
-// `fallback` reason), or, for OpenCode only, OpenCode's own tier for that slot (`derived`, from opencodeTiers).
-// Nothing else is invented: a slot with no allowed tier is dropped and listed in `removed`; `empty` = nothing left.
-const AGENT_MODES = ['both', 'claude', 'opencode'];
-const MODE_LABEL = { both: 'Claude and OpenCode', claude: 'Claude only', opencode: 'OpenCode only' };
-function tiersForMode(tiers, mode, { isClaude, isOpenCode, derived } = {}) {
-  const names = Object.keys(tiers || {});
-  if (mode !== 'claude' && mode !== 'opencode') return { tiers: tiers || {}, removed: [], empty: !names.length };
-  const kind = t => (isOpenCode?.(t) ? 'opencode' : isClaude?.(t) ? 'claude' : 'other');
+// Single-CLI teams: a team runs on one CLI, the project's lead CLI (cli-registry.js leadCli), and only on that CLI's
+// tiers. `installed` maps agent id -> CLI found on PATH (missing or true = assume it is); `models` is OpenCode's model
+// list once read (null = unknown). A configured tier on this CLI is kept, with its fallback routes on other CLIs left
+// out (the local model only for OpenCode). A slot on another CLI, or one that can't run, takes the first of its own
+// fallback routes that is on this CLI (marked with `fallback`), or its derived tier (OpenCode: opencodeTiers; Codex and Gemini: registryTiers);
+// otherwise it is dropped and listed in `removed`. Nothing is borrowed from another CLI. `empty` = nothing left.
+const AGENT_MODES = Reg.IDS;
+function cliTiers(cli, { base, agents, installed, models } = {}) {
+  const names = Object.keys(base || {}), label = Reg.labelOf(cli);
+  const on = id => Reg.kindOf((agents || []).find(a => a.id === id)) === cli;
+  const has = id => !installed || installed[id] !== false;
+  const ocIds = cli === 'opencode' && models ? new Set(models.map(m => `${m.providerID}/${m.id}`)) : null;
+  const ok = r => on(r.agent) && has(r.agent) && !(ocIds && r.model && !ocIds.has(r.model));
+  const own = (agents || []).find(a => Reg.is(a, cli) && has(a.id));
+  const derived = !own ? null : cli === 'opencode' ? ((!models || models.length) ? opencodeTiers(models, base, own.id) : null)
+    : Reg.get(cli)?.tiers ? registryTiers(cli, base, own.id) : null;
   const out = {}, removed = [];
-  names.forEach((name, i) => {
-    const t = tiers[name];
-    if (kind(t) === mode) { out[name] = t; return; }
-    // A tier whose first route is on the other CLI can still run on a fallback route that is on this one.
-    const promote = c => { const r = kind(c) === mode ? c : (c.fallbacks || []).find(f => !f.local && kind({ agent: f.agent || c.agent }) === mode); return !r ? null : r === c ? c : { ...c, agent: r.agent || c.agent, model: r.model, effort: r.effort, fallbacks: undefined }; };
-    const sub = (mode === 'opencode' && derived?.[name] && kind(derived[name]) === 'opencode' ? derived[name] : null)
-      || names.slice(i).map(n => promote(tiers[n])).find(Boolean);
-    if (sub) out[name] = { ...sub, use: t.use, fallback: MODE_LABEL[mode] };
+  for (const name of names) {
+    const t = base[name];
+    const routes = (t.fallbacks || []).filter(r => (r.local ? cli === 'opencode' : ok({ ...r, agent: r.agent || t.agent })));
+    if (ok(t)) {
+      if (routes.length === (t.fallbacks || []).length) out[name] = t;
+      else { const { fallbacks, ...rest } = t; out[name] = routes.length ? { ...rest, fallbacks: routes } : rest; }
+      continue;
+    }
+    const why = !on(t.agent) ? `${label} team` : !has(t.agent) ? `${label} not installed` : `${t.model} not available in ${label}`;
+    const r = routes.find(f => !f.local);
+    if (r) {
+      const { effort, fallbacks, ...rest } = t, after = routes.slice(routes.indexOf(r) + 1);
+      out[name] = { ...rest, agent: r.agent || t.agent, model: r.model, ...(r.effort ? { effort: r.effort } : {}), ...(after.length ? { fallbacks: after } : {}), fallback: why };
+    } else if (derived?.[name]) out[name] = { ...derived[name], use: t.use || derived[name].use, ...(on(t.agent) ? { fallback: why } : {}) };
     else removed.push(name);
-  });
+  }
   return { tiers: out, removed, empty: !Object.keys(out).length };
 }
 
-// `operant agent --agent/--model/--tier` that names the other CLI than the project's mode allows -> the error text, else null.
-// kind: 'claude' | 'opencode' | 'other' for what was named.
-function modeConflict(mode, what, kind) {
-  if ((mode !== 'claude' && mode !== 'opencode') || kind === mode || (kind !== 'claude' && kind !== 'opencode')) return null;
-  return `this project is set to ${MODE_LABEL[mode]}, and ${what} runs on ${kind === 'claude' ? 'Claude' : 'OpenCode'} - change it in the project's sidebar menu (Agents) or Settings › Agents`;
+// The default agent's team tiers (Settings and the gear slider). OpenCode builds its set from its models.
+function activeTiers({ team, agents, defaultAgent, models, installed }) {
+  const base = team?.tiers || {};
+  const agent = (agents || []).find(a => a.id === defaultAgent) || (agents || [])[0];
+  if (agent && Reg.is(agent, 'opencode')) return opencodeTiers(models, base, agent.id);
+  return cliTiers(Reg.kindOf(agent), { base, agents, installed, models }).tiers;
 }
 
-// The tiers for each single-CLI mode, from the configured tiers (not the default agent's set), for main to keep in config.
-function tiersByMode({ base, agents, isOpenCode, isClaude, installed, models }) {
-  const avail = availableTiers({ base, agents, isOpenCode, isClaude, installed, models });
-  const agentOf = t => (agents || []).find(a => a.id === t.agent);
-  const kinds = { isOpenCode: t => { const a = agentOf(t); return !!a && isOpenCode(a); }, isClaude: t => { const a = agentOf(t); return !!a && !!isClaude && isClaude(a); } };
-  const oc = (agents || []).find(a => isOpenCode(a) && installed?.[a.id] !== false);
-  const derived = oc && models?.length ? opencodeTiers(models, base, oc.id) : null;
-  return { claude: tiersForMode(avail, 'claude', kinds), opencode: tiersForMode(avail, 'opencode', { ...kinds, derived }) };
+// `operant agent --agent/--model/--tier` that names another CLI than the project's team runs on -> the error text, else null.
+// kind: the CLI id of what was named, or 'other' (a custom agent or an unknown model, which is let through).
+function modeConflict(cli, what, kind) {
+  if (!kind || kind === 'other' || kind === cli || !Reg.get(kind)) return null;
+  return `this project's team runs on ${Reg.labelOf(cli)}, and ${what} runs on ${Reg.labelOf(kind)}: a team uses one CLI - change the project's CLI in its sidebar menu (Agents) or Settings › Agents`;
+}
+
+// The team tiers for each CLI that has an agent set up ({ claude: { tiers, removed, empty }, opencode: ... }), for main to keep in config.
+function tiersByMode({ base, agents, installed, models }) {
+  const out = {};
+  for (const cli of Reg.IDS) if ((agents || []).some(a => Reg.is(a, cli))) out[cli] = cliTiers(cli, { base, agents, installed, models });
+  return out;
 }
 
 // `agent` entries for OpenCode's config: each OpenCode-run tier becomes a `tier-<name>` subagent
@@ -166,6 +151,6 @@ function suggestTier(prompt, tiers) {
   return { tier: names[idx], reason };
 }
 
-const api = { parseModels, reasoningModel, opencodeTiers, availableTiers, activeTiers, opencodeSubagents, mergeSubagents, suggestTier, tiersForMode, modeConflict, tiersByMode, AGENT_MODES, MODE_LABEL, FREE_MODEL };
+const api = { parseModels, reasoningModel, opencodeTiers, registryTiers, cliTiers, activeTiers, opencodeSubagents, mergeSubagents, suggestTier, modeConflict, tiersByMode, AGENT_MODES, FREE_MODEL };
   if (typeof module !== 'undefined') module.exports = api; else globalThis.TeamTiers = api;
 })();

@@ -2,6 +2,7 @@
 // or reshapes a saved key, add a migration here ({ to: N, run(user) }) and raise CURRENT by matching it.
 // A migration edits the copy it is given, and must be idempotent: a crash before the migrated file is saved
 // means it runs again on the next start.
+const CLI_IDS = require('./cli-registry').IDS; // the CLIs a project's team can run on
 const MIGRATIONS = [
   // Template: version 1 only establishes the version number, it changes nothing. A later one looks like
   //   { to: 2, run(user) { if ('oldKey' in user) { user.newKey ??= user.oldKey; delete user.oldKey; } } },
@@ -14,11 +15,13 @@ const MIGRATIONS = [
   } },
   // Gemma 3 can't call tools in Ollama, so it can't run a tier: a saved gemma3 local model goes back to the default.
   { to: 3, run(user) { if (/^gemma3(:|$)/.test(user.localModel?.model || '')) delete user.localModel.model; } },
-  // Big Pickle (free) is used first (item 96): an xsmall tier saved on a paid model is only OFFERED "Use Big Pickle"
-  // (Settings > Agents > Team, one click); nothing is switched here. The new free tier comes from the defaults.
-  { to: 4, run(user) {
-    const x = user.team?.tiers?.xsmall;
-    if (isPlain(x) && x.model && !/(^|\/)big-pickle$|-free$|^ollama\//i.test(x.model)) user.tierOffers = [...new Set([...(Array.isArray(user.tierOffers) ? user.tierOffers : []), 'use-big-pickle'])];
+  // Item 96 offered an xsmall tier on a paid model "Use Big Pickle" first. That put an OpenCode route in front of a
+  // Claude tier, and a team now runs on one CLI only, so the offer is gone (version 5 drops the saved offers list).
+  { to: 4, run() {} },
+  // Single-CLI teams: a project's team runs on one CLI. 'both' is gone; such a project follows its default agent's CLI.
+  { to: 5, run(user) {
+    delete user.tierOffers;
+    for (const d of Object.values(user.projectDefaults || {})) if (isPlain(d) && d.agents === 'both') delete d.agents;
   } },
 ];
 const CURRENT = MIGRATIONS[MIGRATIONS.length - 1].to;
@@ -147,13 +150,12 @@ function validatePatch(patch, defaults, opts = {}) {
       if (new Set(v.map(a => a.id)).size !== v.length) { bad(key, 'agents with different ids'); continue; }
     }
     if (key === 'localModel' && !(isPlain(v) && (v.model === undefined || (typeof v.model === 'string' && /^[A-Za-z0-9._\/-]+(:[A-Za-z0-9._-]+)?$/.test(v.model))))) { bad(key, 'an Ollama model name like gemma4:e4b'); continue; }
-    if (key === 'tierOffers' && v.some(o => typeof o !== 'string')) { bad(key, 'a list of offer names'); continue; }
     if (key === 'team') teamErrors(v, current.team || {}, agentIds, (expected, sub) => bad('team', expected, sub));
     if (key === 'projectDefaults') {
       for (const [p, d] of Object.entries(v)) {
         if (!isPlain(d)) { bad(key, 'per-project settings as objects'); break; }
         if (d.agent && d.agent !== current.projectDefaults?.[p]?.agent && !agentIds.has(d.agent)) { bad(key, 'an agent that exists', `"${d.agent}" is not one`); break; }
-        if (d.agents !== undefined && !['both', 'claude', 'opencode'].includes(d.agents)) { bad(key, 'agents as both, claude or opencode'); break; }
+        if (d.agents !== undefined && !CLI_IDS.includes(d.agents)) { bad(key, "the team's CLI as " + CLI_IDS.join(', ')); break; }
       }
     }
   }

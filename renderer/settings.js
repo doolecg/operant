@@ -102,7 +102,7 @@ const Panels = (() => {
       { key: 'updateWhenIdle', label: 'Wait for agents before updating', hint: 'Clicking Update while an agent is working installs once it finishes', type: 'toggle' },
       { key: 'saveQuitWaits', label: 'Let agents finish before Save and quit', hint: 'Asks working agents to save a progress note and stop at a safe point · Force quit skips it', type: 'toggle' },
       { key: 'showExternalAgents', label: 'Show subagents from other Claude Code and OpenCode sessions', hint: 'Your IDE, other terminals', type: 'toggle' },
-      { key: 'autoCloseDoneAgentsSeconds', label: 'Close finished agents after', hint: 'Seconds after you first see them · running agents never close · 0 = never', type: 'number', min: 0, max: 86400 },
+      { key: 'autoCloseDoneAgentsSeconds', label: 'Close finished agents after', hint: 'Seconds after you first see them, Claude workers after you read their result · running agents never close · 0 = never', type: 'number', min: 0, max: 86400 },
       { key: 'idleCloseTerminalMinutes', label: 'Close idle terminals after', hint: 'Minutes · 0 = never · the master and focused tile stay', type: 'number', min: 0, max: 1440 },
       { key: 'agentLookbackSeconds', label: 'Pick up agents started before launch', hint: 'Seconds · ' + RESTART, type: 'number', min: 0, max: 3600 },
       { key: 'typingGuardMode', label: 'Message for a tile you are typing in', hint: 'What `operant send` and `operant msg` do while you are typing in the target tile', type: 'select',
@@ -239,7 +239,7 @@ const Panels = (() => {
     'lineHeight', 'cursorStyle', 'cursorBlink', 'scrollback', 'gpuTerminals', 'hardwareAcceleration', 'clockSeconds', 'clockDate', 'barTitle', 'mediaSize',
     'shell', 'explorerOpensIn', 'linkBrowserCommand', 'secondBrowser', 'secondBrowserCommand', 'notifySubagents', 'notifyOnlyUnfocused',
     'updateChannel', 'updateCheckHours', 'opencodeTheme', 'installSkill', 'briefAgents', 'longCommandHook', 'shareSetup',
-    'masterRatio', 'maxTilesPerWorkspace', 'moveFollowsTile', 'updateWhenIdle', 'saveQuitWaits', 'showExternalAgents', 'autoCloseDoneAgentsSeconds',
+    'masterRatio', 'maxTilesPerWorkspace', 'moveFollowsTile', 'updateWhenIdle', 'saveQuitWaits', 'showExternalAgents',
     'idleCloseTerminalMinutes', 'agentLookbackSeconds', 'stuckTurns', 'runawayLoopRepeats', 'runawayTokens', 'runawayMinutes', 'runawaySubagents',
     'sidebarWidth', 'sidebarHiddenFiles', 'ideCommand', 'configOpensIn', 'editorCommand', 'codegraphChangedFiles', 'codegraphButtons',
     'usageSeries', 'planLimitAlerts', 'contextBadge', 'tileTokens', 'cacheTtlMinutes', 'compactBeforeCold']);
@@ -483,13 +483,6 @@ const Panels = (() => {
     return `<div class="set-row"><div class="lbl">Routes this week<span class="hint">Each tier tries its routes in order: the next one only when the first was busy, out of free use, or this kind of task kept failing there. Tasks, tokens and cost saved are from this week's finished tasks</span>
       <span class="hint">${lines.length ? lines.join('<br>') : (d ? 'No tasks this week yet' : 'Reading this week…')}</span></div></div>`;
   }
-  // Item 96: after a config migration, an xsmall tier on a paid model is offered Big Pickle first; nothing is switched until the click.
-  function bigPickleOffer(cfg) {
-    if (!(cfg.tierOffers || []).includes('use-big-pickle')) return '';
-    const x = (cfg.team && cfg.team.tiers && cfg.team.tiers.xsmall) || {};
-    return `<div class="set-row"><div class="lbl">Use Big Pickle first<span class="hint">Your xsmall tier runs ${esc(TeamRouteLabel(x.model || ''))}. Big Pickle is free: with this change xsmall runs it first and goes to ${esc(TeamRouteLabel(x.model || ''))} only when Big Pickle is busy, out of free use, or this kind of task kept failing there</span></div>
-        <div class="ctl"><button class="btn primary" data-offer-use-bp>Use Big Pickle</button><button class="btn" data-offer-dismiss>Not now</button></div></div>`;
-  }
   const TeamRouteLabel = id => (typeof TierRoutes !== 'undefined' ? TierRoutes.labelOf({ model: id }) : id);
   // Item 94: the team settings, one row each, worded by agent-settings.js. Every row: short label, what it does for
   // you, the value in effect and when it applies, its warnings, a Reset when it differs from the default, and its
@@ -525,18 +518,18 @@ const Panels = (() => {
       case 'localModel': return `<div data-sid="localModel">${localModelBlock(cfg, ext)}</div>`;
       case 'routing': {
         const def = cfg.agents.find(a => a.id === cfg.defaultAgent) || cfg.agents[0];
-        const ocNote = def && /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(String(def.command || '').trim().split(/\s+/)[0])
+        const ocNote = def && CliRegistry.is(def, 'opencode')
           ? `<div class="set-row"><div class="lbl">OpenCode tiers<span class="hint">OpenCode is your default agent, so its tiers come from the models it can reach: ${esc(Object.entries(cfg.teamTiers || {}).map(([n, t]) => `${n} ${t.model}${t.effort ? ' · ' + t.effort : ''}`).join(', ') || 'reading its models…')}. Free Zen models have no effort levels, so they give one tier; a paid Zen or OpenAI model adds one per effort level. The tiers under Advanced apply when another agent is the default.</span></div></div>` : '';
         const fb = ocNote ? [] : Object.entries(cfg.teamTiers || {}).filter(([, t]) => t.fallback);
         const fbNote = fb.length ? `<div class="set-row"><div class="lbl">Fallbacks in use<span class="hint">${esc(fb.map(([n, t]) => `${n}: ${t.agent} ${t.model}${t.effort ? ' · ' + t.effort : ''} (${t.fallback})`).join('; '))}</span></div></div>` : '';
-        return `<div data-sid="routing">${ocNote}${fbNote}${bigPickleOffer(cfg)}${routesBlock(cfg, ext)}</div>`;
+        return `<div data-sid="routing">${ocNote}${fbNote}${routesBlock(cfg, ext)}</div>`;
       }
     }
     if (it.sid.startsWith('tier.')) {
       const id = it.sid.slice(5), t = tiers[id] || {};
       return shell(`<select data-team-f="${id}.agent">${cfg.agents.map(a => `<option value="${esc(a.id)}"${a.id === t.agent ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
           <input data-team-f="${id}.model" value="${esc(t.model || '')}" placeholder="model id" spellcheck="false">
-          <select data-team-f="${id}.effort" title="Effort (Claude Code only)">${[['', 'Default effort'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']].map(([v, n]) => `<option value="${v}"${v === (t.effort || '') ? ' selected' : ''}>${n}</option>`).join('')}</select>`,
+          <select data-team-f="${id}.effort" title="Effort (Claude Code and Codex; OpenCode uses its model variant; Gemini CLI has none)">${[['', 'Default effort'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']].map(([v, n]) => `<option value="${v}"${v === (t.effort || '') ? ' selected' : ''}>${n}</option>`).join('')}</select>`,
         `<span class="hint">Use for (shown to the lead and taught in the skill): <input data-team-f="${id}.use" value="${esc(t.use || '')}" placeholder="what this tier is for" spellcheck="false" style="width:100%"></span>`);
     }
     if (it.sid.startsWith('budget.')) {
@@ -871,8 +864,6 @@ const Panels = (() => {
       });
       pane.querySelectorAll('[data-team-apply]').forEach(b => b.onclick = async () => { if (await ext.applyLimitSuggestions()) draw(); });
       bindLocalCard(pane, cfg, set, ext);
-      pane.querySelectorAll('[data-offer-use-bp]').forEach(b => b.onclick = () => ext.useBigPickle());
-      pane.querySelectorAll('[data-offer-dismiss]').forEach(b => b.onclick = () => set('tierOffers', (cfg.tierOffers || []).filter(o => o !== 'use-big-pickle')));
       pane.querySelectorAll('[data-team-top]').forEach(el => el.onchange = () => set('team', { ...(cfg.team || {}), maxTier: el.value }));
       pane.querySelectorAll('[data-team-f]').forEach(el => el.onchange = () => {
         const [tierId, field] = el.dataset.teamF.split('.');
@@ -954,5 +945,6 @@ const Panels = (() => {
   // An old tab name (now a group) opens its new tab, scrolled to that group.
   const showTab = t => { [tab, scrollTo] = tabFor(t); query = ''; };
 
-  return { renderSettings, refreshLocalCard, noteLaunch, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
+  const resetSearch = () => { query = ''; const s = document.querySelector('#settings-body .set-search'); if (s) s.value = ''; };
+  return { resetSearch, renderSettings, refreshLocalCard, noteLaunch, renderKeys, actionName, pretty, settingsTab, settingsIndex, showSetting, showTab, GROUPS };
 })();

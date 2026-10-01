@@ -7,13 +7,13 @@ const path = require('node:path');
 const { formatPrime, subagentBrief, readLocal, BUDGET } = require('../bin/operant-prime.js');
 
 const tiers = {
-  xsmall: { agent: 'opencode', model: 'opencode/big-pickle', use: 'very easy tasks: look things up, renames' },
+  xsmall: { agent: 'claude', model: 'claude-haiku-4-5', use: 'very easy tasks: look things up, renames' },
   small: { agent: 'claude', model: 'claude-sonnet-5-5', use: 'a feature across a few files, a normal bug fix' },
 };
 const lead = (over = {}) => ({
   v: '1.19.0', role: 'lead',
   tile: { id: 7, kind: 'ai', title: 'Claude Code', project: 'F:/code/Operant', branch: 'dev-1.19.0', agent: 'claude' },
-  team: { enabled: true, tiers, maxWorkers: 4, workers: 1 },
+  team: { enabled: true, tiers, maxWorkers: 4, workers: 1, agents: 'Claude Code' },
   tiles: [{ id: 7, kind: 'ai', title: 'Claude Code' }, { id: 5, kind: 'shell', title: 'npm run dev', busy: true },
     { id: 8, kind: 'ai', title: 'worker', tier: 'xsmall', taskId: 12 }],
   ports: [{ id: 5, title: 'npm run dev', url: 'http://localhost:5173' }],
@@ -28,11 +28,13 @@ test('a lead with team mode on gets the tiers and the routing rule', () => {
   assert.match(text, /lead agent in tile 7 \(Claude Code\)/);
   assert.match(text, /project Operant · branch dev-1\.19\.0/);
   assert.match(text, /Team mode is on \(1\/4 workers running\)/);
-  assert.match(text, /xsmall\s+opencode opencode\/big-pickle - very easy tasks/);
+  assert.match(text, /xsmall\s+claude claude-haiku-4-5 as haiku - hand it: very easy tasks/);
+  assert.match(text, /small\s+claude claude-sonnet-5-5 as sonnet - hand it: a feature/);
   assert.match(text, /never above small/);
   assert.match(text, /only after it has reported back, and then straight away.*never leave a reported one open/);
   assert.match(text, /the Agent tool with `model`/);
-  assert.match(text, /one master worker for that CLI, never one tile per task/);
+  assert.match(text, /Every tier runs on your own CLI \(Claude Code\), and a team never mixes CLIs/);
+  assert.doesNotMatch(text, /master worker|\bother CLI/);
   assert.match(text, /8 ai "worker" · xsmall worker, task 12/);
   assert.doesNotMatch(text, /7 ai "Claude Code"/, 'its own tile is not listed');
   assert.match(text, /Dev servers: http:\/\/localhost:5173 \(tile 5\)/);
@@ -83,6 +85,7 @@ test('an OpenCode lead is not told about the Agent tool', () => {
   const text = formatPrime(lead({ tile: { ...lead().tile, agent: 'opencode' } }), {});
   assert.match(text, /lead agent in tile 7 \(OpenCode\)/);
   assert.doesNotMatch(text, /Agent tool/);
+  assert.match(text, /OpenCode: the `tier-<name>` subagent/);
 });
 
 test('a worker gets its task and how to report, not the team or the progress note', () => {
@@ -96,6 +99,31 @@ test('a worker gets its task and how to report, not the team or the progress not
   assert.match(text, /--note "TL;DR:/);
   assert.doesNotMatch(text, /Team mode|Progress note|Project memory/);
   assert.match(text, /CodeGraph index found/);
+});
+
+test('Codex and Gemini leads have no subagent tool: one master, numbered parts, worker tiles of the same CLI', () => {
+  for (const [cli, label] of [['codex', 'Codex'], ['gemini', 'Gemini CLI']]) {
+    const t = { xsmall: { agent: cli, model: 'm-mini', use: 'renames' }, small: { agent: cli, model: 'm', effort: 'low', use: 'a normal bug fix' } };
+    const text = formatPrime(lead({ tile: { id: 7, kind: 'ai', agent: cli, cli }, team: { enabled: true, tiers: t, maxWorkers: 3, workers: 0, agents: label } }), {});
+    assert.ok(text.includes(`lead agent in tile 7 (${label})`), label);
+    assert.match(text, /no subagent tool, so you are this team's one master/);
+    assert.match(text, /operant agent --tier <tier> --title "<n>\/<total> <3-5 words>"/);
+    assert.match(text, /up to 3 at once/);
+    assert.ok(text.includes(`Every tier runs on your own CLI (${label})`), label);
+    assert.doesNotMatch(text, /Agent tool|tier-<name>|own subagents with that model| as (haiku|sonnet|opus)/);
+    assert.match(text, /xsmall\s+\w+ m-mini - hand it: renames/);
+    const worker = formatPrime({ role: 'worker', tile: { id: 8, agent: cli, cli }, task: { id: 4, text: 'do it', tier: 'small' } }, {});
+    assert.match(worker, /Do its parts yourself, one at a time\. Workers can't start workers/);
+    assert.doesNotMatch(worker, /subagent/);
+    assert.ok(text.length <= BUDGET);
+  }
+});
+
+test('OpenCode leads hand parts to tier-<name> subagents, with no Claude aliases', () => {
+  const text = formatPrime(lead({ tile: { id: 7, kind: 'ai', agent: 'oc', cli: 'opencode' } }), {});
+  assert.match(text, /lead agent in tile 7 \(OpenCode\)/);
+  assert.match(text, /OpenCode: the `tier-<name>` subagent/);
+  assert.doesNotMatch(text, / as haiku|Agent tool/);
 });
 
 test('a shell tile says so', () => {

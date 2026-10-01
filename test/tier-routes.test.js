@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const R = require('../tier-routes');
 const { mergeUser, migrate, validatePatch, CURRENT } = require('../config-migrate');
 const { summarizeRoutes, summarizeRouteUse } = require('../outcomes');
-const { opencodeTiers, tiersForMode } = require('../team-tiers');
+const { opencodeTiers, tiersByMode } = require('../team-tiers');
 
 const BP = 'opencode/big-pickle';
 const HAIKU = 'claude-haiku-4-5';
@@ -26,6 +26,10 @@ test('failure text is sorted into busy, out of free use, or not a route problem'
   for (const s of ['429 Too Many Requests', 'Model is overloaded', 'request timed out', '503']) assert.equal(R.classifyFailure(s), 'busy', s);
   for (const s of ['free usage limit reached', 'quota exhausted', 'insufficient credits']) assert.equal(R.classifyFailure(s), 'quota', s);
   for (const s of ['', 'syntax error in file', 'permission denied']) assert.equal(R.classifyFailure(s), null, s);
+  // OpenAI (Codex) and Gemini: a used-up plan or day's quota is quota even with a 429; a per-minute limit is busy.
+  for (const s of ['You exceeded your current quota, please check your plan and billing details (429)', 'insufficient_quota',
+    "You've hit your usage limit. Upgrade or try again in 3 hours", 'RESOURCE_EXHAUSTED: Quota exceeded for quota metric requests per day per user']) assert.equal(R.classifyFailure(s), 'quota', s);
+  for (const s of ['429 RESOURCE_EXHAUSTED: requests per minute', 'stream error: 500 server_error', 'The model is overloaded. Please try again later. (503)']) assert.equal(R.classifyFailure(s), 'busy', s);
 });
 
 test('all routes healthy: the first one runs, and says so', () => {
@@ -109,12 +113,14 @@ test('overlay resolves every tier and every per-mode result; forTask re-picks a 
   assert.equal(R.forTask(R.overlay(tiers, { health: h }).xsmall, {}, 'docs').model, HAIKU, 'a health skip survives the per-task pick');
 });
 
-test('a Claude-only project runs xsmall and free on the Haiku route', () => {
-  const kinds = { isOpenCode: t => t.agent === 'opencode', isClaude: t => t.agent === 'claude' };
-  const r = tiersForMode(tiers, 'claude', kinds);
+test('a Claude team runs xsmall on its Claude route and has no OpenCode free tier', () => {
+  const agents = [{ id: 'claude', command: 'claude' }, { id: 'opencode', command: 'opencode' }];
+  const r = tiersByMode({ base: tiers, agents }).claude;
   assert.equal(r.tiers.xsmall.model, HAIKU);
-  assert.equal(r.tiers.free.model, HAIKU);
+  assert.equal(r.tiers.xsmall.agent, 'claude');
+  assert.equal(r.tiers.free, undefined);
   assert.equal(r.tiers.small.model, 'claude-sonnet-5-5');
+  assert.ok(R.routesOf(r.tiers.xsmall).every(x => x.agent === 'claude'), 'no route on another CLI');
 });
 
 test('OpenCode as the default agent still has a free tier and keeps its local fallback', () => {
@@ -124,24 +130,14 @@ test('OpenCode as the default agent still has a free tier and keeps its local fa
   assert.equal(t.xsmall.fallbacks, undefined, 'a Claude-only fallback is not carried to OpenCode');
 });
 
-test('config migration: a paid xsmall is only offered Big Pickle, never switched', () => {
-  assert.ok(CURRENT >= 4);
+test('config migration: a paid xsmall is not offered Big Pickle (another CLI), and a saved offer is dropped', () => {
+  assert.ok(CURRENT >= 5);
   const saved = { configVersion: 3, team: { tiers: { xsmall: { agent: 'claude', model: HAIKU, use: 'x' } } } };
   const m = migrate(saved);
-  assert.deepEqual(m.user.tierOffers, ['use-big-pickle']);
+  assert.equal(m.user.tierOffers, undefined);
   assert.equal(m.user.team.tiers.xsmall.model, HAIKU, 'nothing switched');
-  assert.equal(migrate(m.user).changed, false, 'runs once');
-  assert.equal(migrate({ configVersion: 3, team: { tiers: { xsmall: { agent: 'opencode', model: BP } } } }).user.tierOffers, undefined);
-  assert.equal(migrate({ configVersion: 3 }).user.tierOffers, undefined);
-});
-
-test('the one-click change: Big Pickle first, the old model kept as the fallback', () => {
-  const t = R.useBigPickle({ agent: 'claude', model: HAIKU, effort: 'low', use: 'x' }, 'opencode');
-  assert.equal(t.model, BP);
-  assert.equal(t.agent, 'opencode');
-  assert.equal(t.effort, undefined);
-  assert.deepEqual(t.fallbacks, [{ agent: 'claude', model: HAIKU, effort: 'low' }]);
-  assert.equal(R.resolve(t, { health: downBP('429') }).model, HAIKU);
+  assert.equal(migrate({ configVersion: 4, tierOffers: ['use-big-pickle'] }).user.tierOffers, undefined);
+  assert.equal(R.useBigPickle, undefined);
 });
 
 test('saved tiers keep the new free tier from the defaults, ahead of xsmall', () => {
@@ -151,14 +147,13 @@ test('saved tiers keep the new free tier from the defaults, ahead of xsmall', ()
   assert.equal(merged.team.budgets.free, 1);
 });
 
-test('settings: fallbacks and tier offers are validated', () => {
+test('settings: fallbacks are validated', () => {
   const agents = [{ id: 'claude', name: 'c', command: 'claude' }, { id: 'opencode', name: 'o', command: 'opencode' }];
-  const defaults = { team: { tiers: { xsmall }, budgets: {} }, tierOffers: [], agents };
+  const defaults = { team: { tiers: { xsmall }, budgets: {} }, agents };
   const opts = { current: defaults };
-  assert.deepEqual(validatePatch({ team: { tiers: { xsmall } }, tierOffers: ['use-big-pickle'] }, defaults, opts), []);
+  assert.deepEqual(validatePatch({ team: { tiers: { xsmall } } }, defaults, opts), []);
   assert.equal(validatePatch({ team: { tiers: { xsmall: { ...xsmall, fallbacks: 'haiku' } } } }, defaults, opts).length, 1);
   assert.equal(validatePatch({ team: { tiers: { xsmall: { ...xsmall, fallbacks: [{ agent: 'nope', model: 'm' }] } } } }, defaults, opts).length, 1);
-  assert.equal(validatePatch({ tierOffers: [1] }, defaults, opts).length, 1);
 });
 
 test('outcomes: per route results for learning, and this week\'s use with cost saved and reasons', () => {

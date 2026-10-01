@@ -1,3 +1,35 @@
+# Operant 2.7.0
+
+Teams now stay on one CLI (a Claude team, an OpenCode team, a Codex team or a Gemini team), the Tasks panel is gone, working tiles are easier to spot, and a batch of settings and terminal fixes.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.7.0-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.7.0-mac-arm64.dmg` (Apple Silicon) or `Operant-2.7.0-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.7.0-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.7.0-linux-amd64.deb` (`sudo apt install ./Operant-2.7.0-linux-amd64.deb`).
+
+## New
+- **Codex CLI and Gemini CLI:** both are supported again, each as its own team with its own tiers and models (⚙ Settings › Agents › Team). They are new in this release and haven't been tried against the real CLIs yet, so check the model names in Settings if a tile fails to start.
+- **Team CLI per project:** the project menu in the sidebar picks which CLI a project's team uses.
+- **Tile status:** every tile shows a status dot (working, waiting, done, idle) and its number, the same one `operant tiles` and `operant close` use.
+- **Auto-close delay setting:** ⚙ Settings › Tiles & subagents › close finished agent tiles after, now visible, in seconds (0 = never).
+
+## Changed
+- **Teams never mix CLIs:** a team's workers always run on the same CLI as its lead, so Claude and OpenCode no longer hand work to each other. The "Use Big Pickle" offer and the mixed fallback routes are gone, and saved "both" projects follow their default CLI.
+- **Per-CLI briefs and skill:** each CLI is told how to delegate in its own way (Claude and OpenCode with their built-in subagents, Codex and Gemini with worker tiles).
+- **Tasks panel removed:** a task that needs your decision now shows a card in the top-right with Move up, Retry with a hint, I'll take over and Stop. The Seats view went with the panel; seats themselves are unchanged.
+- **Faster close:** finished agent tiles close after 5 seconds by default (was 15), and Claude worker tiles use the same delay once their result is read.
+- **Glow only when working:** only tiles that are actually working get the glowing border.
+- **Spacing:** more padding around settings rows, hints, update notes and documents.
+
+## Fixed
+- **Settings scroll:** clicking a toggle no longer jumps the panel back to the top.
+- **Settings search:** the search box clears when you close the settings panel.
+- **Terminal text cut off:** the last line at the bottom of a terminal is no longer clipped.
+- **Image paste:** Ctrl+V with an image on the clipboard now reaches Claude Code on Windows and Linux (it expects Alt+V).
+- **Rate-limit errors:** a bare "429" error is now treated as a busy provider.
+
+---
+
 # Operant 2.6.1
 
 A smaller, leaner 2.6: the installer is about 7.5 MB lighter and startup no longer waits on the state backup check. No new features.

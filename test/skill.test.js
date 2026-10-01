@@ -100,6 +100,14 @@ test('the Team mode section carries the whole workflow and only acts when team m
   assert.match(team, /Approve only after `operant test` passes/);
   assert.match(team, /only after it has reported back, and then straight away/);
   assert.match(team, /never leave a reported one open/);
+  assert.match(team, /A team runs on one CLI/);
+  assert.doesNotMatch(team, /master worker|\bother CLI/);
+  // Each CLI's own way to hand a part to a tier.
+  assert.match(team, /Claude Code: a subagent through the Agent tool, `model` set to the tier's alias \(haiku, sonnet or opus\)/);
+  assert.match(team, /OpenCode: the `tier-<name>` subagent/);
+  assert.match(team, /Codex, Gemini CLI \(no subagent tool\): you are the team's one master; number the parts/);
+  assert.match(team, /--title "<n>\/<total> <3-5 words>"/);
+  assert.match(team, /Each tier's use \(in your context\) says what to hand it/);
 });
 
 test('the skill has no Terminal, prompt-box or refiner assumptions', parsed, () => {

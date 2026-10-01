@@ -9,6 +9,7 @@ const os = require('os');
 const net = require('net');
 const { contextMax } = require('./usage');
 const { isFreeFailure: localFailure } = require('./local-model');
+const cliRegistry = require('./cli-registry');
 
 const DB_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -294,6 +295,6 @@ function createOpenCode({ sendTo, primary, config, onToolUse, onToolResult, onTo
 }
 
 // The OpenCode CLI, however its command is written.
-const isOpenCode = agent => /(^|[\\/])opencode(\.(exe|cmd|ps1))?$/i.test(String(agent?.command || '').trim().split(/\s+/)[0]);
+const isOpenCode = agent => cliRegistry.is(agent, 'opencode');
 
 module.exports = { createOpenCode, isOpenCode };

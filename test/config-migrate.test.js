@@ -146,10 +146,16 @@ test('all or nothing: one bad key means the patch reports it and applyPatch is n
   assert.deepStrictEqual(user, { fontSize: 14 });
 });
 
-test('a project agent choice must be both, claude or opencode', () => {
-  assert.deepStrictEqual(v({ projectDefaults: { '/p': { agents: 'claude' } } }), []);
-  assert.deepStrictEqual(v({ projectDefaults: { '/p': { agents: 'both' } } }), []);
-  assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agents: 'gemini' } } })), ['projectDefaults']);
+test('a project team CLI must be one of the registry CLIs; both is gone', () => {
+  for (const cli of ['claude', 'opencode', 'codex', 'gemini']) assert.deepStrictEqual(v({ projectDefaults: { '/p': { agents: cli } } }), [], cli);
+  assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agents: 'both' } } })), ['projectDefaults']);
+  assert.deepStrictEqual(keys(v({ projectDefaults: { '/p': { agents: 'aider' } } })), ['projectDefaults']);
+});
+
+test("a saved 'both' project follows its default agent's CLI after migration; other choices are kept", () => {
+  const r = migrate({ configVersion: 4, projectDefaults: { '/a': { agents: 'both', agent: 'opencode' }, '/b': { agents: 'claude' }, '/c': { agents: 'both' } } });
+  assert.deepStrictEqual(r.user.projectDefaults, { '/a': { agent: 'opencode' }, '/b': { agents: 'claude' }, '/c': {} });
+  assert.deepStrictEqual(migrate(r.user).user, r.user);
 });
 
 test('the Operant Terminal settings are dropped and a default agent of operant is reset', () => {

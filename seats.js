@@ -18,6 +18,8 @@ const DELEGATIONS_MAX = 30;
 const DROP_BACK_TIER = 'small'; // where follow-up work goes after a hard (medium) part
 const CAPS = { decisions: [6, 160], constraints: [6, 160], files: [12, 120], verification: 300, lastError: 400, note: 300, guidance: 600, podBrief: 1500, podName: 60 };
 
+const LEGACY_CROSS_CLI_SEAT = 'master-opencode';
+
 // id, role, kind, tier, guidance
 const DEFAULTS = [
   ['planner', 'planner', 'normal', 'small', 'Plan before editing; keep steps few and checkable.'],
@@ -29,7 +31,6 @@ const DEFAULTS = [
   ['hard-1', 'hard worker', 'hard', 'medium', 'Only the hard part; hand follow-up work back down.'],
   ['hard-2', 'hard worker', 'hard', 'medium', 'Only the hard part; hand follow-up work back down.'],
   ['lead', 'lead', 'master', 'small', 'Split the work, hand parts to seats, review what comes back.'],
-  ['master-opencode', 'OpenCode master', 'master', 'free', 'Take the work for OpenCode, hand parts to seats on the cheapest tier that fits.'],
 ];
 
 // Pods (2.7): seats that share one brief (project facts, rules), stored once here and referenced by id.
@@ -67,7 +68,7 @@ function normalize(data, now = Date.now()) {
   const seats = [], removed = (Array.isArray(data.removed) ? data.removed : []).filter(x => typeof x === 'string');
   for (const raw of data.seats) {
     if (!raw || typeof raw.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(raw.id)) continue;
-    if (removed.includes(raw.id)) continue;
+    if (removed.includes(raw.id) || (raw.id === LEGACY_CROSS_CLI_SEAT && raw.state !== 'active')) continue; // 2.7: teams are one CLI, the OpenCode master seat is gone
     const d = DEFAULTS.find(x => x[0] === raw.id);
     const s = makeSeat(d || [raw.id, raw.role || raw.id, 'normal', 'small', ''], Number(raw.createdAt) || now);
     if (KINDS.includes(raw.kind)) s.kind = raw.kind;
@@ -397,12 +398,12 @@ function startTemplate(store, tpl) {
   return { ready, skipped };
 }
 // ---- adopt: attach a tile that is already running to a seat, without restarting it or sending it anything.
-// tile: { id, alive, agent (a Claude Code or Codex tile), seatId }. userAsked: the user named the seat (a worker adopting a hard seat does not count).
+// tile: { id, alive, agent (a Claude Code, Codex or Gemini CLI tile: cli-registry.js `adopt`), seatId }. userAsked: the user named the seat (a worker adopting a hard seat does not count).
 function adopt(store, id, tile, { userAsked = false, now = Date.now() } = {}) {
   const s = need(store, id);
   if (!tile || tile.id == null) throw new Error('a tile id is required (--tile <id>)');
   if (!tile.alive) throw new Error(`tile ${tile.id} is not running`);
-  if (!tile.agent) throw new Error(`tile ${tile.id} is not a Claude Code or Codex tile`);
+  if (!tile.agent) throw new Error(`tile ${tile.id} is not a Claude Code, Codex or Gemini CLI tile`);
   const held = tile.seatId || (seatOfTile(store, tile.id) || {}).id;
   if (held) throw new Error(`tile ${tile.id} already holds seat ${held}`);
   if (s.state === 'active' && s.tileId != null) throw new Error(`seat ${id} is already held by tile ${s.tileId}`);

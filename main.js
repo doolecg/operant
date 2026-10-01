@@ -37,6 +37,7 @@ const tierGuard = require('./tier-guard');
 const { priceOf } = require('./pricing');
 const { readOpenCodeUsage } = require('./opencode-usage');
 const { createOpenCode, isOpenCode } = require('./opencode');
+const cliRegistry = require('./cli-registry');
 const shellIntegration = require('./shell-integration');
 const { THEMES } = require('./renderer/themes');
 const opencodeTheme = require('./opencode-theme');
@@ -193,6 +194,8 @@ const DEFAULT_CONFIG = {
   agents: [
     { id: 'claude', name: 'Claude Code', command: 'claude', args: [], install: 'npm i -g @anthropic-ai/claude-code', icon: '✻' },
     { id: 'opencode', name: 'OpenCode', command: 'opencode', args: [], install: 'npm i -g opencode-ai', icon: '▣' },
+    { id: 'codex', name: 'OpenAI Codex', command: 'codex', args: [], install: 'npm i -g @openai/codex', icon: '◎' },
+    { id: 'gemini', name: 'Gemini CLI', command: 'gemini', args: [], install: 'npm i -g @google/gemini-cli', icon: '✦' },
   ],
   defaultAgent: 'claude',          // what Alt+Enter, the master and Explorer's entry open
   onboarded: false,               // false until the first-run tour is finished or skipped
@@ -203,7 +206,6 @@ const DEFAULT_CONFIG = {
   installSkill: true,             // Claude Code & OpenCode tiles get the `operant` skill per session, from the app's own agent-plugin folder (Settings > Agents)
   briefAgents: true,              // give every agent tile Operant's rules from its first message, not just when it loads the skill (Settings > Agents)
   localModel: { model: 'gemma4:e4b' }, // Settings > Agents > Team > Local model: the Ollama model the free tier falls back to when Big Pickle is busy or out of free use
-  tierOffers: [],                 // one-click changes offered after a config migration, e.g. 'use-big-pickle' (Settings > Agents > Team)
   backgroundAfterSeconds: 5,       // a rerouted long command (test/build/install) that is still running after this many seconds moves to the Backrooms and the agent waits for its errors · 0 = always at once (Settings > Agents)
   longCommandHook: true,          // Claude Code and OpenCode: reroute long commands (test/build/install) through operant test/build/run automatically; the rewritten command still goes through the normal permission prompts (Settings > Agents)
   shareSetup: true,               // share your main agent's setup (rules, MCP servers, skills) with every agent you launch, per process (Settings > Agents)
@@ -226,8 +228,9 @@ const DEFAULT_CONFIG = {
     enabled: false,
     tiers: {
       // Cheapest first. Each tier is a model; `fallbacks` are more routes it goes to when the first is busy, out of free use, or failed this kind of task before (tier-routes.js).
+      // A team uses only the tiers on its CLI (team-tiers.js cliTiers): free is OpenCode's, OpenCode derives the rest from its models.
       free: { agent: 'opencode', model: 'opencode/big-pickle', fallbacks: [{ local: true }], use: 'the easiest jobs: look things up in the code, read and summarise files, run tests and builds, docs tweaks (no web research)' },
-      xsmall: { agent: 'opencode', model: 'opencode/big-pickle', fallbacks: [{ agent: 'claude', model: 'claude-haiku-4-5' }], use: 'small isolated edits: renames, screenshots, wording, a one-line fix (no web research)' },
+      xsmall: { agent: 'claude', model: 'claude-haiku-4-5', use: 'small isolated edits: renames, screenshots, wording, a one-line fix (no web research)' },
       small: { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', use: 'smaller tasks: a feature across a few files, a normal bug fix, simple edits' },
       medium: { agent: 'claude', model: 'claude-opus-5-5', effort: 'medium', use: 'medium tasks: harder features across several files, research' },
       high: { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', use: 'hard tasks: tricky debugging, a multi-file refactor' },
@@ -249,7 +252,7 @@ const DEFAULT_CONFIG = {
   defaultLayout: 'master',        // 'master' (big left pane + stack) or 'dwindle'
   masterRatio: 0.55,
   // Idle reaping (0 disables each). The focused tile and the master terminal are never reaped.
-  autoCloseDoneAgentsSeconds: 15, // finished agent tiles, counted from when you first see them
+  autoCloseDoneAgentsSeconds: 5,  // finished agent tiles, counted from when you first see them
   idleCloseTerminalMinutes: 10,   // Claude/shell tiles with no output and no typing
   maxTilesPerWorkspace: 6,        // new agents spill onto the next workspace past this
   moveFollowsTile: true,          // Alt+Shift+1-9 takes you with the tile to its new workspace
@@ -390,21 +393,15 @@ const routeCtx = cfg => ({
   health: routeHealth, localModel: cfg.localModel?.model || localModelLib.DEFAULT_MODEL,
   ready: r => (r.local ? localReady && cfg.localModels !== false : cfg.cloudProviders !== false && cliInstalled[r.agent] !== false),
 });
-const withTiers = c => ({ ...c, teamTiers: tierRoutes.overlay(teamTiers.activeTiers({ ...c, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), routeCtx(c)),
-  // Per-project agent choice: the tiers left when a project is Claude only or OpenCode only (team-tiers.js tiersForMode).
-  teamModes: tierRoutes.overlayModes(teamTiers.tiersByMode({ base: c.team?.tiers || {}, agents: c.agents, isOpenCode, isClaude, models: ocModels, installed: cliInstalled }), routeCtx(c)) });
+const withTiers = c => ({ ...c, teamTiers: tierRoutes.overlay(teamTiers.activeTiers({ ...c, models: ocModels, installed: cliInstalled }), routeCtx(c)),
+  // Single-CLI teams: each CLI's own tiers (team-tiers.js cliTiers); a project's team uses its lead CLI's (cli-registry.js leadCli).
+  teamModes: tierRoutes.overlayModes(teamTiers.tiersByMode({ base: c.team?.tiers || {}, agents: c.agents, models: ocModels, installed: cliInstalled }), routeCtx(c)) });
 const refreshTiers = () => { const t = withTiers(config); config.teamTiers = t.teamTiers; config.teamModes = t.teamModes; broadcast('team:tiers', t.teamTiers); broadcast('team:modes', t.teamModes); };
-// Codex and Gemini CLI are no longer built in: drop them from a saved agents list.
-const dropRemoved = u => {
-  if (!Array.isArray(u.agents)) return u;
-  const agents = u.agents.filter(a => a && a.id !== 'codex' && a.id !== 'gemini');
-  return { ...u, agents, ...(u.defaultAgent === 'codex' || u.defaultAgent === 'gemini' ? { defaultAgent: 'claude' } : {}) };
-};
 // The in-app browser tile is gone: a saved 'tile' link choice means Windows' default.
 const dropTileLinks = u => u.linkBrowser === 'tile' ? { ...u, linkBrowser: 'default' } : u;
 // shellSyntax is derived too: the language a shell tile's `run` string is written in (sh or PowerShell).
 const withShell = c => ({ ...c, shellSyntax: unix.usesSh(c.shell) ? 'sh' : 'powershell' });
-const merged = () => withShell(withTiers(configMigrate.mergeUser(DEFAULT_CONFIG, dropTileLinks(dropRemoved(user)), DEFAULT_KEYBINDS)));
+const merged = () => withShell(withTiers(configMigrate.mergeUser(DEFAULT_CONFIG, dropTileLinks(user), DEFAULT_KEYBINDS)));
 const config = merged();
 // Read before the app is ready, so it only changes on a restart.
 if (!config.hardwareAcceleration) app.disableHardwareAcceleration();
@@ -813,7 +810,7 @@ async function openUrl(url, { second = false } = {}) {
 
 const findAgent = id => config.agents.find(a => a.id === id) || config.agents.find(a => a.id === config.defaultAgent) || config.agents[0];
 // Claude Code gets its own --session-id, which is how its subagents find their parent tile.
-function isClaude(agent) { return /(^|[\\/])claude(\.(exe|cmd|ps1))?$/i.test(String(agent.command).trim()); }
+const isClaude = agent => cliRegistry.is(agent, 'claude');
 
 // Whether an agent's installed CLI takes what the agent plugin needs (`pluginDir`: Claude Code's
 // --plugin-dir, `skillPaths`: OpenCode's skills.paths; agent-setup.js runs the probes). Asked once per launch
@@ -845,20 +842,20 @@ const hasTranscript = id => {
 };
 
 // Item 35: cheap readers. Runs the team's xsmall tier agent non-interactively, in a hidden child
-// process (no tile), and hands back its answer only - never the file/log/page itself. Only OpenCode
-// and Claude Code are supported (the two agents with a documented non-interactive print mode).
+// process (no tile), and hands back its answer only - never the file/log/page itself. The four
+// registry CLIs are supported (each has a non-interactive print mode); custom agents are not.
 async function controlSummarize(cmd, args, tile) {
-  const team = config.team || DEFAULT_CONFIG.team;
-  const tierCfg = team?.tiers?.xsmall;
-  if (!tierCfg?.agent) return { ok: false, error: 'no xsmall tier configured (Settings › Agents › Team)' };
-  const agent = findAgent(tierCfg.agent);
-  if (!agent) return { ok: false, error: `xsmall tier agent "${tierCfg.agent}" isn't configured in Settings › Agents` };
-  const isOc = isOpenCode(agent), isCl = isClaude(agent);
-  if (!isOc && !isCl) return { ok: false, error: 'the xsmall tier agent must be OpenCode or Claude Code for cheap reads' };
-
   const owner = ownerForTile(tile);
   const statusR = await forwardControl(owner, 'status', {}, tile, 10000);
   const cwd = (statusR.ok && statusR.result?.cwd) || config.defaultCwd;
+  // The xsmall tier of the project's team CLI, never another CLI's.
+  const cli = cliRegistry.leadCli({ agents: config.agents, defaultAgent: config.defaultAgent, project: config.projectDefaults?.[projectOf(cwd)] });
+  const tierCfg = config.teamModes?.[cli]?.tiers?.xsmall;
+  if (!tierCfg?.agent) return { ok: false, error: `no xsmall tier for this project's ${cliRegistry.labelOf(cli)} team (Settings › Agents › Team)` };
+  const agent = config.agents.find(a => a.id === tierCfg.agent);
+  if (!agent) return { ok: false, error: `xsmall tier agent "${tierCfg.agent}" isn't configured in Settings › Agents` };
+  const isOc = isOpenCode(agent), kind = cliRegistry.kindOf(agent);
+  if (!cliRegistry.get(kind)) return { ok: false, error: 'the xsmall tier agent must be Claude Code, OpenCode, Codex or Gemini CLI for cheap reads' };
   let tmpFile = null;
   try {
     let instruction;
@@ -890,9 +887,12 @@ async function controlSummarize(cmd, args, tile) {
     // --auto: opencode run otherwise blocks forever on its own permission prompt with no TTY to
     // answer it, since this runs headless with no tile. Reads only (the instruction never asks it
     // to change anything), so auto-approving is safe here.
-    const cmdArgs = isOc
-      ? ['run', '--auto', ...(tierCfg.model ? ['-m', tierCfg.model] : []), instruction]
-      : ['-p', ...(tierCfg.model ? ['--model', tierCfg.model] : []), instruction];
+    // Codex: `exec` is its non-interactive run (read-only sandbox by default). Gemini: -p prints the answer and exits.
+    const modelArgs = cliRegistry.flag(kind, 'model', tierCfg.model);
+    const cmdArgs = isOc ? ['run', '--auto', ...modelArgs, instruction]
+      : kind === 'codex' ? ['exec', ...modelArgs, ...cliRegistry.flag(kind, 'effort', tierCfg.effort), instruction]
+      : kind === 'gemini' ? [...modelArgs, '-p', instruction]
+      : ['-p', ...modelArgs, instruction];
     const env = await withFreshPath({ ...process.env });
     const r = await run(exe, cmdArgs, { cwd, env, timeout: 120000 });
     if (r.code !== 0 && !r.stdout.trim()) {
@@ -976,16 +976,18 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
       return `'${s.replace(/'/g, "''")}'`;
     };
     const extra = String(proj.args || '').trim().split(/\s+/).filter(Boolean);
-    // Claude Code takes the prompt positionally, OpenCode as --prompt;
-    // anything else (a custom agent) also gets it positional, appended after the other args.
-    const promptArgs = !prompt ? [] : isOpenCode(agent) ? ['--prompt', prompt] : [prompt];
+    // Each CLI's own flags (cli-registry.js): Claude Code and Codex take the prompt positionally, OpenCode as --prompt,
+    // Gemini as -i; anything else (a custom agent) also gets it positional, appended after the other args.
+    const cli = cliRegistry.kindOf(agent);
     // Item 43: Claude Code gets the brief on every launch, including resumed/reopened tiles —
-    // --append-system-prompt combines fine with --resume/--session-id. OpenCode gets it through its
-    // own env below; other agents have no equivalent flag, so they're skipped.
+    // --append-system-prompt combines fine with --resume/--session-id. Codex gets it as developer instructions
+    // (-c developer_instructions), Gemini ahead of its first prompt, OpenCode through its own env below; other agents are skipped.
     // With another agent as main, the main agent's own rules file rides along (Settings > Agents > Share).
-    const rules = (config.integrationsEnabled && config.shareSetup) ? agentBrief.mainRulesText(agentSetup.mainAgentId(config), 'claude') : '';
-    const briefText = [config.briefAgents && agentBrief.briefFor('claude'), rules].filter(Boolean).join('\n\n');
-    const briefArgs = briefText && isClaude(agent) ? ['--append-system-prompt', briefText] : [];
+    const rules = cli !== 'opencode' && config.integrationsEnabled && config.shareSetup ? agentBrief.mainRulesText(agentSetup.mainAgentId(config), cli) : '';
+    const briefText = cli === 'opencode' ? '' : [config.briefAgents && cliRegistry.get(cli) && agentBrief.briefFor(cli), rules].filter(Boolean).join('\n\n');
+    const briefArgs = cliRegistry.flag(cli, 'brief', briefText);
+    const firstPrompt = cliRegistry.get(cli)?.brief === 'prompt-prefix' && briefText ? agentBrief.withBriefPrompt(briefText, prompt) : prompt;
+    const promptArgs = cliRegistry.flag(cli, 'prompt', firstPrompt);
     // Item 37: same idea as the brief above, but as a --settings file so Claude Code's own
     // PreToolUse hook mechanism does the rewriting (never touches the user's own settings.json).
     // A team worker's file also has its Stop hook. Claude Code takes one --settings flag, so it's one file.
@@ -995,10 +997,11 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     const pluginArgs = isClaude(agent) && config.installSkill && pluginReady() && await agentCan(agent, 'pluginDir') ? ['--plugin-dir', PLUGIN_DIR] : [];
     // When the main agent (Settings > Agents) is OpenCode, a Claude tile gets its MCP servers too.
     const setupArgs = agentSetup.claudeExtraArgs({ agent, config, cwd: dir, userDataDir: AGENT_SETUP_DIR });
-    // Item 33: team mode picks the agent and passes its model straight through — OpenCode takes it as
-    // -m, Claude Code as --model. Other agents don't get a model flag (none of the built-in ones need it).
-    const modelArgs = model ? (isOpenCode(agent) ? ['-m', String(model)] : isClaude(agent) ? ['--model', String(model), ...(effort ? ['--effort', String(effort)] : [])] : []) : [];
-    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...pluginArgs, ...setupArgs, ...modelArgs, ...(sessionId ? [resuming ? '--resume' : '--session-id', sessionId] : []), ...(ocPort ? ['--port', String(ocPort)] : []), ...promptArgs].map(sh ? unix.sq : q).join(' ');
+    // Item 33: team mode picks the agent and passes its model straight through (Claude Code --model, the others -m),
+    // with its effort where the CLI has a flag for it (Claude Code --effort, Codex -c model_reasoning_effort; OpenCode's is below).
+    // Custom agents don't get a model flag.
+    const modelArgs = model ? [...cliRegistry.flag(cli, 'model', model), ...cliRegistry.flag(cli, 'effort', effort)] : [];
+    const quoted = [...[].concat(agent.args || []), ...extra, ...briefArgs, ...hookArgs, ...pluginArgs, ...setupArgs, ...modelArgs, ...cliRegistry.flag(cli, resuming ? 'resume' : 'session', sessionId), ...cliRegistry.flag(cli, 'port', ocPort), ...promptArgs].map(sh ? unix.sq : q).join(' ');
     // A command that isn't installed gets a plain explanation instead of PowerShell's error.
     const missing = `${agent.name}: '${agent.command}' isn't installed or isn't on your PATH.`
       + (agent.install ? ` Install it with: ${agent.install}` : ' Set its command in Settings > Agents.');
@@ -1077,7 +1080,7 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     envBase.OPENCODE_CONFIG_CONTENT = JSON.stringify(oc);
   }
   const tierAgents = isOc && (config.team?.enabled || worker)
-    ? teamTiers.opencodeSubagents(config.teamTiers || {}, id => { const a = config.agents.find(x => x.id === id); return !!a && isOpenCode(a); }) : {};
+    ? teamTiers.opencodeSubagents(config.teamModes?.opencode?.tiers || config.teamTiers || {}, id => { const a = config.agents.find(x => x.id === id); return !!a && isOpenCode(a); }) : {};
   if (isOc && ((model && effort) || Object.keys(tierAgents).length)) {
     let oc = {}; try { oc = JSON.parse(envBase.OPENCODE_CONFIG_CONTENT || '{}'); } catch {}
     oc.agent = teamTiers.mergeSubagents(oc.agent, tierAgents);

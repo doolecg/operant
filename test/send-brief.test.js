@@ -8,7 +8,7 @@ const tile = (id, over = {}) => ({ id, alive: true, kind: 'ai', agentConf: 'clau
 const SELF = tile(7, { agentConf: 'opencode', agentName: 'OpenCode' });
 
 // The app's side, faked: `idle` decides whether deliver() finds the tile ready; `opened` records new tiles.
-function world({ tiles = [], idle = true, team = true, mode = 'both' } = {}) {
+function world({ tiles = [], idle = true, team = true, mode = 'claude' } = {}) {
   const w = { state: M.newState(), opened: [], typed: [], tiles: [SELF, ...tiles] };
   w.env = {
     state: w.state, teamEnabled: team, agents: AGENTS, agentKind: id => id, agentMode: () => mode, flatLine: s => s.replace(/\s*\n\s*/g, ' '),
@@ -86,7 +86,7 @@ test('--team sends the brief as team work: numbered parts as subagents on their 
   assert.match(text, /can't approve anything/);
 });
 
-test('team work in an OpenCode-only project goes to an OpenCode tile, and opens one if none runs', async () => {
+test('team work in an OpenCode team project goes to an OpenCode tile, and opens one if none runs', async () => {
   const w = world({ tiles: [tile(3), tile(4, { agentConf: 'opencode' })], mode: 'opencode' });
   assert.equal((await send(w, { team: true })).to, 4);
   const w2 = world({ tiles: [tile(3)], mode: 'opencode' });

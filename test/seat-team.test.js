@@ -41,13 +41,10 @@ test('a seat pinned to medium is marked in the table and the seat page', () => {
   assert.match(S.formatSeat(S.find(st, 'planner')), /pinned to medium/);
 });
 
-test('master seats: two by default, the second on the free tier', () => {
+test('master seats: one lead by default, no cross-CLI master', () => {
   const st = fresh();
   assert.equal(S.find(st, 'lead').kind, 'master');
-  const oc = S.find(st, 'master-opencode');
-  assert.equal(oc.kind, 'master');
-  assert.equal(oc.tier, 'free');
-  assert.deepEqual(oc.delegations, []);
+  assert.equal(S.find(st, 'master-opencode'), undefined);
 });
 
 test('master delegations: recorded, deduped by task, shown as "delegates to", master only', () => {
@@ -167,8 +164,9 @@ test('tierFor: exploratory prefers xsmall for ordinary small seats only; default
   assert.equal(S.tierFor(planner, { tier: 'high', norms: N.profile('exploratory') }), 'high');
 });
 
-test('a normalized older file gains master-opencode and an empty removed list', () => {
-  const st = S.normalize({ schema: 1, seats: [{ id: 'planner' }] }, T0);
-  assert.ok(S.find(st, 'master-opencode'));
+test('a normalized older file gains the defaults, loses master-opencode, and has an empty removed list', () => {
+  const st = S.normalize({ schema: 1, seats: [{ id: 'planner' }, { id: 'master-opencode', kind: 'master', state: 'empty' }] }, T0);
+  assert.ok(S.find(st, 'lead'));
+  assert.equal(S.find(st, 'master-opencode'), undefined);
   assert.deepEqual(st.removed, []);
 });

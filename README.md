@@ -24,7 +24,7 @@ operant wait 7 --errors
 
 ## What your agents get
 - **The Operant skill and live context.** Operant loads its skill into each Claude Code and OpenCode session itself, so nothing is written to your home folder. At session start and after every compact, `operant prime` hands the agent the current state, so it doesn't have to rediscover it.
-- **Team mode and tiers.** A lead agent hands work to tiers: Haiku, Sonnet and Opus on Claude Code, and OpenCode's free and paid models. Each tier uses what's available and falls back when a CLI or model is missing. Workers finish with `operant task done --status done|blocked|failed --note "<files, open issues>"`.
+- **Team mode and tiers.** A lead agent hands work to tiers of its own CLI: Haiku, Sonnet and Opus on Claude Code, or OpenCode's free and paid models. A team never mixes CLIs; a tier falls back only to another route on the same CLI. Workers finish with `operant task done --status done|blocked|failed --note "<files, open issues>"`.
 - **Tiers picked from results.** Every team task's outcome is recorded. `operant agent` without a tier picks the cheapest one that has passed most tasks of that kind, says why, says "insufficient data" when there isn't enough history, and now and then tries a cheaper tier.
 - **Review, escalation and budgets.** A worker's result waits for approval. A failed task is retried once, then moved up a tier. A worker that is stuck (the same command failing again, or 30 tool calls without an edit on a code task) moves up on its own. Per-tier token budgets (Settings › Agents › Team, or `--budget`) stop a worker and escalate it.
 - **Checks before review.** When a code task comes back, Operant runs the project's tests (else build) and shows the result and diff size on the review card. A failure goes back to the worker once. Toggle: Settings › Agents › Team.
@@ -73,9 +73,9 @@ The first time Operant starts, it asks which agent you'd like to use. That agent
 In **Settings › Agents** you can add any command that runs in a terminal (Aider, Goose, Amp, a local model wrapper), give it a name, icon and arguments, and choose the default. Each agent runs through the shell set in Settings: PowerShell on Windows, your login shell on macOS and Linux (zsh or bash; fish and others work too). If it exits with an error, the tile stays open so you can read it. The `operant` command works the same in every shell.
 
 ## Team mode
-In the project's sidebar menu you can choose **Claude only**, **OpenCode only** or **both**. That applies to the picks, routing, escalation, workers and new agent tiles.
+A team runs on one CLI: the project's, which you pick in its sidebar menu (**Claude Code team** or **OpenCode team**; by default its default agent's). Its tiers, routing, escalation, workers and new agent tiles all stay on that CLI.
 
-- **Local-model fallback:** the lowest tier runs Big Pickle first. When Big Pickle is busy or out of free use, it falls back to a local model (Gemma via Ollama), installed in the background from Settings › Agents › Team.
+- **Local-model fallback:** an OpenCode team's lowest tier runs Big Pickle first. When Big Pickle is busy or out of free use, it falls back to a local model (Gemma via Ollama), installed in the background from Settings › Agents › Team.
 - **Long commands:** tests, builds and installs run inline and move to the Backrooms after 5 seconds (a setting).
 - **Worker tiles** close automatically once the lead has read their result.
 
@@ -104,7 +104,7 @@ Nothing closes while it's still working: a subagent stays open until it says it'
 
 | config key | default |
 |---|---|
-| `autoCloseDoneAgentsSeconds` | 15 |
+| `autoCloseDoneAgentsSeconds` | 5 |
 | `idleCloseTerminalMinutes` | 10 |
 
 Set any of them to `0` to disable it.

@@ -195,7 +195,7 @@ function formatResult(cmd, result) {
       return result.off ? `stopped watching tile ${result.id}` : `watching tile ${result.id}`;
     case 'plan': return result.approved ? 'approved' : `change: ${result.note || ''}`;
     case 'task': if (result.sub === 'show') return [`${result.id}  ${result.status}${result.tier ? '  ' + result.tier : ''}`, result.text, ...(result.note ? [`note: ${result.note}`] : []),
-      ...(result.askText ? [result.askText, 'Only the user answers this, on the board. Do not move the task up or restart it yourself.'] : [])].join('\n');
+      ...(result.askText ? [result.askText, 'Only the user answers this, on the card Operant shows. Do not move the task up or restart it yourself.'] : [])].join('\n');
       return result.sub === 'add' ? String(result.id) : `${result.id}  ${result.status}${result.note ? `  ${result.note}` : ''}`;
     case 'board': {
       const owner = o => o ? `${o.id} ${o.title}` : '-';

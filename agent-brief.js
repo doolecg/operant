@@ -7,21 +7,33 @@ const fs = require('fs');
 const path = require('path');
 const { redactText } = require('./redact');
 
-// The skill's name as each agent sees it: Claude Code namespaces plugin skills.
+// The skill's name as each agent sees it: Claude Code namespaces plugin skills. Codex and Gemini CLI get no skill:
+// this brief is all they are given, so it carries the delegation and worker rules the skill would.
 const SKILL_NAME = { claude: 'operant:operant', opencode: 'operant' };
+// How a lead hands a part to a tier on each CLI: its own subagents where the CLI has them, else worker tiles of the same CLI.
+const TEAM = {
+  claude: 'Team mode: cheapest tier that fits as your own subagents (the Agent tool, `model` haiku, sonnet or opus per tier), independents in parallel; every tier is on your own CLI.',
+  opencode: 'Team mode: cheapest tier that fits as your own `tier-<name>` subagents, independents in parallel; every tier is on your own CLI.',
+};
+const TILES = 'Team mode (only when `operant team` says on): you have no subagent tool, so you are the one master: split the work into numbered parts that touch different files, and hand each part that fits a tier to a worker tile, cheapest tier first: `operant agent --tier <tier> --title "<n>/<total> <3-5 words>" "<brief: goal, files it owns, how to test, report with operant task done>"`. Every tier is on your own CLI. Do the rest yourself.';
+const WORKER = 'If your context says you are a worker: do your task yourself, part by part (workers can\'t start workers), retry a failing step once, then report in at most 100 words and stop: `operant task done <id> --status done|blocked|failed --note "TL;DR: <one sentence>; <files changed>"`.';
 function briefFor(agent) {
+  const own = !(agent === 'codex' || agent === 'gemini');
   return [
     "In Operant; `operant` CLI on PATH.",
     'Context: <operant-context> or `operant prime`.',
     'Tests, builds, installs, dev servers: `operant test|build|run "<cmd>"`, then `operant wait <id> --errors`.',
     'Ping user: `operant notify "<text>"`.',
-    "Cheapest subagent tier that fits (free, xsmall, small, medium), independents in parallel; other CLI's parts go to one master worker: `operant agent --tier <t> \"<numbered parts>\"`.",
+    own ? TEAM[agent] || TEAM.claude : TILES,
     'Review a worker: `operant read <tile>`, `operant test`, then `operant task approve <id>` or `reject <id> --note "<why>"`.',
+    ...(own ? [] : [WORKER]),
     '`operant ask` only if the answer changes correctness, cost or a destructive step; else decide and note it.',
     'With .codegraph: first code action is a CodeGraph query. Keep replies short.',
-    `More: the \`${SKILL_NAME[agent] || 'operant'}\` skill.`,
+    own ? `More: the \`${SKILL_NAME[agent] || 'operant'}\` skill.` : 'More: `operant help workflows|team|worker`.',
   ].join('\n');
 }
+// Gemini CLI has no flag for extra instructions, so the brief opens its first prompt; with no task yet it only waits.
+const withBriefPrompt = (brief, prompt) => `${brief}\n\n---\n\n${prompt ? String(prompt) : 'No task yet: reply only "Ready." and wait for one.'}`;
 const BRIEF = briefFor('claude');
 
 // The worker brief's context section: the pieces that matter for this task (context-engine.js: ranked,
@@ -60,6 +72,8 @@ const home = require('os').homedir();
 const RULES = {
   claude: path.join(home, '.claude', 'CLAUDE.md'),
   opencode: path.join(home, '.config', 'opencode', 'AGENTS.md'),
+  codex: path.join(home, '.codex', 'AGENTS.md'),
+  gemini: path.join(home, '.gemini', 'GEMINI.md'),
 };
 // Once Operant's hub holds the rules (hub.js), that file is the main agent's rules for Claude Code:
 // ~/.claude/CLAUDE.md is then only an @import line pointing at it.
@@ -90,4 +104,4 @@ const opencodeConfigContent = (filePath, { mainAgent, plugins = [], skillPaths =
   return JSON.stringify(content);
 };
 
-module.exports = { BRIEF, briefFor, contextSection, CONTEXT_MAX_BYTES, briefPath, setHubDir, opencodeConfigContent, mainRulesText };
+module.exports = { BRIEF, briefFor, withBriefPrompt, contextSection, CONTEXT_MAX_BYTES, briefPath, setHubDir, opencodeConfigContent, mainRulesText };
