@@ -1,3 +1,26 @@
+# Operant 2.7.1
+
+Finished subagents close again, tile and status colours show what each agent is doing, file paths in terminals open on Ctrl+click, the image viewer has zoom buttons, and Settings is tidier.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.7.1-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt. 1.1.0 and later update to this by themselves (except 1.15.0, which needs a manual install).
+- **macOS:** `Operant-2.7.1-mac-arm64.dmg` (Apple Silicon) or `Operant-2.7.1-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux:** `Operant-2.7.1-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04) or `Operant-2.7.1-linux-amd64.deb` (`sudo apt install ./Operant-2.7.1-linux-amd64.deb`).
+
+## New
+- **Clickable file paths:** a path in a terminal (a screenshot a tool saved, a file an agent edited, such as `Update(src/a.js)`) opens beside that tile on Ctrl+click. Images open in the viewer; other files open as ⚙ Settings › Files says.
+- **Image zoom buttons:** the image viewer's title bar has − , +, Fit and 100%, next to the existing Ctrl+wheel zoom, drag to pan and double-click for fit.
+- **Status dots in the top bar:** running (orange), idle (grey) and done (green), plus a red count when something is waiting on you.
+
+## Changed
+- **Tile colours:** the border glows orange while a tile is working, is grey when it is idle or done, and turns red when it needs you. Subagent pills show the same dots.
+- **Settings:** the Tiles tab is split into Tiles, Subagents, Messages between tiles and Runaway guard, the seat idle setting is gone, and many labels and hints are shorter.
+
+## Fixed
+- **Finished subagents stay open:** subagents that end by handing back their report were never marked finished, so they didn't say "finished" and never closed. They do now.
+
+---
+
 # Operant 2.7.0
 
 Teams now stay on one CLI (a Claude team, an OpenCode team, a Codex team or a Gemini team), the Tasks panel is gone, working tiles are easier to spot, and a batch of settings and terminal fixes.

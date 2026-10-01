@@ -1,6 +1,6 @@
 {
   "name": "operant",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "description": "Hyprland-style tiling workspace for terminal AI agents: Claude Code, OpenCode and more",
   "main": "main.js",
   "scripts": {

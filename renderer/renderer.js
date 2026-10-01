@@ -198,7 +198,7 @@
   // It is also kept off for tiles that can't be seen (another workspace, or beyond the first couple
   // of working tiles on this one), because composited animation costs per tile.
   const tileState = w => {
-    if (w.waitingPrompt) return 'waiting';
+    if (w.waitingPrompt) return 'attention';
     if (String(w.sessionId || '').startsWith('oc:') ? w.ocBusy : isWorking(w)) return 'working';
     return w.kind === 'agent' && w.status === 'done' ? 'done' : 'idle';
   };
@@ -320,6 +320,19 @@
     el.querySelector('.held-discard').addEventListener('click', e => { e.stopPropagation(); discardHeld(w); });
     el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
     term.attachCustomKeyEventHandler(e => handleTermKey(e, w));
+    // A file path in the output (a screenshot a tool saved, a file an agent edited) is a link: Ctrl+click opens it
+    // beside this tile, in a viewer for images and as Settings > Files says for the rest.
+    term.registerLinkProvider({ provideLinks(y, done) {
+      const text = term.buffer.active.getLine(y - 1)?.translateToString(true) || '', out = [], taken = [];
+      for (const [re, grp] of FILE_LINKS) for (const m of text.matchAll(re)) {
+        const raw = grp ? m[1] : m[0], at = m.index + (grp ? m[0].indexOf(raw) : 0), end = at + raw.length;
+        if (taken.some(([a, b]) => at < b && end > a)) continue;
+        taken.push([at, end]);
+        out.push({ text: raw, range: { start: { x: at + 1, y }, end: { x: end, y } }, decorations: { underline: true, pointerCursor: true },
+          activate: e => { if (ctrlOrCmd(e)) openFile(resolvePath(w.cwd || lastCwd, raw), cfg.fileOpens, { ws: w.ws, near: w }); } });
+      }
+      done(out.length ? out : undefined);
+    } });
     // Copy on select: copies once when the drag ends, not on every selection tick.
     let hasSel = false;
     term.onSelectionChange(() => { hasSel = term.hasSelection(); });
@@ -534,6 +547,14 @@
   const SHOW_FILE = IS_WIN ? 'Show in Explorer' : IS_MAC ? 'Show in Finder' : 'Show in folder';
   const OPEN_FOLDER = IS_WIN ? 'Open in Explorer' : IS_MAC ? 'Open in Finder' : 'Open folder';
   const isMarkdown = p => /\.(md|markdown|mdx|mdown)$/i.test(p);
+  // Paths in terminal text, as [regex, path is group 1]: tool lines like Update(src/a.js), absolute paths (spaces allowed on
+  // a drive path) and relative ones with a folder. A file needs an extension.
+  const FILE_LINKS = [
+    [/\b(?:Update|Edit|MultiEdit|Write|Read|Create|NotebookEdit)\(([^)\r\n]+\.[A-Za-z0-9]{1,8})\)/g, true],
+    [/(?<!\w)[A-Za-z]:[\\/][^"'<>|*?\]()\r\n]*?\.[A-Za-z0-9]{1,8}(?![\w])/g, false],
+    [/(?<![\w:/.~-])\/[\w@.+~-]+(?:\/[\w@.+~-]+)*?\.[A-Za-z0-9]{1,8}(?![\w])/g, false],
+    [/(?<![\w@:/\.-])(?:\.{1,2}[\\/])?[\w@.-]+(?:[\\/][\w@.-]+)+\.[A-Za-z0-9]{1,8}(?![\w])/g, false],
+  ];
   const isImageFile = p => /\.(png|jpe?g|gif|webp|bmp|ico|svg|avif)$/i.test(p);
 
   // Vim shows no help of its own, so its tiles get the essentials along the bottom.
@@ -786,7 +807,7 @@
     const el = document.createElement('div');
     el.className = 'win view opening';
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="sdot"></span><span class="ico">▤</span><span class="tid">#${id}</span><span class="title"></span><span class="badge"></span>
-      <span class="view-acts"><button data-v="source" title="Show the Markdown source">Source</button><button data-v="edit" title="Edit">✎</button>
+      <span class="view-acts"><span class="img-acts" hidden><button data-z="out" title="Zoom out (Ctrl+wheel)">−</button><button data-z="in" title="Zoom in (Ctrl+wheel)">+</button><button data-z="fit" title="Fit to the tile (double-click)">Fit</button><button data-z="one" title="Actual size">100%</button></span><button data-v="source" title="Show the Markdown source">Source</button><button data-v="edit" title="Edit">✎</button>
       <button data-v="open" title="${OPEN_DEFAULT}">↗</button></span><button class="x" title="Close">✕</button></div>${IBAR}
       <div class="plan-bar hidden"><span class="plan-msg">Review this plan</span><span class="plan-actions">
         <button class="btn primary" data-p="approve">Approve</button><button class="btn" data-p="change">Change</button></span>
@@ -799,6 +820,15 @@
     el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
     el.addEventListener('mousedown', e => onWinMouseDown(e, w), true);
     el.querySelector('.view-acts').addEventListener('click', e => {
+      const z = e.target.closest('[data-z]');
+      if (z) {
+        const img = w.el.querySelector('.view-img img');
+        if (!img) return;
+        const cur = imgPct(w, img);
+        if (z.dataset.z === 'fit') { w.imgFit = true; drawImgSize(w); }
+        else setImgZoom(w, z.dataset.z === 'one' ? 100 : z.dataset.z === 'in' ? cur * 1.25 : cur / 1.25);
+        return;
+      }
       const b = e.target.closest('[data-v]');
       if (!b) return;
       if (b.dataset.v === 'source') { w.source = !w.source; drawView(w); }
@@ -952,6 +982,7 @@
     btn.title = w.source ? 'Show it rendered' : 'Show the Markdown source';
     if (!w.image) w.imgInfo = null;
     w.el.querySelector('[data-v="edit"]').hidden = !!w.image;
+    w.el.querySelector('.img-acts').hidden = !w.image;
     w.el.classList.toggle('md', md);
     if (w.error) body.innerHTML = `<div class="view-msg">${esc(w.error)}<br><button class="btn" data-v2="open">${OPEN_DEFAULT}</button></div>`;
     else if (w.image) {
@@ -2217,7 +2248,8 @@ async function contextBrief(t) {
       }
       text += AgentRender.entry(e, w.state);
       w.tools += e.blocks.filter(b => b.type === 'tool_use').length;
-      if (e.role === 'assistant') w.status = e.stop === 'end_turn' ? 'done' : 'running';
+      // A subagent that ends by calling SubagentHandback never writes an end_turn message.
+      if (e.role === 'assistant') w.status = e.stop === 'end_turn' || e.blocks.some(b => b.type === 'tool_use' && b.name === 'SubagentHandback') ? 'done' : 'running';
       else if (e.blocks.some(b => b.type === 'text')) w.status = 'running';
     }
     if (text) output(w, text);
@@ -2246,8 +2278,9 @@ async function contextBrief(t) {
     w.el.classList.toggle('done', w.status === 'done');
     updateBorderFlow();
     const tools = `${w.tools} tool${w.tools === 1 ? '' : 's'}`;
-    if (w.status === 'running') setBadge(w, `<span class="spin">✻</span> ${w.info.agentType} · ${tools}${closing}`);
-    else setBadge(w, `✓ done · ${tools}${closing}`);
+    const state = w.status === 'done' ? 'done' : tileState(w) === 'working' ? 'running' : 'idle';
+    const label = state === 'running' ? w.info.agentType : state === 'done' ? 'done' : 'idle';
+    setBadge(w, `<i class="pdot ${state}"></i>${label} · ${tools}${closing}`);
   }
 
   // The info bar under every tile's title (item 42), gated by Settings > "Tile info bar" (cfg.tileTokens).
@@ -3641,7 +3674,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const agRun = ag.filter(w => w.status === 'running').length;
     const aiRun = ai.filter(aiWorking).length;
     const waiting = all.filter(w => w.waitingPrompt).length;
-    const html = `◆ <span class="run">${agRun + aiRun} running</span> · <span class="idle">${ai.length - aiRun} idle</span> · <span class="ok">${ag.length - agRun} done</span>${waiting ? ` · <span class="warn">${waiting} waiting</span>` : ''}`;
+    const html = `<span class="run"><i class="pdot running"></i>${agRun + aiRun} running</span><span class="idle"><i class="pdot"></i>${ai.length - aiRun} idle</span><span class="ok"><i class="pdot done"></i>${ag.length - agRun} done</span>${waiting ? `<span class="warn"><i class="pdot attention"></i>${waiting} waiting</span>` : ''}`;
     if (html !== lastStats) $('#stat-agents').innerHTML = lastStats = html;
   }
   // Working state changes without any other event, so redraw the bar when a workspace's busy dot would.
@@ -3649,7 +3682,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     const busy = workspaces.map((_, i) => wsWins(i).some(isWorking) ? 1 : 0).join('');
     if (busy !== lastBusy) { lastBusy = busy; refreshBar(); } else refreshStats();
     const flow = [...wins.values()].map(w => tileState(w)[0]).join('');
-    if (flow !== lastFlowWork) { lastFlowWork = flow; updateBorderFlow(); }
+    if (flow !== lastFlowWork) { lastFlowWork = flow; updateBorderFlow(); for (const w of wins.values()) if (w.kind === 'agent') updateBadge(w); }
   }, 1000);
 
   function toast(html, onClick, duration = 5000) {
@@ -4068,9 +4101,9 @@ Double-click to ${name ? 'rename' : 'name'} it`;
     return true;
   }
 
-  function openFile(p, how) {
-    if (how === 'edit' && !isImageFile(p)) return openEditor(p);
-    if (how === 'view' || isImageFile(p)) return openViewer(p);
+  function openFile(p, how, opts) {
+    if (how === 'edit' && !isImageFile(p)) return openEditor(p, opts);
+    if (how === 'view' || isImageFile(p)) return openViewer(p, opts);
     operant.openPath(p);
   }
 
