@@ -20,6 +20,7 @@ const { createUsage, contextMax } = require('./usage');
 const { writeFileAtomic, isExecutableTarget, isSafeRef } = require('./atomic-write');
 const configMigrate = require('./config-migrate');
 const installState = require('./install-state');
+const codegraphInstall = require('./codegraph-install');
 const { redactText, redactSecrets, redactValues } = require('./redact');
 const { createStuckTracker } = require('./stuck');
 const cgFirst = require('./codegraph-first');
@@ -29,7 +30,6 @@ const failureClass = require('./failure-class');
 const routeHealthLib = require('./route-health');
 const analytics = require('./analytics');
 const ops = require('./ops');
-const seatsLib = require('./seats');
 const normsLib = require('./norms');
 const registry = require('./registry');
 const routingLib = require('./routing');
@@ -265,7 +265,6 @@ const DEFAULT_CONFIG = {
   // Idle reaping (0 disables each). The focused tile and the master terminal are never reaped.
   autoCloseDoneAgentsSeconds: 5,  // finished agent tiles, counted from when you first see them
   idleCloseTerminalMinutes: 10,   // Claude/shell tiles with no output and no typing
-  maxTilesPerWorkspace: 6,        // new agents spill onto the next workspace past this
   moveFollowsTile: true,          // Alt+Shift+1-9 takes you with the tile to its new workspace
   confirmClose: true,             // ask before closing a window that still has terminals running
   restoreSession: 'update',       // reopen the tiles you had open: 'update' (after an update) | 'always' | 'never'
@@ -281,7 +280,7 @@ const DEFAULT_CONFIG = {
     : "'Cascadia Mono', 'Cascadia Code', Consolas, monospace",
   opacity: 0.86,
   blur: 20,
-  lineHeight: 1,
+  lineHeight: 1.15,
   cursorBlink: true,
   cursorStyle: 'block',           // 'block' | 'bar' | 'underline'
   scrollback: 10000,
@@ -329,30 +328,33 @@ const DEFAULT_CONFIG = {
   vimKeys: false,                 // j/k, h/l, gg/G, Ctrl+D/U and / in viewers, diffs and the sidebar
   fileOpens: 'view',              // double-clicking a file in the sidebar: 'view' (viewer tile) | 'edit' (editor tile) | 'system'
   codegraphButtons: true,        // "Index with CodeGraph" buttons in the sidebar
-  codegraphOnStartup: 'changed',  // index pinned projects when Operant starts: 'changed' (lots of changes) | 'all' | 'off'
+  codegraphGate: true,           // agents' grep on code is refused until they have queried CodeGraph (new tiles)
+  codegraphAutoInstall: true,     // install CodeGraph with npm when Operant starts and it is missing
+  codegraphOnStartup: 'all',      // index pinned projects when Operant starts: 'all' | 'changed' (lots of changes) | 'off'
   codegraphChangedFiles: 20,      // files added, changed or removed since the last index that count as lots
   // Desktop notifications
   notifications: true,
-  notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long is waiting for you
-  notifySubagents: true,          // a Claude subagent finished
+  notifyWhenIdleSeconds: 6,       // an agent that was working and has gone quiet this long counts as done
+  notifyQuestions: true,          // an agent asks you a question
+  notifyFinished: false,          // an agent finished its turn
+  notifyMessages: true,           // an agent sends you a message (operant notify)
+  notifySubagents: false,         // a Claude subagent finished
   notifyOnlyUnfocused: true,      // skip it when you're already looking at that tile
-  notifyWaiting: true,            // an agent is waiting for you
   notifyApprovals: true,          // an agent needs an approval
   notifyTasks: true,              // a task finished
   notifyRunaway: true,            // the runaway guard flagged a tile
   notifyBell: true,               // a tile rang the terminal bell
   notifyWatch: true,              // a watched command finished
   notifySound: true,              // play the OS notification sound
-  notifyMinWorkSeconds: 2.5,      // an agent must have worked this long before 'waiting' fires
+  notifyMinWorkSeconds: 2.5,      // an agent must have worked this long before a question or 'finished' fires
   notifyQuietFrom: '',            // HH:MM (24h): with notifyQuietTo, no toasts in that window (still logged in the bell panel)
   notifyQuietTo: '',
   notifyOnlyBackground: false,    // toast only when Operant's window is not focused at all
   // Runaway guard: flags a tile whose agent may be stuck.
   typingGuardMode: 'hold',        // a message for a tile you are typing in: 'hold' until you stop | 'refuse' it
   typingGuardSeconds: 3,          // keystrokes within this many seconds count as typing · 0 = off
-  seatIdleMinutes: 15,            // a seat's worker idle this long is closed to stop costing tokens; the seat reopens from stored state · 0 = never (Settings > Agents)
   teamNorms: 'trust-but-verify',  // default working style for projects with no norms of their own: 'exploratory' | 'trust-but-verify'
-  readyCheck: true,               // check a seat's tile is up, started and idle before sending it work (Settings > Agents)
+  readyCheck: true,               // check a tile is up, started and idle before sending it a message (Settings > Agents)
   runawayGuard: 'warn',           // 'warn' (badge + notification) | 'stop' (also interrupts) | 'off'
   stuckTurns: 30,                 // a worker on a code task: this many tool calls with no file edit = stuck; 0 = off
   runawayLoopRepeats: 5,          // same tool + same input this many times in a tile's last 20 tool calls
@@ -620,8 +622,7 @@ function startControlServer() {
           const done = await bgTasks.settled(t.id, (Number(args.timeout) || 600) * 1000);
           return reply(200, { ok: true, result: { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: args.errors !== false, digest: digestText }) } });
         }
-        const boardOp = (cmd === 'team' && ['snapshot', 'restore'].includes(args.sub)) || (cmd === 'seat' && args.sub === 'adopt'); // needs the renderer's board and tiles
-        if (!boardOp && (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'seats', 'seat', 'pods', 'pod', 'norms'].includes(cmd) || (cmd === 'team' && args.sub))) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
+        if (['doctor', 'providers', 'models', 'stats', 'route', 'components', 'history', 'norms'].includes(cmd)) { const r = await opsCommand(cmd, args); return reply(r.ok ? 200 : 400, r); }
         const owner = ownerForTile(tile);
         // wait, test and build block until the tile goes quiet (up to --timeout, 600 s by default), with
         // room for the tile to start; plan waits on the user, same as ask, so it gets an ask-length leash.
@@ -1060,6 +1061,8 @@ ipcMain.handle('pty:create', async (e, { kind, agentId, cwd, cols, rows, run, re
     // A tile opened as a team worker can't itself start workers (operant-cli.js checks this).
     ...(worker ? { OPERANT_WORKER: '1' } : {}),
   });
+  // The CodeGraph gate (bin/operant-hook.js pre-tool-use, hooks/opencode-operant.mjs) reads this.
+  if (config.codegraphGate === false) envBase.OPERANT_CODEGRAPH_GATE = '0';
   // A `claude` started by hand in a shell tile, or by another agent, gets the operant skill from the
   // environment. A Claude Code tile gets --plugin-dir instead, and both would load the plugin twice, so
   // its inherited copy of ours (Operant may itself run in a tile) goes; with the setting off it goes everywhere.
@@ -1408,9 +1411,12 @@ const codegraphVersion = async () => {
   return r.code === 0 && r.stdout.trim() || null;
 };
 ipcMain.handle('codegraph:version', codegraphVersion);
-// Which pinned projects to index as Operant starts, asked once per run (the first window gets the answer):
-// with 'changed', indexed projects with at least codegraphChangedFiles files changed since their last index;
-// with 'all', every pinned project, including ones CodeGraph hasn't set up yet.
+// What to do as Operant starts, asked once per run (the first window gets the answer): { projects, install }.
+// projects: with 'all', every pinned project, including ones CodeGraph hasn't set up yet; with 'changed', indexed projects
+// with at least codegraphChangedFiles files changed since their last index; nothing with 'off'.
+// install: 'install' when CodeGraph is missing and npm is there (the renderer installs it, then indexes in the same tile),
+// 'no-npm' when npm is missing (a toast), null otherwise. The attempt is remembered in userData/codegraph-install.json
+// ({ version, npm }), so a failed install isn't repeated every start; it is tried again after an upgrade.
 let codegraphStartupDone = false;
 const codegraphPending = async dir => { const env = await freshEnv(); return new Promise(resolve => {
   let out = '';
@@ -1424,17 +1430,31 @@ const codegraphPending = async dir => { const env = await freshEnv(); return new
     try { const c = JSON.parse(out).pendingChanges || {}; resolve((c.added || 0) + (c.modified || 0) + (c.removed || 0)); } catch { resolve(0); }
   });
 }); };
+const codegraphTriedFile = () => path.join(app.getPath('userData'), 'codegraph-install.json');
+const npmAvailable = async () => (await run('npm', ['--version'], { shell: needsShell, env: await freshEnv() })).code === 0;
 ipcMain.handle('codegraph:startup', async () => {
-  if (codegraphStartupDone || config.codegraphOnStartup === 'off') return [];
+  const none = { projects: [], install: null };
+  if (codegraphStartupDone) return none;
   codegraphStartupDone = true;
   const seen = new Set();
   const projects = [...config.projects, ...(config.projectGroups || []).flatMap(g => g.projects || [])]
     .filter(p => p && isDir(p) && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
-  if (!projects.length || !await codegraphVersion()) return [];
-  if (config.codegraphOnStartup === 'all') return projects;
+  const mode = config.codegraphOnStartup;
+  const installed = await codegraphVersion();
+  let install = null;
+  if (!installed && config.codegraphAutoInstall) {
+    let tried = null;
+    try { tried = JSON.parse(fs.readFileSync(codegraphTriedFile(), 'utf8')); } catch {}
+    const npm = await npmAvailable();
+    install = codegraphInstall.decide({ enabled: true, installed: false, npm, tried, version: app.getVersion() });
+    if (install) { try { writeFileAtomic(codegraphTriedFile(), JSON.stringify({ version: app.getVersion(), npm, at: new Date().toISOString() })); } catch {} }
+  }
+  if (mode === 'off' || !projects.length) return { projects: [], install };
+  if (!installed) return { projects: install === 'install' ? projects : [], install };
+  if (mode === 'all') return { projects, install };
   const indexed = projects.filter(p => fs.existsSync(path.join(p, '.codegraph')));
   const counts = await Promise.all(indexed.map(codegraphPending));
-  return indexed.filter((_, i) => counts[i] >= Math.max(1, config.codegraphChangedFiles || 1));
+  return { projects: indexed.filter((_, i) => counts[i] >= Math.max(1, config.codegraphChangedFiles || 1)), install };
 });
 // Runs the IDE through cmd so .cmd launchers like code and cursor work. Resolves to an error message, or null.
 ipcMain.handle('ide:open', async (_e, dir) => { const cmd = await ideCommand(); const env = await freshEnv(); return new Promise(resolve => {
@@ -1513,11 +1533,11 @@ const protocolReady = process.platform === 'win32' && installed && app.setAsDefa
 if (process.platform === 'linux' && installed && !process.env.APPIMAGE) { try { app.setAsDefaultProtocolClient('operant'); } catch (e) { logLine(`operant:// registration failed: ${e.message || e}`); } }
 const liveNotes = new Set(); // a Notification that gets garbage-collected never reports its click
 
-function focusTile(wcId, tileId) {
+function focusTile(wcId, tileId, tileUid) {
   const w = [...windows].find(x => alive(x) && x.webContents.id === wcId);
   if (!w) return;
   bringUp(w);
-  sendTo(w, 'focus-tile', tileId);
+  sendTo(w, 'focus-tile', { id: tileId, uid: tileUid });
 }
 
 function toastXml(title, body, launch) {
@@ -1527,30 +1547,30 @@ function toastXml(title, body, launch) {
     + '</binding></visual></toast>';
 }
 
-ipcMain.on('notify', (e, { title, body, tileId, silent }) => {
+ipcMain.on('notify', (e, { title, body, tileId, tileUid, silent }) => {
   const w = winOf(e);
   if (!w || !config.notifications || !Notification.isSupported()) return;
   const wcId = w.webContents.id;
   const quiet = typeof silent === 'boolean' ? silent : !config.notifySound;
   const n = new Notification(protocolReady
-    ? { toastXml: toastXml(title, body, `operant://focus/${wcId}/${tileId}`), silent: quiet }
+    ? { toastXml: toastXml(title, body, `operant://focus/${wcId}/${tileId}${Number.isInteger(tileUid) ? `/${tileUid}` : ''}`), silent: quiet }
     : { title, body, icon: ICON, silent: quiet });
   liveNotes.add(n);
   if (liveNotes.size > 50) liveNotes.delete(liveNotes.values().next().value);
-  n.on('click', () => focusTile(wcId, tileId));
+  n.on('click', () => focusTile(wcId, tileId, tileUid));
   n.show();
 });
 
-// operant://focus/<window>/<tile> from a clicked toast.
+// operant://focus/<window>/<tile>[/<uid>] from a clicked toast; the uid is the tile's never-reused serial.
 function focusLink(argv) {
-  const m = argv.map(a => /^operant:\/\/focus\/(\d+)\/(\d+)/i.exec(a)).find(Boolean);
-  return m ? { wcId: +m[1], tileId: +m[2] } : null;
+  const m = argv.map(a => /^operant:\/\/focus\/(\d+)\/(\d+)(?:\/(\d+))?/i.exec(a)).find(Boolean);
+  return m ? { wcId: +m[1], tileId: +m[2], tileUid: m[3] != null ? +m[3] : undefined } : null;
 }
 // macOS hands a clicked operant:// link over this way, not through argv.
 app.on('open-url', (e, url) => {
   e.preventDefault();
   const link = focusLink([url]);
-  if (link) focusTile(link.wcId, link.tileId);
+  if (link) focusTile(link.wcId, link.tileId, link.tileUid);
 });
 ipcMain.handle('win:focused', e => { const w = winOf(e); return !!w && w.isFocused() && !w.isMinimized(); });
 
@@ -1776,54 +1796,16 @@ ipcMain.handle('basement:run', async (_e, { command, cwd, title, timeoutMs }) =>
   return { id: 'bg' + t.id, text: longCommands.taskReport(t, { errors: true, digest: digestText }) };
 });
 ipcMain.handle('usage:summary', () => usage.summary());
-// A project's counted tokens today (input + output + cache writes), for its daily cap.
-// Seat binding for the renderer (renderer/renderer.js): op 'take' | 'release' | 'keep' | 'boost' | 'plan' on the project's seats file.
-ipcMain.handle('seats:op', (_e, { dir, op, seat, ...o }) => {
+// The project's team norms (norms.js), for the renderer: { preset, id, label, ... }, or null without a project folder.
+ipcMain.handle('norms:get', (_e, dir) => {
   try {
     const root = memory.memoryProjectDir(dir) || dir;
-    if (!root) return { ok: false, error: 'no project folder' };
-    if (op === 'plan') { // may this seat be filled, at which tier, with which brief? nothing is changed
-      const st = seatsLib.load(root), s = seatsLib.need(st, seat);
-      const can = seatsLib.canFill(s, { userAsked: true, tierUpApproved: !!o.tierUpApproved });
-      const norms = normsLib.profile(normsLib.load(root, config.teamNorms));
-      return { ok: true, result: { tier: seatsLib.tierFor(s, { tier: o.tier, norms }), brief: seatsLib.launchBrief(st, seat), kind: s.kind, ...can } };
-    }
-    // Snapshot and restore (seats.js): the renderer owns the board, so it passes its tasks in and applies the re-queued ones itself.
-    if (op === 'snapshot') {
-      const snap = seatsLib.snapshotOf(seatsLib.load(root), { name: o.name, tasks: o.tasks });
-      seatsLib.saveSnapshot(app.getPath('userData'), snap);
-      return { ok: true, result: { name: snap.name, seats: snap.seats.length, tasks: snap.tasks.length } };
-    }
-    if (op === 'restore') {
-      const snap = seatsLib.loadSnapshot(app.getPath('userData'), o.name);
-      const r = seatsLib.update(root, st => seatsLib.restoreSnapshot(st, snap, { boardTasks: o.tasks }));
-      return { ok: true, result: { ...r, text: seatsLib.formatRestore(snap.name || o.name, r) } };
-    }
-    if (op === 'list') { // read-only: seats and pods as stored, with the tier each would start on (nothing is changed)
-      const st = seatsLib.load(root), norms = normsLib.profile(normsLib.load(root, config.teamNorms));
-      return { ok: true, result: { root, seats: st.seats.map(s => ({ ...s, effTier: seatsLib.tierFor(s, { norms }), pinnedMedium: s.tier === 'medium' || (!!s.boost && s.boost.tier === 'medium') })), pods: st.pods, norms: { id: norms.id, label: norms.label, preferCheap: norms.preferCheap } } };
-    }
-    if (op === 'norms') { const preset = normsLib.load(root, config.teamNorms); return { ok: true, result: { preset, ...normsLib.profile(preset) } }; }
-    return { ok: true, result: seatsLib.update(root, st => {
-      if (op === 'delegate') { // a master's task created with --for or --seat: recorded on the master seat that tile holds
-        const m = seatsLib.seatOfTile(st, o.tileId);
-        if (!m || m.kind !== 'master') return null;
-        return seatsLib.delegate(st, m.id, { seatId: seat || (o.forTile != null && (seatsLib.seatOfTile(st, o.forTile) || {}).id) || null, taskId: o.taskId });
-      }
-      if (op === 'adopt') return seatsLib.adopt(st, seat, o.tile, { userAsked: !!o.userAsked });
-      if (op === 'take') return seatsLib.take(st, seat, { tileId: o.tileId, podId: o.podId });
-      if (op === 'release') {
-        const before = seatsLib.need(st, seat), stays = o.tileId != null && before.tileId !== o.tileId; // a replaced worker closing later changes nothing
-        const s = seatsLib.release(st, seat, { task: o.task, reason: o.reason, empty: !!o.empty, extra: o.extra, tileId: o.tileId });
-        return stays ? s : { ...s, dropBack: seatsLib.dropBack(s) };
-      }
-      if (op === 'keep') return seatsLib.keep(st, seat, { task: o.task, reason: o.reason, extra: o.extra });
-      if (op === 'boost') return seatsLib.boost(st, seat, o.tier, o.taskId);
-      if (op === 'unboost') { const s = seatsLib.need(st, seat); delete s.boost; return s; } // back to the seat default
-      throw new Error(`unknown seat op "${op}"`);
-    }) };
-  } catch (e) { return { ok: false, error: e.message }; }
+    if (!root) return null;
+    const preset = normsLib.load(root, config.teamNorms);
+    return { preset, ...normsLib.profile(preset) };
+  } catch { return null; }
 });
+// A project's counted tokens today (input + output + cache writes), for its daily cap.
 ipcMain.handle('usage:projectToday', (_e, cwd) => usage.todayFor(cwd ? path.basename(cwd) : ''));
 ipcMain.handle('usage:series', (_e, range) => usage.series(String(range)));
 
@@ -1914,36 +1896,6 @@ async function opsCommand(cmd, args = {}) {
       contextProviders: { codegraph: okc('codegraph'), memory: !health.some(c => c.id === 'memory' && c.state === 'unavailable'), git, ripgrep: rg } });
     return { ok: true, result: { rows, text: ops.formatDoctor(rows) } };
   }
-  if (cmd === 'seats' || cmd === 'seat') {
-    const dir = memory.memoryProjectDir(args.cwd) || args.cwd;
-    if (!dir) return { ok: false, error: 'no project folder' };
-    try {
-      if (cmd === 'seats') { const store = seatsLib.load(dir); return { ok: true, result: { seats: store.seats, text: seatsLib.formatTable(store) } }; }
-      if (args.sub === 'add') {
-        if (!args.id) return { ok: false, error: 'usage: operant seat add <id> [--role r] [--tier t] [--kind normal|hard|master]' };
-        const seat = seatsLib.update(dir, st => seatsLib.addSeat(st, { id: String(args.id), role: args.role === true ? undefined : args.role, tier: args.tier === true ? undefined : args.tier, kind: args.kind === true ? undefined : args.kind }));
-        return { ok: true, result: { seat, text: `added seat ${seat.id} (${seat.kind}, ${seat.tier})` } };
-      }
-      if (args.sub === 'remove') {
-        if (!args.id) return { ok: false, error: 'usage: operant seat remove <id> [--force]' };
-        const seat = seatsLib.update(dir, st => seatsLib.removeSeat(st, String(args.id), { force: !!args.force }));
-        return { ok: true, result: { seat, text: `removed seat ${seat.id}` } };
-      }
-      if (args.sub === 'set') {
-        if (!args.id) return { ok: false, error: 'usage: operant seat set <id> [--tier t] [--guidance "text"]' };
-        if (args.tier == null && args.guidance == null) return { ok: false, error: 'give --tier or --guidance' };
-        const seat = seatsLib.update(dir, st => {
-          if (args.tier != null) seatsLib.setTier(st, String(args.id), String(args.tier));
-          if (args.guidance != null) seatsLib.setGuidance(st, String(args.id), String(args.guidance));
-          return seatsLib.need(st, String(args.id));
-        });
-        return { ok: true, result: { seat, text: seatsLib.formatSeat(seat) } };
-      }
-      if (!args.id) return { ok: false, error: 'usage: operant seat <id>  |  operant seat set <id> [--tier t] [--guidance "text"]' };
-      const seat = seatsLib.need(seatsLib.load(dir), String(args.id));
-      return { ok: true, result: { seat, text: seatsLib.formatSeat(seat) } };
-    } catch (e) { return { ok: false, error: e.message }; }
-  }
   if (cmd === 'norms') {
     const dir = memory.memoryProjectDir(args.cwd) || args.cwd;
     if (!dir) return { ok: false, error: 'no project folder' };
@@ -1951,36 +1903,6 @@ async function opsCommand(cmd, args = {}) {
       if (args.preset) normsLib.save(dir, args.preset);
       const preset = normsLib.load(dir, config.teamNorms), p = normsLib.profile(preset);
       return { ok: true, result: { preset, text: `${args.preset ? 'set: ' : ''}${p.id}: ${p.text} (presets: ${normsLib.PRESETS.join(', ')})` } };
-    } catch (e) { return { ok: false, error: e.message }; }
-  }
-  if (cmd === 'pods' || cmd === 'pod') {
-    const dir = memory.memoryProjectDir(args.cwd) || args.cwd;
-    if (!dir) return { ok: false, error: 'no project folder' };
-    try {
-      if (cmd === 'pods') { const store = seatsLib.load(dir); return { ok: true, result: { pods: store.pods, text: seatsLib.formatPods(store) } }; }
-      if (args.sub !== 'set' || !args.id || typeof args.brief !== 'string') return { ok: false, error: 'usage: operant pod set <id> --brief "<text>"' };
-      const pod = seatsLib.update(dir, st => seatsLib.setPodBrief(st, String(args.id), args.brief));
-      return { ok: true, result: { pod, text: `pod ${pod.id} brief set (${pod.brief.length} characters)` } };
-    } catch (e) { return { ok: false, error: e.message }; }
-  }
-  if (cmd === 'team' && args.sub) {
-    const dir = memory.memoryProjectDir(args.cwd) || args.cwd, userDir = app.getPath('userData');
-    try {
-      if (args.sub === 'list') { const templates = seatsLib.loadTemplates(userDir); return { ok: true, result: { templates, text: seatsLib.formatTemplates(templates) } }; }
-      if (args.sub === 'snapshots') { const snapshots = seatsLib.listSnapshots(userDir); return { ok: true, result: { snapshots, text: seatsLib.formatSnapshots(snapshots) } }; }
-      if (!args.name) return { ok: false, error: 'usage: operant team list | save <name> | start <name> | snapshot <name> | restore <name> | snapshots' };
-      if (!dir) return { ok: false, error: 'no project folder' };
-      if (args.sub === 'save') {
-        const t = seatsLib.saveTemplate(userDir, seatsLib.templateFromSeats(seatsLib.load(dir), String(args.name)));
-        return { ok: true, result: { template: t, text: `saved team "${t.name}": ${t.seats.map(e => `${e.seat} ${e.tier}`).join(', ')}` } };
-      }
-      if (args.sub === 'start') {
-        const t = seatsLib.findTemplate(seatsLib.loadTemplates(userDir), String(args.name));
-        if (!t) return { ok: false, error: `no team template "${args.name}" (operant team list)` };
-        const r = seatsLib.update(dir, st => seatsLib.startTemplate(st, t));
-        return { ok: true, result: { ...r, text: `team "${t.name}": ready to fill: ${r.ready.join(', ') || '-'}${r.skipped.length ? `; skipped: ${r.skipped.join(', ')}` : ''} (nothing launched; fill a seat with operant agent --seat <id>)` } };
-      }
-      return { ok: false, error: 'usage: operant team list | save <name> | start <name> | snapshot <name> | restore <name> | snapshots' };
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (cmd === 'providers') {
@@ -2834,7 +2756,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', (_e, argv, cwd) => {
     const link = focusLink(argv);
-    if (link) return focusTile(link.wcId, link.tileId);
+    if (link) return focusTile(link.wcId, link.tileId, link.tileUid);
     const dirs = folderArgs(argv, cwd || undefined);
     if (!dirs.length) openFolder(null);
     for (const d of dirs) openFolder(d);

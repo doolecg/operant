@@ -144,4 +144,159 @@ async function prepareBrief({ cwd, task, isCode = true, exists, exec, maxChars =
   return { state: 'fresh', text: head + flatten(out, Math.max(200, maxChars - head.length)), explored: true };
 }
 
-module.exports = { classify, createCgTracker, symbolsFromTask, flatten, indexState, prepareBrief, NUDGE_TEXT, DEGRADED_TEXT, MAX_BRIEF_CHARS };
+// ---- The hard gate: a code search by grep waits for the agent's first CodeGraph call. -----------------------------
+// Pure logic for `operant hook pre-tool-use` (Claude Code PreToolUse) and the OpenCode plugin. The caller keeps one
+// { cg: boolean } state per agent and says whether the project has a .codegraph folder.
+const NONCODE_EXT = new Set(['css', 'scss', 'sass', 'less', 'json', 'jsonc', 'json5', 'md', 'mdx', 'markdown', 'txt', 'html', 'htm', 'xml', 'yml', 'yaml', 'toml', 'ini', 'lock', 'svg', 'csv', 'log']);
+const UNINDEXED_DIR = /(^|[\\/])(node_modules|dist|build|\.git)([\\/]|$)/i;
+const NOT_A_QUERY = new Set(['function', 'const', 'class', 'return', 'import', 'export', 'require', 'let', 'var', 'new', 'async', 'await', 'this', 'that', 'the', 'and', 'for', 'with', 'from', 'true', 'false', 'null', 'undefined', 'else', 'while', 'switch', 'case', 'try', 'catch', 'throw', 'typeof', 'void', 'default']);
+const SEARCH_TOOLS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'findstr', 'select-string', 'sls']);
+// Flags that take a value: short ones as typed (-c and -C differ), long ones and PowerShell's lowercased.
+const VALUE_FLAGS = new Set(['-e', '-f', '-g', '-t', '-T', '-m', '-A', '-B', '-C', '-d', '-j', '--regexp', '--file', '--glob', '--iglob', '--type', '--type-not', '--include', '--exclude', '--exclude-dir', '--max-count', '--context', '--after-context', '--before-context', '--max-depth', '--color', '--colour', '--threads', '-include', '-exclude', '-path', '-literalpath', '-pattern', '-context', '-encoding']);
+const INCLUDE_FLAGS = new Set(['-g', '--glob', '--iglob', '--include', '-include']);
+const TYPE_FLAGS = new Set(['-t', '--type']);
+const PATTERN_FLAGS = new Set(['-e', '--regexp', '-pattern']);
+const PATH_FLAGS = new Set(['-path', '-literalpath']);
+
+const unquote = p => String(p).trim().replace(/^['"]|['"]$/g, '');
+const extOf = p => { const m = /\.([A-Za-z0-9]+)$/.exec(String(p).split(/[\\/]/).pop()); return m ? m[1].toLowerCase() : ''; };
+
+// `*.css`, `**/*.{css,json}`, `docs/a.md`, `styles` + ext: true when the glob or file names only non-code files.
+function nonCodeGlob(g) {
+  const s = unquote(g);
+  const brace = /\.\{([^}]+)\}$/.exec(s);
+  if (brace) return brace[1].split(',').every(e => NONCODE_EXT.has(e.trim().toLowerCase()));
+  return NONCODE_EXT.has(extOf(s));
+}
+
+// targets: { globs, types, paths } of one search. True when it can only hit non-code files or folders that are not
+// indexed (node_modules, dist, build, .git). No target at all is a whole-repo search: code.
+function targetsOnlyNonCode(t) {
+  const globs = ((t && t.globs) || []).map(unquote).filter(g => g && !g.startsWith('!'));
+  const types = ((t && t.types) || []).map(x => unquote(x).toLowerCase()).filter(Boolean);
+  const paths = ((t && t.paths) || []).map(unquote).filter(Boolean);
+  if (paths.length && paths.every(p => UNINDEXED_DIR.test(p) || nonCodeGlob(p))) return true;
+  if (globs.length || types.length) return globs.every(nonCodeGlob) && types.every(x => NONCODE_EXT.has(x));
+  return false;
+}
+
+// Quote-aware split of a command line at ; & && || | and newlines. Each segment says what led into it ('|' = a pipe).
+function shellSegments(cmd) {
+  const segs = [];
+  let cur = '', q = null, lead = '';
+  const cut = next => { segs.push({ text: cur, lead }); cur = ''; lead = next; };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (q) { cur += c; if (c === q) q = null; continue; }
+    if (c === '"' || c === "'") { q = c; cur += c; continue; }
+    if (c === '|' && cmd[i + 1] === '|') { cut('||'); i++; continue; }
+    if (c === '&' && cmd[i + 1] === '&') { cut('&&'); i++; continue; }
+    if (c === '|') { cut('|'); continue; }
+    if (c === ';' || c === '\n' || c === '&') { cut(';'); continue; }
+    cur += c;
+  }
+  segs.push({ text: cur, lead });
+  return segs;
+}
+function tokenize(s) {
+  const out = [];
+  for (const m of s.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g)) out.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+  return out;
+}
+
+// The content searches in a shell command line: [{ tool, pattern, globs, types, paths, piped }]. `find` and
+// `rg --files` list files rather than search them and are left out.
+function shellSearches(command) {
+  const found = [];
+  for (const seg of shellSegments(String(command || ''))) {
+    const tok = tokenize(seg.text.replace(/^[\s(]+/, ''));
+    while (tok.length && /^(sudo|time|command|env|exec|call)$/i.test(tok[0])) tok.shift();
+    if (!tok.length) continue;
+    let tool = tok.shift().replace(/^.*[\\/]/, '').replace(/\.(exe|cmd)$/i, '').toLowerCase();
+    if (tool === 'git') { if ((tok[0] || '').toLowerCase() !== 'grep') continue; tool = 'git grep'; tok.shift(); }
+    else if (!SEARCH_TOOLS.has(tool)) continue;
+    const s = { tool, pattern: null, globs: [], types: [], paths: [], piped: seg.lead === '|' };
+    const pos = [];
+    let listsFiles = false;
+    for (let i = 0; i < tok.length; i++) {
+      const t = tok[i];
+      if (t === '--files') { listsFiles = true; continue; }
+      const fs = /^\/([A-Za-z])(?::(.*))?$/.exec(t);              // findstr: /s /i /c:"text"
+      if (fs) { if (fs[1].toLowerCase() === 'c' && fs[2] !== undefined) s.pattern = fs[2]; continue; }
+      if (!t.startsWith('-') || t.length < 2) { pos.push(t); continue; }
+      const eq = /^(--?[A-Za-z][\w-]*)[=:]([\s\S]*)$/.exec(t);
+      const name = (eq ? eq[1] : t);
+      const key = name.length > 2 ? name.toLowerCase() : name;
+      if (!VALUE_FLAGS.has(key)) continue;
+      const val = eq ? eq[2] : tok[++i];
+      if (val === undefined) continue;
+      if (INCLUDE_FLAGS.has(key)) s.globs.push(...val.split(','));
+      else if (TYPE_FLAGS.has(key)) s.types.push(val);
+      else if (PATTERN_FLAGS.has(key)) s.pattern = val;
+      else if (PATH_FLAGS.has(key)) s.paths.push(...val.split(','));
+    }
+    if (listsFiles) continue;
+    if (s.pattern === null) s.pattern = pos.shift() ?? '';
+    s.paths.push(...pos);
+    found.push(s);
+  }
+  return found;
+}
+
+// Up to three identifiers from a grep pattern, as the suggested CodeGraph query.
+function queryFromPattern(pattern, max = 3) {
+  const words = String(pattern || '').replace(/\\[A-Za-z]/g, ' ').match(/[A-Za-z_$][\w$]{2,}/g) || [];
+  const out = [];
+  for (const w of words) if (!NOT_A_QUERY.has(w.toLowerCase()) && !out.includes(w)) out.push(w);
+  return out.slice(0, max);
+}
+
+function denyText(pattern) {
+  const q = queryFromPattern(pattern);
+  return `This project has a CodeGraph index. Query it first: run \`codegraph explore "${q.length ? q.join(' ') : '<names or question>'}"\` in the shell, or use the codegraph MCP tool (load it via tool search if it is deferred). Grep is allowed after that, and always for non-code files (CSS, JSON, Markdown, HTML).`;
+}
+
+// Is this tool call a code search by grep? -> { pattern } or null. Tool names: Claude Code Grep/Bash/PowerShell,
+// OpenCode grep/bash.
+function codeSearchOf(tool, input) {
+  const n = String(tool || '');
+  const inp = input && typeof input === 'object' ? input : {};
+  if (/^grep$/i.test(n)) {
+    const globs = [inp.glob, inp.include].filter(x => typeof x === 'string' && x);
+    const types = typeof inp.type === 'string' && inp.type ? [inp.type] : [];
+    const paths = typeof inp.path === 'string' && inp.path ? [inp.path] : [];
+    return targetsOnlyNonCode({ globs, types, paths }) ? null : { pattern: inp.pattern };
+  }
+  if (/^(bash|shell|powershell)$/i.test(n) && classify(n, inp).kind === 'grep') {
+    for (const s of shellSearches(commandOf(inp))) {
+      if (s.piped) continue;                       // filtering another command's output, not searching the code
+      if (!targetsOnlyNonCode(s)) return { pattern: s.pattern };
+    }
+  }
+  return null;
+}
+
+// -> { allow, record?, reason? }. record: this call is a CodeGraph call, so the caller notes it in the agent's state.
+function gateDecision({ tool, input, state, hasIndex }) {
+  if (!hasIndex) return { allow: true };
+  if (classify(tool, input).kind === 'codegraph') return { allow: true, record: true };
+  if (state && state.cg) return { allow: true };
+  const hit = codeSearchOf(tool, input);
+  return hit ? { allow: false, reason: denyText(hit.pattern) } : { allow: true };
+}
+
+// The folder holding the project's .codegraph: cwd or the nearest ancestor, stopping at the git root (a folder with
+// .git) or the filesystem root. null when there is none.
+function findIndexRoot(cwd, exists) {
+  let dir = cwd && path.resolve(String(cwd));
+  while (dir) {
+    if (exists(path.join(dir, '.codegraph'))) return dir;
+    if (exists(path.join(dir, '.git'))) return null;
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+  return null;
+}
+
+module.exports = { gateDecision, targetsOnlyNonCode, shellSearches, queryFromPattern, findIndexRoot, classify, createCgTracker, symbolsFromTask, flatten, indexState, prepareBrief, NUDGE_TEXT, DEGRADED_TEXT, MAX_BRIEF_CHARS };

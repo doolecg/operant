@@ -1,5 +1,6 @@
 (function () {
 const Reg = typeof module !== 'undefined' ? require('./cli-registry') : globalThis.CliRegistry;
+const Roles = typeof module !== 'undefined' ? require('./roles') : null;
 // Team tiers follow the team's CLI. Claude Code (and any other agent) uses the tiers set in
 // Settings › Agents › Team that run on it. OpenCode builds its own from the models it can reach: the free Zen
 // models have no effort variants, so they give one tier; a paid Zen or OpenAI model with variants
@@ -113,12 +114,18 @@ function tiersByMode({ base, agents, installed, models }) {
 }
 
 // `agent` entries for OpenCode's config: each OpenCode-run tier becomes a `tier-<name>` subagent
-// the lead can hand work to. isOc(agentId) says whether a tier's agent is OpenCode.
+// the lead can hand work to, and each role whose tier runs on OpenCode a `role-<name>` one. isOc(agentId) says whether a tier's agent is OpenCode.
 function opencodeSubagents(tiers, isOc) {
   const out = {};
   for (const [name, t] of Object.entries(tiers || {})) {
     if (!t?.model || !isOc(t.agent)) continue;
     out[`tier-${name}`] = { mode: 'subagent', model: t.model, ...(t.effort ? { variant: t.effort } : {}), description: t.use || `${name} tier` };
+  }
+  // The role presets (roles.js) as `role-<name>` subagents, on the model of the role's tier.
+  for (const [name, r] of Object.entries(Roles?.ROLES || {})) {
+    const t = tiers?.[r.tier];
+    if (!t?.model || !isOc(t.agent) || !Roles.roleText(name)) continue;
+    out[`role-${name}`] = { mode: 'subagent', model: t.model, ...(t.effort ? { variant: t.effort } : {}), prompt: Roles.roleText(name), description: Roles.roleDescription(name) || `${name} role` };
   }
   return out;
 }

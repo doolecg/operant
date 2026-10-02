@@ -1,3 +1,34 @@
+# Operant 2.7.5
+
+Agents now work from role presets instead of seats, notifications only interrupt you for what matters, agents check CodeGraph before they grep, and the menus, notification center and fonts are cleaner and roomier.
+
+**Install:** download the file for your system.
+- **Windows:** `Operant-2.7.5-windows-x64.msi`. Run it. It installs per-user, so there's no admin prompt.
+- **macOS:** `Operant-2.7.5-mac-arm64.dmg` (Apple Silicon) or `Operant-2.7.5-mac-x64.dmg` (Intel). Drag Operant to Applications. The app isn't code-signed, so macOS blocks the first launch: choose *Open Anyway* in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Operant.app` once.
+- **Linux (x64):** `Operant-2.7.5-linux-x86_64.AppImage` (`chmod +x` it, then run it; Ubuntu 22.04 and later need FUSE 2 first: `sudo apt install libfuse2t64`, or `libfuse2` on 22.04), `Operant-2.7.5-linux-amd64.deb` (`sudo apt install ./Operant-2.7.5-linux-amd64.deb`), `Operant-2.7.5-linux-x86_64.rpm` (`sudo dnf install ./Operant-2.7.5-linux-x86_64.rpm`) or `Operant-2.7.5-linux-x64.tar.gz`. On Ubuntu 24.04 and later the AppImage and tarball need an AppArmor profile or `OPERANT_NO_SANDBOX=1 ./Operant-2.7.5-linux-x86_64.AppImage`; the README explains.
+
+## New
+- **Role presets:** six short, focused roles make an agent good at one kind of job: implement, fix, explore, review, docs and design. Claude Code gets them as the `operant:<role>` subagents, OpenCode as `role-<name>` agents, and worker tiles get the role that fits their task. Design runs on Opus 5.5 at high effort, decides the approach and returns a plan split into tasks. Every role ends with the same report: DONE, DONE_WITH_CONCERNS, BLOCKED or NEEDS_CONTEXT. The team loop (a fresh agent per task, a review after each part, a final review) follows ideas from the superpowers plugin (MIT).
+- **Notifications that say what they're about:** a question shows the question itself ("Claude Code asks: should I push to dev-2.7.5?"), a permission prompt shows the command or edit, and `operant notify` messages are their own kind. Each row in the bell panel has a kind label, and the panel groups New and Earlier, shows an unread count and has a × to dismiss a row.
+- **Agents check CodeGraph before they grep:** in a project with a CodeGraph index, an agent's grep on code is refused until it has queried CodeGraph once. The refusal tells it the exact `codegraph explore` command to run. CSS, JSON, Markdown and HTML searches stay free. Applies to Claude Code tiles and their subagents, and to OpenCode tiles when "Brief agents" is on. ⚙ Settings › Projects › CodeGraph › Agents query CodeGraph before grep (on by default, applies to new agents).
+- **CodeGraph installs itself:** if CodeGraph is missing when Operant starts and npm is available, Operant installs it in a background tile and indexes your pinned projects. ⚙ Settings › Projects › CodeGraph › Install CodeGraph if it's missing (on by default).
+
+## Changed
+- **Seats, pods, team templates and team snapshots are gone.** The role presets replace them. The commands `operant seats`, `seat`, `pods` and `pod`, the `--seat` flag and `operant team list|save|start|snapshot|restore|snapshots` are removed; `operant team` still shows the team. Team norms stay. Messages to a Claude Code or OpenCode tile now always wait until its agent has started.
+- **"An agent finished" no longer notifies by default,** and neither does "a Claude subagent finished". The old "agent is waiting" switch is split into questions (on) and finished (off). ⚙ Settings › General › Notifications has a switch for each.
+- **Projects are indexed with CodeGraph every time Operant starts** (all pinned projects, quick for ones already indexed). A saved "projects with lots of changes" setting moves to "all projects"; you can still choose either or off.
+- **Subagent tiles always open on the workspace of the agent that started them.** They no longer spill onto the next workspace, so the "Tiles per workspace" setting is gone.
+- **Tile numbers are reused.** A new tile takes the lowest free number once an old tile has been closed for 5 minutes and nothing still points at it, so numbers stop climbing into the hundreds. Clicking an old notification never jumps to a newer tile that took its number.
+- **Cleaner, easier to read:** smoother font rendering and antialiasing, a consistent text size scale, clearer secondary text, and hover fades. Menus and drop-downs have more room, the ⚙ quick menu is larger with a Team section, and Settings drop-downs match the text fields.
+- **Terminal line height is 1.15** (it was 1.0); a saved 1.0 moves with it, and bold text is semibold.
+
+## Fixed
+- **A task handed back as done** no longer shows a made-up `failure:` line in `operant task show`.
+- **The lead's review list** only shows tasks from its own project; tasks from other repositories used to appear in it.
+- **Notification rows** no longer repeat the tile name.
+
+---
+
 # Operant 2.7.4
 
 Claude Code messages no longer carry CodeGraph's automatic code attachment, which saves tokens on every turn.

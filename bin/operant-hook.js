@@ -5,7 +5,12 @@
 // and exits 0.
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 const prime = require('./operant-prime');
+const cgFirst = require('../codegraph-first');
 
 const API_TIMEOUT = 3000;
 
@@ -35,6 +40,23 @@ async function call(cmd, args) {
   return body && body.ok ? body.result : null;
 }
 
+// CodeGraph-first gate state: one tiny file per agent (session, plus the subagent's id when Claude Code gives one).
+const GATE_DIR = path.join(os.tmpdir(), 'operant-cg');
+const GATE_TTL = 24 * 3600 * 1000;
+const gateFile = input => path.join(GATE_DIR, crypto.createHash('sha1').update(`${input.session_id || ''}|${input.agent_id || ''}`).digest('hex').slice(0, 20) + '.json');
+function readGate(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { return {}; } }
+function writeGate(file) {
+  try {
+    fs.mkdirSync(GATE_DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ cg: true }));
+    const old = Date.now() - GATE_TTL;
+    for (const f of fs.readdirSync(GATE_DIR)) {
+      const p = path.join(GATE_DIR, f);
+      try { if (fs.statSync(p).mtimeMs < old) fs.unlinkSync(p); } catch {}
+    }
+  } catch {}
+}
+
 const HANDLERS = {
   // Every start, resume, /clear, compact and fork: the context from before a compact is summarised
   // away, so it's injected again each time rather than once.
@@ -60,6 +82,16 @@ const HANDLERS = {
   async 'post-tool-use'() {
     const r = await call('hook', { event: 'post-tool-use' });
     return r && r.context ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: r.context } } : null;
+  },
+  // CodeGraph first: a code search by grep is denied until this agent has made a CodeGraph call. Needs no Operant API,
+  // so it also holds for subagents and with the app slow or closed. OPERANT_CODEGRAPH_GATE=0 switches it off.
+  async 'pre-tool-use'(input) {
+    if (process.env.OPERANT_CODEGRAPH_GATE === '0' || !input || typeof input.tool_name !== 'string') return null;
+    if (!cgFirst.findIndexRoot(input.cwd || process.cwd(), fs.existsSync)) return null;
+    const file = gateFile(input);
+    const d = cgFirst.gateDecision({ tool: input.tool_name, input: input.tool_input, state: readGate(file), hasIndex: true });
+    if (d.record) { writeGate(file); return null; }
+    return d.allow ? null : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: d.reason } };
   },
 };
 

@@ -8,13 +8,13 @@ const CLIS = {
   claude: {
     id: 'claude', label: 'Claude Code', command: 'claude', install: 'npm i -g @anthropic-ai/claude-code',
     flags: { prompt: ['{}'], model: ['--model', '{}'], effort: ['--effort', '{}'], session: ['--session-id', '{}'], resume: ['--resume', '{}'], brief: ['--append-system-prompt', '{}'] },
-    brief: 'append-system-prompt', skill: 'plugin-dir', busy: 'hooks', adopt: true, tiers: null,
+    brief: 'append-system-prompt', skill: 'plugin-dir', busy: 'hooks', tiers: null,
     delegate: 'the Agent tool with `model` set to the tier\'s alias (haiku, sonnet or opus)',
   },
   opencode: {
     id: 'opencode', label: 'OpenCode', command: 'opencode', install: 'npm i -g opencode-ai',
     flags: { prompt: ['--prompt', '{}'], model: ['-m', '{}'], effort: null, session: null, resume: null, port: ['--port', '{}'], brief: null },
-    brief: 'config-instructions', skill: 'skill-paths', busy: 'server', adopt: false, tiers: null,
+    brief: 'config-instructions', skill: 'skill-paths', busy: 'server', tiers: null,
     delegate: 'the `tier-<name>` subagent',
   },
   // Codex: prompt positional; effort and the brief go in as config overrides (-c key=value, the value read as TOML).
@@ -23,7 +23,7 @@ const CLIS = {
     flags: { prompt: ['{}'], model: ['-m', '{}'], effort: ['-c', 'model_reasoning_effort={}'], session: null, resume: null, brief: ['-c', 'developer_instructions={toml}'] },
     // Codex's shell tool drops env vars named like KEY/SECRET/TOKEN by default; keep Operant's (OPERANT_AUTH) for the `operant` command.
     launch: ['-c', 'shell_environment_policy.inherit=all', '-c', 'shell_environment_policy.ignore_default_excludes=true'],
-    brief: 'developer-instructions', skill: 'brief', busy: 'output', adopt: true,
+    brief: 'developer-instructions', skill: 'brief', busy: 'output',
     tiers: {
       xsmall: { model: 'gpt-5.1-codex-mini', effort: 'medium' },
       small: { model: 'gpt-5.1-codex', effort: 'low' },
@@ -38,7 +38,7 @@ const CLIS = {
   gemini: {
     id: 'gemini', label: 'Gemini CLI', command: 'gemini', install: 'npm i -g @google/gemini-cli',
     flags: { prompt: ['-i', '{}'], model: ['-m', '{}'], effort: null, session: null, resume: null, brief: null },
-    brief: 'prompt-prefix', skill: 'brief', busy: 'output', adopt: true,
+    brief: 'prompt-prefix', skill: 'brief', busy: 'output',
     tiers: {
       xsmall: { model: 'gemini-2.5-flash-lite' },
       small: { model: 'gemini-2.5-flash' },

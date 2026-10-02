@@ -23,6 +23,21 @@ const MIGRATIONS = [
     delete user.tierOffers;
     for (const d of Object.values(user.projectDefaults || {})) if (isPlain(d) && d.agents === 'both') delete d.agents;
   } },
+  // "Waiting" is split into questions and finished (finished starts off as a default): an off waiting switch turns
+  // questions off, and a saved "subagent finished" goes off too, since those toasts now start off.
+  { to: 6, run(user) {
+    if (user.notifyWaiting === false) user.notifyQuestions = false;
+    delete user.notifyWaiting;
+    if ('notifySubagents' in user) user.notifySubagents = false;
+  } },
+  // Seats are gone (stateless role presets replace them): their idle-close setting goes.
+  { to: 7, run(user) { delete user.seatIdleMinutes; } },
+  // Terminal line height default 1 -> 1.15 (easier to read); a saved old default follows it.
+  { to: 8, run(user) { if (user.lineHeight === 1) user.lineHeight = 1.15; } },
+  // CodeGraph indexes every pinned project on every start: a saved 'changed' (the old default) follows the new default.
+  { to: 9, run(user) { if (user.codegraphOnStartup === 'changed') user.codegraphOnStartup = 'all'; } },
+  // Subagent tiles no longer spill onto the next workspace, so the tiles-per-workspace limit goes.
+  { to: 10, run(user) { delete user.maxTilesPerWorkspace; } },
 ];
 const CURRENT = MIGRATIONS[MIGRATIONS.length - 1].to;
 
@@ -69,7 +84,6 @@ const RANGES = {
   lineHeight: { min: 1, max: 1.6 },
   scrollback: { min: 1000, max: 200000, int: true, unit: 'lines' },
   masterRatio: { min: 0.2, max: 0.85 },
-  maxTilesPerWorkspace: { min: 1, max: 16, int: true, unit: 'tiles' },
   autoCompact: { min: 0, max: 100, int: true, unit: 'percent' },
   cacheTtlMinutes: { min: 1, max: 120, int: true, unit: 'minutes' },
   notifyWhenIdleSeconds: { min: 0, max: 600, int: true, unit: 'seconds' },
@@ -77,7 +91,6 @@ const RANGES = {
   typingGuardSeconds: { min: 0, max: 60, int: true, unit: 'seconds' },
   autoCloseDoneAgentsSeconds: { min: 0, max: 86400, int: true, unit: 'seconds' },
   idleCloseTerminalMinutes: { min: 0, max: 1440, int: true, unit: 'minutes' },
-  seatIdleMinutes: { min: 0, max: 1440, int: true, unit: 'minutes' },
   agentLookbackSeconds: { min: 0, max: 3600, int: true, unit: 'seconds' },
   stuckTurns: { min: 0, max: 200, int: true, unit: 'tool calls' },
   runawayLoopRepeats: { min: 3, max: 50, int: true, unit: 'repeats' },

@@ -21,7 +21,10 @@
   const agentWin = new Map();  // agentId -> win
   const closedAgentInfo = new Map(); // agentId -> info, kept a while so a resumed agent can reopen its tile
   let current = 0;
-  let nextId = 1;
+  // Tile ids are the small numbers on tiles: a new tile takes the lowest free one (tile-ids.js). uid never repeats,
+  // for anything that must not reach a newer tile that took a closed tile's number.
+  const idPool = TileIds.createIdPool();
+  let nextUid = 0;
   let lastCwd = cfg.defaultCwd;
 
   // ------------------------------------------------------------ workspaces
@@ -300,19 +303,43 @@
   // The info bar under every tile's title bar; renderIbar fills in the pieces each kind of tile uses.
   const IBAR = '<div class="ibar"><span class="ib-model"></span><span class="ib-ctx"><i class="ib-bar"><b></b></i><span class="ib-ctxtxt"></span></span><span class="ib-tok"></span><span class="ib-cache"></span><span class="ib-meta"></span><span class="ib-sp"></span><span class="ib-folder"></span><span class="ib-branch"></span></div>';
 
+  // An id is reused only when nothing still points at it: an unfinished board task (owner, lead, verifying tile),
+  // a queued message to or from it, a watch on it or by it, or a compact in flight.
+  const GONE_TASK = new Set(['done', 'failed', 'cancelled']);
+  function tileIdReferenced(id) {
+    if (board.tasks.some(t => !GONE_TASK.has(t.status) && (t.owner === id || t.lead === id || t.checkTile === id))) return true;
+    if (Object.values(msgState.queues).some(q => q.some(m => m.from === id || m.to === id))) return true;
+    if (watches.has(id) || watchPrefix.has(id) || compacting.has(id) || resuming.has(id)) return true;
+    return [...watches.values()].some(st => st.callerId === id);
+  }
+  function claimTileId() {
+    const id = idPool.take(tileIdReferenced);
+    // Dedupe and rate-limit records of the id's earlier tile must not apply to the new one.
+    msgState.sent = msgState.sent.filter(x => x.from !== id && x.to !== id);
+    return id;
+  }
+  // A closed tile's id goes back to the pool (held 5 minutes), and what was keyed by it goes.
+  function releaseTileId(id) {
+    watches.delete(id);
+    for (const [target, st] of [...watches]) if (st.callerId === id) watches.delete(target);
+    watchPrefix.delete(id);
+    for (const key of [...readCursors.keys()]) if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) readCursors.delete(key);
+    idPool.release(id);
+  }
+
   function makeWin(kind, title, icon) {
-    const id = nextId++;
+    const id = claimTileId();
     const el = document.createElement('div');
     el.className = `win ${kind} opening`;
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="sdot"></span><span class="ico">${esc(icon || (kind === 'agent' ? '◆' : '>_'))}</span>
-      <span class="tid">#${id}</span><span class="title"></span><span class="tier"></span><span class="seat" hidden></span><span class="waiting"></span><span class="held" hidden><span class="held-t">message held, you are typing</span><button class="held-release" title="Deliver now">Release</button><button class="held-discard" title="Drop the held messages">Discard</button></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div>${IBAR}<div class="term"><div class="term-fit"></div></div></div>`;
+      <span class="tid">#${id}</span><span class="title"></span><span class="tier"></span><span class="waiting"></span><span class="held" hidden><span class="held-t">message held, you are typing</span><button class="held-release" title="Deliver now">Release</button><button class="held-discard" title="Drop the held messages">Discard</button></span><span class="badge"></span><span class="runaway"></span><button class="x" title="Close">✕</button></div>${IBAR}<div class="term"><div class="term-fit"></div></div></div>`;
     const term = new Terminal({
       ...termOptions(kind), allowTransparency: true,
       disableStdin: kind === 'agent', cursorInactiveStyle: 'none', allowProposedApi: true,
     });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
-    const w = { id, kind, el, term, fit, title, alive: true, ws: current, lastActivity: Date.now(), closeIn: null };
+    const w = { id, uid: ++nextUid, kind, el, term, fit, title, alive: true, ws: current, lastActivity: Date.now(), closeIn: null };
     el.querySelector('.title').textContent = title;
     el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
     el.querySelector('.runaway').addEventListener('click', e => { e.stopPropagation(); stopTile(w); });
@@ -371,6 +398,7 @@
     const t = theme();
     return {
       fontFamily: cfg.fontFamily, fontSize: cfg.fontSize, lineHeight: cfg.lineHeight, scrollback: cfg.scrollback,
+      fontWeight: 'normal', fontWeightBold: '600', letterSpacing: 0,
       cursorStyle: cfg.cursorStyle, cursorBlink: kind !== 'agent' && cfg.cursorBlink,
       theme: {
         background: 'rgba(0,0,0,0)', foreground: t.text, cursor: kind === 'agent' ? 'rgba(0,0,0,0)' : accent(),
@@ -675,7 +703,6 @@
 
   function queueCompact(w) {
     if (!w.alive || !w.ptyId || compacting.has(w.id)) return;
-    if (w.seatId) { const st = board.tasks.find(x => x.owner === w.id && x.seat === w.seatId); operant.seatOp({ dir: seatDirOf(st, w), op: 'keep', seat: w.seatId, task: seatTask(st), reason: 'compacted' }).catch(() => {}); }
     compacting.set(w.id, { stage: 'wait', idleSince: null });
   }
 
@@ -809,7 +836,7 @@
     + '<button data-f="prev" title="Previous (Shift+Enter)">↑</button><button data-f="next" title="Next (Enter)">↓</button><button data-f="close" title="Close (Esc)">✕</button></div>';
 
   function openViewer(file, { ws = current, focus = true, near = null } = {}) {
-    const id = nextId++;
+    const id = claimTileId();
     const el = document.createElement('div');
     el.className = 'win view opening';
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="sdot"></span><span class="ico">▤</span><span class="tid">#${id}</span><span class="title"></span><span class="badge"></span>
@@ -820,7 +847,7 @@
         <div class="plan-change hidden"><input class="plan-note" type="text" placeholder="What should change?">
         <button class="btn primary" data-p="send">Send</button></div></div>
       <div class="view-wrap"><div class="view-page" tabindex="-1"><div class="view-body"></div></div>${FIND_BAR}</div></div>`;
-    const w = { id, kind: 'view', el, term: null, file, title: baseName(file), alive: true, ws, lastActivity: Date.now(), closeIn: null,
+    const w = { id, uid: ++nextUid, kind: 'view', el, term: null, file, title: baseName(file), alive: true, ws, lastActivity: Date.now(), closeIn: null,
       cwd: dirOf(file), page: el.querySelector('.view-page'), source: false, mtime: null, planQueue: [] };
     el.querySelector('.title').textContent = w.title;
     el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
@@ -1142,7 +1169,7 @@
   function openDiff(dir, { ws = current, focus = true, near = null } = {}) {
     const open = [...wins.values()].find(x => x.kind === 'diff' && x.alive && normPath(x.cwd) === normPath(dir));
     if (open && focus) { if (open.ws !== current) switchWorkspace(open.ws); focusWin(open); loadDiff(open); return open; }
-    const id = nextId++;
+    const id = claimTileId();
     const el = document.createElement('div');
     el.className = 'win diff opening';
     el.innerHTML = `<div class="inner"><div class="tbar"><span class="sdot"></span><span class="ico">±</span><span class="tid">#${id}</span><span class="title"></span><span class="badge"></span>
@@ -1153,7 +1180,7 @@
         <div class="commit-row"><label class="commit-amend" title="Change the last commit instead of making a new one"><input type="checkbox"> Amend</label><span class="commit-status"></span></div>
         <div class="commit-row"><button class="btn primary" data-c="commit" title="${MOD}+Enter">Commit</button><button class="btn" data-c="push">Commit and Push</button></div></div></div>
       <div class="view-wrap"><div class="view-page diff-page" tabindex="-1"><div class="diff-body"></div></div>${FIND_BAR}</div></div></div>`;
-    const w = { id, kind: 'diff', el, term: null, title: `Changes · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
+    const w = { id, uid: ++nextUid, kind: 'diff', el, term: null, title: `Changes · ${baseName(dir)}`, alive: true, ws, lastActivity: Date.now(), closeIn: null,
       cwd: dir, page: el.querySelector('.diff-page'), files: [], sel: null, skip: new Set() };
     el.querySelector('.title').textContent = w.title;
     el.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); requestClose(w); });
@@ -1240,55 +1267,7 @@
       + `<span class="board-id">#${r.id}</span><span class="board-text">${esc(r.title)}</span><span class="board-note basement-${r.status}">${esc(r.label)} · ${r.seconds}s</span></div>`).join('')
       + (m.selected ? `<pre class="basement-out">${m.selected.truncated ? '[earlier output dropped]\n' : ''}${esc(m.selected.output || '(no output yet)')}</pre>` : '');
   }
-  function boardChanged() { paintSeatBadges(); saveSession(); }
-  // Seats (seats.js): a task that names a seat keeps that seat's state across workers. Plain data over IPC, no model calls.
-  const seatTask = t => t && ({ status: t.status, note: t.note, failure: t.failure, check: t.check, checkpoint: t.checkpoint, constraints: t.constraints });
-  const seatDirOf = (t, w) => t?.cwd || w?.cwd || lastCwd;
-  async function seatTake(t, w) {
-    if (!t?.seat || !w) return;
-    w.seatId = t.seat;
-    await operant.seatOp({ dir: seatDirOf(t, w), op: 'take', seat: t.seat, tileId: w.id }).catch(() => {});
-    refreshSeats(seatDirOf(t, w));
-  }
-  // Seat state on screen (seat-view.js): one colour set (--seat-* in style.css) for the tile badge. Records come from
-  // `seatOp list` (a small file read, no model); they are refreshed when a seat changes hands.
-  const seatKinds = new Map(); // seat id -> kind, for the tile marker
-  const SEAT_MARK = {
-    hard: '<svg class="seat-mark hard" viewBox="0 0 12 12" aria-label="hard-worker seat"><title>Hard-worker seat: pinned to the medium tier</title><path d="M4 1h4l-.6 3.2L9 6H6.6V10L6 11l-.6-1V6H3l1.6-1.8z" fill="currentColor"/></svg>',
-    master: '<svg class="seat-mark master" viewBox="0 0 12 12" aria-label="master seat"><title>Master seat: takes the work and hands it out</title><path d="M1.5 9.5l-.5-6 2.7 2.3L6 2l2.3 3.8L11 3.5l-.5 6z" fill="currentColor"/></svg>',
-  };
-  const seatChip = state => `<span class="seat-badge seat-${state}">${SeatView.STATE_LABEL[state]}</span>`;
-  function paintSeatBadges() {
-    for (const w of wins.values()) {
-      const el = w.el?.querySelector('.tbar .seat');
-      if (!el) continue;
-      if (!w.seatId) { el.hidden = true; el.innerHTML = ''; continue; }
-      const needs = !!w.waitingPrompt || board.tasks.some(t => t.owner === w.id && t.status === 'paused');
-      el.hidden = false;
-      el.innerHTML = `<span class="seat-name">${esc(w.seatId)}</span>${SEAT_MARK[seatKinds.get(w.seatId)] || ''}${seatChip(SeatView.seatState({ state: 'active', history: [] }, { needsInput: needs }))}`;
-    }
-  }
-  async function refreshSeats(dir) {
-    const r = await operant.seatOp({ dir: dir || lastCwd, op: 'list' }).catch(() => null);
-    if (!r?.ok) return null;
-    for (const s of r.result.seats) seatKinds.set(s.id, s.kind);
-    paintSeatBadges();
-    return r.result;
-  }
-  // The worker ended (closed, finished, token stop): the seat keeps its state and goes idle-closed.
-  function seatRelease(t, w, reason, extra) {
-    const id = w?.seatId || t?.seat;
-    if (!id) return;
-    if (w) w.seatId = null;
-    paintSeatBadges();
-    operant.seatOp({ dir: seatDirOf(t, w), op: 'release', seat: id, task: seatTask(t), reason, extra, tileId: w?.id }).then(r => {
-      const s = r?.ok && r.result;
-      if (!s || s.kind !== 'hard' || !['finished', 'blocked', 'failed', 'rejected'].includes(reason)) return;
-      // A hard seat is empty again: the hard part's follow-up drops back down, and its worker tile is closed once the handback has been read.
-      if (t && s.dropBack) { t.dropBack = s.dropBack; boardChanged(); }
-      if (w?.alive) setTimeout(() => { if (w.alive && !w.busySince) closeWin(w); }, 4000);
-    }).catch(() => {});
-  }
+  function boardChanged() { saveSession(); }
   // Escalation and downgrade signals (routing.js): suggestions only, shown on the review card and in `operant task show`.
   function signalsOf(t) {
     const w = wins.get(t.owner), ctx = w?.ctx?.tokens ?? null;
@@ -1372,15 +1351,13 @@ async function contextBrief(t) {
     if (!conf) throw new Error(`unknown tier "${tier}" - set it up in Settings › Agents › Team (this project's team runs on ${CliRegistry.labelOf(agentMode(t.cwd || lastCwd))})`);
     // No embedded newline/double-quotes here - the whole prompt is one quoted shell argument
     // (see pty:create in main.js), and those have caused it to be mis-split on Windows.
-    const seatPlan = t.seat ? await operant.seatOp({ dir: t.cwd || lastCwd, op: 'plan', seat: t.seat, tier }).catch(() => null) : null;
-    const prompt = `${seatPlan?.ok ? oneLine(seatPlan.result.brief) + ' — ' : ''}${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${Board.resumeBrief(t) ? ' — ' + Board.resumeBrief(t) : ''}${await codegraphBrief(t, t.cwd || lastCwd)}${await contextBrief(t)} — ${reportLine(t.id)}`;
+    const prompt = `${t.text}${t.failure ? ' — ' + oneLine(t.failure) : ''}${Board.resumeBrief(t) ? ' — ' + Board.resumeBrief(t) : ''}${await codegraphBrief(t, t.cwd || lastCwd)}${await contextBrief(t)} — ${reportLine(t.id)}`;
     const lead = wins.get(t.lead);
     const w = await newTerminal('ai', t.cwd, {
       agentId: conf.agent, prompt, title: t.title || undefined, model: conf.model, effort: conf.effort || null,
       worker: true, ws: lead?.alive ? lead.ws : masterWs(), near: lead?.alive ? lead : undefined, focus: false,
     });
     w.tier = tier; setTierDot(w);
-    await seatTake(t, w);
     t.owner = w.id; t.agent = conf.agent; t.model = conf.model;
     noteRoute(w, t, conf);
     traceDecision(t, w, conf, t.decision);
@@ -1447,7 +1424,7 @@ async function contextBrief(t) {
   // Tokens a task has used on its current tier: earlier tiles on this tier plus the live one (input + output + cache writes).
   const taskUsed = (t, w) => TierGuard.counted(t.tokens) - (t.limitBase || 0) + TierGuard.counted(w?.tok);
   const limitLine = u => `limit: ${fmtK(u.work)} of ${fmtK(u.limit)}` + (u.allowanceUsed ? ` · saving allowance ${fmtK(u.allowanceUsed)} of ${fmtK(u.allowance)}` : '');
-  const askCard = t => `<div class="board-ask" data-ask="${t.id}"><div class="board-ask-why">${t.seat ? `Seat ${esc(t.seat)} · ` : ''}Paused: ${esc(t.ask.why)}${t.ask.reason ? ` · ${esc(t.ask.reason)}` : ''}. Nothing runs until you choose.</div>`
+  const askCard = t => `<div class="board-ask" data-ask="${t.id}"><div class="board-ask-why">Paused: ${esc(t.ask.why)}${t.ask.reason ? ` · ${esc(t.ask.reason)}` : ''}. Nothing runs until you choose.</div>`
     + (t.ask.evidence.length ? `<div class="board-note">${t.ask.evidence.map(esc).join(' · ')}</div>` : '')
     + `<div class="board-ask-btns">${t.ask.choices.map(c => `<button class="btn" data-choice="${c.id}">${esc(c.label)}</button>`).join('')}</div>`
     + '<input class="board-ask-hint hidden" placeholder="Your hint for the worker, then Enter" spellcheck="false"></div>';
@@ -1477,7 +1454,7 @@ async function contextBrief(t) {
     TierGuard.pause(t, ask);
     if (w?.alive && w.ptyId && kind !== 'limit' && kind !== 'budget' && kind !== 'higher') { stopTile(w); if (w.sessionId) operant.stuckReset(w.sessionId); }
     boardChanged();
-    tell(t, `${t.seat ? `Seat ${t.seat}, task` : 'Task'} ${t.id} ${ask.why}: ${taskTldr(t)}`, `${ask.reason}. Paused until you answer: ${ask.choices.map(c => c.label).join(' · ')}`);
+    tell(t, `Task ${t.id} ${ask.why}: ${taskTldr(t)}`, `${ask.reason}. Paused until you answer: ${ask.choices.map(c => c.label).join(' · ')}`);
     askToast(t);
   }
   // The paused task's card stays on screen (top right) until the user picks; the choices are the ask's own.
@@ -1511,7 +1488,6 @@ async function contextBrief(t) {
     if (r.do === 'up') {
       if (r.limit) t.budget = r.limit; else delete t.budget;
       await escalateTask(t, ask.reason || ask.why);
-      if (t.seat && t.tier) operant.seatOp({ dir: seatDirOf(t), op: 'boost', seat: t.seat, tier: t.tier, taskId: t.id }).catch(() => {}); // one-off: cleared when the seat closes
     } else if (r.do === 'retry') {
       t.note = `Your hint: ${r.hint}`;
       Board.noteChange(t, { kind: 'context', text: oneLine(r.hint).slice(0, 240) });
@@ -1579,7 +1555,6 @@ async function contextBrief(t) {
   }
   setInterval(() => { for (const w of wins.values()) if (w.alive && w.tier && w.limit) checkBudget(w); }, 15000);
   async function onLimitEvent(t, w, ev) {
-    seatRelease(t, w?.seatId ? w : null, 'token-stop');
     const st = w.limit.tracker.state();
     if (ev.type !== 'stop') {
       Messaging.enqueue(msgState, { from: 'operant', to: w.id, text: TierGuard.limitMessage(ev, { id: t.id, plan: st.plan, used: st.used }) });
@@ -1622,14 +1597,13 @@ async function contextBrief(t) {
     }
     command = ok ? ran.join(' + ') : ran[ran.length - 1];
     t.check = { command, ok, summary: summary.slice(0, 600), at: Date.now() };
-    if (ok) seatRelease(t, wins.get(t.owner)?.alive ? wins.get(t.owner) : null, 'finished');
     try { t.diffStat = await operant.git('diffstat', cwd) || null; } catch {}
     if (t.status !== 'verifying') { boardChanged(); return; }
-    if (ok) { t.status = 'review'; boardChanged(); if (from) notify(from, `Task ${t.id} ready for review: ${taskTldr(t)}`, `checks passed: ${command}`, null, true, 'task'); return; }
+    if (ok) { t.status = 'review'; boardChanged(); if (from) notify(from, `Task ${t.id} ready for review`, `${taskTldr(t)} · checks passed: ${command}`, null, true, 'task'); return; }
     const first = oneLine(summary.split('\n').find(l => /error|fail|not ok/i.test(l)) || summary.split('\n')[0] || 'no output').slice(0, 160);
     const why = `checks failed: ${command} - ${first}`;
     if (Board.verifyFailed(t, why) === 'retry') retryTask(t, wins.get(t.owner), `Operant's checks failed (${oneLine(why)}). Fix it`);
-    else { boardChanged(); if (from) notify(from, `Task ${t.id} ready for review, checks failed: ${taskTldr(t)}`, why, null, true, 'task'); }
+    else { boardChanged(); if (from) notify(from, `Task ${t.id} ready for review, checks failed`, `${taskTldr(t)} · ${why}`, null, true, 'task'); }
   }
 
   // Back to 'doing' in the same tile; with no live tile left, a new worker on the same tier.
@@ -1915,9 +1889,9 @@ async function contextBrief(t) {
     if (typingNow(w)) { setHeldLine(w, true); return; }
     releaseHeld(w);
   }
-  // Ready check (ready-check.js): a tile holding a seat gets a message only when its process is up, its agent started and it is idle; otherwise it stays queued with the reason.
+  // Ready check (ready-check.js): a Claude Code or OpenCode tile gets a message only when its process is up, its agent started and it is idle; otherwise it stays queued with the reason.
   function notReadyReason(w) {
-    if (!w.seatId) return null;
+    if (!isClaudeTile(w) && !String(w.sessionId || '').startsWith('oc:')) return null; // other CLIs have no session to tell started from not
     const r = ReadyCheck.readyCheck({ alive: w.alive, ptyId: w.ptyId, started: !!w.sessionId, working: String(w.sessionId || '').startsWith('oc:') ? w.ocBusy : isWorking(w), waitingPrompt: w.waitingPrompt || (isClaudeTile(w) && !!claudePromptInLast(w)) }, { enabled: cfg.readyCheck !== false });
     return r.ready ? null : r.reason;
   }
@@ -1973,7 +1947,6 @@ async function contextBrief(t) {
       t.note = 'Worker closed without reporting a result';
       notify(w, `Task ${t.id} ended without a result`, t.text, null, true, 'task');
     }
-    if (w.seatId) seatRelease(board.tasks.find(x => x.owner === w.id && x.seat === w.seatId), w, 'closed');
     if (w.tier) boardChanged();
     w.alive = false;
     if (w.planQueue?.length) { w.planQueue.forEach(r => r({ approved: false, note: '(closed without an answer)' })); w.planQueue = []; }
@@ -1995,6 +1968,7 @@ async function contextBrief(t) {
     const closeMs = parseFloat(getComputedStyle(document.body).getPropertyValue('--anim-pop')) || 0;
     setTimeout(() => { w.term?.dispose(); w.el.remove(); }, closeMs);
     wins.delete(w.id);
+    releaseTileId(w.id);
     recovery.forget(w.id); resuming.delete(w.id);
     layout(wsIndex);
     if (wasFocused) {
@@ -2083,28 +2057,31 @@ async function contextBrief(t) {
   // Worker tiles (w.tier) stay silent; their result reaches the master as the "Task N done" notification.
   // force: for what needs the user regardless (permission prompts, a finished task).
   const clip = (t, n) => { t = String(t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
-  // kind: 'waiting' | 'approval' | 'task' | 'runaway' | 'bell' | 'watch' | 'subagent'; its notify* setting off skips the desktop notification.
-  const kindOn = kind => ({ waiting: cfg.notifyWaiting, approval: cfg.notifyApprovals, task: cfg.notifyTasks, runaway: cfg.notifyRunaway, bell: cfg.notifyBell, watch: cfg.notifyWatch })[kind] !== false;
+  // kind: 'question' | 'finished' | 'message' | 'approval' | 'task' | 'runaway' | 'bell' | 'watch' | 'subagent'; its notify* setting off skips the desktop notification.
+  const kindOn = kind => ({ question: cfg.notifyQuestions, finished: cfg.notifyFinished, message: cfg.notifyMessages, approval: cfg.notifyApprovals, task: cfg.notifyTasks, runaway: cfg.notifyRunaway, bell: cfg.notifyBell, watch: cfg.notifyWatch })[kind] !== false;
+  const KIND_LABEL = { question: 'Question', approval: 'Permission', message: 'Message', finished: 'Finished', task: 'Task', runaway: 'Runaway', bell: 'Bell', watch: 'Watch', subagent: 'Subagent' };
+  const tileName = w => w.title || w.agentName;
+  const withProject = (w, body) => [body, w.cwd ? baseName(w.cwd) : ''].filter(Boolean).join(' · ');
   async function notify(w, title, body, action, force, kind) {
     if (!w.alive) return;
     if (w.tier && !force) return;
     if (!force && w.lastNotified && Date.now() - w.lastNotified < 5000) return;
-    logNotification(w, title, body, action); // kept for the bell panel even when the desktop notification below is off
+    logNotification(w, title, body, action, kind); // kept for the bell panel even when the desktop notification below is off
     if (!cfg.notifications) return;
     if (!kindOn(kind)) return;
     if (QuietHours.inQuietHours(cfg.notifyQuietFrom, cfg.notifyQuietTo)) return;
     if (cfg.notifyOnlyBackground && await operant.windowFocused()) return;
     if (cfg.notifyOnlyUnfocused && w.ws === current && workspaces[w.ws].focused === w.id && await operant.windowFocused()) return;
     w.lastNotified = Date.now();
-    operant.notify({ title, body, tileId: w.id, silent: !cfg.notifySound });
+    operant.notify({ title, body, tileId: w.id, tileUid: w.uid, silent: !cfg.notifySound });
   }
 
   // The bell panel's log: newest first, capped at 100, kept only in memory.
   const notifLog = [];
   let notifId = 0;
-  function logNotification(w, title, body, action) {
+  function logNotification(w, title, body, action, kind) {
     const icon = w.el?.querySelector('.ico')?.textContent || '🔔';
-    notifLog.unshift({ id: ++notifId, tileId: w.id, ws: w.ws, icon, tileTitle: w.title, title, body, at: Date.now(), read: false, action: action || null });
+    notifLog.unshift({ id: ++notifId, tileId: w.id, tileUid: w.uid, ws: w.ws, icon, tileTitle: w.title, title, body, at: Date.now(), read: false, action: action || null, kind: kind || null });
     notifLog.length = Math.min(notifLog.length, 100);
     updateNotifBadge();
     if (openPanel() === 'notifications') renderNotifications();
@@ -2114,8 +2091,11 @@ async function contextBrief(t) {
     $('#notif-badge').textContent = n > 99 ? '99+' : n || '';
     $('#notif-badge').classList.toggle('hidden', !n);
   }
+  // Rows that were unread when the panel opened stay under "New" for that look, though opening marks them read.
+  let notifFresh = new Set();
   function markAllNotifsRead() {
-    if (!notifLog.some(n => !n.read)) return;
+    notifFresh = new Set(notifLog.filter(n => !n.read).map(n => n.id));
+    if (!notifFresh.size) return;
     notifLog.forEach(n => n.read = true);
     updateNotifBadge();
     renderNotifications();
@@ -2128,21 +2108,37 @@ async function contextBrief(t) {
     const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
     return `${Math.round(h / 24)}d ago`;
   }
+  const NOTIF_X = '<svg viewBox="0 0 10 10"><path d="m2 2 6 6M8 2 2 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+  const notifRow = n => `<button class="notif-row${!n.read || notifFresh.has(n.id) ? ' unread' : ''}${n.kind ? ` notif-kind-${n.kind}` : ''}" data-id="${n.id}">
+      <span class="notif-ico">${esc(n.icon)}</span>
+      <span class="notif-txt"><span class="notif-title">${KIND_LABEL[n.kind] ? `<span class="notif-kind notif-kind-${n.kind}">${KIND_LABEL[n.kind]}</span>` : ''}${esc(n.title)}</span>${n.tileTitle && !String(n.title).includes(n.tileTitle) ? `<span class="notif-tile">${esc(n.tileTitle)}</span>` : ''}${n.body ? `<span class="notif-body">${esc(n.body)}</span>` : ''}${n.action ? `<span class="notif-action" data-action="${n.id}">${esc(n.action.label)}</span>` : ''}</span>
+      <span class="notif-time">${relTime(n.at)}<span class="notif-x" data-dismiss="${n.id}" title="Dismiss" aria-label="Dismiss">${NOTIF_X}</span></span></button>`;
   function renderNotifications() {
     const body = $('#notif-body');
-    body.innerHTML = notifLog.length ? notifLog.map(n => `<button class="notif-row${n.read ? '' : ' unread'}" data-id="${n.id}">
-      <span class="notif-ico">${esc(n.icon)}</span>
-      <span class="notif-txt"><span class="notif-title">${esc(n.title)}</span>${n.tileTitle ? `<span class="notif-tile">${esc(n.tileTitle)}</span>` : ''}${n.body ? `<span class="notif-body">${esc(n.body)}</span>` : ''}${n.action ? `<span class="notif-action" data-action="${n.id}">${esc(n.action.label)}</span>` : ''}</span>
-      <span class="notif-time">${relTime(n.at)}</span></button>`).join('')
-      : '<div class="side-empty">No notifications yet</div>';
+    const fresh = notifLog.filter(n => !n.read || notifFresh.has(n.id)), earlier = notifLog.filter(n => !fresh.includes(n));
+    const group = (label, list) => list.length ? `<div class="notif-group">${label}</div>${list.map(notifRow).join('')}` : '';
+    body.innerHTML = !notifLog.length
+      ? `<div class="notif-empty"><svg viewBox="0 0 16 16"><path d="M8 1.3a4.3 4.3 0 0 0-4.3 4.3v2.1c0 .5-.2 1-.5 1.5l-.9 1.2a.9.9 0 0 0 .7 1.4h9.9a.9.9 0 0 0 .7-1.4l-.9-1.2a2.6 2.6 0 0 1-.5-1.5V5.6A4.3 4.3 0 0 0 8 1.3z" fill="currentColor"/><path d="M6.3 12.8a1.7 1.7 0 0 0 3.4 0z" fill="currentColor"/></svg><b>You’re all caught up</b><span>Questions, permission prompts and finished work from your tiles land here.</span></div>`
+      : fresh.length ? group('New', fresh) + group('Earlier', earlier) : earlier.map(notifRow).join('');
+    const count = $('#notif-count');
+    count.textContent = fresh.length ? `${fresh.length} new` : notifLog.length || '';
+    count.classList.toggle('new', !!fresh.length);
+    count.classList.toggle('hidden', !notifLog.length);
+    $('#notif-clear').classList.toggle('hidden', !notifLog.length);
     body.querySelectorAll('[data-id]').forEach(b => b.onclick = () => focusNotification(+b.dataset.id));
     body.querySelectorAll('[data-action]').forEach(b => b.onclick = e => { e.stopPropagation(); showAlwaysAllowCard(+b.dataset.action); });
+    body.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const i = notifLog.findIndex(x => x.id === +b.dataset.dismiss);
+      if (i >= 0) notifLog.splice(i, 1);
+      renderNotifications(); updateNotifBadge();
+    });
   }
   function focusNotification(id) {
     const n = notifLog.find(x => x.id === id);
     const w = n && wins.get(n.tileId);
     closePanels();
-    if (!w || !w.alive) return toast('That tile is closed.');
+    if (!w || !w.alive || w.uid !== n.tileUid) return toast('That tile is closed.');
     if (w.ws !== current) switchWorkspace(w.ws);
     focusWin(w);
   }
@@ -2172,16 +2168,18 @@ async function contextBrief(t) {
       const open = worked >= 2500 && w.tier && w.ptyId ? openTaskOf(w) : null;
       if (open && !w.nudged) { w.nudged = true; sendLine(w, `Report back now: run operant task done ${open.id} --note '<the result>'`); }
       else if (open) idleUnreported(open, w);
-      if (worked >= (cfg.notifyMinWorkSeconds ?? 2.5) * 1000 && cfg.notifyWhenIdleSeconds > 0) {
-        const what = w.title !== w.agentName ? w.title : shortPath(w.cwd || '').split(/[\\/]/).filter(Boolean).pop();
-        notify(w, `${w.agentName} is waiting${what ? ': ' + clip(what, 50) : ''}`, `${w.title !== w.agentName ? w.title + ' · ' : ''}${shortPath(w.cwd || '')}`, null, false, 'waiting');
+      if (worked >= (cfg.notifyMinWorkSeconds ?? 2.5) * 1000 && cfg.notifyWhenIdleSeconds > 0 && !w.tier && !w.waitingPrompt) {
+        const lines = lastScreenLines(w, 60), msg = Attention.lastMessage(lines);
+        if (Attention.isQuestion(msg, lines)) notify(w, `${tileName(w)} asks`, withProject(w, Attention.summary(Attention.lastSentence(msg), 180)), null, false, 'question');
+        else if (cfg.notifyFinished) notify(w, `${tileName(w)} finished`, withProject(w, Attention.summary(msg, 140)), null, false, 'finished');
       }
     }
   }, 1000);
 
-  operant.on('focus-tile', id => {
+  operant.on('focus-tile', d => {
+    const { id, uid } = d && typeof d === 'object' ? d : { id: d };
     const w = wins.get(Number(id));
-    if (!w || !w.alive) return;
+    if (!w || !w.alive || (uid != null && w.uid !== uid)) return;
     if (w.ws !== current) switchWorkspace(w.ws);
     focusWin(w);
   });
@@ -2212,12 +2210,9 @@ async function contextBrief(t) {
     // Keep an agent near whatever spawned it: its Claude tile, or a sibling agent from the same session.
     const sibling = [...agentWin.values()].reverse().find(a => a.sessionId === info.sessionId && a.alive);
     const anchor = parent || sibling || null;
-    let wsIndex = anchor ? anchor.ws : masterWs();
-    if (wsWins(wsIndex).length >= cfg.maxTilesPerWorkspace) {
-      const order = [...Array(WS_COUNT).keys()].map(k => (wsIndex + 1 + k) % WS_COUNT);
-      wsIndex = order.find(k => wsWins(k).length < cfg.maxTilesPerWorkspace) ?? wsIndex;
-    }
-    const target = anchor && anchor.ws === wsIndex ? (sibling && sibling.ws === wsIndex ? sibling : anchor) : null;
+    // Always on the spawner's workspace, never spilled onto another one.
+    const wsIndex = anchor ? anchor.ws : masterWs();
+    const target = anchor ? (sibling && sibling.ws === wsIndex ? sibling : anchor) : null;
 
     const w = makeWin('agent', info.description);
     Object.assign(w, { agentId: info.agentId, sessionId: info.sessionId, info, status: 'running', state: { first: true, tools: new Map() }, tools: 0 });
@@ -2271,7 +2266,7 @@ async function contextBrief(t) {
       w.doneMarked = true;
       w.unchecked = true;
       output(w, '\x1b[38;2;156;184;138m✓ finished\x1b[0m\r\n\r\n');
-      if (cfg.notifySubagents) notify(w, `✓ ${w.info.agentType} finished`, w.info.description, null, false, 'subagent');
+      if (cfg.notifySubagents) notify(w, `${tileName(w)}: ${w.info.agentType} subagent finished`, w.info.description, null, false, 'subagent');
     }
     if (w.status !== 'done') w.doneMarked = false;
     updateBadge(w);
@@ -2408,9 +2403,6 @@ async function contextBrief(t) {
   setInterval(() => {
     const now = Date.now();
     for (const w of [...wins.values()]) {
-      // A seat's worker idle past the timeout is closed to stop costing tokens; its seat keeps its state and reopens with operant agent --seat.
-      if (w.seatId && w.alive && !w.master && !(w.busySince) && !board.tasks.some(x => x.owner === w.id && Board.isOpen(x))
-        && ReadyCheck.idleDue({ busy: isWorking(w), since: w.lastActivity, minutes: cfg.seatIdleMinutes, now })) { closeWin(w); continue; }
       if (w.unchecked && onScreen(w)) { w.unchecked = false; touch(w); updateBadge(w); }
       const limit = idleLimit(w);
       const isFocused = w.ws === current && workspaces[w.ws].focused === w.id;
@@ -2536,7 +2528,7 @@ async function contextBrief(t) {
     const count = (waitingCounts.get(key) || 0) + 1;
     waitingCounts.set(key, count);
     const action = count >= 3 ? buildAlwaysAllowAction(w, kind, label, detail, key, count, extra) : null;
-    notify(w, `${w.agentName} needs approval: ${clip(`${label}${detail ? ' ' + detail : ''}`, 50)}`, `${label}${detail ? ': ' + detail : ''}`, action, true, 'approval');
+    notify(w, `${tileName(w)} needs permission`, withProject(w, `${label}${detail ? ': ' + clip(detail, 140) : ''}`), action, true, 'approval');
   }
 
   // Best-effort rule text; the user reviews and saves it themselves, Operant never writes it.
@@ -3377,8 +3369,7 @@ Click to open the setup card`;
         + '<div class="cg-note">A code index your agents query instead of grepping. Installing runs <code>codegraph install</code>, which connects it to your agents; Operant then removes its per-message prompt hook, so agents query the index only when they need code. Index a project with ◇ in the sidebar.</div>';
       el.querySelector('[data-cg="install"]').onclick = () => {
         closePanels(false); cgVersion = undefined;
-        const install = 'npm i -g @colbymchenry/codegraph@latest';
-        newTerminal('shell', null, { run: isSh() ? `${install} && codegraph install` : `${install}; if ($?) { codegraph install }`, title: 'CodeGraph' });
+        newTerminal('shell', null, { run: CodegraphInstall.installCommand(isSh()), title: 'CodeGraph' });
       };
       el.querySelector('[data-cg="index"]').onclick = () => { closePanels(false); runCodegraph(allProjects(), 'all projects'); };
     };
@@ -4145,25 +4136,27 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   }
 
   // One shell tile that indexes each folder with CodeGraph: sync if it has a .codegraph, init otherwise.
-  function runCodegraph(dirs, label, { focus = true } = {}) {
+  // With `install`, the tile first installs CodeGraph (npm, then `codegraph install`) and goes on to index only if that worked.
+  function runCodegraph(dirs, label, { focus = true, install = false } = {}) {
     dirs = (dirs || []).filter(Boolean);
-    if (!dirs.length) return toast('No projects to index. Pin a folder first.');
-    let run;
-    if (isSh()) {
+    if (!dirs.length && !install) return toast('No projects to index. Pin a folder first.');
+    let run = '';
+    if (dirs.length && isSh()) {
       // Single quotes throughout (a ' inside becomes '\''), and printf's %s so a folder's name is never read as a format.
       const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
       const steps = dirs.map(d => `printf '\\n\\033[36m== %s\\033[0m\\n' ${q(d)}; `
         + `if [ -d ${q(d + '/.codegraph')} ]; then codegraph sync ${q(d)}; else codegraph init -y ${q(d)}; fi`);
       run = `if ! command -v codegraph >/dev/null 2>&1; then printf '\\033[33mCodeGraph is not installed. Install it from Settings > Projects > CodeGraph.\\033[0m\\n'; else `
         + steps.join('; ') + `; printf '\\n\\033[32mCodeGraph done for ${dirs.length} project(s)\\033[0m\\n'; fi`;
-    } else {
+    } else if (dirs.length) {
       const q = s => `'${String(s).replace(/'/g, "''")}'`;
       const steps = dirs.map(d => `Write-Host ''; Write-Host ${q('== ' + d)} -ForegroundColor Cyan; `
         + `if (Test-Path -LiteralPath (Join-Path ${q(d)} '.codegraph')) { codegraph sync ${q(d)} } else { codegraph init -y ${q(d)} }`);
       run = `if (-not (Get-Command codegraph -ErrorAction SilentlyContinue)) { Write-Host 'CodeGraph is not installed. Install it from Settings > Projects > CodeGraph.' -ForegroundColor Yellow } else { `
         + steps.join('; ') + `; Write-Host ''; Write-Host 'CodeGraph done for ${dirs.length} project(s)' -ForegroundColor Green }`;
     }
-    newTerminal('shell', dirs[0], { run, title: `CodeGraph · ${label || baseName(dirs[0])}`, focus });
+    if (install) run = CodegraphInstall.installCommand(isSh(), run);
+    newTerminal('shell', dirs[0] || null, { run, title: install ? 'CodeGraph · install' : `CodeGraph · ${label || baseName(dirs[0])}`, focus });
   }
 
   sideBody.addEventListener('click', e => {
@@ -4818,11 +4811,17 @@ Double-click to ${name ? 'rename' : 'name'} it`;
   else startFresh();
   operant.appReady();
   operant.on('open-folder', dir => { lastCwd = dir; newTerminal('ai', dir); });
-  // Settings › Projects › CodeGraph: pinned projects with lots of new code (or all of them) are indexed in one tile at startup.
-  operant.codegraphStartup().then(dirs => {
-    if (!dirs.length) return;
-    runCodegraph(dirs, `${dirs.length} project${dirs.length === 1 ? '' : 's'} on startup`, { focus: false });
-    toast(`<b>◇ CodeGraph</b> indexing ${dirs.map(d => esc(baseName(d))).join(', ')}`);
+  // Settings › Projects › CodeGraph: CodeGraph is installed when it's missing, and pinned projects are indexed (all of them, or
+  // the ones with lots of changes), in one background tile.
+  operant.codegraphStartup().then(({ projects: dirs, install }) => {
+    if (install === 'no-npm') toast('<b>◇ CodeGraph</b> is not installed and npm was not found. Install Node.js, then use Settings › Projects › CodeGraph.');
+    if (install === 'install') {
+      runCodegraph(dirs, '', { focus: false, install: true });
+      toast('<b>◇ CodeGraph</b> installing' + (dirs.length ? ' and indexing ' + dirs.map(d => esc(baseName(d))).join(', ') : ''));
+    } else if (dirs.length) {
+      runCodegraph(dirs, `${dirs.length} project${dirs.length === 1 ? '' : 's'} on startup`, { focus: false });
+      toast(`<b>◇ CodeGraph</b> indexing ${dirs.map(d => esc(baseName(d))).join(', ')}`);
+    }
   });
   // The tiers change with the default agent and, for OpenCode, once its model list has been read.
   function onTeamTiers(t) {
@@ -5167,15 +5166,6 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         let agentId = args.agent, model = args.model, effort = args.effort ? String(args.effort) : null, tier = null, suggested = null, limitInfo = null, routed = null;
         // Single-CLI teams: an explicit --agent/--model/--tier for another CLI than the project's team CLI is an error.
         const dir = args.cwd || self?.cwd || lastCwd, mode = agentMode(dir), mtiers = tiersIn(dir);
-        // --seat: the seat's default tier (or the tier you named) and a short brief from what its last worker left. A hard seat named here counts as your word.
-        let seatBrief = '';
-        if (args.seat) {
-          const sp = await operant.seatOp({ dir, op: 'plan', seat: String(args.seat), tier: args.tier ? String(args.tier) : undefined });
-          if (!sp.ok) throw new Error(sp.error);
-          if (!sp.result.ok) throw new Error(sp.result.reason);
-          if (!args.tier && !args.model && !args.agent) args.tier = sp.result.tier;
-          seatBrief = sp.result.brief;
-        }
         const conflict = (args.agent && TeamTiers.modeConflict(mode, `agent "${args.agent}"`, agentKind(args.agent)))
           || (args.model && TeamTiers.modeConflict(mode, `model "${args.model}"`, /^claude/i.test(args.model) ? 'claude' : /\//.test(args.model) ? 'opencode' : 'other'))
           || (args.tier && !mtiers[args.tier] && activeTiers()[args.tier] && TeamTiers.modeConflict(mode, `tier "${args.tier}"`, agentKind(activeTiers()[args.tier].agent)));
@@ -5224,12 +5214,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (agentId && !cfg.agents.some(a => a.id === agentId)) throw new Error(`unknown agent "${agentId}" - configured: ${cfg.agents.map(a => a.id).join(', ')}`);
         // With --tier, a board task is added automatically, owned by the new worker tile,
         // with a final line telling it how to hand the result back.
-        let taskId = null, prompt = seatBrief ? `${oneLine(seatBrief)} — ${args.prompt}` : args.prompt;
+        let taskId = null, prompt = args.prompt;
         if (tier) {
           taskId = board.nextTaskId++;
           const task = { id: taskId, text: String(args.prompt), title: args.title ? String(args.title) : null, status: 'todo', owner: null, note: null, tier, attempts: 1, createdAt: Date.now(), lead: self?.id ?? null, cwd: args.cwd || self?.cwd };
           if (args.budget != null && !isNaN(args.budget)) task.budget = Math.max(0, Math.round(+args.budget));
-          if (args.seat) task.seat = String(args.seat);
           if (routed && !args.model) { task.agent = agentId; task.model = model; task.route = routeInfo(routed); }
           if (suggested) task.decision = { basis: suggested.basis, reason: suggested.reason, alternatives: suggested.alternatives, skipped: suggested.skipped, structured: suggested.detail, rejected: suggested.rejected };
           task.profile = await profileTask(task.text, task.cwd || dir).catch(() => TaskType.describeTask(task.text));
@@ -5240,39 +5229,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         const w = await newTerminal('ai', args.cwd || self?.cwd, {
           agentId, prompt, title: args.title, model, effort, worker: !!tier, ws: self?.ws ?? masterWs(), near: self, focus: !!args.focus,
         });
-        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { await seatTake(t, w); t.owner = w.id; traceDecision(t, w, routed, t.decision); if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
+        if (tier) { w.tier = tier; setTierDot(w); tagUsage(w, tier, taskId); const t = board.tasks.find(x => x.id === taskId); if (t) { t.owner = w.id; traceDecision(t, w, routed, t.decision); if (t.route) noteRoute(w, null, routed); armLimit(w, t); boardChanged(); } }
         return { id: w.id, ...(tier ? { tier, taskId } : {}), ...(tier && routed?.route ? { route: routed.route.note } : {}), ...(suggested ? { reason: suggested.reason, basis: suggested.basis } : {}), ...(limitInfo || {}) };
       }
       case 'team': {
-        // Snapshot and restore (seats.js): seats and their board tasks saved by name; restore re-queues unfinished tasks and launches nothing.
-        if (args.sub === 'snapshot' || args.sub === 'restore') {
-          if (!args.name) throw new Error(`usage: operant team ${args.sub} <name>`);
-          const dir = args.cwd || self?.cwd || lastCwd;
-          if (args.sub === 'snapshot') {
-            const r = await operant.seatOp({ dir, op: 'snapshot', name: String(args.name), tasks: board.tasks });
-            if (!r.ok) throw new Error(r.error);
-            return { ...r.result, text: `saved snapshot "${r.result.name}": ${r.result.seats} seat${r.result.seats === 1 ? '' : 's'}, ${r.result.tasks} task${r.result.tasks === 1 ? '' : 's'} (state only, no transcripts)` };
-          }
-          const r = await operant.seatOp({ dir, op: 'restore', name: String(args.name), tasks: board.tasks });
-          if (!r.ok) throw new Error(r.error);
-          for (const t of r.result.requeue) board.tasks.push({ ...t, id: board.nextTaskId++, owner: null, note: null, createdAt: Date.now() });
-          if (r.result.requeue.length) boardChanged();
-          return r.result;
-        }
         return teamInfo(self?.cwd || lastCwd);
-      }
-      // Adopt a running Claude Code, Codex or Gemini CLI tile into a seat: nothing is sent to it and it is not restarted. Closing the tile releases the seat.
-      case 'seat': {
-        if (args.sub !== 'adopt' || !args.id || args.tile == null) throw new Error('usage: operant seat adopt <seat> --tile <tile>');
-        const w = needTile(args.tile);
-        const agent = cfg.agents.find(a => a.id === w.agentConf);
-        const isAgent = w.kind === 'ai' && !!CliRegistry.get(CliRegistry.kindOf(agent))?.adopt;
-        const r = await operant.seatOp({ dir: args.cwd || w.cwd || self?.cwd || lastCwd, op: 'adopt', seat: String(args.id), userAsked: !self?.tier,
-          tile: { id: w.id, alive: !!(w.alive && w.ptyId), agent: isAgent, seatId: w.seatId || null } });
-        if (!r.ok) throw new Error(r.error);
-        w.seatId = String(args.id);
-        refreshSeats(args.cwd || w.cwd || self?.cwd || lastCwd);
-        return { id: w.id, seat: w.seatId, text: `tile ${w.id} now holds seat ${w.seatId} (nothing was sent to it)` };
       }
       // The live context bin/operant-prime.js formats: sent by the SessionStart hook at every start
       // and compact (args.hook), and by `operant prime`. The hook path follows "Brief agents at launch".
@@ -5290,7 +5251,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           task: task ? { id: task.id, text: task.text, plan: PlanCheck.lines(PlanCheck.check(task.text, task.profile)), tier: self.tier, subagents: subagentLimit(), tools: await operant.workerTools().catch(() => null) } : null,
           team: self.tier ? null : teamInfo(self.cwd || lastCwd),
           refineTo: cfg.refineTo === 'team' ? 'team' : 'claude',
-          review: self.tier ? [] : board.tasks.filter(t => t.status === 'review').map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
+          review: self.tier ? [] : board.tasks.filter(t => t.status === 'review' && projectDir(t.cwd || lastCwd) === project).map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t) })),
           paused: self.tier ? [] : board.tasks.filter(t => t.status === 'paused' && t.ask).map(t => ({ id: t.id, tier: t.tier || null, tldr: taskTldr(t), why: t.ask.why })),
           tiles: [...wins.values()].filter(w => w.alive && w.id !== self.id).map(w => ({
             id: w.id, kind: w.kind, title: w.title, busy: isWorking(w), tier: w.tier || null, taskId: w.tier ? openTask(w)?.id ?? null : null })),
@@ -5397,7 +5358,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
       case 'notify': {
         if (!self) throw new Error('unknown tile');
         if (!args.text) throw new Error('text required');
-        notify(self, args.title || self.title, args.text);
+        notify(self, args.title || tileName(self), args.text, null, false, 'message');
         return {};
       }
       case 'title':
@@ -5444,11 +5405,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
         if (args.sub === 'add') {
           if (!args.text) throw new Error('text required');
           const id = board.nextTaskId++;
-          const seat = args.seat ? String(args.seat) : null;
-          if (seat) { const sp = await operant.seatOp({ dir: self?.cwd || lastCwd, op: 'plan', seat }); if (!sp.ok) { board.nextTaskId--; throw new Error(sp.error); } if (!sp.result.ok) { board.nextTaskId--; throw new Error(sp.result.reason); } }
-          board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null, createdAt: Date.now(), ...(seat ? { seat } : {}) });
-          // A master seat's delegation: recorded on the master when its tile creates a task for a worker or a seat.
-          if ((seat || args.for != null) && self?.seatId) operant.seatOp({ dir: self.cwd || lastCwd, op: 'delegate', seat, tileId: self.id, forTile: args.for != null ? Number(args.for) : null, taskId: id }).catch(() => {});
+          board.tasks.push({ id, text: String(args.text), status: 'todo', owner: args.for != null ? Number(args.for) : null, note: null, createdAt: Date.now() });
           boardChanged();
           return { id, sub: 'add' };
         }
@@ -5463,11 +5420,11 @@ Double-click to ${name ? 'rename' : 'name'} it`;
             ask: t.ask ? { why: t.ask.why, reason: t.ask.reason, evidence: t.ask.evidence, next: t.ask.next, choices: t.ask.choices.map(c => c.label) } : null,
             askText: TierGuard.askText(t) || null,
             plan: PlanCheck.lines(PlanCheck.check(t.text, t.profile)), checkpoint: t.checkpoint || null, actions: (t.actions || []).map(a => a.cmd),
-            failureClass: ['failed', 'blocked', 'paused', 'review'].includes(t.status) ? FailureClass.classify({ note: t.note, failure: t.failure, check: t.check }) : null,
-            changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: (await operant.seatOp({ dir: t.cwd || lastCwd, op: 'norms' }).catch(() => null))?.result?.independentReview === false ? null : TaskType.reviewAdvice(t.profile),
+            failureClass: ['failed', 'blocked', 'paused'].includes(t.status) || (t.status === 'review' && (t.check?.ok === false || /\b(blocked|failed)\b/i.test(t.note || ''))) ? FailureClass.classify({ note: t.note, failure: t.failure, check: t.check }) : null,
+            changes: t.changes || [], closedFrom: t.closedFrom || null, profile: t.profile || null, tools: t.tier ? await operant.workerTools().catch(() => null) : null, reviewAdvice: (await operant.norms(t.cwd || lastCwd).catch(() => null))?.independentReview === false ? null : TaskType.reviewAdvice(t.profile),
             signals: (() => { const s = signalsOf(t); return s.up.length || s.down.length ? { suggestionOnly: true, up: s.up.map(x => x.text), down: s.down.map(x => x.text) } : null; })() };
         }
-        if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; await seatTake(t, self); }
+        if (args.sub === 'claim') { if (!self) throw new Error('unknown tile'); t.owner = self.id; t.status = 'doing'; }
         else if (args.sub === 'done') {
           // A worker's handback: done, or blocked/failed with why in the note.
           const status = args.status == null ? 'done' : String(args.status);
@@ -5476,7 +5433,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           const from = n?.alive ? n : self;
           Board.handback(t, status, args.note);
           let verify = null, extras = [];
-          const norms = (await operant.seatOp({ dir: t.cwd || from?.cwd || lastCwd, op: 'norms' }).catch(() => null))?.result;
+          const norms = await operant.norms(t.cwd || from?.cwd || lastCwd).catch(() => null);
           if (status === 'done' && cfg.team?.verifyBeforeReview !== false && TaskType.needsVerification(t)) {
             const cwd = t.cwd || from?.cwd || lastCwd;
             verify = await detectProjectCommand(cwd, 'test') || await detectProjectCommand(cwd, 'build');
@@ -5494,11 +5451,10 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           // A worker that saved after the 90% call (or past its limit) is stopped here and the user asked.
           const limitStop = status === 'blocked' && n?.limit?.taskId === t.id ? n.limit.tracker.onSaved() : null;
           if (limitStop) { onLimitEvent(t, n, limitStop); boardChanged(); return { id: t.id, status: 'paused', note: t.note, sub: args.sub }; }
-          if (!verify) seatRelease(t, n?.alive ? n : null, status === 'done' ? 'finished' : status);
           if (status === 'blocked' || (status === 'failed' && !t.tier)) recordOutcome(t, status);
           if (status === 'failed' && t.tier) taskFailed(t, t.note || 'the worker reported it failed');
           else if (verify) { verifyTask(t, verify, from, extras); boardChanged(); return { id: t.id, status: t.status, note: t.note, sub: args.sub, verify: [verify, ...extras].join(' + ') }; }
-          else if (from) notify(from, status === 'done' ? `Task ${t.id} ready for review: ${taskTldr(t)}` : `Task ${t.id} ${status}: ${taskTldr(t)}`, t.note || '', null, true, 'task');
+          else if (from) notify(from, `Task ${t.id} ${status === 'done' ? 'ready for review' : status}`, [taskTldr(t), t.note].filter(Boolean).join(' · '), null, true, 'task');
         }
         else if (args.sub === 'approve') {
           Board.approve(t); recordOutcome(t, 'done');
@@ -5516,7 +5472,7 @@ Double-click to ${name ? 'rename' : 'name'} it`;
           if (!args.note) throw new Error('--note "<why>" required');
           const w = wins.get(t.owner);
           if (Board.reject(t, args.note) === 'retry') retryTask(t, w, `The lead rejected your result: ${oneLine(args.note)}. Fix it`);
-          else { seatRelease(t, w?.alive ? w : null, 'rejected', { rejectNote: oneLine(args.note) }); askUser(t, 'rejected', t.retried ? `rejected twice: ${oneLine(args.note)}` : `rejected, and a retry would change nothing (${oneLine(args.note)})`); }
+          else { askUser(t, 'rejected', t.retried ? `rejected twice: ${oneLine(args.note)}` : `rejected, and a retry would change nothing (${oneLine(args.note)})`); }
         }
         else if (args.sub === 'note') { if (!args.text) throw new Error('text required'); t.note = String(args.text); }
         else if (args.sub === 'checkpoint') {

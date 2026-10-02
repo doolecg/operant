@@ -69,7 +69,7 @@ const REASONS = {
 // a new one). A busy tile is never interrupted: the brief waits in its queue until deliver() finds it idle. --team is team
 // work, refused (never turned into a plain send) while team mode is off. `env` is the app's side: state, teamEnabled, agents,
 // agentKind(id), agentMode(dir), messageTarget(ref), deliver(tile), flatLine(text), cwdOf(tile), projectOf(dir), tiles(),
-// open(agentId, dir, prompt, near) -> tile; notReady(tile) -> why a seat tile could not take it yet, or null (optional).
+// open(agentId, dir, prompt, near) -> tile; notReady(tile) -> why a tile could not take it yet, or null (optional).
 const LABELS = { claude: 'Claude Code', opencode: 'OpenCode', codex: 'Codex', gemini: 'Gemini CLI' };
 async function sendBrief(args, self, env) {
   if (!self) throw new Error('unknown tile');

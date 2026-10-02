@@ -8,6 +8,14 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Bash|PowerShell|mcp__codegraph.*",
+        "hooks": [
+          { "type": "command", "command": "operant hook pre-tool-use", "timeout": 5 }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "hooks": [

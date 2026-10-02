@@ -98,10 +98,25 @@ test('neither installed leaves nothing', () => {
 
 test('opencodeSubagents makes tier-<name> entries for OpenCode tiers only', () => {
   const t = tt.opencodeSubagents({ ...full, small: { ...full.small, agent: 'opencode', model: 'openai/gpt-5.5', effort: 'low' } }, id => id === 'opencode');
-  assert.deepEqual(Object.keys(t), ['tier-xsmall', 'tier-small']);
+  assert.deepEqual(Object.keys(t).filter(k => k.startsWith('tier-')), ['tier-xsmall', 'tier-small']);
   assert.deepEqual(t['tier-small'], { mode: 'subagent', model: 'openai/gpt-5.5', variant: 'low', description: full.small.use });
   assert.equal(t['tier-xsmall'].variant, undefined);
   assert.deepEqual(tt.mergeSubagents({ build: { x: 1 }, 'tier-xsmall': { mine: 1 } }, t)['tier-xsmall'], { mine: 1 });
+});
+
+test('opencodeSubagents adds role-<name> subagents on the model of its tier, skipping tiers with no OpenCode route', () => {
+  const { roleText } = require('../roles.js');
+  const t = tt.opencodeSubagents({ ...full, small: { ...full.small, agent: 'opencode', model: 'openai/gpt-5.5', effort: 'low' } }, id => id === 'opencode');
+  assert.deepEqual(Object.keys(t).filter(k => k.startsWith('role-')), ['role-implement', 'role-fix', 'role-explore', 'role-review', 'role-docs']);
+  assert.equal(t['role-fix'].prompt, roleText('fix'));
+  assert.deepEqual([t['role-fix'].mode, t['role-fix'].model, t['role-fix'].variant], ['subagent', 'openai/gpt-5.5', 'low']);
+  assert.equal(t['role-explore'].model, full.xsmall.model);
+  assert.equal(t['role-explore'].variant, undefined);
+  assert.match(t['role-review'].description, /review|check/i);
+  const all = tt.opencodeSubagents({ ...full, high: { ...full.high, agent: 'opencode' } }, () => true);
+  assert.equal(all['role-design'].model, full.high.model);
+  assert.deepEqual(tt.mergeSubagents({ 'role-fix': { mine: 1 } }, t)['role-fix'], { mine: 1 });
+  assert.deepEqual(tt.opencodeSubagents({}, () => true), {});
 });
 
 test('suggestTier scores, floors and defaults', () => {

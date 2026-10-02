@@ -12,8 +12,8 @@ const { redactText } = require('./redact');
 const SKILL_NAME = { claude: 'operant:operant', opencode: 'operant' };
 // How a lead hands a part to a tier on each CLI: its own subagents where the CLI has them, else worker tiles of the same CLI.
 const TEAM = {
-  claude: 'Team mode: cheapest tier that fits as your own subagents (the Agent tool, `model` haiku, sonnet or opus per tier), independents in parallel; every tier is on your own CLI.',
-  opencode: 'Team mode: cheapest tier that fits as your own `tier-<name>` subagents, independents in parallel; every tier is on your own CLI.',
+  claude: 'Team mode: cheapest tier that fits as your own subagents (the Agent tool, `model` haiku, sonnet or opus per tier), independents in parallel; give each a role as the `operant:<role>` subagent (implement, fix, explore, review, docs, design), `model` sizes it; every tier is on your own CLI.',
+  opencode: 'Team mode: cheapest tier that fits as your own `tier-<name>` subagents, or `role-<name>` (implement, fix, explore, review, docs, design), independents in parallel; every tier is on your own CLI.',
 };
 const TILES = 'Team mode (only when `operant team` says on): you have no subagent tool, so you are the one master: split the work into numbered parts that touch different files, and hand each part that fits a tier to a worker tile, cheapest tier first: `operant agent --tier <tier> --title "<n>/<total> <3-5 words>" "<brief: goal, files it owns, how to test, report with operant task done>"`. Every tier is on your own CLI. Do the rest yourself.';
 const WORKER = 'If your context says you are a worker: do your task yourself, part by part (workers can\'t start workers), retry a failing step once, then report in at most 100 words and stop: `operant task done <id> --status done|blocked|failed --note "TL;DR: <one sentence>; <files changed>"`.';

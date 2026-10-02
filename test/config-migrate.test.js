@@ -168,3 +168,35 @@ test('a saved gemma3 local model goes back to the default, other models are kept
   assert.deepStrictEqual(migrate({ configVersion: 2, localModel: { model: 'gemma3:4b' } }).user.localModel, {});
   assert.deepStrictEqual(migrate({ configVersion: 2, localModel: { model: 'qwen3:4b' } }).user.localModel, { model: 'qwen3:4b' });
 });
+
+test('"agent is waiting" becomes questions; a saved subagent toast goes off and nothing else is written', () => {
+  const off = migrate({ configVersion: 5, notifyWaiting: false, notifySubagents: true, theme: 'dark' });
+  assert.deepStrictEqual(off.user, { configVersion: CURRENT, notifyQuestions: false, notifySubagents: false, theme: 'dark' });
+  const on = migrate({ configVersion: 5, notifyWaiting: true });
+  assert.deepStrictEqual(on.user, { configVersion: CURRENT });
+  assert.deepStrictEqual(migrate(off.user).user, off.user);
+});
+
+test('the removed idle-close setting is dropped and nothing else is touched', () => {
+  const r = migrate({ configVersion: 6, seatIdleMinutes: 30, theme: 'dark' });
+  assert.deepStrictEqual(r.user, { configVersion: CURRENT, theme: 'dark' });
+  assert.deepStrictEqual(migrate(r.user).user, r.user);
+});
+
+test('a saved terminal line height of 1 (the old default) becomes 1.15; a chosen one is kept', () => {
+  assert.strictEqual(migrate({ configVersion: 7, lineHeight: 1 }).user.lineHeight, 1.15);
+  assert.strictEqual(migrate({ configVersion: 7, lineHeight: 1.3 }).user.lineHeight, 1.3);
+  assert.strictEqual('lineHeight' in migrate({ configVersion: 7 }).user, false);
+});
+
+test('a saved startup indexing of "changed" (the old default) becomes "all"; a chosen "off" or "all" is kept', () => {
+  assert.strictEqual(migrate({ configVersion: 8, codegraphOnStartup: 'changed' }).user.codegraphOnStartup, 'all');
+  assert.strictEqual(migrate({ configVersion: 8, codegraphOnStartup: 'off' }).user.codegraphOnStartup, 'off');
+  assert.strictEqual(migrate({ configVersion: 8, codegraphOnStartup: 'all' }).user.codegraphOnStartup, 'all');
+  assert.strictEqual('codegraphOnStartup' in migrate({ configVersion: 8 }).user, false);
+});
+
+test('the removed tiles-per-workspace limit is dropped', () => {
+  const r = migrate({ configVersion: 9, maxTilesPerWorkspace: 6, theme: 'dark' });
+  assert.deepStrictEqual(r.user, { configVersion: CURRENT, theme: 'dark' });
+});

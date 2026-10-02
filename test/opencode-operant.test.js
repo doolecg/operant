@@ -57,3 +57,26 @@ test('outside a tile the plugin has no hooks', async () => {
   try { assert.deepEqual(await (await import(PLUGIN)).default({ directory: __dirname }), {}); }
   finally { if (saved !== undefined) process.env.OPERANT = saved; }
 });
+
+test('the CodeGraph-first gate blocks a code grep until the session has made a CodeGraph call', async () => {
+  const saved = { ...process.env };
+  Object.assign(process.env, { OPERANT: '1', OPERANT_API: 'http://127.0.0.1:9', OPERANT_TILE: '4' });
+  delete process.env.OPERANT_CODEGRAPH_GATE;
+  try {
+    const hooks = await (await import(PLUGIN)).default({ directory: path.join(__dirname, '..') });
+    const before = (sessionID, tool, args) => hooks['tool.execute.before']({ tool, sessionID }, { args });
+    await assert.rejects(before('a', 'grep', { pattern: 'notify' }), /codegraph explore "notify"/);
+    await assert.rejects(before('a', 'bash', { command: 'rg notify' }), /CodeGraph index/);
+    await before('a', 'grep', { pattern: 'x', include: '*.css' });
+    await before('a', 'bash', { command: 'codegraph explore "notify"' });
+    await before('a', 'grep', { pattern: 'notify' });
+    await assert.rejects(before('b', 'grep', { pattern: 'notify' }), /CodeGraph index/, 'another session still has to ask');
+    await before('b', 'codegraph_codegraph_explore', { query: 'x' });
+    await before('b', 'grep', { pattern: 'notify' });
+    process.env.OPERANT_CODEGRAPH_GATE = '0';
+    await before('c', 'grep', { pattern: 'notify' });
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});

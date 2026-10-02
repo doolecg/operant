@@ -1,6 +1,6 @@
 # Operant
 
-A Hyprland-style tiling window manager for terminal AI agents on Windows, macOS and Linux. Run **Claude Code**, **OpenCode**, **Codex**, **Gemini CLI** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a desktop notification when an agent finishes and is waiting for you. Claude Code's subagents each get their **own live tile** as soon as they start.
+A Hyprland-style tiling window manager for terminal AI agents on Windows, macOS and Linux. Run **Claude Code**, **OpenCode**, **Codex**, **Gemini CLI** or any other command-line agent side by side in tiles, across nine workspaces. Operant sends a desktop notification when an agent asks you something or needs your permission. Claude Code's subagents each get their **own live tile** as soon as they start.
 
 ## Saving tokens
 Operant is built so agents don't have to read their own noise. A few things do that work:
@@ -12,7 +12,7 @@ Operant is built so agents don't have to read their own noise. A few things do t
 - **Launch brief** starts every agent with the essentials: use CodeGraph before grep/reading, read `.operant/progress.md` if it exists, run long commands through `operant run`/`wait`.
 - **The Operant skill loads itself** into every Claude Code and OpenCode session (Codex and Gemini tiles get a short launch brief instead), so agents use `operant run`/`wait`/`read` without being told to. `operant help [cmd]` shows the full command reference.
 - **Optional "Reroute long commands" hook** (Settings › Agents, on by default, never auto-approves) moves test, build and install commands from the agent's shell into tiles automatically, so savings don't depend on remembering the skill.
-- **CodeGraph:** agents query a code index instead of grepping and reading whole files. Indexing runs on startup for projects that changed.
+- **CodeGraph:** agents query a code index instead of grepping and reading whole files. Operant installs CodeGraph with npm when it is missing and indexes your pinned projects on every start (both can be switched off in Settings › Projects › CodeGraph).
 - **Context size on every agent tile,** like `ctx 84k`, orange at 60% and red at 85%, so you can see when to `/compact` or start a fresh session before a big context starts costing you on every message.
 - **Token usage pill** with today's total, a daily budget, and a graph over time; plan limit alerts at 80% and 95%.
 - **Subagents get their own tiles,** so you can see what one is doing without asking the agent to summarise it back to you.
@@ -124,11 +124,14 @@ The Operant Terminal (2.2 and 2.3) was removed in 2.3.1; its settings migrate au
 
 ## Notifications
 Operant sends a desktop notification when:
-- an agent that was working goes quiet (it finished, or it's asking you something),
-- an agent rings the terminal bell,
-- a Claude subagent finishes.
+- an agent asks you a question (the notification shows the question),
+- an agent needs your permission for a command or an edit,
+- an agent sends you a message with `operant notify`,
+- a worker's task is ready for review, or the runaway guard flags a tile.
 
-Click the notification, or click it later in the Action Center, and Operant comes to the front on that tile. It switches to the right window and workspace if it needs to. By default you don't get one for the tile you're looking at. **Settings › General › Notifications** has the switches and the quiet time: a toggle for each kind (waiting, approvals, tasks, runaway, bell, watch), a sound, quiet hours, *only when Operant is in the background* and a minimum working time before a "finished" one fires (`notifyWaiting`, `notifyApprovals`, `notifyTasks`, `notifyRunaway`, `notifyBell`, `notifyWatch`, `notifySound`, `notifyQuietFrom`/`notifyQuietTo`, `notifyOnlyBackground`, `notifyMinWorkSeconds`).
+"An agent finished its turn" and "a Claude subagent finished" are off by default; switch them on if you want them.
+
+Click the notification, or click it later in the Action Center, and Operant comes to the front on that tile. It switches to the right window and workspace if it needs to. By default you don't get one for the tile you're looking at. **Settings › General › Notifications** has the switches and the quiet time: a toggle for each kind (questions, permission, messages, finished, tasks, runaway, bell, watch, subagents), a sound, quiet hours, *only when Operant is in the background* and a minimum working time before a question or "finished" one fires (`notifyQuestions`, `notifyMessages`, `notifyFinished`, `notifySubagents`, `notifyApprovals`, `notifyTasks`, `notifyRunaway`, `notifyBell`, `notifyWatch`, `notifySound`, `notifyQuietFrom`/`notifyQuietTo`, `notifyOnlyBackground`, `notifyMinWorkSeconds`).
 
 ## Claude Code subagents
 Claude Code writes each subagent's transcript to
@@ -136,7 +139,6 @@ Claude Code writes each subagent's transcript to
 
 - A subagent started from a Claude Code tile opens next to that tile. Each Claude tile is launched with its own `--session-id`, which is how Operant knows which subagents belong to it.
 - Subagents from Claude sessions running elsewhere (another terminal, your IDE) also show up. You can turn that off in Settings.
-- Past the tiles-per-workspace limit, new subagents spill onto the next workspace, and a toast tells you where.
 
 ## Idle closing
 A tile closes when nothing has happened in it for a while: no output, no typing, no new transcript lines, and you're not looking at it. The badge counts down the last 30 seconds. The focused tile and the master are never closed.

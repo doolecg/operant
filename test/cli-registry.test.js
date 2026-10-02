@@ -48,7 +48,6 @@ test('Codex and Gemini have default tiers; Codex by reasoning effort, Gemini fla
   const g = R.CLIS.gemini.tiers;
   assert.deepEqual([g.xsmall.model, g.small.model, g.medium.model, g.high.model, g.max.model].map(m => m.replace(/^gemini-[\d.]+-/, '')), ['flash-lite', 'flash', 'pro', 'pro', 'pro']);
   assert.ok(Object.values(g).every(t => !t.effort));
-  assert.deepEqual(R.IDS.filter(id => R.CLIS[id].adopt), ['claude', 'codex', 'gemini']);
 });
 
 test('kindOf recognises a CLI however its command is written', () => {

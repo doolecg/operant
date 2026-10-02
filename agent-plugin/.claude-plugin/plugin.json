@@ -1,6 +1,6 @@
 {
   "name": "operant",
-  "version": "2.7.4",
+  "version": "2.7.5",
   "description": "Teaches coding agents in Operant's tiles to drive the app: long commands in their own tiles, the task board, plan approval, questions, notifications, shared memory and live context.",
   "author": {
     "name": "doolecg"

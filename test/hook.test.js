@@ -113,3 +113,41 @@ test('post-tool-use hands waiting agent messages over as additionalContext', asy
   });
   await withApi({ hook: {} }, async env => assert.equal((await runHook('post-tool-use', { env })).out, ''));
 });
+
+// The CodeGraph-first gate (pre-tool-use): needs no Operant API, only a .codegraph folder and a state file per agent.
+test('pre-tool-use denies a code grep until the agent has made a CodeGraph call, per session and subagent', async () => {
+  const fs = require('node:fs'), os = require('node:os');
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-gate-'));
+  fs.mkdirSync(path.join(proj, '.codegraph'));
+  fs.mkdirSync(path.join(proj, 'src'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-gate-tmp-'));
+  const env = { TMPDIR: tmp, TEMP: tmp, TMP: tmp };
+  const sid = 'sess-' + process.pid;
+  const ask = (tool_name, tool_input, extra = {}, e = env) => runHook('pre-tool-use', { env: e, input: { session_id: sid, cwd: path.join(proj, 'src'), tool_name, tool_input, ...extra } });
+  try {
+    const denied = await ask('Grep', { pattern: 'notify' });
+    assert.equal(denied.code, 0);
+    const out = JSON.parse(denied.out);
+    assert.equal(out.hookSpecificOutput.hookEventName, 'PreToolUse');
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /codegraph explore "notify"/);
+    assert.equal((await ask('Grep', { pattern: 'x', glob: '*.css' })).out, '');
+    assert.notEqual((await ask('Bash', { command: 'rg notify' })).out, '');
+    // a subagent's CodeGraph call unlocks only the subagent
+    assert.equal((await ask('Bash', { command: 'codegraph explore "notify"' }, { agent_id: 'sub1' })).out, '');
+    assert.equal((await ask('Grep', { pattern: 'notify' }, { agent_id: 'sub1' })).out, '');
+    assert.notEqual((await ask('Grep', { pattern: 'notify' })).out, '');
+    assert.notEqual((await ask('Grep', { pattern: 'notify' }, { agent_id: 'sub2' })).out, '');
+    assert.equal((await ask('mcp__codegraph__codegraph_explore', { query: 'notify' })).out, '');
+    assert.equal((await ask('Grep', { pattern: 'notify' })).out, '');
+    // off switch, and no index
+    assert.equal((await ask('Grep', { pattern: 'notify' }, { session_id: 'other' }, { ...env, OPERANT_CODEGRAPH_GATE: '0' })).out, '');
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-gate-bare-'));
+    fs.mkdirSync(path.join(bare, '.git'));
+    try { assert.equal((await ask('Grep', { pattern: 'notify' }, { cwd: bare, session_id: 'other' })).out, ''); } finally { fs.rmSync(bare, { recursive: true, force: true }); }
+    assert.equal((await runHook('pre-tool-use', { env, stdin: '{nope' })).out, '');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

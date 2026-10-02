@@ -166,3 +166,63 @@ test('summarizeCodegraph averages the measurements and splits tokens by CodeGrap
   assert.deepEqual([s.nudged, s.degraded, s.tokensWith, s.tokensWithout], [2, 1, 2000, 6000]);
   assert.deepEqual(summarizeCodegraph([]), { tasks: 0, firstCodegraph: 0, avgFilesBefore: 0, avgFilesAfter: 0, nudged: 0, degraded: 0, tokensWith: null, tokensWithout: null });
 });
+
+// The CodeGraph-first gate: a code search by grep is denied until the agent's first CodeGraph call.
+const gate = (tool, input, state = {}, hasIndex = true) => cg.gateDecision({ tool, input, state, hasIndex });
+
+test('gate: a Grep or shell grep on code is denied with a CodeGraph query built from the pattern', () => {
+  const d = gate('Grep', { pattern: 'function\\s+notifyUser|foo' });
+  assert.equal(d.allow, false);
+  assert.match(d.reason, /codegraph explore "notifyUser foo"/);
+  assert.match(d.reason, /MCP tool/);
+  for (const command of ['grep -rn notify src', 'rg notify', 'git grep notify', 'findstr /s /i notify *.js', 'Select-String -Pattern notify -Include *.js', 'cd src && rg -tjs notify'])
+    assert.equal(gate('Bash', { command }).allow, false, command);
+  assert.equal(gate('PowerShell', { command: 'Select-String notify main.js' }).allow, false);
+  assert.equal(gate('grep', { pattern: 'x', include: '*.js' }).allow, false);
+});
+
+test('gate: searches that only reach non-code or unindexed files are allowed', () => {
+  assert.equal(gate('Grep', { pattern: 'x', glob: '*.css' }).allow, true);
+  assert.equal(gate('Grep', { pattern: 'x', glob: '**/*.{json,md}' }).allow, true);
+  assert.equal(gate('Grep', { pattern: 'x', type: 'json' }).allow, true);
+  assert.equal(gate('Grep', { pattern: 'x', path: 'docs/guide.md' }).allow, true);
+  assert.equal(gate('Grep', { pattern: 'x', path: 'node_modules/foo' }).allow, true);
+  assert.equal(gate('Grep', { pattern: 'x', path: 'C:\\app\\dist\\a.js' }).allow, true);
+  assert.equal(gate('Grep', { pattern: 'x', glob: '*.js' }).allow, false);
+  assert.equal(gate('Grep', { pattern: 'x', glob: '*.css', path: 'src' }).allow, true);
+  assert.equal(gate('Grep', { pattern: 'x', path: 'src' }).allow, false);
+  for (const command of ["rg -g '*.css' foo", 'rg foo -t json', 'grep -rn --include=*.json foo .', 'grep -rn foo node_modules', 'grep foo README.md package.json',
+    'findstr /s notify *.html', 'Select-String -Pattern foo -Path docs\\a.md', 'grep -r foo .git', 'git log | grep fix', 'find . -name "*.js"', 'rg --files', 'npm test'])
+    assert.equal(gate('Bash', { command }).allow, true, command);
+  assert.equal(cg.targetsOnlyNonCode({}), false);
+  assert.equal(cg.targetsOnlyNonCode({ globs: ['*.css', '*.js'] }), false);
+  assert.equal(cg.targetsOnlyNonCode({ globs: ['!*.js', '*.scss'] }), true);
+});
+
+test('gate: a CodeGraph call (shell or MCP tool) is recorded, and after that grep is free', () => {
+  assert.deepEqual(gate('Bash', { command: 'codegraph explore "notify"' }), { allow: true, record: true });
+  assert.deepEqual(gate('PowerShell', { command: 'codegraph.cmd query notify' }), { allow: true, record: true });
+  assert.deepEqual(gate('mcp__codegraph__codegraph_explore', { query: 'x' }), { allow: true, record: true });
+  assert.deepEqual(gate('Grep', { pattern: 'notify' }, { cg: true }), { allow: true });
+  assert.deepEqual(gate('Bash', { command: 'rg notify' }, { cg: true }), { allow: true });
+});
+
+test('gate: no index means everything is allowed, and non-search tools are never touched', () => {
+  assert.deepEqual(gate('Grep', { pattern: 'notify' }, {}, false), { allow: true });
+  assert.deepEqual(gate('Bash', { command: 'codegraph explore x' }, {}, false), { allow: true });
+  assert.deepEqual(gate('Read', { file_path: 'a.js' }), { allow: true });
+  assert.deepEqual(gate('Glob', { pattern: '**/*.js' }), { allow: true });
+  assert.deepEqual(gate('Bash', { command: 'operant test "npm test"' }), { allow: true });
+  assert.equal(gate('Grep', undefined).allow, false);
+});
+
+test('findIndexRoot: the nearest .codegraph up to the git root', () => {
+  const r = x => require('node:path').resolve(x);
+  const has = new Set([r('/p/.codegraph'), r('/q/.git')]);
+  const exists = f => has.has(f);
+  assert.equal(cg.findIndexRoot('/p/src/deep', exists), r('/p'));
+  assert.equal(cg.findIndexRoot('/p', exists), r('/p'));
+  assert.equal(cg.findIndexRoot('/q/sub', exists), null);
+  assert.equal(cg.findIndexRoot('/elsewhere', exists), null);
+  assert.equal(cg.findIndexRoot('', exists), null);
+});

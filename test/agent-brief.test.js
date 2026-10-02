@@ -5,7 +5,7 @@ const { BRIEF, briefFor } = require('../agent-brief.js');
 
 test('the brief is short and identical every launch', () => {
   for (const agent of ['claude', 'opencode']) {
-    assert.ok(Buffer.byteLength(briefFor(agent)) <= 760, `${agent}: ${Buffer.byteLength(briefFor(agent))} bytes`);
+    assert.ok(Buffer.byteLength(briefFor(agent)) <= 900, `${agent}: ${Buffer.byteLength(briefFor(agent))} bytes`);
     assert.equal(briefFor(agent), briefFor(agent));
   }
   assert.equal(BRIEF, briefFor('claude'));
@@ -22,6 +22,12 @@ test('a team stays on its own CLI: no master worker for another CLI', () => {
     assert.match(briefFor(agent), /every tier is on your own CLI/);
     assert.doesNotMatch(briefFor(agent), /master worker|\bother CLI/);
   }
+});
+
+test('the lead is told the role subagents by the name its CLI gives them', () => {
+  assert.match(briefFor('claude'), /`operant:<role>` subagent \(implement, fix, explore, review, docs, design\), `model` sizes it/);
+  assert.match(briefFor('opencode'), /`role-<name>` \(implement, fix, explore, review, docs, design\)/);
+  for (const cli of ['codex', 'gemini']) assert.doesNotMatch(briefFor(cli), /role-<name>|operant:<role>/);
 });
 
 test('team tiers, the progress note and CodeGraph live in prime, not here', () => {

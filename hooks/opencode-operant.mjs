@@ -5,13 +5,19 @@
 // again after a compaction, so the system prompt stays the same between turns and the prompt cache
 // stays warm.
 //
+// It also holds OpenCode's side of the CodeGraph-first gate (the same pure logic as `operant hook pre-tool-use`):
+// a grep on code throws, which blocks the tool call, until that session has made a CodeGraph call. Every
+// subagent is its own session, so each has to ask CodeGraph once.
+//
 // Loaded like the other Operant plugins: main.js lists it in the per-process OPENCODE_CONFIG_CONTENT
 // `plugin` array, never the user's opencode.json. A no-op outside an Operant tile. .mjs for the
 // reason given in opencode-long-commands.mjs.
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const prime = require('../bin/operant-prime.js');
+const { gateDecision, findIndexRoot } = require('../codegraph-first.js');
 
 async function call(cmd, args) {
   const res = await fetch(`${process.env.OPERANT_API}/v1`, {
@@ -29,6 +35,8 @@ export default async ({ directory }) => {
   const subagents = new Set();
   const replies = new Map(); // sessionID -> { id, parts: Map(partID -> text) } of the latest assistant reply
   const texts = new Map(); // sessionID -> the text to add ('' for nothing)
+  const askedCodeGraph = new Set(); // sessions that made a CodeGraph call
+  const hasIndex = findIndexRoot(directory, existsSync) !== null;
 
   async function textFor(sessionID) {
     if (subagents.has(sessionID)) {
@@ -56,6 +64,13 @@ export default async ({ directory }) => {
         if (output.trim()) await call('hook', { event: 'output', output }).catch(() => {});
       }
       if (event?.type === 'session.compacted') texts.delete(event.properties?.sessionID);
+    },
+    'tool.execute.before': async (input, output) => {
+      if (process.env.OPERANT_CODEGRAPH_GATE === '0' || !hasIndex || !input) return;
+      const id = input.sessionID || '';
+      const d = gateDecision({ tool: input.tool, input: output && output.args, state: { cg: askedCodeGraph.has(id) }, hasIndex });
+      if (d.record) askedCodeGraph.add(id);
+      else if (!d.allow) throw new Error(d.reason);
     },
     // Title and summary calls come without a session; they don't need Operant's context.
     'experimental.chat.system.transform': async (input, output) => {
