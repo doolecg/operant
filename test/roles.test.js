@@ -57,7 +57,7 @@ test('roleText is the body without frontmatter, cached, empty for an unknown rol
     assert.ok(t.length > 100);
     assert.doesNotMatch(t, /^---|^name:|^model:/m);
     assert.equal(roleText(name), t);
-    assert.equal(t, split(fs.readFileSync(path.join(dir, `${name}.md`), 'utf8')).body.trim());
+    assert.equal(t, split(fs.readFileSync(path.join(dir, `${name}.md`), 'utf8').replace(/\r\n/g, '\n')).body.trim());
   }
   assert.equal(roleText('nope'), '');
 });

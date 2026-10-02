@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -62,8 +64,10 @@ test('the CodeGraph-first gate blocks a code grep until the session has made a C
   const saved = { ...process.env };
   Object.assign(process.env, { OPERANT: '1', OPERANT_API: 'http://127.0.0.1:9', OPERANT_TILE: '4' });
   delete process.env.OPERANT_CODEGRAPH_GATE;
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'operant-gate-'));
+  fs.mkdirSync(path.join(proj, '.codegraph'));
   try {
-    const hooks = await (await import(PLUGIN)).default({ directory: path.join(__dirname, '..') });
+    const hooks = await (await import(PLUGIN)).default({ directory: proj });
     const before = (sessionID, tool, args) => hooks['tool.execute.before']({ tool, sessionID }, { args });
     await assert.rejects(before('a', 'grep', { pattern: 'notify' }), /codegraph explore "notify"/);
     await assert.rejects(before('a', 'bash', { command: 'rg notify' }), /CodeGraph index/);
@@ -78,5 +82,6 @@ test('the CodeGraph-first gate blocks a code grep until the session has made a C
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
     Object.assign(process.env, saved);
+    fs.rmSync(proj, { recursive: true, force: true });
   }
 });
