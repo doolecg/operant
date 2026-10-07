@@ -203,6 +203,13 @@ export function CollaborationSection() {
               onCommit={(v) => set({ longJobElapsedMinutes: v })}
             />
           </Row>
+          <Row
+            label="Update tracker job"
+            hint="When a job finishes in a project that has a tracker file, open one “Update tracker” job for the project manager. Each project can also turn it off."
+            htmlFor="tracker-jobs"
+          >
+            <Switch id="tracker-jobs" checked={c.trackerJobs} onCheckedChange={(v) => set({ trackerJobs: v })} />
+          </Row>
         </CardContent>
       </Card>
 

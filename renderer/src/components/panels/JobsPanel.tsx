@@ -18,7 +18,6 @@ import {
   useMoveJob,
   useRejectJob,
 } from '@/lib/queries'
-import type { TabProps } from '@/registry'
 
 // Tab badge: jobs that are not done.
 export function useJobsBadge(crewId: number | null): number | undefined {
@@ -28,7 +27,7 @@ export function useJobsBadge(crewId: number | null): number | undefined {
 
 type Reasoning = { kind: 'reject' | 'escalate'; jobId: number }
 
-export function JobsPanel({ crewId, operators }: TabProps) {
+export function JobsPanel({ crewId }: { crewId: number }) {
   const jobsQuery = useJobs(crewId)
   const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data])
   const [title, setTitle] = useState('')
@@ -103,7 +102,7 @@ export function JobsPanel({ crewId, operators }: TabProps) {
               </div>
               <div className="space-y-1">
                 {list.map((j) => (
-                  <JobCard key={j.id} job={j} operators={operators} actions={actions} />
+                  <JobCard key={j.id} job={j} actions={actions} />
                 ))}
                 {list.length === 0 && <div className="text-muted-foreground/60 px-2 text-xs">—</div>}
               </div>
@@ -112,8 +111,8 @@ export function JobsPanel({ crewId, operators }: TabProps) {
         })}
       </div>
 
-      <JobSheet job={byId(sheetId)} jobs={jobs} operators={operators} onClose={() => setSheetId(null)} />
-      <DeleteJobDialog job={byId(deleteId)} jobs={jobs} operators={operators} onClose={() => setDeleteId(null)} />
+      <JobSheet job={byId(sheetId)} jobs={jobs} onClose={() => setSheetId(null)} />
+      <DeleteJobDialog job={byId(deleteId)} jobs={jobs} onClose={() => setDeleteId(null)} />
       <ReasonDialog
         open={reasoning != null}
         title={reasoning?.kind === 'reject' ? 'Reject job' : 'Escalate job'}

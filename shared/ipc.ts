@@ -1,17 +1,46 @@
+import type { ConsoleLine, ConsoleProcess, ConsoleSource } from './console'
+import type { DraftStatus, LearnRunInfo, LearnStatus, LearnStore, Lesson, LessonFilter, LessonPatch, LessonStatus, MemoryFile, SkillDraft } from './learn'
 import type {
   AgentKind,
   AppInfo,
+  BudgetConfig,
+  BudgetStatus,
+  BudgetTarget,
+  ExportFormat,
+  ExportText,
+  ImportPreview,
+  ImportResult,
+  ImportSource,
+  RunUsage,
+  ProvidersStatus,
+  UsageQuery,
+  UsageReport,
+  UsageSeries,
+  UsageSeriesQuery,
+  UsageView,
   CapEvent,
   CapStatus,
   ChangePlan,
   Crew,
   CrewCounts,
+  DiscordBotInput,
+  DiscordBotPatch,
+  DiscordBotView,
+  DiscordHealth,
+  DiscordPairing,
+  DiscordTestResult,
   CrewPatch,
   CrewTopology,
   CrewView,
   GraphData,
   GraphWindow,
   IndexStatus,
+  HindsightAdapter,
+  HindsightKeyState,
+  HindsightStatus,
+  HindsightTestResult,
+  ProjectHealth,
+  JobAgent,
   IpcErrorCode,
   JobState,
   JobInput,
@@ -26,6 +55,9 @@ import type {
   Operator,
   OperatorChange,
   OperatorContext,
+  McpDown,
+  McpOverview,
+  McpServerInput,
   OperatorFromPreset,
   OperatorPatch,
   OperatorSpend,
@@ -35,6 +67,9 @@ import type {
   PresetPatch,
   PurgeOutcome,
   PurgeStatus,
+  Run,
+  RunInput,
+  RunStatus,
   ScratchInput,
   ScratchPatch,
   ScratchSpend,
@@ -42,12 +77,17 @@ import type {
   ScratchTerminal,
   Squad,
   SquadDelete,
+  Team,
+  TeamInput,
+  TeamPatch,
   UnreadCounts,
   UpdateStatus,
   UsageBreakdownResult,
   UsagePeriod,
 } from './types'
+import type { GitChanges, IdeId, IdeInfo, ProjectGroup } from './projects'
 import type { Settings, SettingsPatch } from './settings'
+import type { MediaState, MediaTimeline } from './media'
 
 export interface DashboardSummary {
   operatorsRunning: number
@@ -65,10 +105,32 @@ export interface IpcApi {
   'crews:topology': (crewId: number) => CrewTopology | null
   'crews:create': (input: { name: string; folder: string }) => Crew
   'crews:update': (crewId: number, patch: CrewPatch) => Crew
+  // Saves the project list order: these crews first, in this order.
+  // Opens (or extends) the project's "Update tracker" board job by hand.
+  'crews:trackerNow': (crewId: number) => JobRecord
+  'crews:reorder': (crewIds: number[]) => Crew[]
   // What a delete would remove, for the confirm dialog.
   'crews:counts': (crewId: number) => CrewCounts
   // Stops every session, then removes the crew with its jobs, messages, spend history and tiles.
   'crews:delete': (crewId: number) => CrewCounts
+
+  // Project groups. Removing a group puts its projects back in the list; no folder is touched.
+  'groups:list': () => ProjectGroup[]
+  // A blank name takes the next free "New group", "New group 2", ...
+  'groups:create': (name?: string) => ProjectGroup
+  'groups:rename': (groupId: number, name: string) => ProjectGroup
+  'groups:delete': (groupId: number) => void
+  'groups:collapse': (groupId: number, collapsed: boolean) => ProjectGroup
+  // Saved order of the groups.
+  'groups:reorder': (groupIds: number[]) => ProjectGroup[]
+  // Puts the project in a group (null = ungrouped), before another project when given.
+  'groups:move': (crewId: number, groupId: number | null, beforeCrewId?: number) => Crew[]
+
+  // IDEs and git for the project menu
+  'ide:list': () => IdeInfo[]
+  // Launches the IDE (default: the one in settings) on the project folder; a failure rejects with the reason.
+  'ide:open': (crewId: number, ide?: IdeId) => void
+  'git:changes': (crewId: number) => GitChanges
 
   // Squads
   'squads:create': (input: { crewId: number; name: string }) => Squad
@@ -135,6 +197,47 @@ export interface IpcApi {
   'jobs:move': (jobId: number, patch: { state?: JobState; assigneeId?: number | null }) => JobRecord
   // Aliases of the jobs calls until the renderer moves over (removed in step 13).
 
+  // Model ids the given CLI offers (OpenCode asks the CLI; an error explains an empty list).
+  'models:list': (agent: 'claude' | 'opencode') => { models: string[]; efforts: Record<string, string[]>; error?: string }
+
+  // Teams
+  'teams:list': () => Team[]
+  'teams:create': (input: TeamInput) => Team
+  'teams:update': (teamId: number, patch: TeamPatch) => Team
+  'teams:delete': (teamId: number) => void
+
+  // Dashboard jobs (JOB#). A run over its team's limits is refused.
+  'runs:list': (crewId: number) => Run[]
+  'runs:get': (runId: number) => Run
+  'runs:create': (input: RunInput) => Run
+  // Cancels a queued job or stops a running one; either ends as failed.
+  'runs:stop': (runId: number) => Run
+  'runs:agents': (runId: number) => JobAgent[]
+  // Edits the task of a queued job; refused once it has started.
+  'runs:update': (runId: number, patch: { task?: string }) => Run
+  // Deletes a finished job (done or failed) and its agents; a queued or working one is refused.
+  'runs:delete': (runId: number) => void
+  // The tail of one job agent's transcript as plain text lines (secrets removed, size-capped).
+  'runs:agentLog': (runId: number, agentId: number) => string[]
+  // Jobs that may run at once per project (default 1).
+  'runs:getLimit': () => number
+  'runs:setLimit': (limit: number) => number
+
+  // Discord bots. Tokens go in through create/setToken and never come back out.
+  'discord:list': () => DiscordBotView[]
+  'discord:create': (input: DiscordBotInput) => DiscordBotView
+  'discord:update': (botId: number, patch: DiscordBotPatch) => DiscordBotView
+  'discord:delete': (botId: number) => void
+  'discord:setToken': (botId: number, token: string) => DiscordBotView
+  'discord:clearToken': (botId: number) => DiscordBotView
+  'discord:connect': (botId: number) => DiscordBotView
+  'discord:disconnect': (botId: number) => DiscordBotView
+  'discord:health': () => DiscordHealth[]
+  'discord:test': (botId: number) => DiscordTestResult
+  'discord:pairings': (botId: number) => DiscordPairing[]
+  'discord:approvePairing': (botId: number, code: string) => DiscordBotView
+  'discord:denyPairing': (botId: number, code: string) => void
+
   // Links
   'links:list': (crewId: number) => Link[]
   'links:create': (input: { crewId: number; fromId: number; toId: number; label?: string }) => Link
@@ -180,6 +283,32 @@ export interface IpcApi {
   // Usage, caps, purge
   'usage:series': (crewId: number) => OperatorSpend[]
   'usage:breakdown': (crewId: number, period: UsagePeriod) => UsageBreakdownResult
+  // Any grouping and filter of the usage rows (day, project, job, seat, agent, model, CLI, provider): totals are the sum of the rows.
+  'usage:report': (query: UsageQuery) => UsageReport
+  // Cost and tokens per hour or day, optionally split (a line per model, project, ...).
+  'usage:timeseries': (query: UsageSeriesQuery) => UsageSeries
+  // What one JOB# spent per agent (Master first).
+  'usage:job': (runId: number) => RunUsage
+  // CSV or JSON text of any view, for the renderer to save.
+  'usage:exportText': (view: UsageView, format: ExportFormat) => ExportText
+  // The same, written to a file the user picks (null when they cancel).
+  'usage:export': (view: UsageView, format: ExportFormat) => { saved: string | null }
+  // Budgets: the daily budget lives in settings; project and job caps and what a cap does live here.
+  'budgets:get': () => BudgetStatus
+  'budgets:set': (patch: Partial<BudgetConfig>) => BudgetStatus
+  // "Resume" after a cap: count spend from now on and let held jobs start.
+  'budgets:resume': (target: BudgetTarget) => BudgetStatus
+  // Import from Operant 2.8.2 (its data folder) or from an export file: preview what would be added, then apply.
+  'import:preview': (source: ImportSource) => ImportPreview
+  'import:apply': (source: ImportSource) => ImportResult
+  // Asks for an export file to import (null when cancelled).
+  'import:pickFile': () => string | null
+  // This version's projects, presets and usage as one JSON document, to move to another machine.
+  'data:export': () => ExportText
+  'data:exportFile': () => { saved: string | null }
+  // Plan limits and usage of the services behind the CLIs (Claude, OpenCode providers, z.ai).
+  'providers:status': () => ProvidersStatus
+  'providers:refresh': () => ProvidersStatus
   'caps:status': () => CapStatus
   // "Resume" after a pause: count spend from now on.
   'caps:reset': (target: number | 'daily') => CapStatus
@@ -194,6 +323,47 @@ export interface IpcApi {
 
   'index:status': (crewId: number) => IndexStatus | null
   'index:run': (crewId: number) => IndexStatus | null
+  'health:project': (crewId: number) => ProjectHealth
+  'hindsight:status': () => HindsightStatus
+  'hindsight:act': (action: 'start' | 'stop' | 'restart') => HindsightStatus
+  // Network addresses a shared server can bind, Tailscale marked.
+  'hindsight:adapters': () => HindsightAdapter[]
+  // Test connection: reachability, key accepted or refused, bank count, latency, the server's own error.
+  'hindsight:test': () => HindsightTestResult
+  // API keys are write-only: only whether one is saved comes back (slot: shared = this PC's server, remote = another server).
+  'hindsight:keyState': () => HindsightKeyState
+  'hindsight:setKey': (slot: 'shared' | 'remote', key: string) => HindsightKeyState
+  'hindsight:clearKey': (slot: 'shared' | 'remote') => HindsightKeyState
+  // Makes and saves a random shared key; returned once so it can be copied to the other machines.
+  'hindsight:generateKey': () => string
+
+  // Learning loop and Memory Manager. Lessons come from finished jobs and Master conversations.
+  'learn:status': (crewId?: number) => LearnStatus
+  // "Learn now": runs the learn step on a finished job; null when learning is off.
+  'learn:run': (runId: number) => LearnRunInfo | null
+  'learn:lessons': (filter?: LessonFilter) => Lesson[]
+  'learn:editLesson': (id: number, patch: LessonPatch) => Lesson
+  // Folds the lessons in `mergeIds` into `keepId`.
+  'learn:mergeLessons': (keepId: number, mergeIds: number[]) => Lesson
+  // active (also approves a queued one), stale or deleted.
+  'learn:setLessonStatus': (id: number, status: LessonStatus) => Lesson
+  'learn:moveLesson': (id: number, from: LearnStore, to: LearnStore) => Lesson
+  'learn:hindsightEntries': (crewId: number, query?: string) => { ok: true; items: string[] } | { ok: false; error: string }
+  'learn:memoryFiles': (crewId: number) => MemoryFile[]
+  'learn:drafts': (crewId?: number, status?: DraftStatus) => SkillDraft[]
+  'learn:editDraft': (id: number, patch: { name?: string; body?: string }) => SkillDraft
+  // Installs the skill as a project skill file: only ever on this explicit call.
+  'learn:approveDraft': (id: number) => SkillDraft
+  'learn:rejectDraft': (id: number) => SkillDraft
+  'learn:deleteDraft': (id: number) => void
+  // MCP servers for the project's folder (null = user-level only); `refresh` re-runs the status checks.
+  'mcp:list': (crewId: number | null, refresh?: boolean) => McpOverview
+  'mcp:add': (crewId: number | null, input: McpServerInput) => McpOverview
+  'mcp:update': (crewId: number | null, serverId: string, input: McpServerInput) => McpOverview
+  'mcp:setEnabled': (crewId: number | null, serverId: string, enabled: boolean) => McpOverview
+  'mcp:remove': (crewId: number | null, serverId: string) => McpOverview
+  // Servers the team seats need that are down, for the header badge.
+  'mcp:health': () => McpDown[]
   'events:recent': (limit: number) => OperantEvent[]
   'dashboard:summary': () => DashboardSummary
   'settings:get': () => Settings
@@ -202,21 +372,39 @@ export interface IpcApi {
   'settings:reset': (section: keyof Settings) => Settings
   // Handled by main (needs Electron), not by core.
   'app:pickFolder': () => string | null
+  // Shows the project folder in the file manager.
+  'shell:openFolder': (crewId: number) => void
   'app:info': () => AppInfo
   'app:openExternal': (url: string) => void
   'update:status': () => UpdateStatus
   'update:check': () => UpdateStatus
   'update:install': () => boolean
+  // The background-process console: kept lines (optionally one source), clear (all or one source), running processes, stop one of ours by pid.
+  'console:list': (source?: ConsoleSource) => ConsoleLine[]
+  'console:clear': (source?: ConsoleSource) => void
+  'console:processes': () => ConsoleProcess[]
+  'console:stop': (pid: number) => boolean
+  // The Windows media session now playing (inactive off Windows or when the controls are off), and one of its
+  // buttons: toggle | next | prev | shuffle | focus | vol <0..1>; any other command is refused (false).
+  'media:state': () => MediaState
+  'media:command': (cmd: string) => boolean
 }
 
 export type IpcChannel = keyof IpcApi
 export type MainChannel =
   | 'app:pickFolder'
+  | 'shell:openFolder'
   | 'app:info'
   | 'app:openExternal'
   | 'update:status'
   | 'update:check'
   | 'update:install'
+  | 'console:list'
+  | 'console:clear'
+  | 'console:processes'
+  | 'console:stop'
+  | 'media:state'
+  | 'media:command'
 export type CoreChannel = Exclude<IpcChannel, MainChannel>
 
 // Push messages: main -> renderer.
@@ -236,9 +424,21 @@ export interface IpcEvents {
   // The unread count of the user inbox ('user') or of an operator (the Master slot included).
   unread: { crewId: number; to: 'user' | number; count: number }
   job: { crewId: number; jobId: number; kind: string }
+  // A dashboard job (JOB#) was created or changed status.
+  run: { crewId: number; runId: number; status: RunStatus }
+  // A job's agent list changed (an agent appeared, finished or got a model).
+  'run:agents': { crewId: number; runId: number }
+  // A Discord bot connected, dropped or failed.
+  'discord:status': DiscordHealth
+  // A bot got a new pairing request.
+  'discord:pairing': { botId: number }
   purge: { kind: 'operator-purged' | 'squad-purged'; crewId: number | null; operatorId: number | null; squadId: number | null; label: string }
   settings: Settings
   update: UpdateStatus
+  'console:line': ConsoleLine
+  'media:state': MediaState
+  'media:timeline': MediaTimeline | null
+  'media:art': string | null
 }
 
 export type IpcEventName = keyof IpcEvents
@@ -247,6 +447,8 @@ export interface OperantBridge {
   invoke<C extends IpcChannel>(channel: C, ...args: Parameters<IpcApi[C]>): Promise<Awaited<ReturnType<IpcApi[C]>>>
   on<E extends IpcEventName>(name: E, listener: (payload: IpcEvents[E]) => void): () => void
   platform: NodeJS.Platform
+  // The page zoom of this window (1 = 100%).
+  setZoom(factor: number): void
 }
 
 export const CORE_CHANNELS: CoreChannel[] = [
@@ -254,8 +456,20 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'crews:topology',
   'crews:create',
   'crews:update',
+  'crews:trackerNow',
+  'crews:reorder',
   'crews:counts',
   'crews:delete',
+  'groups:list',
+  'groups:create',
+  'groups:rename',
+  'groups:delete',
+  'groups:collapse',
+  'groups:reorder',
+  'groups:move',
+  'ide:list',
+  'ide:open',
+  'git:changes',
   'squads:create',
   'squads:update',
   'squads:delete',
@@ -296,6 +510,63 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'jobs:approveStart',
   'jobs:escalate',
   'jobs:move',
+  'models:list',
+  'teams:list',
+  'teams:create',
+  'teams:update',
+  'teams:delete',
+  'runs:list',
+  'runs:get',
+  'runs:create',
+  'runs:stop',
+  'runs:agents',
+  'runs:update',
+  'runs:delete',
+  'runs:agentLog',
+  'runs:getLimit',
+  'runs:setLimit',
+  'discord:list',
+  'discord:create',
+  'discord:update',
+  'discord:delete',
+  'discord:setToken',
+  'discord:clearToken',
+  'discord:connect',
+  'discord:disconnect',
+  'discord:health',
+  'discord:test',
+  'discord:pairings',
+  'discord:approvePairing',
+  'discord:denyPairing',
+  'health:project',
+  'hindsight:status',
+  'mcp:list',
+  'mcp:add',
+  'mcp:update',
+  'mcp:setEnabled',
+  'mcp:remove',
+  'mcp:health',
+  'hindsight:act',
+  'hindsight:adapters',
+  'hindsight:test',
+  'hindsight:keyState',
+  'hindsight:setKey',
+  'hindsight:clearKey',
+  'hindsight:generateKey',
+  'learn:status',
+  'learn:run',
+  'learn:lessons',
+  'learn:editLesson',
+  'learn:mergeLessons',
+  'learn:setLessonStatus',
+  'learn:moveLesson',
+  'learn:hindsightEntries',
+  'learn:memoryFiles',
+  'learn:drafts',
+  'learn:editDraft',
+  'learn:approveDraft',
+  'learn:rejectDraft',
+  'learn:deleteDraft',
   'links:list',
   'links:create',
   'links:update',
@@ -324,6 +595,21 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'scratch:buffer',
   'usage:series',
   'usage:breakdown',
+  'usage:report',
+  'usage:timeseries',
+  'usage:job',
+  'usage:exportText',
+  'usage:export',
+  'budgets:get',
+  'budgets:set',
+  'budgets:resume',
+  'import:preview',
+  'import:apply',
+  'import:pickFile',
+  'data:export',
+  'data:exportFile',
+  'providers:status',
+  'providers:refresh',
   'caps:status',
   'caps:reset',
   'purge:status',
@@ -342,11 +628,18 @@ export const CORE_CHANNELS: CoreChannel[] = [
 
 export const MAIN_CHANNELS: MainChannel[] = [
   'app:pickFolder',
+  'shell:openFolder',
   'app:info',
   'app:openExternal',
   'update:status',
   'update:check',
   'update:install',
+  'console:list',
+  'console:clear',
+  'console:processes',
+  'console:stop',
+  'media:state',
+  'media:command',
 ]
 
 // What a rejected call carries. Electron only passes an error's message across the bridge, so main encodes

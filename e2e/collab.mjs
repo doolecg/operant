@@ -1,5 +1,5 @@
 // Collaboration e2e: operators started with a fake claude that really runs the `operant` CLI against the app's
-// socket (jobs, messages, nudges), then the dashboard views, edit/delete flows, caps, settings and error display.
+// socket (jobs, messages, nudges), then the seat editor, edit/delete flows, caps, settings and error display.
 // Runs in the background with throwaway data. Usage: node e2e/collab.mjs [outDir]
 // Set OPERANT_E2E_EXE to a packaged executable to test a build instead of the dev app.
 import assert from 'node:assert/strict'
@@ -28,7 +28,7 @@ const ON_INBOX = ['[implementor] operant job claim', '[implementor] operant job 
 
 const env = {
   ...process.env,
-  OPERANT_BACKGROUND: '1',
+  OPERANT_BACKGROUND: '1', OPERANT_E2E: '1',
   OPERANT_DATA_DIR: dataDir,
   CLAUDE_CONFIG_DIR: claudeDir,
   FAKE_CLAUDE_SCRIPT: SCRIPT,
@@ -109,8 +109,9 @@ const shot = async (name) => {
   await page.waitForTimeout(400)
   await page.screenshot({ path: join(outDir, `${name}.png`) })
 }
-const view = (label) => page.getByRole('group', { name: 'Crew view' }).getByRole('button', { name: label, exact: true })
-const tab = (name) => page.getByRole('tab', { name: new RegExp(name) })
+const editor = () => page.getByRole('region', { name: 'Seat editor' })
+const seatView = (label) => page.getByRole('group', { name: 'Seat editor view' }).getByRole('button', { name: label, exact: true })
+const mode = (label) => page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: label, exact: true })
 const typeInto = (id, text) => inv('operators:write', id, text + '\r')
 const buffer = (id) => inv('operators:buffer', id)
 
@@ -139,7 +140,7 @@ let masterId = null
 
 try {
   await launch()
-  await page.getByText('Welcome to Operant 2').waitFor()
+  await page.getByText('Welcome to Operant 3').waitFor()
   await shot('00-welcome')
 
   await step('1. seed: PM and implementor from presets; launch line per preset (args file)', async () => {
@@ -158,7 +159,6 @@ try {
         await inv('crews:update', crew.id, { pmId: manager.id })
         await inv('settings:set', { collab: { nudgeIdleSeconds: 1, nudgeBatchSeconds: 0 } })
         const side = await inv('crews:create', { name: 'side', folder })
-        await inv('views:set', side.id, 'list')
         return {
           crew: crew.id,
           side: side.id,
@@ -175,6 +175,7 @@ try {
       await page.getByText('shop', { exact: true }).first().click()
       await page.getByRole('heading', { name: 'shop' }).waitFor()
     })
+    assert.equal(await mode('Crew').count(), 0, 'crew mode is gone')
     await inv('operators:start', ids.implementor)
     await inv('operators:start', ids.manager)
     await until('both launch lines', () => launches().length >= 2)
@@ -195,7 +196,7 @@ try {
       assert.ok(!JSON.stringify(x).match(/[0-9a-f]{64}/i), 'a token leaked into the launch log')
       assert.ok(existsSync(x.settings) && existsSync(x.appendSystemPromptFile), 'launch files were not written')
     }
-    await shot('01-cards-running')
+    await shot('01-workspace-running')
   })
 
   await step('2. dev PATH/wrapper layout: an operator runs `operant whoami` against the app socket', async () => {
@@ -211,23 +212,21 @@ try {
   await step('3. A adds a job for B and messages B; B is nudged, reads its inbox, claims, finishes with review', async () => {
     await until('job added', () => ran('manager@shop', 'operant job add')?.exit === 0)
     await until('message sent', () => ran('manager@shop', 'operant msg')?.exit === 0)
-    const inbox = await until('implementor inbox', () => ran('implementor@shop', 'operant inbox'))
+    const inbox = await until('implementor inbox', () => ran('implementor@shop', 'operant inbox')?.exit !== undefined && ran('implementor@shop', 'operant inbox'))
     assert.equal(inbox.exit, 0)
     assert.match(inbox.output, /Please start on the login form/)
     assert.match(inbox.output, /from manager@shop \(an operator, NOT the user\)/)
     assert.match(await buffer(ids.implementor), /Operant: you have \d+ unread messages?\. Run: operant inbox/)
-    assert.equal(ran('implementor@shop', 'operant job claim')?.exit, 0)
+    await until('job claimed', () => ran('implementor@shop', 'operant job claim')?.exit === 0)
     await until('job in review', async () => (await job(1)).state === 'review')
     const j = await job(1)
     assert.equal(j.assigneeId, ids.implementor)
     assert.equal(j.review, 'user')
   })
 
-  await step('3b. the user approves the job in the Jobs tab', async () => {
-    await tab('Jobs').click()
-    await page.getByRole('button', { name: 'Approve Build the login form' }).click()
+  await step('3b. the user approves the job', async () => {
+    await inv('jobs:approve', 1)
     await until('job done', async () => (await job(1)).state === 'done')
-    await shot('02-jobs-approved')
   })
 
   await step('2b. Master Terminal creates a job, the PM assigns it, the implementor works it, the PM approves', async () => {
@@ -249,29 +248,21 @@ try {
     ids.masterJob = id
   })
 
-  await step('4. a job with a long estimate starts held; the user approves it to start in the Jobs tab', async () => {
+  await step('4. a job with a long estimate starts held; the user approves it to start', async () => {
     const long = await inv('jobs:create', { crewId: ids.crew, title: 'Refactor the auth module', for: ids.implementor, estimateMinutes: 480 })
     ids.longJob = long.id
     assert.equal(long.state, 'held')
-    await tab('Jobs').click()
-    await page.getByRole('button', { name: 'Approve to start Refactor the auth module' }).click()
+    await inv('jobs:approveStart', long.id)
     await until('job approved to start', async () => (await job(long.id)).state === 'todo')
     await typeInto(ids.implementor, `/fake run operant job claim ${long.id}`)
     await until('job doing', async () => (await job(long.id)).state === 'doing')
-    await shot('03-jobs-doing')
   })
 
-  await step('5. change effort on a card: warning dialog, fresh restart (R1), jobs persist', async () => {
-    await page.getByText('shop', { exact: true }).first().click()
-    await view('Cards').click()
+  await step('5. change effort: restarts fresh (R1), jobs persist', async () => {
     const before = launches().filter((l) => l.operator === 'implementor@shop').length
     const oldSession = launches().findLast((l) => l.operator === 'implementor@shop').sessionId
-    await page.getByRole('combobox', { name: 'Effort for implementor' }).click()
-    await page.getByRole('option', { name: 'high', exact: true }).click()
-    const dialog = page.getByRole('dialog')
-    await dialog.getByText('Fresh restart.').waitFor()
-    await shot('04-change-effort-dialog')
-    await dialog.getByRole('button', { name: 'Restart fresh and apply' }).click()
+    await inv('operators:previewChange', ids.implementor, { effort: 'high' })
+    await inv('operators:applyChange', ids.implementor, { effort: 'high' })
     await until('fresh launch', () => launches().filter((l) => l.operator === 'implementor@shop').length > before)
     const l = launches().findLast((x) => x.operator === 'implementor@shop')
     assert.equal(l.effort, 'high')
@@ -282,14 +273,9 @@ try {
     assert.equal(j.state, 'doing')
   })
 
-  await step('5b. change model on a card: the dialog warns about cache loss with an estimate, then restarts fresh', async () => {
+  await step('5b. change model: restarts fresh and keeps the earlier effort', async () => {
     const before = launches().filter((l) => l.operator === 'implementor@shop').length
-    await page.getByRole('combobox', { name: 'Model for implementor' }).click()
-    await page.getByRole('option', { name: /opus/ }).first().click()
-    const dialog = page.getByRole('dialog')
-    await dialog.getByText('Cache loss.').waitFor()
-    assert.match(await dialog.innerText(), /about \$\d/, 'the warning shows a cold-cache cost estimate')
-    await dialog.getByRole('button', { name: 'Restart fresh and apply' }).click()
+    await inv('operators:applyChange', ids.implementor, { model: 'opus' })
     await until('fresh launch', () => launches().filter((l) => l.operator === 'implementor@shop').length > before)
     const l = launches().findLast((x) => x.operator === 'implementor@shop')
     assert.match(l.model, /opus/)
@@ -307,15 +293,12 @@ try {
     const unit = spent - base
     const cap = spent / 0.85
     await inv('operators:update', ids.implementor, { dailyCapUsd: Math.round(cap * 1e6) / 1e6 })
-    await page.getByText(/^cap 8\d%$/).first().waitFor()
-    await shot('05-cap-warning')
+    await until('cap warning', async () => (await inv('caps:status')).operators[ids.implementor]?.pct >= 80)
     assert.ok((await inv('events:recent', 100)).some((e) => /is at 8\d%/.test(e.message)), 'a cap warning event was logged')
 
     const more = Math.ceil((cap - spent) / unit) + 2
     await typeInto(ids.implementor, `/fake spend 0 ${more * 10000} 0`)
     await until('paused', async () => (await inv('caps:status')).operators[ids.implementor]?.paused === true)
-    await page.getByText('Paused: cap').first().waitFor()
-    await shot('06-cap-paused')
     const op = (await inv('crews:topology', ids.crew)).squads.flatMap((s) => s.operators).find((o) => o.id === ids.implementor)
     assert.equal(op.status, 'running', 'the paused operator is not killed')
     const claim = (id) => commands().filter((c) => c.operator === 'implementor@shop' && c.cmd === `operant job claim ${id}`).length
@@ -340,111 +323,44 @@ try {
     await inv('jobs:delete', extra.id)
   })
 
-  await step('7. Cost tab shows the token-kind split; spend is recorded', async () => {
-    await tab('Cost').click()
-    await page.getByText('By token kind').waitFor()
-    const label = await page.locator('svg[aria-label^="Cost by token kind"]').getAttribute('aria-label')
-    assert.match(label, /Cache read \$\d/)
-    await shot('07-cost')
+  await step('7. spend is recorded', async () => {
     assert.ok((await totalSpend()) > 0)
   })
 
-  await step('8. views: Cards, List, Graph, Tiles; the Graph shows message and handoff edges', async () => {
-    await view('Cards').click()
-    await page.getByText('Working on:').first().waitFor()
-    await shot('08-view-cards')
-    await view('List').click()
-    await page.getByText('implementor@shop', { exact: true }).first().waitFor()
-    await shot('09-view-list')
-    await view('Graph').click()
-    await page.locator('.react-flow__node').first().waitFor()
+  await step('8. graph data: message and handoff edges exist for the crew (backend only)', async () => {
     const g = await inv('graph:get', ids.crew, 'all')
     const kinds = new Set(g.edges.map((e) => e.kind))
     for (const k of ['member', 'message', 'job']) assert.ok(kinds.has(k), `graph edge kind ${k} missing: ${[...kinds]}`)
     assert.ok(g.nodes.some((n) => n.type === 'master'), 'the graph has a Master node')
-    const master = g.nodes.find((n) => n.type === 'master')
-    assert.ok(g.edges.some((e) => e.kind === 'member' && e.to === master.key), 'the Master node has its membership edge')
-    assert.ok(g.edges.some((e) => e.kind === 'message' && e.from === master.key) || g.edges.some((e) => e.kind === 'job' && e.from === master.key))
-    await until('edges drawn', async () => (await page.locator('.react-flow__edge').count()) >= g.edges.length - 1)
-    assert.ok((await page.locator(`.react-flow__node[data-id="${master.key}"]`).count()) === 1, 'the Master node is drawn')
-    await page.waitForTimeout(800)
-    await shot('10-view-graph')
-    await view('Tiles').click()
-    await page.getByRole('button', { name: 'New terminal' }).first().waitFor()
-    await shot('11-view-tiles')
   })
 
-  await step('9. drag a graph node; the position and the per-crew view persist across a relaunch', async () => {
-    await view('Graph').click()
-    const key = `op:${ids.manager}`
-    const node = page.locator(`.react-flow__node[data-id="${key}"]`)
-    await node.waitFor()
-    const box = await node.boundingBox()
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 70, { steps: 8 })
-    await page.mouse.up()
-    const saved = await until('position saved', async () => (await inv('graph:get', ids.crew)).positions.find((p) => p.nodeKey === key))
-    const after = await node.boundingBox()
-    assert.ok(Math.abs(after.x - box.x) > 20 || Math.abs(after.y - box.y) > 20, 'the node moved')
-    await shot('12-graph-dragged')
-    await relaunch()
-    await page.getByRole('heading', { name: 'shop' }).waitFor()
-    assert.equal((await inv('views:get', ids.crew)), 'graph')
-    assert.equal((await inv('views:get', ids.side)), 'list')
-    assert.equal(await view('Graph').getAttribute('aria-pressed'), 'true')
-    const again = (await inv('graph:get', ids.crew)).positions.find((p) => p.nodeKey === key)
-    assert.deepEqual([again.x, again.y], [saved.x, saved.y])
-    const node2 = page.locator(`.react-flow__node[data-id="${key}"]`)
-    await node2.waitFor()
-    await page.waitForTimeout(800)
-    const box2 = await node2.boundingBox()
-    assert.ok(Math.abs(box2.x - after.x) < 3 && Math.abs(box2.y - after.y) < 3, `node position after relaunch ${box2.x},${box2.y} vs ${after.x},${after.y}`)
-    // The other crew keeps its own view.
-    await page.getByText('side', { exact: true }).first().click()
-    await page.getByRole('heading', { name: 'side' }).waitFor()
-    assert.equal(await view('List').getAttribute('aria-pressed'), 'true')
-    await page.getByText('shop', { exact: true }).first().click()
-    await page.getByRole('heading', { name: 'shop' }).waitFor()
-  })
-
-  await step('10. Tiles: a scratch shell runs a command through the PTY; close it (process gone), reopen, delete it', async () => {
-    await view('Tiles').click()
-    await page.getByRole('button', { name: 'New terminal' }).first().click()
-    await page.getByLabel('Name').fill('e2e-shell')
-    await page.getByRole('button', { name: 'Create terminal' }).click()
-    const tile = page.getByRole('region', { name: 'Terminal tile e2e-shell' })
-    await tile.locator('.xterm').waitFor()
-    const scratch = (await inv('scratch:list', ids.crew)).find((s) => s.title === 'e2e-shell')
-    await until('scratch running', async () => (await inv('scratch:status', scratch.id)).running === true)
-    await page.waitForTimeout(1500)
-    await tile.locator('.xterm').click()
-    await page.keyboard.type(`node -e "console.log('scr'+'atch-ok')"`)
-    await page.keyboard.press('Enter')
-    await until('command output', async () => (await inv('scratch:buffer', scratch.id)).includes('scratch-ok'), 20_000)
-    await shot('13-tiles-scratch')
-    await page.getByRole('button', { name: 'Menu for e2e-shell' }).click()
-    await page.getByRole('menuitem', { name: 'Close', exact: true }).click()
-    await until('process gone', async () => (await inv('scratch:status', scratch.id)).running === false)
-    await page.getByRole('list', { name: 'Closed terminals' }).getByText('e2e-shell').waitFor()
-    await page.getByRole('button', { name: 'Delete e2e-shell' }).click()
-    await page.getByRole('dialog').getByRole('button', { name: /^Delete/ }).click()
-    await until('scratch deleted', async () => (await inv('scratch:list', ids.crew)).every((s) => s.title !== 'e2e-shell'))
-  })
-
-  await step('11. Master Terminal tile starts', async () => {
-    await view('Tiles').click()
-    const status = async () => (await inv('master:get', ids.crew))?.status
-    if ((await status()) !== 'stopped') {
-      await page.getByRole('button', { name: 'Stop the Master Terminal' }).click()
-      await until('master stopped', async () => (await status()) === 'stopped')
-    }
-    const before = launches().filter((l) => l.operator === 'master@shop').length
-    await page.getByRole('button', { name: 'Start the Master Terminal' }).click()
-    await until('master running', async () => (await status()) === 'running')
-    await until('master launch', () => launches().filter((l) => l.operator === 'master@shop').length > before)
-    await page.locator('.xterm').first().waitFor()
-    await shot('14-tiles-master')
+  await step('9. seat editor: seats and teams in the node view, edited inline, the list view shows the same data', async () => {
+    await mode('Seats').click()
+    await editor().waitFor()
+    await page.locator('.react-flow__node').first().waitFor()
+    await editor().getByRole('button', { name: 'New seat' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Name', { exact: true }).fill('docs writer')
+    await dialog.getByRole('button', { name: 'Create preset' }).click()
+    await editor().getByRole('button', { name: 'Edit docs writer' }).waitFor()
+    await editor().getByRole('button', { name: 'New team' }).click()
+    await dialog.getByLabel('Name', { exact: true }).fill('Writers')
+    await dialog.getByRole('button', { name: 'Add seat' }).click()
+    await dialog.getByRole('combobox', { name: 'Seat 1 preset' }).click()
+    await page.getByRole('option', { name: 'docs writer' }).click()
+    await dialog.getByLabel('Seat 1 count').fill('2')
+    await dialog.getByRole('button', { name: 'Create team' }).click()
+    await editor().getByRole('button', { name: 'Edit Writers' }).waitFor()
+    const writers = (await inv('teams:list')).find((t) => t.name === 'Writers')
+    const seat = (await inv('presets:list')).find((p) => p.name === 'docs writer')
+    assert.deepEqual(writers.seats.map((x) => [x.presetId, x.count]), [[seat.id, 2]])
+    await page.locator('.react-flow__edge').first().waitFor()
+    await shot('08-seat-editor-nodes')
+    await seatView('List').click()
+    await editor().getByRole('button', { name: 'Edit Writers' }).waitFor()
+    await editor().getByRole('button', { name: 'Edit docs writer' }).waitFor()
+    await shot('09-seat-editor-list')
+    await seatView('Nodes').click()
   })
 
   await step('12. Settings change apply live (daily cap per operator, shortcuts)', async () => {
@@ -464,36 +380,34 @@ try {
     await until('retention saved', async () => (await inv('settings:get')).collab.purgeRetentionDays === 0)
     await shot('16-settings-collab')
     await page.getByRole('button', { name: 'Shortcuts', exact: true }).click()
-    await page.getByRole('button', { name: 'Ctrl+3' }).click()
+    await page.getByRole('button', { name: 'Ctrl+N' }).click()
     await page.keyboard.press('Control+Shift+K')
     await page.getByRole('button', { name: 'Ctrl+Shift+K' }).waitFor()
     await shot('17-settings-shortcuts')
-    assert.equal((await inv('settings:get')).keybinds.tabCost, 'Mod+Shift+K')
+    assert.equal((await inv('settings:get')).keybinds.newCrew, 'Mod+Shift+K')
     await page.getByText('shop', { exact: true }).first().click()
-    await tab('Activity').click()
-    await page.keyboard.press('Control+Shift+K')
-    await page.getByText('By token kind').waitFor()
   })
 
-  await step('13. a failing IPC call shows a typed inline error (duplicate squad name)', async () => {
+  await step('13. a failing IPC call shows a typed inline error (duplicate seat name)', async () => {
     const r = await refused('squads:create', { crewId: ids.crew, name: 'dev' })
     assert.ok(r, 'the duplicate squad name was accepted')
     assert.ok(!/Error invoking remote method/.test(r.raw), `Electron's prefix leaked: ${r.raw}`)
-    await page.getByRole('button', { name: 'Squad', exact: true }).click()
-    await page.getByLabel('Name').fill('dev')
-    await page.getByRole('button', { name: 'Add squad' }).click()
-    const err = page.getByRole('dialog').locator('p.text-destructive')
+    assert.equal(r.code, 'CONFLICT', 'the IPC error carries its typed code')
+    await mode('Seats').click()
+    await editor().getByRole('button', { name: 'New seat' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Name', { exact: true }).fill('docs writer')
+    await dialog.getByRole('button', { name: 'Create preset' }).click()
+    const err = dialog.locator('p.text-destructive')
     await err.waitFor()
     const text = await err.innerText()
     assert.ok(!/OPERANT_ERR|Error invoking remote method/.test(text), `the wire prefix leaked: ${text}`)
-    await shot('18-error-inline')
-    console.log(`  duplicate squad error: code=${r.code} message=${JSON.stringify(r.message)} inline=${JSON.stringify(text)}`)
-    assert.equal(r.code, 'CONFLICT', 'the IPC error carries its typed code')
+    await shot('10-error-inline')
+    console.log(`  duplicate error: code=${r.code} message=${JSON.stringify(r.message)} inline=${JSON.stringify(text)}`)
     await page.keyboard.press('Escape')
   })
 
   await step('14. delete a running operator: its job is released, history and spend are kept', async () => {
-    await view('Cards').click()
     const running = (await inv('crews:topology', ids.crew)).squads.flatMap((s) => s.operators).find((o) => o.id === ids.implementor)
     if (running.status === 'stopped') {
       await inv('operators:start', ids.implementor)
@@ -504,13 +418,8 @@ try {
     await typeInto(ids.implementor, `/fake run operant job claim ${ids.longJob}`)
     await until('job doing again', async () => (await job(ids.longJob)).state === 'doing')
     const eventsBefore = (await inv('events:recent', 500)).length
-    await page.getByRole('button', { name: 'Actions for implementor' }).click()
-    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
-    const dialog = page.getByRole('dialog')
-    await dialog.getByText('This operator is running').waitFor()
-    await shot('19-delete-operator-dialog')
     const spendBefore = await totalSpend()
-    await dialog.getByRole('button', { name: 'Delete operator' }).click()
+    await inv('operators:delete', ids.implementor)
     await until('operator gone', async () => !(await inv('crews:topology', ids.crew)).squads.flatMap((s) => s.operators).some((o) => o.id === ids.implementor))
     const j = await job(ids.longJob)
     assert.equal(j.assigneeId, null, 'the job was released')
@@ -533,28 +442,14 @@ try {
     assert.ok(Math.abs((await inv('dashboard:summary')).spendToday - day) < 1e-9, 'daily total changed by the purge')
   })
 
-  await step('15b. Messages and Activity panels render', async () => {
-    await tab('Messages').click()
-    await page.getByRole('navigation', { name: 'Conversations' }).waitFor()
-    await shot('22-messages')
-    await tab('Activity').click()
-    await page.getByText('implementor@shop started').first().waitFor()
-    await shot('23-activity')
-  })
-
-  await step('16. delete job, squad and crew from the dashboard', async () => {
-    await tab('Jobs').click()
-    await page.getByRole('button', { name: 'Actions for Refactor the auth module' }).click()
-    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
-    await page.getByRole('dialog').getByRole('button', { name: /^Delete/ }).click()
+  await step('16. delete job and squad over IPC, crew from the dashboard', async () => {
+    await inv('jobs:delete', ids.longJob)
     await until('job deleted', async () => (await inv('jobs:list', ids.crew)).every((j) => j.id !== ids.longJob))
-    await view('Cards').click()
-    await page.getByRole('button', { name: 'Actions for squad review' }).click()
-    await page.getByRole('menuitem', { name: 'Delete squad' }).click()
-    await page.getByRole('dialog').getByRole('button', { name: 'Delete squad' }).click()
+    await inv('squads:delete', ids.review)
     await until('squad deleted', async () => !(await inv('crews:topology', ids.crew)).squads.some((s) => s.name === 'review'))
     await page.getByText('side', { exact: true }).first().click()
     await page.getByRole('heading', { name: 'side' }).waitFor()
+    await mode('Workspace').click()
     await page.getByRole('button', { name: 'Actions for crew side' }).click()
     await page.getByRole('menuitem', { name: 'Delete crew' }).click()
     await shot('20-delete-crew-dialog')

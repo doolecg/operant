@@ -3,15 +3,73 @@
 // - logs the launch (selected args, OPERANT_* env names, never values) to CLAUDE_CONFIG_DIR/fake-claude-launches.jsonl,
 // - stays alive reading stdin like a tiny REPL: a typed `Run: operant inbox` nudge runs `operant inbox`,
 //   `/clear` and `/exit` behave, and `/fake spend <in> <out> <cacheRead>` / `/fake run operant ...` are test hooks,
+// - with -p (a dashboard job) emits one stream-json message and stays alive until killed,
+// - answers the learn step (haiku, -p) with CLAUDE_CONFIG_DIR/learn-response.json when that file exists,
 // - runs FAKE_CLAUDE_SCRIPT (one `operant ...` command per line, at start) and FAKE_CLAUDE_ON_INBOX (after each
 //   inbox read). A line may start with `[role]` to apply to that role only; output is echoed and logged to
 //   CLAUDE_CONFIG_DIR/fake-claude-commands.jsonl.
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 const args = process.argv.slice(2)
+
+// `claude mcp list|add|remove` against CLAUDE_CONFIG_DIR/.claude.json and ./.mcp.json, in the real output format.
+// A server whose name has "bad" fails to connect, one with "auth" needs authentication, the rest connect.
+if (args[0] === 'mcp') {
+  const file = join(process.env.CLAUDE_CONFIG_DIR, '.claude.json')
+  const cfg = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {}
+  const key = process.cwd().replaceAll('\\', '/')
+  const mcpJson = join(process.cwd(), '.mcp.json')
+  const proj = () => ((cfg.projects ??= {})[key] ??= {})
+  const readJson = (f) => (existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : {})
+  const scopes = () => ({ user: (cfg.mcpServers ??= {}), local: (proj().mcpServers ??= {}), project: (readJson(mcpJson).mcpServers ?? {}) })
+  const save = (project) => {
+    writeFileSync(file, JSON.stringify(cfg))
+    if (project) writeFileSync(mcpJson, JSON.stringify({ mcpServers: project }))
+  }
+  const val = (flagName) => args.filter((a, i) => args[i - 1] === flagName)
+  const [sub] = args.slice(1)
+  if (sub === 'list') {
+    process.stdout.write('Checking MCP server health…\n\n')
+    for (const group of Object.values(scopes())) {
+      for (const [name, v] of Object.entries(group)) {
+        const target = v.url ? `${v.url} (HTTP)` : [v.command, ...(v.args ?? [])].join(' ')
+        const status = name.includes('bad') ? '✘ Failed to connect — ECONNREFUSED fake server' : name.includes('auth') ? '! Needs authentication' : '✔ Connected'
+        process.stdout.write(`${name}: ${target} - ${status}\n`)
+      }
+    }
+  } else if (sub === 'add') {
+    const scope = val('-s')[0] ?? 'local'
+    const dash = args.indexOf('--')
+    const head = dash >= 0 ? args.slice(2, dash) : args.slice(2)
+    const positional = head.filter((a, i) => !a.startsWith('-') && !['-s', '-t', '-e', '-H'].includes(head[i - 1]))
+    const name = positional[0]
+    const entry = dash >= 0 ? { type: 'stdio', command: args[dash + 1], args: args.slice(dash + 2) } : { type: val('-t')[0] ?? 'http', url: positional[1] }
+    const envs = val('-e')
+    if (envs.length) entry.env = Object.fromEntries(envs.map((e) => [e.split('=')[0], e.slice(e.indexOf('=') + 1)]))
+    const hdrs = val('-H')
+    if (hdrs.length) entry.headers = Object.fromEntries(hdrs.map((h) => [h.split(': ')[0], h.slice(h.indexOf(': ') + 2)]))
+    const group = scopes()[scope]
+    group[name] = entry
+    save(scope === 'project' ? group : null)
+    process.stdout.write(`Added ${entry.type} MCP server ${name}\n`)
+  } else if (sub === 'remove') {
+    const scope = val('-s')[0]
+    const name = args.slice(2).filter((a, i, all) => !a.startsWith('-') && all[i - 1] !== '-s')[0]
+    const all = scopes()
+    const target = scope ?? Object.keys(all).find((k) => name in all[k])
+    if (!target || !(name in all[target])) {
+      process.stderr.write(`No MCP server found with name: ${name}\n`)
+      process.exit(1)
+    }
+    delete all[target][name]
+    save(target === 'project' ? all.project : null)
+    process.stdout.write(`Removed MCP server ${name}\n`)
+  }
+  process.exit(0)
+}
 const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined)
 const sessionId = flag('--session-id') ?? flag('--resume')
 const modelArg = flag('--model') ?? ''
@@ -72,6 +130,24 @@ function runLines(text) {
     const c = /^operant\s+(.*)$/.exec(l) ?? /^operant$/.exec(l)
     if (c) operant(c[1] ?? '')
   }
+}
+
+// The learn step (`claude -p --model claude-haiku-4-5`, prompt on stdin): answer with the lessons JSON in
+// CLAUDE_CONFIG_DIR/learn-response.json, as one result message, and exit.
+if ((args.includes('-p') || args.includes('--print')) && modelArg === 'claude-haiku-4-5' && existsSync(join(configDir, 'learn-response.json'))) {
+  const text = readFileSync(join(configDir, 'learn-response.json'), 'utf8')
+  process.stdin.resume()
+  process.stdin.on('data', () => {})
+  await new Promise((r) => process.stdin.on('end', r))
+  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text }))
+  process.exit(0)
+}
+
+// `claude -p` (a dashboard job's Master): say one thing in stream-json, then keep working until it is killed.
+if (args.includes('-p') || args.includes('--print')) {
+  console.log(JSON.stringify({ type: 'assistant', session_id: 'fake-run', message: { content: [{ type: 'text', text: 'Working on the task.' }] } }))
+  setInterval(() => {}, 1000)
+  await new Promise(() => {})
 }
 
 runLines(process.env.FAKE_CLAUDE_SCRIPT)

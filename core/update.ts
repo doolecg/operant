@@ -5,8 +5,10 @@ import { createHash } from 'node:crypto'
 import { createReadStream, lstatSync } from 'node:fs'
 
 export const UPDATE_REPO = 'doolecg/operant2'
-export const APP_BUNDLE = 'Operant 2.app'
-export const DEB_DIR = '/opt/Operant 2/'
+export const APP_BUNDLE = 'Operant 3.app'
+// Copies installed before the rename keep the old bundle and folder names until an update replaces them.
+export const APP_BUNDLES = [APP_BUNDLE, 'Operant 2.app']
+export const DEB_DIRS = ['/opt/Operant 3/', '/opt/Operant 2/']
 export const DEFAULT_CHECK_HOURS = 3
 
 export type InstallKind = 'msi' | 'dmg' | 'appimage' | 'deb'
@@ -64,7 +66,7 @@ export function installKind({
 }: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; execPath?: string } = {}): InstallKind | null {
   if (platform === 'win32') return 'msi'
   if (platform === 'darwin') return 'dmg'
-  if (platform === 'linux') return env.APPIMAGE ? 'appimage' : execPath.startsWith(DEB_DIR) ? 'deb' : null
+  if (platform === 'linux') return env.APPIMAGE ? 'appimage' : DEB_DIRS.some((d) => execPath.startsWith(d)) ? 'deb' : null
   return null
 }
 
@@ -122,11 +124,11 @@ export const shQuote = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`
 const workerHead = (pid: number, log: string) => [
   `exec >>${shQuote(log)} 2>&1`,
   `say() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }`,
-  `say "waiting for Operant 2 (pid ${Number(pid)}) to exit"`,
+  `say "waiting for Operant 3 (pid ${Number(pid)}) to exit"`,
   `n=0`,
   `while kill -0 ${Number(pid)} 2>/dev/null; do`,
   `  n=$((n+1))`,
-  `  if [ "$n" -gt 60 ]; then say "Operant 2 is still running, leaving the update for the next quit"; exit 1; fi`,
+  `  if [ "$n" -gt 60 ]; then say "Operant 3 is still running, leaving the update for the next quit"; exit 1; fi`,
   `  sleep 1`,
   `done`,
 ]

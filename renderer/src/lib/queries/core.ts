@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useMutation, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query'
 import type { IpcApi, IpcChannel, OperantBridge } from '@shared/ipc'
-import type { GraphWindow, MessageFilter, UsagePeriod } from '@shared/types'
+import type { MessageFilter, UsagePeriod } from '@shared/types'
 import { bridge } from '../bridge'
 
 export const call = <C extends IpcChannel>(channel: C, ...args: Parameters<IpcApi[C]>) => bridge().invoke(channel, ...args)
@@ -13,7 +13,6 @@ export const keys = {
   index: (crewId: number) => ['index', crewId] as const,
   events: ['events'] as const,
   summary: ['summary'] as const,
-  contexts: ['contexts'] as const,
   spend: (crewId: number) => ['spend', crewId] as const,
   settings: ['settings'] as const,
   update: ['update'] as const,
@@ -21,19 +20,20 @@ export const keys = {
   master: (crewId: number) => ['master', crewId] as const,
   jobs: (crewId: number, open?: boolean) => (open === undefined ? (['jobs', crewId] as const) : (['jobs', crewId, open] as const)),
   job: (jobId: number) => ['job', jobId] as const,
-  links: (crewId: number) => ['links', crewId] as const,
+  runs: (crewId: number) => ['runs', crewId] as const,
+  run: (runId: number) => ['run', runId] as const,
+  runAgents: (runId: number) => ['runAgents', runId] as const,
+  teams: ['teams'] as const,
+  runLimit: ['runLimit'] as const,
+  health: (crewId: number) => ['health', crewId] as const,
   messages: (crewId: number, filter?: MessageFilter) => ['messages', crewId, filter ?? null] as const,
   messagesOf: (crewId: number) => ['messages', crewId] as const,
   unread: (crewId: number) => ['unread', crewId] as const,
-  tiles: (crewId: number) => ['tiles', crewId] as const,
-  scratch: (crewId: number) => ['scratch', crewId] as const,
   breakdown: (crewId: number, period: UsagePeriod) => ['breakdown', crewId, period] as const,
   caps: ['caps'] as const,
   purge: ['purge'] as const,
   presets: ['presets'] as const,
   shippedRole: (presetId: number) => ['shippedRole', presetId] as const,
-  graph: (crewId: number, window?: GraphWindow) =>
-    window === undefined ? (['graph', crewId] as const) : (['graph', crewId, window] as const),
 }
 
 // Mutations invalidate the keys they name; without any they refresh everything (the data is local and cheap).

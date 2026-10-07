@@ -414,7 +414,7 @@ describe('Store', () => {
       let s: Store | undefined
       try {
         s = new Store(file)
-        expect(s.schemaVersion).toBe(6)
+        expect(s.schemaVersion).toBe(MIGRATIONS.length)
         const rows = s.db.prepare('SELECT * FROM usage ORDER BY id').all() as Array<Record<string, number | string | null>>
         expect(rows.map((r) => [r.id, r.operator_id, r.message_id, r.cache_read, r.cache_w5m, r.legacy, r.scratch_id])).toEqual([
           [11, 7, 'm1', 300, 0, 1, null],
@@ -473,7 +473,7 @@ describe('Store', () => {
       let s: Store | undefined
       try {
         s = new Store(file)
-        expect(s.schemaVersion).toBe(6)
+        expect(s.schemaVersion).toBe(MIGRATIONS.length)
         expect(s.listJobs(1).map((j) => [j.id, j.assigneeId, j.preassignedId, j.estimateMinutes, j.startedAt, j.escalation])).toEqual([
           [1, 7, legacy ? 7 : null, 30, null, ''],
           [2, 8, null, null, 9, 'why'],

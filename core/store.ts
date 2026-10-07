@@ -28,7 +28,23 @@ import type {
   MessageParty,
   NodePosition,
   Usage,
+  JobAgent,
+  MasterCli,
+  Run,
+  RunStatus,
+  SeatFields,
+  DiscordBot,
+  DiscordBotInput,
+  DiscordBotPatch,
+  DiscordPairing,
+  Team,
+  TeamInput,
+  TeamLimits,
+  TeamPatch,
+  TeamSeat,
 } from '../shared/types'
+import { RUN_TRANSITIONS } from '../shared/types'
+import { LESSONS_MIGRATION } from './lessons-store'
 
 // Append-only: each entry runs once, in order, tracked by PRAGMA user_version.
 export const MIGRATIONS: string[] = [
@@ -238,6 +254,117 @@ export const MIGRATIONS: string[] = [
    CREATE TABLE IF NOT EXISTS job_preassigned (job_id INTEGER PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE);
    UPDATE jobs SET preassigned_id = assignee_id WHERE id IN (SELECT job_id FROM job_preassigned);
    DROP TABLE job_preassigned;`,
+  // Seats, teams, dashboard runs (JOB# from 20001 via AUTOINCREMENT, so numbers are never reused),
+  // run agents, and project ids, order and Discord channels. All additive.
+  `ALTER TABLE presets ADD COLUMN skills TEXT NOT NULL DEFAULT '[]';
+   ALTER TABLE presets ADD COLUMN hindsight INTEGER NOT NULL DEFAULT 1;
+   ALTER TABLE presets ADD COLUMN codegraph INTEGER NOT NULL DEFAULT 1;
+   CREATE TABLE teams (
+     id INTEGER PRIMARY KEY,
+     name TEXT NOT NULL UNIQUE,
+     seats TEXT NOT NULL DEFAULT '[]',
+     limits TEXT NOT NULL DEFAULT '{}',
+     rules TEXT NOT NULL DEFAULT '',
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE runs (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     crew_id INTEGER NOT NULL REFERENCES crews(id) ON DELETE CASCADE,
+     task TEXT NOT NULL,
+     master_cli TEXT NOT NULL,
+     team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+     seats TEXT NOT NULL DEFAULT '[]',
+     limits TEXT NOT NULL DEFAULT '{}',
+     rules TEXT NOT NULL DEFAULT '',
+     status TEXT NOT NULL DEFAULT 'queued',
+     outcome TEXT NOT NULL DEFAULT '',
+     created_at INTEGER NOT NULL,
+     started_at INTEGER,
+     finished_at INTEGER
+   );
+   INSERT INTO sqlite_sequence (name, seq) VALUES ('runs', 20000);
+   CREATE INDEX runs_crew_status ON runs (crew_id, status);
+   CREATE TABLE job_agents (
+     id INTEGER PRIMARY KEY,
+     run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+     seat TEXT NOT NULL,
+     model TEXT NOT NULL DEFAULT '',
+     status TEXT NOT NULL DEFAULT 'working',
+     transcript_ref TEXT NOT NULL DEFAULT ''
+   );
+   CREATE INDEX job_agents_run ON job_agents (run_id);
+   ALTER TABLE crews ADD COLUMN prj_number INTEGER;
+   ALTER TABLE crews ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE crews ADD COLUMN discord_channels TEXT NOT NULL DEFAULT '[]';
+   UPDATE crews SET prj_number = 1000 + (SELECT COUNT(*) FROM crews c WHERE c.id <= crews.id), sort_order = id;
+   CREATE UNIQUE INDEX crews_prj_number ON crews (prj_number);
+   INSERT OR REPLACE INTO settings (key, value) VALUES ('prj.next', CAST(1001 + (SELECT COUNT(*) FROM crews) AS TEXT));`,
+  // Discord bots. The token itself is never stored here: token_ref only names its entry in the secret store.
+  `CREATE TABLE discord_bots (
+     id INTEGER PRIMARY KEY,
+     name TEXT NOT NULL UNIQUE,
+     rules TEXT NOT NULL DEFAULT '',
+     allowlist TEXT NOT NULL DEFAULT '[]',
+     home_channel TEXT NOT NULL DEFAULT '',
+     general_channel TEXT NOT NULL DEFAULT '',
+     token_ref TEXT NOT NULL DEFAULT '',
+     mention_only INTEGER NOT NULL DEFAULT 1,
+     confirm_start INTEGER NOT NULL DEFAULT 1,
+     enabled INTEGER NOT NULL DEFAULT 0,
+     updated_at INTEGER NOT NULL
+   );`,
+  // Run-level Master model and effort (empty = the project Master's own), and pending Discord pairing codes
+  // (codes only, never tokens) so a restart does not lose them.
+  `ALTER TABLE runs ADD COLUMN master_model TEXT NOT NULL DEFAULT '';
+   ALTER TABLE runs ADD COLUMN master_effort TEXT NOT NULL DEFAULT '';
+   CREATE TABLE discord_pairings (
+     bot_id INTEGER NOT NULL REFERENCES discord_bots(id) ON DELETE CASCADE,
+     code TEXT NOT NULL,
+     user_id TEXT NOT NULL,
+     username TEXT NOT NULL,
+     channel_id TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (bot_id, code)
+   );`,
+  // The CLI jobs started from a Discord bot run on.
+  `ALTER TABLE discord_bots ADD COLUMN master_cli TEXT NOT NULL DEFAULT 'claude';`,
+  // Seats choose MCP servers by name. The older mcp, codegraph and hindsight fields migrate into the list.
+  `ALTER TABLE presets ADD COLUMN mcp_servers TEXT NOT NULL DEFAULT '[]';
+   UPDATE presets SET mcp_servers = '[' ||
+     CASE WHEN codegraph = 1 AND mcp = 'codegraph' THEN '"codegraph"' ELSE '' END ||
+     CASE WHEN codegraph = 1 AND mcp = 'codegraph' AND hindsight = 1 THEN ',' ELSE '' END ||
+     CASE WHEN hindsight = 1 THEN '"hindsight"' ELSE '' END || ']';`,
+  // Usage per run, agent, seat, CLI and provider (all additive). run_id and job_agent_id are plain numbers so a
+  // deleted job's spend keeps its JOB#. crew_id carries the project for rows with no operator or scratch terminal
+  // (job agents, front desk, imports). ext_key is the stable key that makes ingest and import idempotent.
+  `ALTER TABLE usage ADD COLUMN run_id INTEGER;
+   ALTER TABLE usage ADD COLUMN job_agent_id INTEGER;
+   ALTER TABLE usage ADD COLUMN cli TEXT NOT NULL DEFAULT 'claude';
+   ALTER TABLE usage ADD COLUMN provider TEXT NOT NULL DEFAULT '';
+   ALTER TABLE usage ADD COLUMN source TEXT NOT NULL DEFAULT '';
+   ALTER TABLE usage ADD COLUMN seat TEXT NOT NULL DEFAULT '';
+   ALTER TABLE usage ADD COLUMN crew_id INTEGER REFERENCES crews(id) ON DELETE CASCADE;
+   ALTER TABLE usage ADD COLUMN project_label TEXT NOT NULL DEFAULT '';
+   ALTER TABLE usage ADD COLUMN ext_key TEXT;
+   UPDATE usage SET cli = 'claude', provider = 'anthropic', source = CASE WHEN scratch_id IS NOT NULL THEN 'scratch' ELSE 'operator' END;
+   CREATE UNIQUE INDEX usage_ext_key ON usage (ext_key);
+   CREATE INDEX usage_run ON usage (run_id);
+   CREATE INDEX usage_crew_at ON usage (crew_id, at);`,
+  // The learning loop: lessons, skill drafts and learn-run records (all additive).
+  LESSONS_MIGRATION,
+  // Project groups: named, ordered, collapsible; a project is in at most one (deleting a group ungroups its projects).
+  `CREATE TABLE project_groups (
+     id INTEGER PRIMARY KEY,
+     name TEXT NOT NULL,
+     sort_order INTEGER NOT NULL DEFAULT 0,
+     collapsed INTEGER NOT NULL DEFAULT 0
+   );
+   CREATE UNIQUE INDEX project_groups_name ON project_groups (name COLLATE NOCASE);
+   ALTER TABLE crews ADD COLUMN group_id INTEGER REFERENCES project_groups(id) ON DELETE SET NULL;`,
+  // The project's tracker document (a path inside the project folder, empty = none) and whether a finished job
+  // opens an "Update tracker" board job for the project manager.
+  `ALTER TABLE crews ADD COLUMN tracker_file TEXT NOT NULL DEFAULT '';
+   ALTER TABLE crews ADD COLUMN tracker_jobs INTEGER NOT NULL DEFAULT 1;`,
 ]
 
 type Row = Record<string, unknown>
@@ -249,6 +376,12 @@ const toCrew = (r: Row): Crew => ({
   createdAt: Number(r.created_at),
   view: r.view as CrewView,
   pmId: r.pm_id == null ? null : Number(r.pm_id),
+  prjNumber: Number(r.prj_number),
+  sortOrder: Number(r.sort_order),
+  discordChannels: parseList(r.discord_channels),
+  groupId: r.group_id == null ? null : Number(r.group_id),
+  trackerFile: String(r.tracker_file ?? ''),
+  trackerJobs: Number(r.tracker_jobs ?? 1) === 1,
 })
 const toSquad = (r: Row): Squad => ({
   id: Number(r.id),
@@ -297,6 +430,10 @@ const toPreset = (r: Row): Preset => ({
   name: String(r.name),
   roleText: r.role_text == null ? null : String(r.role_text),
   updatedAt: Number(r.updated_at),
+  skills: parseList(r.skills),
+  hindsight: Number(r.hindsight) === 1,
+  codegraph: Number(r.codegraph) === 1,
+  mcpServers: parseList(r.mcp_servers),
 })
 const toScratch = (r: Row): ScratchTerminal => ({
   id: Number(r.id),
@@ -322,6 +459,102 @@ const OPERATOR_SELECT = `SELECT s.*, CASE
   FROM operators s LEFT JOIN presets pr ON pr.id = s.preset_id`
 
 type PresetFields = Omit<Preset, 'id' | 'updatedAt'>
+type BuiltinPreset = Omit<PresetFields, keyof SeatFields>
+const SEAT_DEFAULTS: SeatFields = { skills: [], hindsight: true, codegraph: true, mcpServers: ['codegraph', 'hindsight'] }
+
+// `mcpServers` and the older mcp, codegraph and hindsight fields describe the same choice. Whichever the change
+// names wins, and the others follow it.
+function syncSeatMcp<T extends Partial<LaunchSettings & SeatFields>>(prev: Partial<LaunchSettings & SeatFields>, patch: T): T {
+  const touched = patch.mcpServers !== undefined || patch.mcp !== undefined || patch.codegraph !== undefined || patch.hindsight !== undefined
+  if (!touched) return patch
+  const list = new Set(patch.mcpServers ?? prev.mcpServers ?? [])
+  const toggle = (name: string, on: boolean) => (on ? list.add(name) : list.delete(name))
+  if (patch.mcpServers === undefined) {
+    if (patch.mcp !== undefined) toggle('codegraph', patch.mcp === 'codegraph')
+    else if (patch.codegraph !== undefined) toggle('codegraph', patch.codegraph)
+    if (patch.hindsight !== undefined) toggle('hindsight', patch.hindsight)
+  }
+  return { ...patch, mcpServers: [...list], codegraph: list.has('codegraph'), hindsight: list.has('hindsight'), mcp: list.has('codegraph') ? 'codegraph' : 'none' }
+}
+
+const parseJson = <T>(v: unknown, fallback: T): T => {
+  try {
+    return JSON.parse(String(v)) as T
+  } catch {
+    return fallback
+  }
+}
+const toDiscordBot = (r: Row): DiscordBot => ({
+  id: Number(r.id),
+  name: String(r.name),
+  rules: String(r.rules),
+  allowlist: parseList(r.allowlist),
+  homeChannel: String(r.home_channel),
+  generalChannel: String(r.general_channel),
+  tokenRef: String(r.token_ref),
+  mentionOnly: Number(r.mention_only) === 1,
+  confirmStart: Number(r.confirm_start) === 1,
+  enabled: Number(r.enabled) === 1,
+  masterCli: r.master_cli === 'opencode' ? 'opencode' : 'claude',
+})
+const DEFAULT_LIMITS: TeamLimits = { maxWorkers: 0, topTier: '', tokenBudget: 0 }
+const toLimits = (v: unknown): TeamLimits => ({ ...DEFAULT_LIMITS, ...parseJson<Partial<TeamLimits>>(v, {}) })
+const toSeats = (v: unknown): TeamSeat[] => {
+  const a = parseJson<unknown>(v, [])
+  return Array.isArray(a) ? (a as TeamSeat[]) : []
+}
+const toTeam = (r: Row): Team => ({
+  id: Number(r.id),
+  name: String(r.name),
+  seats: toSeats(r.seats),
+  limits: toLimits(r.limits),
+  rules: String(r.rules),
+  updatedAt: Number(r.updated_at),
+})
+const toRun = (r: Row): Run => ({
+  id: Number(r.id),
+  crewId: Number(r.crew_id),
+  task: String(r.task),
+  masterCli: r.master_cli as MasterCli,
+  masterModel: String(r.master_model ?? ''),
+  masterEffort: String(r.master_effort ?? ''),
+  teamId: r.team_id == null ? null : Number(r.team_id),
+  seats: toSeats(r.seats),
+  limits: toLimits(r.limits),
+  rules: String(r.rules),
+  status: r.status as RunStatus,
+  outcome: String(r.outcome),
+  createdAt: Number(r.created_at),
+  startedAt: r.started_at == null ? null : Number(r.started_at),
+  finishedAt: r.finished_at == null ? null : Number(r.finished_at),
+})
+const toJobAgent = (r: Row): JobAgent => ({
+  id: Number(r.id),
+  runId: Number(r.run_id),
+  seat: String(r.seat),
+  model: String(r.model),
+  status: String(r.status),
+  transcriptRef: String(r.transcript_ref),
+})
+
+export interface NewRun {
+  crewId: number
+  task: string
+  masterCli: MasterCli
+  masterModel?: string
+  masterEffort?: string
+  teamId?: number | null
+  seats?: TeamSeat[]
+  limits?: TeamLimits
+  rules?: string
+}
+
+export class RunTransitionError extends Error {
+  constructor(from: RunStatus, to: RunStatus) {
+    super(`A job cannot go from ${from} to ${to}`)
+    this.name = 'RunTransitionError'
+  }
+}
 
 const toJob = (r: Row): Job => ({
   id: Number(r.id),
@@ -406,7 +639,7 @@ const IMPLEMENTOR_DENY = ['Bash(git push*)', 'Bash(git commit*)']
 const TESTER_PATHS = ['**/test/**', '**/*.test.*', 'e2e/**']
 
 // The shipped presets. Role text is null: the text lives in plugin/roles/<builtin>.md.
-export const BUILTIN_PRESETS: PresetFields[] = [
+export const BUILTIN_PRESETS: BuiltinPreset[] = [
   {
     builtin: 'pm',
     name: 'project manager',
@@ -553,7 +786,16 @@ const OPERATOR_COLUMNS: Record<string, string> = {
   dailyCapUsd: 'daily_cap_usd',
   presetId: 'preset_id',
 }
-const PRESET_COLUMNS: Record<string, string> = { ...LAUNCH_COLUMNS, name: 'name', roleText: 'role_text', updatedAt: 'updated_at' }
+const PRESET_COLUMNS: Record<string, string> = {
+  ...LAUNCH_COLUMNS,
+  name: 'name',
+  roleText: 'role_text',
+  updatedAt: 'updated_at',
+  skills: 'skills',
+  hindsight: 'hindsight',
+  codegraph: 'codegraph',
+  mcpServers: 'mcp_servers',
+}
 const SCRATCH_COLUMNS: Record<string, string> = {
   title: 'title',
   agent: 'agent',
@@ -602,6 +844,16 @@ export interface UsageInput {
   contextTokens?: number
   cold?: boolean
   toolUse?: boolean
+  legacy?: boolean
+  runId?: number | null
+  jobAgentId?: number | null
+  cli?: string
+  provider?: string
+  source?: string
+  seat?: string
+  crewId?: number | null
+  projectLabel?: string
+  extKey?: string | null
 }
 
 export type UsageTarget = { crewId: number } | { operatorId: number }
@@ -705,14 +957,19 @@ export class Store {
   // Crews
 
   createCrew(name: string, folder: string): Crew {
-    const row = this.db
-      .prepare('INSERT INTO crews (name, folder, created_at) VALUES (?, ?, ?) RETURNING *')
-      .get(name, folder, this.now()) as Row
-    return toCrew(row)
+    return this.tx(() => {
+      const prj = Number(this.getJson('prj.next') ?? 1001)
+      this.setJson('prj.next', prj + 1)
+      const order = Number((this.db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM crews').get() as Row).n)
+      const row = this.db
+        .prepare('INSERT INTO crews (name, folder, created_at, prj_number, sort_order) VALUES (?, ?, ?, ?, ?) RETURNING *')
+        .get(name, folder, this.now(), prj, order) as Row
+      return toCrew(row)
+    })
   }
 
   listCrews(): Crew[] {
-    return (this.db.prepare('SELECT * FROM crews ORDER BY name').all() as Row[]).map(toCrew)
+    return (this.db.prepare('SELECT * FROM crews ORDER BY sort_order, id').all() as Row[]).map(toCrew)
   }
 
   getCrew(id: number): Crew | null {
@@ -720,15 +977,36 @@ export class Store {
     return row ? toCrew(row) : null
   }
 
-  updateCrew(id: number, patch: { name?: string; folder?: string; view?: CrewView; pmId?: number | null }): Crew {
+  updateCrew(id: number, patch: { name?: string; folder?: string; view?: CrewView; pmId?: number | null; discordChannels?: string[]; trackerFile?: string; trackerJobs?: boolean }): Crew {
     const cur = this.getCrew(id)
     if (!cur) throw new Error(`Crew ${id} not found`)
     const pmId = patch.pmId === undefined ? cur.pmId : patch.pmId
     if (pmId != null && this.crewIdOfOperator(pmId) !== id) throw new Error('The PM must be a live operator of this crew')
     const row = this.db
-      .prepare('UPDATE crews SET name = ?, folder = ?, view = ?, pm_id = ? WHERE id = ? RETURNING *')
-      .get(patch.name ?? cur.name, patch.folder ?? cur.folder, patch.view ?? cur.view, pmId, id) as Row
+      .prepare('UPDATE crews SET name = ?, folder = ?, view = ?, pm_id = ?, discord_channels = ?, tracker_file = ?, tracker_jobs = ? WHERE id = ? RETURNING *')
+      .get(
+        patch.name ?? cur.name,
+        patch.folder ?? cur.folder,
+        patch.view ?? cur.view,
+        pmId,
+        JSON.stringify(patch.discordChannels ?? cur.discordChannels),
+        patch.trackerFile ?? cur.trackerFile,
+        (patch.trackerJobs ?? cur.trackerJobs) ? 1 : 0,
+        id,
+      ) as Row
     return toCrew(row)
+  }
+
+  // Saved order of the project list: the given crews take positions 1..n, any other crew follows.
+  reorderCrews(ids: number[]): Crew[] {
+    this.tx(() => {
+      const current = (this.db.prepare('SELECT id FROM crews ORDER BY sort_order, id').all() as Row[]).map((r) => Number(r.id))
+      const first = ids.filter((id, i) => current.includes(id) && ids.indexOf(id) === i)
+      const order = [...first, ...current.filter((id) => !first.includes(id))]
+      const set = this.db.prepare('UPDATE crews SET sort_order = ? WHERE id = ?')
+      order.forEach((id, i) => set.run(i + 1, id))
+    })
+    return this.listCrews()
   }
 
   getCrewView(id: number): CrewView {
@@ -779,6 +1057,11 @@ export class Store {
   }
 
   private txDepth = 0
+
+  // One transaction around several store calls (they join it); rolled back when `fn` throws.
+  transaction<T>(fn: () => T): T {
+    return this.tx(fn)
+  }
 
   private tx<T>(fn: () => T): T {
     if (this.txDepth > 0) return fn()
@@ -1022,8 +1305,8 @@ export class Store {
     const row = this.db
       .prepare(
         `INSERT INTO presets (builtin, name, agent, model, effort, permission_mode, tools, allow, deny, cache_ttl,
-           context_cap, clear_between_jobs, mcp, role_text, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+           context_cap, clear_between_jobs, mcp, role_text, updated_at, skills, hindsight, codegraph, mcp_servers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       )
       .get(
         f.builtin,
@@ -1041,6 +1324,10 @@ export class Store {
         f.mcp,
         f.roleText,
         this.now(),
+        JSON.stringify(f.skills),
+        f.hindsight ? 1 : 0,
+        f.codegraph ? 1 : 0,
+        JSON.stringify(f.mcpServers),
       ) as Row
     return toPreset(row)
   }
@@ -1059,7 +1346,7 @@ export class Store {
   restoreBuiltins(): Preset[] {
     return this.tx(() =>
       BUILTIN_PRESETS.filter((b) => !this.getPresetByBuiltin(b.builtin!)).map((b) =>
-        this.insertPreset({ ...b, name: this.presetNameFree(b.name, null) }),
+        this.insertPreset({ ...SEAT_DEFAULTS, ...b, name: this.presetNameFree(b.name, null) }),
       ),
     )
   }
@@ -1079,6 +1366,9 @@ export class Store {
   }
 
   createPreset(input: NewPreset): Preset {
+    // A preset made from the older fields alone (no list) takes its servers from them.
+    const fromFields = [...((input.mcp ?? 'codegraph') === 'codegraph' && (input.codegraph ?? true) ? ['codegraph'] : []), ...((input.hindsight ?? true) ? ['hindsight'] : [])]
+    const seat = syncSeatMcp({}, { mcpServers: input.mcpServers ?? fromFields })
     return this.insertPreset({
       effort: '',
       tools: '',
@@ -1089,14 +1379,16 @@ export class Store {
       clearBetweenJobs: true,
       mcp: 'codegraph',
       roleText: null,
+      ...SEAT_DEFAULTS,
       ...input,
+      ...seat,
       builtin: null,
     })
   }
 
   updatePreset(id: number, patch: PresetPatch): Preset {
     if (!this.getPreset(id)) throw new Error(`Preset ${id} not found`)
-    this.writeColumns('presets', id, { ...patch, updatedAt: this.now() }, PRESET_COLUMNS)
+    this.writeColumns('presets', id, { ...syncSeatMcp(this.getPreset(id)!, patch), updatedAt: this.now() }, PRESET_COLUMNS)
     return this.getPreset(id)!
   }
 
@@ -1261,6 +1553,225 @@ export class Store {
     this.db.prepare('DELETE FROM job_deps WHERE job_id = ? AND depends_on_id = ?').run(jobId, dependsOnId)
   }
 
+  // Discord bots
+
+  createDiscordBot(input: DiscordBotInput): DiscordBot {
+    const row = this.db
+      .prepare(
+        `INSERT INTO discord_bots (name, rules, allowlist, home_channel, general_channel, mention_only, confirm_start, enabled, master_cli, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      )
+      .get(
+        input.name,
+        input.rules ?? '',
+        JSON.stringify(input.allowlist ?? []),
+        input.homeChannel ?? '',
+        input.generalChannel ?? '',
+        input.mentionOnly === false ? 0 : 1,
+        input.confirmStart === false ? 0 : 1,
+        input.enabled ? 1 : 0,
+        input.masterCli ?? 'claude',
+        this.now(),
+      ) as Row
+    return toDiscordBot(row)
+  }
+
+  listDiscordBots(): DiscordBot[] {
+    return (this.db.prepare('SELECT * FROM discord_bots ORDER BY name').all() as Row[]).map(toDiscordBot)
+  }
+
+  getDiscordBot(id: number): DiscordBot | null {
+    const row = this.db.prepare('SELECT * FROM discord_bots WHERE id = ?').get(id) as Row | undefined
+    return row ? toDiscordBot(row) : null
+  }
+
+  updateDiscordBot(id: number, patch: DiscordBotPatch & { tokenRef?: string }): DiscordBot {
+    const cur = this.getDiscordBot(id)
+    if (!cur) throw new Error(`Discord bot ${id} not found`)
+    const row = this.db
+      .prepare(
+        `UPDATE discord_bots SET name = ?, rules = ?, allowlist = ?, home_channel = ?, general_channel = ?, token_ref = ?,
+           mention_only = ?, confirm_start = ?, enabled = ?, master_cli = ?, updated_at = ? WHERE id = ? RETURNING *`,
+      )
+      .get(
+        patch.name ?? cur.name,
+        patch.rules ?? cur.rules,
+        JSON.stringify(patch.allowlist ?? cur.allowlist),
+        patch.homeChannel ?? cur.homeChannel,
+        patch.generalChannel ?? cur.generalChannel,
+        patch.tokenRef ?? cur.tokenRef,
+        (patch.mentionOnly ?? cur.mentionOnly) ? 1 : 0,
+        (patch.confirmStart ?? cur.confirmStart) ? 1 : 0,
+        (patch.enabled ?? cur.enabled) ? 1 : 0,
+        patch.masterCli ?? cur.masterCli ?? 'claude',
+        this.now(),
+        id,
+      ) as Row
+    return toDiscordBot(row)
+  }
+
+  listDiscordPairings(botId: number): DiscordPairing[] {
+    return (this.db.prepare('SELECT * FROM discord_pairings WHERE bot_id = ? ORDER BY created_at, code').all(botId) as Row[]).map((r) => ({
+      code: String(r.code),
+      userId: String(r.user_id),
+      username: String(r.username),
+      channelId: String(r.channel_id),
+      createdAt: Number(r.created_at),
+    }))
+  }
+
+  addDiscordPairing(botId: number, p: DiscordPairing): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO discord_pairings (bot_id, code, user_id, username, channel_id, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(botId, p.code, p.userId, p.username, p.channelId, p.createdAt)
+  }
+
+  // True when the code existed.
+  deleteDiscordPairing(botId: number, code: string): boolean {
+    return Number(this.db.prepare('DELETE FROM discord_pairings WHERE bot_id = ? AND code = ?').run(botId, code).changes) > 0
+  }
+
+  purgeDiscordPairings(botId: number, olderThan: number): void {
+    this.db.prepare('DELETE FROM discord_pairings WHERE bot_id = ? AND created_at < ?').run(botId, olderThan)
+  }
+
+  deleteDiscordBot(id: number): void {
+    this.db.prepare('DELETE FROM discord_bots WHERE id = ?').run(id)
+  }
+
+  // Teams
+
+  createTeam(input: TeamInput): Team {
+    const row = this.db
+      .prepare('INSERT INTO teams (name, seats, limits, rules, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING *')
+      .get(
+        input.name,
+        JSON.stringify(input.seats ?? []),
+        JSON.stringify({ ...DEFAULT_LIMITS, ...input.limits }),
+        input.rules ?? '',
+        this.now(),
+      ) as Row
+    return toTeam(row)
+  }
+
+  listTeams(): Team[] {
+    return (this.db.prepare('SELECT * FROM teams ORDER BY name').all() as Row[]).map(toTeam)
+  }
+
+  getTeam(id: number): Team | null {
+    const row = this.db.prepare('SELECT * FROM teams WHERE id = ?').get(id) as Row | undefined
+    return row ? toTeam(row) : null
+  }
+
+  updateTeam(id: number, patch: TeamPatch): Team {
+    const cur = this.getTeam(id)
+    if (!cur) throw new Error(`Team ${id} not found`)
+    const row = this.db
+      .prepare('UPDATE teams SET name = ?, seats = ?, limits = ?, rules = ?, updated_at = ? WHERE id = ? RETURNING *')
+      .get(
+        patch.name ?? cur.name,
+        JSON.stringify(patch.seats ?? cur.seats),
+        JSON.stringify({ ...cur.limits, ...patch.limits }),
+        patch.rules ?? cur.rules,
+        this.now(),
+        id,
+      ) as Row
+    return toTeam(row)
+  }
+
+  // Runs sent with it keep their own copy of its seats and limits.
+  deleteTeam(id: number): void {
+    this.db.prepare('DELETE FROM teams WHERE id = ?').run(id)
+  }
+
+  // Runs (dashboard jobs, JOB#)
+
+  createRun(input: NewRun): Run {
+    const row = this.db
+      .prepare(
+        `INSERT INTO runs (crew_id, task, master_cli, master_model, master_effort, team_id, seats, limits, rules, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?) RETURNING *`,
+      )
+      .get(
+        input.crewId,
+        input.task,
+        input.masterCli,
+        input.masterModel ?? '',
+        input.masterEffort ?? '',
+        input.teamId ?? null,
+        JSON.stringify(input.seats ?? []),
+        JSON.stringify({ ...DEFAULT_LIMITS, ...input.limits }),
+        input.rules ?? '',
+        this.now(),
+      ) as Row
+    return toRun(row)
+  }
+
+  getRun(id: number): Run | null {
+    const row = this.db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as Row | undefined
+    return row ? toRun(row) : null
+  }
+
+  listRuns(crewId?: number): Run[] {
+    const rows = (
+      crewId === undefined
+        ? this.db.prepare('SELECT * FROM runs ORDER BY id').all()
+        : this.db.prepare('SELECT * FROM runs WHERE crew_id = ? ORDER BY id').all(crewId)
+    ) as Row[]
+    return rows.map(toRun)
+  }
+
+  // Moves a run along RUN_TRANSITIONS only; the outcome (when given) replaces the stored text.
+  setRunStatus(id: number, status: RunStatus, outcome?: string): Run {
+    const cur = this.getRun(id)
+    if (!cur) throw new Error(`Job ${id} not found`)
+    if (!RUN_TRANSITIONS[cur.status].includes(status)) throw new RunTransitionError(cur.status, status)
+    const now = this.now()
+    const started = status === 'working' && cur.startedAt == null ? now : cur.startedAt
+    const finished = status === 'done' || status === 'failed' ? now : cur.finishedAt
+    const row = this.db
+      .prepare('UPDATE runs SET status = ?, outcome = ?, started_at = ?, finished_at = ? WHERE id = ? RETURNING *')
+      .get(status, outcome ?? cur.outcome, started, finished, id) as Row
+    return toRun(row)
+  }
+
+  // Only a queued run's task can change; any other status is the caller's to refuse first.
+  setRunTask(id: number, task: string): Run {
+    const row = this.db.prepare('UPDATE runs SET task = ? WHERE id = ? RETURNING *').get(task, id) as Row | undefined
+    if (!row) throw new Error(`Job ${id} not found`)
+    return toRun(row)
+  }
+
+  // Its job_agents go with it (ON DELETE CASCADE).
+  deleteRun(id: number): void {
+    this.db.prepare('DELETE FROM runs WHERE id = ?').run(id)
+  }
+
+  addJobAgent(runId: number, a: { seat: string; model?: string; status?: string; transcriptRef?: string }): JobAgent {
+    if (!this.getRun(runId)) throw new Error(`Job ${runId} not found`)
+    const row = this.db
+      .prepare('INSERT INTO job_agents (run_id, seat, model, status, transcript_ref) VALUES (?, ?, ?, ?, ?) RETURNING *')
+      .get(runId, a.seat, a.model ?? '', a.status ?? 'working', a.transcriptRef ?? '') as Row
+    return toJobAgent(row)
+  }
+
+  listJobAgents(runId: number): JobAgent[] {
+    return (this.db.prepare('SELECT * FROM job_agents WHERE run_id = ? ORDER BY id').all(runId) as Row[]).map(toJobAgent)
+  }
+
+  getJobAgent(id: number): JobAgent | null {
+    const row = this.db.prepare('SELECT * FROM job_agents WHERE id = ?').get(id) as Row | undefined
+    return row ? toJobAgent(row) : null
+  }
+
+  setJobAgentModel(id: number, model: string): void {
+    this.db.prepare('UPDATE job_agents SET model = ? WHERE id = ?').run(model, id)
+  }
+
+  setJobAgentStatus(id: number, status: string): void {
+    this.db.prepare('UPDATE job_agents SET status = ? WHERE id = ?').run(status, id)
+  }
+
   // Messages
 
   createMessage(input: NewMessage): Message {
@@ -1422,11 +1933,13 @@ export class Store {
 
   private insertUsage(u: UsageInput, onConflict: string): Row | undefined {
     const kinds = u.cacheRead != null || u.cacheW5m != null || u.cacheW1h != null
+    const cli = u.cli ?? 'claude'
     return this.db
       .prepare(
         `INSERT INTO usage (operator_id, scratch_id, message_id, session_id, model, at, job_id, input_tokens, output_tokens,
-           cache_read, cache_w5m, cache_w1h, cost_usd, context_tokens, cold, tool_use)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ${onConflict} RETURNING *`,
+           cache_read, cache_w5m, cache_w1h, cost_usd, context_tokens, cold, tool_use, legacy,
+           run_id, job_agent_id, cli, provider, source, seat, crew_id, project_label, ext_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ${onConflict} RETURNING *`,
       )
       .get(
         u.operatorId ?? null,
@@ -1445,7 +1958,52 @@ export class Store {
         u.contextTokens ?? 0,
         u.cold ? 1 : 0,
         u.toolUse ? 1 : 0,
+        u.legacy ? 1 : 0,
+        u.runId ?? null,
+        u.jobAgentId ?? null,
+        cli,
+        u.provider ?? (cli === 'claude' ? 'anthropic' : ''),
+        u.source ?? (u.scratchId != null ? 'scratch' : u.operatorId != null ? 'operator' : ''),
+        u.seat ?? '',
+        u.crewId ?? null,
+        u.projectLabel ?? '',
+        u.extKey ?? null,
       ) as Row | undefined
+  }
+
+  // A usage row that belongs to no operator or scratch terminal (a job's Master or agent, the Discord front desk,
+  // an import), keyed by `extKey`. `update` re-writes the figures of a row seen before (a transcript still growing);
+  // otherwise a known key is left alone. Returns what happened.
+  upsertKeyedUsage(u: UsageInput & { extKey: string }, update: boolean): 'added' | 'updated' | 'unchanged' {
+    if (u.operatorId != null || u.scratchId != null) throw new Error('Keyed usage belongs to no operator or scratch terminal')
+    const have = this.db.prepare('SELECT id FROM usage WHERE ext_key = ?').get(u.extKey) as Row | undefined
+    if (!have) {
+      this.insertUsage(u, '')
+      return 'added'
+    }
+    if (!update) return 'unchanged'
+    const kinds = u.cacheRead != null || u.cacheW5m != null || u.cacheW1h != null
+    this.db
+      .prepare(
+        `UPDATE usage SET model = ?, at = ?, input_tokens = ?, output_tokens = ?, cache_read = ?, cache_w5m = ?, cache_w1h = ?,
+           cost_usd = ?, context_tokens = ?, tool_use = ?, job_agent_id = ?, seat = ? WHERE id = ?`,
+      )
+      .run(
+        u.model ?? '',
+        u.at,
+        u.inputTokens,
+        u.outputTokens,
+        kinds ? (u.cacheRead ?? 0) : (u.cacheTokens ?? 0),
+        u.cacheW5m ?? 0,
+        u.cacheW1h ?? 0,
+        u.costUsd,
+        u.contextTokens ?? 0,
+        u.toolUse ? 1 : 0,
+        u.jobAgentId ?? null,
+        u.seat ?? '',
+        have.id as number,
+      )
+    return 'updated'
   }
 
   // Spend per operator of a crew in fixed-width time buckets from `since`, for sparklines.
@@ -1495,6 +2053,8 @@ export class Store {
         since,
         crewId,
       ) +
+      // Job agents, the front desk and imports carry their project on the row.
+      sum('SELECT COALESCE(SUM(cost_usd), 0) AS total FROM usage WHERE at >= ? AND crew_id = ? AND operator_id IS NULL AND scratch_id IS NULL', since, crewId) +
       sum('SELECT COALESCE(SUM(cost_usd), 0) AS total FROM spend_archive WHERE day >= ? AND crew_id = ?', since, crewId)
     )
   }

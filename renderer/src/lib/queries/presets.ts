@@ -11,7 +11,7 @@ export const useShippedRole = (presetId: number | null) =>
     enabled: presetId != null,
   })
 
-const presetKeys = [keys.presets, ['topology']] as const
+const presetKeys = [keys.presets, ['topology'], ['mcp', 'health']] as const
 
 export const useCreatePreset = () => useMutate('presets:create', presetKeys)
 export const useUpdatePreset = () => useMutate('presets:update', presetKeys)
@@ -19,6 +19,3 @@ export const useDuplicatePreset = () => useMutate('presets:duplicate', presetKey
 export const useDeletePreset = () => useMutate('presets:delete', presetKeys)
 export const useResetPreset = () => useMutate('presets:reset', presetKeys)
 export const useRestoreBuiltinPresets = () => useMutate('presets:restoreBuiltins', presetKeys)
-export const useApplyPresetToOperators = () => useMutate('presets:applyToOperators', presetKeys)
-export const useSavePresetFromOperator = () => useMutate('presets:saveFromOperator', presetKeys)
-export const useRevertOperatorToPreset = () => useMutate('presets:revertOperator', presetKeys)

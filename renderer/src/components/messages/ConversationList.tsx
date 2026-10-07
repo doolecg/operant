@@ -1,4 +1,4 @@
-import { Crown, MessageSquare, Users } from 'lucide-react'
+import { Crown, MessageSquare } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type { Conversation } from './model'
@@ -20,7 +20,7 @@ export function ConversationList({ items, onOpen }: { items: Conversation[]; onO
     <ScrollArea className="h-full">
       <nav aria-label="Conversations" className="space-y-0.5 p-2">
         {items.map((c) => {
-          const Icon = c.key === 'master' ? Crown : c.key.startsWith('squad:') ? Users : MessageSquare
+          const Icon = c.key === 'master' ? Crown : MessageSquare
           return (
             <button
               key={c.key}

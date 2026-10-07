@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { posix, win32 } from 'node:path'
-import type { AgentKind, CacheTtl, LaunchSettings, Operator, Preset, ScratchTerminal } from '../shared/types'
+import type { AgentKind, CacheTtl, LaunchSettings, MasterCli, Operator, Preset, ScratchTerminal } from '../shared/types'
 import { rateFor } from './pricing'
 
 // PowerShell and sh (bash, zsh, ...) are the supported shells for typing a launch line. cmd.exe has no
@@ -96,12 +96,23 @@ const CONTROL_RE = /[\0-\x1f\x7f]/
 const CAP_MIN = 100_000
 const CAP_MAX = 1_000_000
 
-function checkModel(model: string): string {
-  if (typeof model !== 'string' || !MODEL_RE.test(model)) throw new LaunchError('model', `invalid model id ${JSON.stringify(String(model).slice(0, 40))}`)
+// OpenCode ids are `provider/model` (slashes, dots, colons, underscores, plus signs).
+const OPENCODE_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:+/@\-]{0,127}$/
+
+function checkModel(model: string, agent?: string): string {
+  const re = agent === 'opencode' ? OPENCODE_MODEL_RE : MODEL_RE
+  if (typeof model !== 'string' || !re.test(model) || (agent === 'opencode' && model.includes('..'))) throw new LaunchError('model', `invalid model id ${JSON.stringify(String(model).slice(0, 40))}`)
   return model
 }
 
-function checkEffort(effort: string): string {
+// OpenCode's effort is a per-model --variant name.
+const VARIANT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/
+
+function checkEffort(effort: string, agent?: string): string {
+  if (agent === 'opencode') {
+    if (typeof effort !== 'string' || (effort !== '' && !VARIANT_RE.test(effort))) throw new LaunchError('effort', 'invalid variant name')
+    return effort
+  }
   if (typeof effort !== 'string' || effort !== '' && !EFFORTS.includes(effort)) throw new LaunchError('effort', `must be one of ${EFFORTS.join(', ')}`)
   return effort
 }
@@ -135,13 +146,27 @@ function checkCap(cap: number): number {
   return cap
 }
 
+const AGENT_KINDS: readonly string[] = ['claude', 'opencode', 'codex', 'shell']
+export const MASTER_CLIS: readonly MasterCli[] = ['claude', 'opencode']
+
+// A Master or a seat runs on Claude or OpenCode only.
+export function validateMasterCli(cli: unknown, field = 'masterCli'): MasterCli {
+  if (cli !== 'claude' && cli !== 'opencode') throw new LaunchError(field, 'must be claude or opencode')
+  return cli
+}
+
+// Whether a model id is acceptable on the command line.
+export function validateModel(model: string, agent?: string): string {
+  return checkModel(model, agent)
+}
+
 // Checks the launch fields present in `patch` with the same rules the launch builders apply, so a bad
 // value is refused when it is saved instead of when the operator starts.
 export function validateLaunchSettings(patch: Partial<LaunchSettings>): void {
   const agent = patch.agent
-  if (agent !== undefined && agent !== 'claude' && agent !== 'codex' && agent !== 'shell') throw new LaunchError('agent', 'must be claude, codex or shell')
-  if (patch.model !== undefined && agent !== 'shell' && patch.model !== '') checkModel(patch.model)
-  if (patch.effort !== undefined) checkEffort(patch.effort)
+  if (agent !== undefined && !AGENT_KINDS.includes(agent)) throw new LaunchError('agent', 'must be claude, opencode, codex or shell')
+  if (patch.model !== undefined && agent !== 'shell' && patch.model !== '') checkModel(patch.model, agent)
+  if (patch.effort !== undefined) checkEffort(patch.effort, agent)
   if (patch.permissionMode !== undefined && patch.permissionMode !== '') checkMode(patch.permissionMode)
   if (patch.tools !== undefined) checkTools(patch.tools)
   if (patch.allow !== undefined) checkRules('allow', patch.allow)
@@ -417,6 +442,33 @@ export function buildMasterLaunch(ctx: LaunchContext, master?: Pick<Operator, 'm
   add('--plugin-dir', checkPath('pluginDir', ctx.pluginDir))
   add('--session-id', sessionId)
   return { file: 'claude', args, env: operantEnv(ctx), files: [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: null }
+}
+
+export interface RunLaunch {
+  file: 'claude'
+  args: string[]
+  cwd: string
+}
+
+// A job on the Claude Master: one non-interactive `claude -p` run whose events stream as JSON lines. The
+// prompt is written to its stdin, never put on the command line.
+export function buildClaudeRunLaunch(
+  run: { cwd: string; model?: string; effort?: string; permissionMode?: string; mcpConfig?: string; settingsFile?: string },
+  ctx: Pick<LaunchContext, 'supported'> = {},
+): RunLaunch {
+  const args: string[] = ['-p', '--output-format', 'stream-json', '--verbose']
+  const add = (flag: string, value: string) => {
+    if (!ctx.supported || ctx.supported.has(flag)) args.push(flag, value)
+  }
+  if (run.model) add('--model', checkModel(run.model))
+  if (run.effort && !isHaiku(run.model ?? '')) add('--effort', checkEffort(run.effort))
+  if (run.permissionMode && run.permissionMode !== 'default') add('--permission-mode', checkMode(run.permissionMode))
+  if (run.mcpConfig && (!ctx.supported || ctx.supported.has('--mcp-config'))) {
+    args.push('--strict-mcp-config', '--mcp-config', checkPath('mcpConfig', run.mcpConfig))
+  }
+  // A settings file that turns every hook off (the user's and plugins'); quoted because the spawn goes through a shell.
+  if (run.settingsFile) add('--settings', `"${checkPath('settingsFile', run.settingsFile)}"`)
+  return { file: 'claude', args, cwd: checkPath('cwd', run.cwd) }
 }
 
 export interface ScratchOptions {

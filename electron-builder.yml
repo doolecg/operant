@@ -1,5 +1,5 @@
 appId: com.doolecg.operant2
-productName: Operant 2
+productName: Operant 3
 copyright: Copyright © 2026 doolecg
 directories:
   output: dist
@@ -25,6 +25,12 @@ extraResources:
     to: cli
   - from: cli/bin
     to: cli
+  # The window and taskbar icon, loaded at runtime.
+  - from: build/icon.png
+    to: icon.png
+  # The PowerShell helper for the Windows media controls; outside the asar so PowerShell can read it.
+  - from: helper
+    to: helper
 
 # Native modules must be real files on disk.
 asarUnpack:
@@ -39,21 +45,21 @@ win:
   target:
     - target: msi
       arch: [x64]
-  artifactName: Operant2-${version}-windows-${arch}.${ext}
+  artifactName: Operant3-${version}-windows-${arch}.${ext}
 
 msi:
   oneClick: false
   perMachine: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Operant 2
+  shortcutName: Operant 3
 
 mac:
   target:
     - target: dmg
       arch: [arm64, x64]
   category: public.app-category.developer-tools
-  artifactName: Operant2-${version}-mac-${arch}.${ext}
+  artifactName: Operant3-${version}-mac-${arch}.${ext}
 
 linux:
   target:
@@ -63,6 +69,6 @@ linux:
       arch: [x64]
   category: Development
   maintainer: doolecg <doolecg@gmail.com>
-  artifactName: Operant2-${version}-linux-${arch}.${ext}
+  artifactName: Operant3-${version}-linux-${arch}.${ext}
 
 publish: null

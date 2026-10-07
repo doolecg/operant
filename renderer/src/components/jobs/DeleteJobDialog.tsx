@@ -1,4 +1,4 @@
-import type { JobRecord, Operator } from '@shared/types'
+import type { JobRecord } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useDeleteJob } from '@/lib/queries'
@@ -7,17 +7,15 @@ import { errorText, operatorLabel, stateLabel } from './jobUi'
 export function DeleteJobDialog({
   job,
   jobs,
-  operators,
   onClose,
 }: {
   job: JobRecord | null
   jobs: JobRecord[]
-  operators: Operator[]
   onClose: () => void
 }) {
   const del = useDeleteJob()
   const dependents = job ? jobs.filter((j) => j.deps.includes(job.id)).length : 0
-  const holder = job?.assigneeId != null && (job.state === 'doing' || job.state === 'review') ? operatorLabel(operators, job.assigneeId) : null
+  const holder = job?.assigneeId != null && (job.state === 'doing' || job.state === 'review') ? operatorLabel(job.assigneeId) : null
   const close = () => {
     del.reset()
     onClose()

@@ -27,6 +27,10 @@ describe('paths', () => {
     expect(appDataDir(env('win32', { OPERANT_DATA_DIR: 'D:\\tmp\\op' }))).toBe('D:\\tmp\\op')
   })
 
+  it('keeps the data folder name pinned across the Operant 3 rename', () => {
+    expect(appDataDir(env('win32', { APPDATA: 'C:\a' }))).toBe(join('C:\a', 'Operant2'))
+  })
+
   it('picks a default shell per OS', () => {
     expect(defaultShell(env('win32')).file).toBe('powershell.exe')
     expect(defaultShell(env('darwin')).file).toBe('/bin/zsh')

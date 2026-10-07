@@ -1,28 +1,51 @@
+import { DEFAULT_LEARN_SETTINGS, type LearnSettings } from './learn'
+import { IDE_IDS, type IdeId } from './projects'
 import type { CacheTtl } from './types'
+import type { ClockFormat, MediaSize, TopBarSettings } from './media'
+
+export type HindsightMode = 'local' | 'lan' | 'remote'
 
 export type KeyAction =
   | 'newCrew'
-  | 'addSquad'
   | 'indexCrew'
-  | 'tabActivity'
-  | 'tabJobs'
-  | 'tabMessages'
-  | 'tabCost'
-  | 'viewCards'
-  | 'viewList'
-  | 'viewGraph'
-  | 'viewTiles'
   | 'openSettings'
+  | 'toggleConsole'
+  | 'newShell'
+  | 'toggleSidebar'
+  | 'openInIde'
+  | 'mediaPlayPause'
+  | 'mediaNext'
+  | 'mediaPrev'
+  | 'mediaShuffle'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomReset'
 
 export interface Settings {
+  // The learning loop: lessons from finished jobs, written to Hindsight, CodeGraph notes and personal memory.
+  learn: LearnSettings
   // Daily spend budget in USD across all crews; 0 turns the budget off.
   dailyBudgetUsd: number
+  // A Hindsight memory server hosted elsewhere (http/https URL); empty runs the local one through uvx.
+  hindsightUrl: string
+  // How the Hindsight memory server is hosted: local (127.0.0.1, Operant runs it), lan (Operant runs it bound to
+  // bindHost so other machines can connect) or remote (url; Operant never starts or stops it). API keys live in the
+  // encrypted secret store, never here. openBind records that the user confirmed a non-loopback bind with no key.
+  hindsight: { mode: HindsightMode; bindHost: string; port: number; url: string; openBind: boolean }
   defaultModels: { claude: string; codex: string }
   // Empty file means the system default shell.
   shell: { file: string; args: string }
+  // The IDE "Open in IDE" launches; `custom` is the command used when the default is Custom (the folder is appended).
+  ide: { default: IdeId; custom: string }
   updates: { channel: 'stable' | 'beta'; checkHours: number; installOnQuit: boolean }
   // Accelerators like "Mod+Shift+P"; Mod is Ctrl, or Cmd on macOS. Empty means unbound.
   keybinds: Record<KeyAction, string>
+  // UI scale: 0 follows the window size (bigger windows get a bigger UI), otherwise a fixed factor from 0.8 to 2.
+  uiScale: number
+  // Side panel widths in px that the user dragged; 0 keeps the built-in size. The window clamps them live.
+  layout: { sidebarWidth: number; rightWidth: number }
+  // The top bar: Windows media controls, the clock and date pill and the agent counts. All apply live.
+  topBar: TopBarSettings
   tokens: {
     // Default per-operator daily cap in USD; 0 turns it off. An operator's own cap wins.
     operatorDailyCapUsd: number
@@ -39,6 +62,9 @@ export interface Settings {
     // Keeps operators on one Claude Code version (DISABLE_AUTOUPDATER=1) so upgrades don't rebuild caches.
     pinClaudeVersion: boolean
   }
+  // Run Masters (`claude -p`). useClaudeHooks lets the user's own Claude hooks and plugins run in them; off by default
+  // because a hook that starts a console program opens a visible window (the run has no console of its own).
+  runs: { useClaudeHooks: boolean }
   collab: {
     nudgeIdleSeconds: number
     nudgeBatchSeconds: number
@@ -49,42 +75,62 @@ export interface Settings {
     // Soft-deleted operators are purged after this many days; the sweep runs only when purgeEnabled.
     purgeRetentionDays: number
     purgeEnabled: boolean
+    // A finished job opens an "Update tracker" board job for projects that have a tracker file (each project can opt out too).
+    trackerJobs: boolean
   }
 }
 
 export const KEY_ACTIONS: Array<{ id: KeyAction; label: string }> = [
   { id: 'newCrew', label: 'New crew' },
-  { id: 'addSquad', label: 'Add squad' },
   { id: 'indexCrew', label: 'Index crew with CodeGraph' },
-  { id: 'tabActivity', label: 'Show activity' },
-  { id: 'tabJobs', label: 'Show jobs' },
-  { id: 'tabMessages', label: 'Show messages' },
-  { id: 'tabCost', label: 'Show cost' },
-  { id: 'viewCards', label: 'Cards view' },
-  { id: 'viewList', label: 'List view' },
-  { id: 'viewGraph', label: 'Graph view' },
-  { id: 'viewTiles', label: 'Tiles view' },
   { id: 'openSettings', label: 'Open settings' },
+  { id: 'toggleConsole', label: 'Show or hide the console' },
+  { id: 'newShell', label: 'New shell in the project folder' },
+  { id: 'toggleSidebar', label: 'Show or hide the project list' },
+  { id: 'openInIde', label: 'Open the project in the IDE' },
+  { id: 'mediaPlayPause', label: 'Media: play or pause' },
+  { id: 'mediaNext', label: 'Media: next track' },
+  { id: 'mediaPrev', label: 'Media: previous track' },
+  { id: 'mediaShuffle', label: 'Media: shuffle' },
+  { id: 'zoomIn', label: 'Zoom in (UI scale)' },
+  { id: 'zoomOut', label: 'Zoom out (UI scale)' },
+  { id: 'zoomReset', label: 'Reset the UI scale to automatic' },
 ]
 
 export const DEFAULT_SETTINGS: Settings = {
+  learn: DEFAULT_LEARN_SETTINGS,
   dailyBudgetUsd: 0,
   defaultModels: { claude: 'sonnet', codex: 'gpt-5' },
+  hindsightUrl: '',
+  hindsight: { mode: 'local', bindHost: '127.0.0.1', port: 9077, url: '', openBind: false },
   shell: { file: '', args: '' },
+  ide: { default: 'code', custom: '' },
   updates: { channel: 'stable', checkHours: 3, installOnQuit: true },
   keybinds: {
     newCrew: 'Mod+N',
-    addSquad: 'Mod+Shift+P',
     indexCrew: 'Mod+I',
-    tabActivity: 'Mod+1',
-    tabJobs: 'Mod+2',
-    tabMessages: 'Mod+4',
-    tabCost: 'Mod+3',
-    viewCards: 'Mod+Shift+1',
-    viewList: 'Mod+Shift+2',
-    viewGraph: 'Mod+Shift+3',
-    viewTiles: 'Mod+Shift+4',
     openSettings: 'Mod+,',
+    toggleConsole: 'Mod+J',
+    newShell: 'Alt+Shift+T',
+    toggleSidebar: 'Alt+B',
+    openInIde: 'Alt+Shift+O',
+    mediaPlayPause: '',
+    mediaNext: '',
+    mediaPrev: '',
+    mediaShuffle: '',
+    zoomIn: 'Mod+=',
+    zoomOut: 'Mod+-',
+    zoomReset: 'Mod+0',
+  },
+  uiScale: 0,
+  layout: { sidebarWidth: 0, rightWidth: 0 },
+  topBar: {
+    mediaControls: typeof process !== 'undefined' && process.platform === 'win32',
+    mediaSize: 'full',
+    clockFormat: 'auto',
+    clockSeconds: false,
+    clockDate: true,
+    agentPill: true,
   },
   tokens: {
     operatorDailyCapUsd: 0,
@@ -95,6 +141,7 @@ export const DEFAULT_SETTINGS: Settings = {
     subagentCacheTtl: '5m',
     pinClaudeVersion: true,
   },
+  runs: { useClaudeHooks: false },
   collab: {
     nudgeIdleSeconds: 5,
     nudgeBatchSeconds: 15,
@@ -104,6 +151,7 @@ export const DEFAULT_SETTINGS: Settings = {
     longJobElapsedMinutes: 240,
     purgeRetentionDays: 30,
     purgeEnabled: true,
+    trackerJobs: true,
   },
 }
 
@@ -116,23 +164,65 @@ const ttl = (v: unknown, fallback: CacheTtl): CacheTtl => (v === 'auto' || v ===
 const num = (v: unknown, fallback: number, min: number, max: number) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
 
+const HTTP_URL = /^https?:\/\/[^\s]+$/i
+const HOST_RE = /^[A-Za-z0-9.:_-]{1,100}$/
+
+// The legacy hindsightUrl (non-empty means remote) migrates into hindsight.url and mode; hindsightUrl mirrors the
+// remote URL afterwards so older readers keep working.
+function hindsightSettings(r: Record<string, any>): Pick<Settings, 'hindsight' | 'hindsightUrl'> {
+  const h = r.hindsight && typeof r.hindsight === 'object' ? r.hindsight : {}
+  const d = DEFAULT_SETTINGS.hindsight
+  const legacy = HTTP_URL.test(str(r.hindsightUrl, '', 300)) ? str(r.hindsightUrl, '', 300) : ''
+  const own = HTTP_URL.test(str(h.url, '', 300)) ? str(h.url, '', 300) : ''
+  const url = own || legacy
+  let mode: HindsightMode = h.mode === 'lan' || h.mode === 'remote' || h.mode === 'local' ? h.mode : d.mode
+  if (!own && legacy && mode === 'local') mode = 'remote'
+  const bindHost = str(h.bindHost, d.bindHost, 100)
+  const out = {
+    mode,
+    bindHost: HOST_RE.test(bindHost) ? bindHost : d.bindHost,
+    port: Math.round(num(h.port, d.port, 1, 65535)),
+    url,
+    openBind: h.openBind === true,
+  }
+  return { hindsight: out, hindsightUrl: mode === 'remote' ? url : '' }
+}
+
 // Fills in defaults and drops anything malformed, so stored or incoming values can't break the app.
 export function sanitizeSettings(raw: unknown): Settings {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>
   const d = DEFAULT_SETTINGS
   const models = r.defaultModels ?? {}
   const shell = r.shell ?? {}
+  const ide = r.ide ?? {}
   const updates = r.updates ?? {}
   const keys = r.keybinds ?? {}
   const tokens = r.tokens ?? {}
   const collab = r.collab ?? {}
+  const top = r.topBar ?? {}
+  const learn = r.learn ?? {}
+  const runs = r.runs ?? {}
+  const layout = r.layout ?? {}
+  const flag = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
   return {
+    learn: {
+      enabled: flag(learn.enabled, d.learn.enabled),
+      hindsight: flag(learn.hindsight, d.learn.hindsight),
+      codegraph: flag(learn.codegraph, d.learn.codegraph),
+      memory: flag(learn.memory, d.learn.memory),
+      review: learn.review === 'auto' || learn.review === 'queue' ? learn.review : d.learn.review,
+    },
     dailyBudgetUsd: num(r.dailyBudgetUsd, d.dailyBudgetUsd, 0, 100_000),
+    ...hindsightSettings(r),
     defaultModels: {
       claude: str(models.claude, d.defaultModels.claude) || d.defaultModels.claude,
       codex: str(models.codex, d.defaultModels.codex) || d.defaultModels.codex,
     },
     shell: { file: str(shell.file, d.shell.file, 500), args: str(shell.args, d.shell.args, 500) },
+    ide: {
+      default: (IDE_IDS as readonly string[]).includes(ide.default) ? (ide.default as IdeId) : d.ide.default,
+      custom: str(ide.custom, d.ide.custom, 500),
+    },
     updates: {
       channel: updates.channel === 'beta' ? 'beta' : 'stable',
       checkHours: Math.round(num(updates.checkHours, d.updates.checkHours, 0, 24)),
@@ -141,6 +231,19 @@ export function sanitizeSettings(raw: unknown): Settings {
     keybinds: Object.fromEntries(
       KEY_ACTIONS.map(({ id }) => [id, str(keys[id], d.keybinds[id], 40)]),
     ) as Record<KeyAction, string>,
+    uiScale: r.uiScale === 0 ? 0 : num(r.uiScale, d.uiScale, 0.8, 2),
+    layout: {
+      sidebarWidth: Math.round(num(layout.sidebarWidth, d.layout.sidebarWidth, 0, 4000)),
+      rightWidth: Math.round(num(layout.rightWidth, d.layout.rightWidth, 0, 4000)),
+    },
+    topBar: {
+      mediaControls: flag(top.mediaControls, d.topBar.mediaControls),
+      mediaSize: (['compact', 'full'] as const).includes(top.mediaSize) ? (top.mediaSize as MediaSize) : d.topBar.mediaSize,
+      clockFormat: (['auto', '24', '12'] as const).includes(top.clockFormat) ? (top.clockFormat as ClockFormat) : d.topBar.clockFormat,
+      clockSeconds: flag(top.clockSeconds, d.topBar.clockSeconds),
+      clockDate: flag(top.clockDate, d.topBar.clockDate),
+      agentPill: flag(top.agentPill, d.topBar.agentPill),
+    },
     tokens: {
       operatorDailyCapUsd: num(tokens.operatorDailyCapUsd, d.tokens.operatorDailyCapUsd, 0, 100_000),
       capWarnPct: num(tokens.capWarnPct, d.tokens.capWarnPct, 1, 100),
@@ -150,6 +253,7 @@ export function sanitizeSettings(raw: unknown): Settings {
       subagentCacheTtl: ttl(tokens.subagentCacheTtl, d.tokens.subagentCacheTtl),
       pinClaudeVersion: typeof tokens.pinClaudeVersion === 'boolean' ? tokens.pinClaudeVersion : d.tokens.pinClaudeVersion,
     },
+    runs: { useClaudeHooks: flag(runs.useClaudeHooks, d.runs.useClaudeHooks) },
     collab: {
       nudgeIdleSeconds: num(collab.nudgeIdleSeconds, d.collab.nudgeIdleSeconds, 1, 3600),
       nudgeBatchSeconds: num(collab.nudgeBatchSeconds, d.collab.nudgeBatchSeconds, 0, 3600),
@@ -159,6 +263,7 @@ export function sanitizeSettings(raw: unknown): Settings {
       longJobElapsedMinutes: Math.round(num(collab.longJobElapsedMinutes, d.collab.longJobElapsedMinutes, 1, 10_000)),
       purgeRetentionDays: Math.round(num(collab.purgeRetentionDays, d.collab.purgeRetentionDays, 0, 3650)),
       purgeEnabled: typeof collab.purgeEnabled === 'boolean' ? collab.purgeEnabled : d.collab.purgeEnabled,
+      trackerJobs: typeof collab.trackerJobs === 'boolean' ? collab.trackerJobs : d.collab.trackerJobs,
     },
   }
 }

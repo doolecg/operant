@@ -9,6 +9,7 @@ import { timeAgo } from '@/lib/format'
 import { useAppInfo, useSaveSettings, useSettings, useUpdateStatus } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { CommitInput, Row } from '../parts'
+import { UiScaleSelect } from '../UiScaleControl'
 import { useState } from 'react'
 
 function UpdateRow({ status }: { status?: UpdateStatus }) {
@@ -28,7 +29,7 @@ function UpdateRow({ status }: { status?: UpdateStatus }) {
         idle: 'Not checked yet',
         unsupported: s.message ?? 'Updates are unavailable',
         checking: 'Checking for updates…',
-        current: s.message ?? 'Operant 2 is up to date',
+        current: s.message ?? 'Operant 3 is up to date',
         downloading: `Downloading ${s.version}…`,
         ready: `Version ${s.version} is ready to install`,
         installing: `Installing ${s.version}…`,
@@ -119,6 +120,29 @@ export function GeneralSection() {
               onCommit={(v) => save.mutate({ shell: { args: v } })}
               disabled={!s.shell.file}
             />
+          </Row>
+          <Row
+            label="Use my Claude hooks and plugins in runs"
+            hint="Off: runs and short model calls skip your Claude hooks and plugins, so no console windows pop up. On: they run, but a hook that starts a console program opens a visible window, because a background run has no console of its own (Windows cannot give it a hidden one). Applies to runs started from now on; learning and the Discord front desk never use hooks."
+            htmlFor="run-hooks"
+          >
+            <Switch
+              id="run-hooks"
+              checked={s.runs.useClaudeHooks}
+              onCheckedChange={(v) => save.mutate({ runs: { useClaudeHooks: v } })}
+            />
+          </Row>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Display</CardTitle>
+          <CardDescription>Automatic grows the interface with the window, so a maximized screen looks as roomy as a small one. Ctrl+= and Ctrl+- step it, Ctrl+0 returns to automatic.</CardDescription>
+        </CardHeader>
+        <CardContent className="divide-y">
+          <Row label="UI scale" htmlFor="ui-scale">
+            <UiScaleSelect id="ui-scale" className="w-36" />
           </Row>
         </CardContent>
       </Card>

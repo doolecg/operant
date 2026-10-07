@@ -1,7 +1,7 @@
 {
   "name": "operant2",
-  "productName": "Operant 2",
-  "version": "2.0.0",
+  "productName": "Operant 3",
+  "version": "3.0.0",
   "description": "Run crews of coding agents from one dashboard.",
   "license": "MIT",
   "private": true,
@@ -18,17 +18,19 @@
   "main": "out/main/index.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "main:run": "node scripts/main-run.mjs",
     "build": "vite build -c vite.main.config.ts && vite build -c vite.main.config.ts --mode preload && vite build -c vite.main.config.ts --mode cli && vite build -c vite.config.ts",
     "start": "electron .",
     "test": "vitest run",
-    "test:e2e": "node e2e/dashboard.mjs && node e2e/collab.mjs",
+    "test:e2e": "node e2e/dashboard.mjs && node e2e/scale.mjs && node e2e/collab.mjs && node e2e/runs.mjs && node e2e/discord.mjs && node e2e/mcp.mjs && node e2e/usage.mjs && node e2e/memory.mjs && node e2e/console.mjs && node e2e/projects.mjs && node e2e/topbar.mjs && node e2e/popups.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir"
   },
   "dependencies": {
     "@colbymchenry/codegraph": "^1.6.1",
-    "@lydell/node-pty": "^1.2.0-beta.15"
+    "@lydell/node-pty": "^1.2.0-beta.15",
+    "discord.js": "^14.27.0"
   },
   "devDependencies": {
     "@dagrejs/dagre": "3.1.1",

@@ -1,15 +1,23 @@
 import { join } from 'node:path'
 import { spawn as spawnPty } from '@lydell/node-pty'
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, safeStorage, shell } from 'electron'
+import { scrubLogLine } from '../core/agents'
 import { CliServer } from '../core/cli-server'
 import { CrewIndexes } from '../core/codegraph'
+import { consoleLog } from '../core/console'
+import type { GatewayFactory } from '../core/discord-gateway'
+import { FileSecretStore } from '../core/discord-secrets'
 import { Operant } from '../core/operant'
 import { appDataDir } from '../core/paths'
 import { SessionManager } from '../core/sessions'
 import { Store } from '../core/store'
+import { loadEnv } from './env'
 import { isAppUrl, type AppOrigin } from './guard'
 import { push, registerIpc } from './ipc'
 import { createUpdater } from './updater'
+
+// A .env file sets variables the real environment lacks: the repo root in dev, the app data folder when installed.
+loadEnv({ dir: app.isPackaged ? appDataDir() : app.getAppPath(), log: (line) => console.log(line) })
 
 // Keep data apart from Operant 1, which owns the plain "Operant" folder.
 app.setPath('userData', appDataDir())
@@ -25,6 +33,9 @@ const pluginDir = app.isPackaged ? join(process.resourcesPath, 'plugin') : join(
 // finds out/cli/operant.cjs from there).
 const cliDir = app.isPackaged ? join(process.resourcesPath, 'cli') : join(app.getAppPath(), 'cli', 'bin')
 
+// The window and taskbar icon: resources/icon.png when packaged, build/icon.png in the repo.
+const iconFile = app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(app.getAppPath(), 'build', 'icon.png')
+
 const appOrigin: AppOrigin = { devUrl, indexFile: join(__dirname, '../renderer/index.html') }
 
 let win: BrowserWindow | null = null
@@ -37,11 +48,12 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 960,
-    minHeight: 600,
+    minWidth: 1000,
+    minHeight: 640,
     show: false,
     backgroundColor: '#0a0a0b',
-    title: 'Operant',
+    title: 'Operant 3',
+    icon: iconFile,
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
@@ -74,6 +86,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   store = new Store(join(app.getPath('userData'), 'operant.db'))
+  consoleLog.setScrubber(scrubLogLine)
   sessions = new SessionManager((file, args, opts) => spawnPty(file, args, { name: 'xterm-256color', ...opts }))
   const indexes = new CrewIndexes(
     app.isPackaged ? join(process.resourcesPath, 'codegraph', 'lib', 'dist', 'index.js') : undefined,
@@ -91,10 +104,38 @@ app.whenReady().then(() => {
       operantNode: process.execPath,
     },
     cliServer: (collab) => new CliServer({ collab }),
+    // Where usage exports are saved and import files are picked.
+    fileDialogs: {
+      save: async (defaultPath, filter) => {
+        const opts = { defaultPath, filters: [filter] }
+        const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+        return res.canceled ? null : (res.filePath ?? null)
+      },
+      open: async (filter) => {
+        const opts = { properties: ['openFile' as const], filters: [filter] }
+        const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+        return res.canceled ? null : (res.filePaths[0] ?? null)
+      },
+    },
+    // Bot tokens: encrypted with the OS keychain (DPAPI on Windows), one file each, outside the database.
+    discord: {
+      secrets: new FileSecretStore(join(app.getPath('userData'), 'secrets'), {
+        isAvailable: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (plain) => safeStorage.encryptString(plain),
+        decrypt: (blob) => safeStorage.decryptString(blob),
+      }),
+      // The e2e runs swap in a fake gateway so no test touches the network (unpackaged runs only).
+      ...(process.env.OPERANT_E2E_DISCORD_GATEWAY && !app.isPackaged
+        ? { gateway: require(process.env.OPERANT_E2E_DISCORD_GATEWAY).createGateway as GatewayFactory }
+        : {}),
+    },
   })
   operant = core
+  core.seedFromEnv(process.env)
   core.resetStaleOperators()
   void core.start()
+  // First plan-limit and provider reading now; the core asks again when each is due.
+  void core.providers.refresh().catch(() => undefined)
   const updater = createUpdater({ send: (s) => push(win, 'update', s), getSettings: () => core.currentSettings })
   core.on('settings', () => updater.reschedule())
   registerIpc(core, updater, () => win, appOrigin)

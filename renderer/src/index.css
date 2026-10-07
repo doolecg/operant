@@ -103,3 +103,12 @@
   --xy-handle-border-color: var(--background);
   --xy-attribution-background-color: transparent;
 }
+
+/* Top bar: a title wider than its box scrolls to the end and back. */
+@keyframes media-marquee {
+  0%, 20% { transform: translateX(0); }
+  80%, 100% { transform: translateX(var(--shift)); }
+}
+.media-marquee {
+  animation: media-marquee var(--dur, 8s) linear infinite alternate;
+}

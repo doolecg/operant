@@ -1,6 +1,6 @@
-import type { Message, SquadWithOperators } from '@shared/types'
+import type { Message } from '@shared/types'
 
-export type ConversationKey = 'master' | 'system' | `op:${number}` | `squad:${number}`
+export type ConversationKey = 'master' | 'system' | `op:${number}`
 
 export interface Conversation {
   key: ConversationKey
@@ -11,7 +11,7 @@ export interface Conversation {
   unread: number
 }
 
-// One bubble: a single message, or the copies of one message the user sent to a squad.
+// One bubble: a single message.
 export interface Entry {
   ids: number[]
   message: Message
@@ -32,43 +32,13 @@ export function sourceOf(m: Message): ConversationKey | null {
   return null
 }
 
-export function entriesFor(
-  key: ConversationKey,
-  messages: Message[],
-  squads: SquadWithOperators[],
-): Entry[] {
-  const mine = messages
-  if (!key.startsWith('squad:')) {
-    return mine.filter((m) => sourceOf(m) === key).map((m) => ({ ids: [m.id], message: m, copies: 1 }))
-  }
-  const squad = squads.find((s) => `squad:${s.id}` === key)
-  const members = new Set((squad?.operators ?? []).map((o) => `op:${o.id}`))
-  const out: Entry[] = []
-  const sent = new Map<string, Entry>()
-  for (const m of mine) {
-    const src = sourceOf(m)
-    if (src == null || !members.has(src)) continue
-    if (m.fromKind !== 'user') {
-      out.push({ ids: [m.id], message: m, copies: 1 })
-      continue
-    }
-    // Fan-out writes one row per member with the same body and send time.
-    const k = `${m.body}\u0000${m.kind}\u0000${Math.floor(m.createdAt / 2000)}`
-    const group = sent.get(k)
-    if (group) {
-      group.ids.push(m.id)
-      group.copies += 1
-      if (m.readAt != null) group.message = { ...group.message, readAt: m.readAt }
-    } else {
-      const entry = { ids: [m.id], message: m, copies: 1 }
-      sent.set(k, entry)
-      out.push(entry)
-    }
-  }
-  return out.sort((a, b) => a.message.id - b.message.id)
+export function entriesFor(key: ConversationKey, messages: Message[]): Entry[] {
+  return messages.filter((m) => sourceOf(m) === key).map((m) => ({ ids: [m.id], message: m, copies: 1 }))
 }
 
-export function buildConversations(squads: SquadWithOperators[], messages: Message[]): Conversation[] {
+// The Master, Operant's notices, and every agent that has written to or been written to by the user,
+// named from the messages themselves.
+export function buildConversations(messages: Message[]): Conversation[] {
   const incomingUnread = (key: ConversationKey) =>
     messages.filter((m) => m.toKind === 'user' && m.readAt == null && sourceOf(m) === key).length
   const list: Conversation[] = [
@@ -77,24 +47,15 @@ export function buildConversations(squads: SquadWithOperators[], messages: Messa
   if (messages.some(isSystem)) {
     list.push({ key: 'system', title: 'Operant', subtitle: 'notices', to: null, unread: incomingUnread('system') })
   }
-  for (const s of squads.filter((q) => !q.system)) {
-    const live = s.operators.filter((o) => o.kind !== 'master')
-    list.push({
-      key: `squad:${s.id}`,
-      title: s.name,
-      subtitle: `squad, ${live.length} operator${live.length === 1 ? '' : 's'}`,
-      to: `squad:${s.name}`,
-      unread: live.reduce((n, o) => n + incomingUnread(`op:${o.id}`), 0),
-    })
-    for (const o of live) {
-      list.push({
-        key: `op:${o.id}`,
-        title: o.role,
-        subtitle: `operator in ${s.name}`,
-        to: o.id,
-        unread: incomingUnread(`op:${o.id}`),
-      })
-    }
+  const agents = new Map<number, string>()
+  for (const m of messages) {
+    const key = sourceOf(m)
+    if (!key?.startsWith('op:')) continue
+    const id = Number(key.slice(3))
+    agents.set(id, m.toKind === 'user' ? m.fromLabel : m.toLabel)
+  }
+  for (const [id, label] of agents) {
+    list.push({ key: `op:${id}`, title: label, subtitle: 'agent', to: id, unread: incomingUnread(`op:${id}`) })
   }
   return list
 }

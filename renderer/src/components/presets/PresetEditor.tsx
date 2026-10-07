@@ -109,20 +109,16 @@ function Field({ id, label, hint, children }: { id: string; label: string; hint?
 interface Props {
   // null creates a new preset.
   preset: Preset | null
-  // Operators on this preset, and how many of them still match it.
-  operators: number
-  unmodified: number
   defaultModel: string
   onClose: () => void
 }
 
-function EditorForm({ preset, operators, unmodified, defaultModel, shipped, onClose }: Props & { shipped?: string }) {
+function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shipped?: string }) {
   const create = useCreatePreset()
   const update = useUpdatePreset()
   const initialRole = preset ? (preset.roleText ?? shipped ?? '') : ''
   const [form, setForm] = useState(() => toForm(preset, initialRole, defaultModel))
   const [error, setError] = useState<string | null>(null)
-  const [asking, setAsking] = useState(false)
   const busy = create.isPending || update.isPending
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }))
 
@@ -150,7 +146,7 @@ function EditorForm({ preset, operators, unmodified, defaultModel, shipped, onCl
     return patch
   }
 
-  const run = async (apply: boolean) => {
+  const run = async () => {
     setError(null)
     if (form.name.trim() === '') return setError('Give the preset a name.')
     try {
@@ -158,24 +154,16 @@ function EditorForm({ preset, operators, unmodified, defaultModel, shipped, onCl
         await create.mutateAsync([{ ...launchOf(form), name: form.name.trim(), roleText: form.roleText }])
       } else {
         const patch = patchOf()
-        if (Object.keys(patch).length > 0) await update.mutateAsync([preset.id, patch, apply])
+        if (Object.keys(patch).length > 0) await update.mutateAsync([preset.id, patch])
       }
       onClose()
     } catch (e) {
-      setAsking(false)
       setError(decodeIpcError(e).message)
     }
   }
 
   const save = () => {
-    if (!preset) return void run(false)
-    const { name: _name, ...rest } = patchOf()
-    if (Object.keys(rest).length > 0 && unmodified > 0) {
-      setError(null)
-      if (form.name.trim() === '') return setError('Give the preset a name.')
-      return setAsking(true)
-    }
-    void run(false)
+    void run()
   }
 
   const mode = MODES.find((m) => m.id === form.permissionMode)
@@ -193,6 +181,7 @@ function EditorForm({ preset, operators, unmodified, defaultModel, shipped, onCl
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="claude">Claude Code</SelectItem>
+              <SelectItem value="opencode">opencode</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="shell">Plain shell</SelectItem>
             </SelectContent>
@@ -363,34 +352,14 @@ function EditorForm({ preset, operators, unmodified, defaultModel, shipped, onCl
         </p>
       )}
 
-      {asking ? (
-        <div className="space-y-3 rounded-md border p-3">
-          <p className="text-sm">
-            {operators} operator{operators === 1 ? '' : 's'} use this preset; {unmodified} {unmodified === 1 ? 'is' : 'are'} unmodified. Apply
-            this change to {unmodified === 1 ? 'it' : 'them'}? Running operators take it on their next restart.
-          </p>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setAsking(false)} disabled={busy}>
-              Back
-            </Button>
-            <Button variant="outline" onClick={() => void run(false)} disabled={busy}>
-              Save preset only
-            </Button>
-            <Button onClick={() => void run(true)} disabled={busy}>
-              Save and apply to {unmodified}
-            </Button>
-          </DialogFooter>
-        </div>
-      ) : (
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={busy}>
-            {preset ? 'Save preset' : 'Create preset'}
-          </Button>
-        </DialogFooter>
-      )}
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={save} disabled={busy}>
+          {preset ? 'Save preset' : 'Create preset'}
+        </Button>
+      </DialogFooter>
     </>
   )
 }
@@ -406,7 +375,7 @@ export function PresetEditor({ open, ...props }: Props & { open: boolean }) {
         <DialogHeader>
           <DialogTitle>{preset ? `Edit ${preset.name}` : 'New preset'}</DialogTitle>
           <DialogDescription>
-            A preset is launch settings plus one role text. New operators copy it; editing it later can update the operators that still match.
+            A preset is launch settings plus one role text. A seat uses it to start agents.
           </DialogDescription>
         </DialogHeader>
         {ready ? (

@@ -1,8 +1,9 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { JobRecord, JobReview, JobState, JobUpdate, Operator } from '@shared/types'
+import type { JobRecord, JobReview, JobState, JobUpdate } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Markdown } from '@/components/ui/markdown'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useUpdateJob } from '@/lib/queries'
@@ -18,6 +19,14 @@ const REVIEWS: Array<{ value: JobReview; label: string }> = [
 
 const fieldClass =
   'border-input bg-background focus-visible:ring-ring/50 w-full resize-y rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]'
+
+function Preview({ label, source }: { label: string; source: string }) {
+  return (
+    <div role="group" aria-label={label} className="bg-muted/30 mt-1.5 max-h-48 overflow-y-auto rounded-md border p-2" tabIndex={0}>
+      <Markdown source={source} className="text-xs" />
+    </div>
+  )
+}
 
 function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
@@ -57,31 +66,29 @@ const draftOf = (j: JobRecord): Draft => ({
 export function JobSheet({
   job,
   jobs,
-  operators,
   onClose,
 }: {
   job: JobRecord | null
   jobs: JobRecord[]
-  operators: Operator[]
   onClose: () => void
 }) {
   return (
     <Sheet open={job != null} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-        {job && <JobForm key={job.id} job={job} jobs={jobs} operators={operators} onClose={onClose} />}
+        {job && <JobForm key={job.id} job={job} jobs={jobs} onClose={onClose} />}
       </SheetContent>
     </Sheet>
   )
 }
 
 // Edits a snapshot of the job taken when the sheet opens, so a push never overwrites what is being typed.
-function JobForm({ job, jobs, operators, onClose }: { job: JobRecord; jobs: JobRecord[]; operators: Operator[]; onClose: () => void }) {
+function JobForm({ job, jobs, onClose }: { job: JobRecord; jobs: JobRecord[]; onClose: () => void }) {
   const [d, setD] = useState<Draft>(() => draftOf(job))
   const update = useUpdateJob()
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((p) => ({ ...p, [k]: v }))
   const live = jobs.find((j) => j.id === job.id) ?? job
   const lease = leaseText(live)
-  const creator = live.createdBy == null ? 'the user or the Master Terminal' : operatorLabel(operators, live.createdBy)
+  const creator = live.createdBy == null ? 'the user or the Master Terminal' : operatorLabel(live.createdBy)
 
   const priority = Number(d.priority)
   const estimate = d.estimate.trim() === '' ? null : Number(d.estimate)
@@ -120,7 +127,7 @@ function JobForm({ job, jobs, operators, onClose }: { job: JobRecord; jobs: JobR
         <SheetTitle>Edit job #{job.id}</SheetTitle>
         <SheetDescription>
           Created by {creator}
-          {live.assigneeId != null && ` · claimed by ${operatorLabel(operators, live.assigneeId)}`}
+          {live.assigneeId != null && ` · claimed by ${operatorLabel(live.assigneeId)}`}
           {lease && ` · ${lease}`}
           {live.startedAt != null && ` · started ${clock(live.startedAt)}`}
         </SheetDescription>
@@ -135,6 +142,7 @@ function JobForm({ job, jobs, operators, onClose }: { job: JobRecord; jobs: JobR
         </Field>
         <Field id="job-body" label="Body">
           <textarea id="job-body" value={d.body} onChange={(e) => set('body', e.target.value)} rows={5} className={fieldClass} />
+          {d.body.trim() && <Preview label="Rendered body" source={d.body} />}
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field id="job-priority" label="Priority">
@@ -164,11 +172,7 @@ function JobForm({ job, jobs, operators, onClose }: { job: JobRecord; jobs: JobR
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NONE}>Unassigned</SelectItem>
-                {operators.map((o) => (
-                  <SelectItem key={o.id} value={String(o.id)}>
-                    {o.role}
-                  </SelectItem>
-                ))}
+                {job.assigneeId != null && <SelectItem value={String(job.assigneeId)}>{operatorLabel(job.assigneeId)}</SelectItem>}
               </SelectContent>
             </Select>
           </Field>
@@ -193,13 +197,7 @@ function JobForm({ job, jobs, operators, onClose }: { job: JobRecord; jobs: JobR
                   <SelectValue placeholder="Pick an operator" />
                 </SelectTrigger>
                 <SelectContent>
-                  {operators
-                    .filter((o) => o.id !== d.assigneeId)
-                    .map((o) => (
-                      <SelectItem key={o.id} value={String(o.id)}>
-                        {o.role}
-                      </SelectItem>
-                    ))}
+                  {job.reviewerId != null && <SelectItem value={String(job.reviewerId)}>{operatorLabel(job.reviewerId)}</SelectItem>}
                 </SelectContent>
               </Select>
             </Field>
@@ -229,6 +227,7 @@ function JobForm({ job, jobs, operators, onClose }: { job: JobRecord; jobs: JobR
         </fieldset>
         <Field id="job-note" label="Notes">
           <textarea id="job-note" value={d.note} onChange={(e) => set('note', e.target.value)} rows={3} className={fieldClass} />
+          {d.note.trim() && <Preview label="Rendered notes" source={d.note} />}
         </Field>
         {update.error != null && (
           <p role="alert" className="text-destructive text-xs">

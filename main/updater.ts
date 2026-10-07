@@ -9,7 +9,7 @@ import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { app, net } from 'electron'
 import {
-  APP_BUNDLE,
+  APP_BUNDLES,
   appImageInstallScript,
   checkIntervalMs,
   debInstallScript,
@@ -68,12 +68,12 @@ export function createUpdater({ send, getSettings }: { send: (s: UpdateStatus) =
     }
     if (!Number.isFinite(free) || free >= size * 2) return
     const mb = (n: number) => Math.ceil(n / 1_048_576)
-    throw new Error(`Not enough disk space to download Operant 2 ${version} (needs ${mb(size * 2)} MB, ${mb(free)} MB free)`)
+    throw new Error(`Not enough disk space to download Operant 3 ${version} (needs ${mb(size * 2)} MB, ${mb(free)} MB free)`)
   }
 
   async function fetchAsset(asset: ReleaseAsset, version: string, kind: InstallKind, onDownload: () => void): Promise<string> {
     const dir = tmpdir()
-    const file = join(dir, `Operant2-${version}.${EXT[kind]}`)
+    const file = join(dir, `Operant3-${version}.${EXT[kind]}`)
     if (!downloaded(file, asset.size)) {
       checkDiskSpace(dir, asset.size, version)
       onDownload()
@@ -162,7 +162,7 @@ export function createUpdater({ send, getSettings }: { send: (s: UpdateStatus) =
 
   // Starts a worker that outlives the app, waits for it to exit, installs, and optionally relaunches.
   function startWorker(r: Ready, relaunch: boolean): boolean {
-    const log = join(tmpdir(), `Operant2-${r.version}-install.log`)
+    const log = join(tmpdir(), `Operant3-${r.version}-install.log`)
     const fail = (message: string) => {
       report({ state: 'error', version: r.version, message })
       return false
@@ -189,9 +189,9 @@ export function createUpdater({ send, getSettings }: { send: (s: UpdateStatus) =
     let script: string
     if (r.kind === 'dmg') {
       const bundle = resolve(process.execPath, '../../..')
-      if (basename(bundle) !== APP_BUNDLE || bundle.startsWith('/Volumes/') || bundle.includes('/AppTranslocation/'))
-        return fail('Move Operant 2 to Applications, then update')
-      if (!writable(dirname(bundle))) return fail(`Can't write to ${dirname(bundle)}; move Operant 2 somewhere you can write to`)
+      if (!APP_BUNDLES.includes(basename(bundle)) || bundle.startsWith('/Volumes/') || bundle.includes('/AppTranslocation/'))
+        return fail('Move Operant 3 to Applications, then update')
+      if (!writable(dirname(bundle))) return fail(`Can't write to ${dirname(bundle)}; move Operant 3 somewhere you can write to`)
       script = macInstallScript({ pid: process.pid, dmg: r.file, bundle, log, relaunch })
     } else if (r.kind === 'appimage') {
       const target = resolve(process.env.APPIMAGE ?? '')

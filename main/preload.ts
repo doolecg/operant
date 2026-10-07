@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, type IpcRendererEvent } from 'electron'
 import { CORE_CHANNELS, MAIN_CHANNELS, decodeIpcError, encodeIpcError, type OperantBridge } from '../shared/ipc'
 
 const allowed = new Set<string>([...CORE_CHANNELS, ...MAIN_CHANNELS])
@@ -17,6 +17,7 @@ const bridge: OperantBridge = {
     return () => ipcRenderer.removeListener(`push:${name}`, wrapped)
   },
   platform: process.platform,
+  setZoom: (factor) => webFrame.setZoomFactor(factor),
 }
 
 contextBridge.exposeInMainWorld('operant', bridge)

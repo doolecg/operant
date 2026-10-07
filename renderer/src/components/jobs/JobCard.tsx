@@ -1,5 +1,5 @@
 import { Lock, MoreHorizontal } from 'lucide-react'
-import type { JobRecord, JobState, Operator } from '@shared/types'
+import type { JobRecord, JobState } from '@shared/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -23,10 +23,10 @@ export interface JobActions {
   reassign: (job: JobRecord, assigneeId: number | null) => void
 }
 
-export function JobCard({ job, operators, actions }: { job: JobRecord; operators: Operator[]; actions: JobActions }) {
+export function JobCard({ job, actions }: { job: JobRecord; actions: JobActions }) {
   const meta = [
-    job.assigneeId != null ? `claimed by ${operatorLabel(operators, job.assigneeId)}` : null,
-    job.createdBy != null ? `from ${operatorLabel(operators, job.createdBy)}` : null,
+    job.assigneeId != null ? `claimed by ${operatorLabel(job.assigneeId)}` : null,
+    job.createdBy != null ? `from ${operatorLabel(job.createdBy)}` : null,
     leaseText(job),
     job.estimateMinutes != null ? `${job.estimateMinutes} min` : null,
   ].filter(Boolean)
@@ -68,13 +68,6 @@ export function JobCard({ job, operators, actions }: { job: JobRecord; operators
             <DropdownMenuItem onSelect={() => actions.reassign(job, null)} disabled={job.assigneeId == null}>
               Unassigned
             </DropdownMenuItem>
-            {operators
-              .filter((o) => o.id !== job.assigneeId)
-              .map((o) => (
-                <DropdownMenuItem key={o.id} onSelect={() => actions.reassign(job, o.id)}>
-                  {o.role}
-                </DropdownMenuItem>
-              ))}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={() => actions.remove(job)}>
               Delete

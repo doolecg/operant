@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
-import type { OperantEvent } from '@shared/types'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { Crew, OperantEvent } from '@shared/types'
 import { call, keys, registerLive, useMutate } from './core'
 
 export const useCrews = () => useQuery({ queryKey: keys.crews, queryFn: () => call('crews:list') })
@@ -23,8 +23,21 @@ export const useCrewCounts = (crewId: number | null, enabled = true) =>
 export const useCreateCrew = () => useMutate('crews:create')
 export const useUpdateCrew = () => useMutate('crews:update')
 export const useDeleteCrew = () => useMutate('crews:delete')
-// Saves the crew's view; Cards is the default.
-export const useSetCrewView = () => useMutate('views:set', [keys.crews, ['topology']])
+// Saves the project list order. The list reorders at once and rolls back if the save fails.
+export function useReorderCrews() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (crewIds: number[]) => call('crews:reorder', crewIds),
+    onMutate: async (crewIds) => {
+      await qc.cancelQueries({ queryKey: keys.crews })
+      const before = qc.getQueryData<Crew[]>(keys.crews)
+      if (before) qc.setQueryData<Crew[]>(keys.crews, crewIds.flatMap((id) => before.filter((c) => c.id === id)))
+      return { before }
+    },
+    onError: (_e, _ids, ctx) => ctx?.before && qc.setQueryData(keys.crews, ctx.before),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.crews }),
+  })
+}
 
 export const useIndexStatus = (crewId: number | null) =>
   useQuery({ queryKey: keys.index(crewId ?? -1), queryFn: () => call('index:status', crewId!), enabled: crewId != null })

@@ -1,7 +1,10 @@
 import { app, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { consoleLog, isConsoleSource } from '../core/console'
+import { stopOwnProcess } from '../core/proc'
 import { ipcErrorOf, type Operant } from '../core/operant'
 import { CORE_CHANNELS, encodeIpcError, type IpcApi, type IpcEventName, type IpcEvents, type MainChannel } from '../shared/ipc'
 import { isTrustedSender, type AppOrigin } from './guard'
+import { createMedia } from './media'
 import type { createUpdater } from './updater'
 
 type MainHandlers = { [C in MainChannel]: (...a: Parameters<IpcApi[C]>) => ReturnType<IpcApi[C]> | Promise<ReturnType<IpcApi[C]>> }
@@ -29,6 +32,7 @@ export function registerIpc(
     })
   }
 
+  const media = createMedia(operant)
   const mainHandlers: MainHandlers = {
     'app:pickFolder': async () => {
       const win = getWindow()
@@ -36,9 +40,15 @@ export function registerIpc(
       const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
       return res.canceled ? null : (res.filePaths[0] ?? null)
     },
+    'shell:openFolder': async (crewId) => {
+      const crew = (await operant.handlers['crews:list']()).find((c) => c.id === crewId)
+      if (!crew) throw new Error(encodeIpcError('NOT_FOUND', `Crew ${String(crewId)} not found`))
+      const failure = await shell.openPath(crew.folder)
+      if (failure) throw new Error(encodeIpcError('BAD_ARGS', failure))
+    },
     'app:info': () => ({ version: app.getVersion(), platform: process.platform }),
     'app:openExternal': (url) => {
-      if (/^https:\/\//.test(url)) void shell.openExternal(url)
+      if (/^(https?:\/\/|mailto:)/i.test(url)) void shell.openExternal(url)
     },
     'update:status': () => updater.status,
     'update:check': async () => {
@@ -46,6 +56,12 @@ export function registerIpc(
       return updater.status
     },
     'update:install': () => updater.installNow(),
+    'console:list': (source) => consoleLog.list({ source: isConsoleSource(source) ? source : undefined }),
+    'console:clear': (source) => consoleLog.clear(isConsoleSource(source) ? source : undefined),
+    'console:processes': () => consoleLog.processes(),
+    'console:stop': (pid) => Number.isInteger(pid) && stopOwnProcess(pid),
+    'media:state': () => media.state,
+    'media:command': (cmd) => media.command(cmd),
   }
   for (const [channel, handler] of Object.entries(mainHandlers)) {
     ipcMain.handle(channel, (e, ...args: unknown[]) => {
@@ -66,10 +82,18 @@ export function registerIpc(
   forward('usage')
   forward('caps')
   forward('message')
+  forward('run')
+  forward('run:agents')
+  forward('discord:status')
+  forward('discord:pairing')
   forward('unread')
   forward('job')
   forward('purge')
   forward('settings')
+  media.on('media:state', (s) => push(getWindow(), 'media:state', s))
+  media.on('media:timeline', (t) => push(getWindow(), 'media:timeline', t))
+  media.on('media:art', (a) => push(getWindow(), 'media:art', a))
+  consoleLog.onLine((line) => push(getWindow(), 'console:line', line))
 }
 
 export function push<E extends IpcEventName>(win: BrowserWindow | null, name: E, payload: IpcEvents[E]): void {

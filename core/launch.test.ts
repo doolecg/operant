@@ -48,7 +48,7 @@ const posixCtx: LaunchContext = {
 
 function presetOf(builtin: string, id = 1): Preset {
   const p = BUILTIN_PRESETS.find((b) => b.builtin === builtin)!
-  return { ...p, id, updatedAt: 0 }
+  return { ...p, skills: [], hindsight: true, codegraph: true, mcpServers: ['codegraph', 'hindsight'], id, updatedAt: 0 }
 }
 
 function operatorOf(preset: Preset, id = 7, over: Partial<Operator> = {}): Operator {

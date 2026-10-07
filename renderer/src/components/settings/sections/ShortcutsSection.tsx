@@ -8,9 +8,10 @@ import { useSaveSettings, useSettings } from '@/lib/queries'
 import { KeyRecorder, Row } from '../parts'
 
 const GROUPS: Array<{ title: string; ids: KeyAction[] }> = [
-  { title: 'Crews', ids: ['newCrew', 'addSquad', 'indexCrew', 'openSettings'] },
-  { title: 'Views', ids: ['viewCards', 'viewList', 'viewGraph', 'viewTiles'] },
-  { title: 'Tabs', ids: ['tabActivity', 'tabJobs', 'tabMessages', 'tabCost'] },
+  { title: 'Crews', ids: ['newCrew', 'indexCrew', 'openSettings', 'toggleConsole'] },
+  { title: 'Project actions', ids: ['newShell', 'openInIde', 'toggleSidebar'] },
+  { title: 'View', ids: ['zoomIn', 'zoomOut', 'zoomReset'] },
+  { title: 'Media (Windows)', ids: ['mediaPlayPause', 'mediaNext', 'mediaPrev', 'mediaShuffle'] },
 ]
 
 const labelOf = (id: KeyAction) => KEY_ACTIONS.find((a) => a.id === id)?.label ?? id

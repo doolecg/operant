@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import type { CoreChannel, IpcApi, IpcEvents } from '../shared/ipc'
 import { DEFAULT_SETTINGS, mergeSettings, sanitizeSettings, type Settings } from '../shared/settings'
 import type {
   AgentKind,
+  BudgetConfig,
+  BudgetStatus,
   CapProgress,
   CapStatus,
   ChangePlan,
@@ -22,6 +24,14 @@ import type {
   OperatorStatus,
   Preset,
   PresetPatch,
+  ExportText,
+  ImportSource,
+  Run,
+  SeatFields,
+  UsageQuery,
+  UsageView,
+  TeamLimits,
+  TeamPatch,
   ScratchStatus,
   ScratchTerminal,
 } from '../shared/types'
@@ -47,13 +57,41 @@ import {
   type LaunchWriter,
   type ShellKind,
 } from './launch'
+import { ClaudeAdapter, MasterRegistry } from './master'
+import { createOpenCodeAdapter } from './opencode'
 import { MessageBus, MessageError, type MessageNotice } from './messages'
 import { NudgeScheduler, type NudgeAction, type NudgeOperatorState } from './nudge'
+import { DiscordError, DiscordManager, scrubSecrets, tokenRef } from './discord'
+import { claudeFrontDeskModel, type FrontDeskModel } from './discord-frontdesk'
+import { createDiscordJsGateway, type GatewayFactory } from './discord-gateway'
+import { MemorySecretStore, type SecretStore } from './discord-secrets'
+import { RunError, RunManager, cleanLimits, cleanSeats } from './runs'
+import { SubagentReader } from './agents'
+import { cliExplorer } from './brief'
+import { HindsightService, setSharedBanks } from './hindsight'
+import { generateApiKey, listAdapters } from './hindsight-net'
+import { McpError, McpService } from './mcp'
+import { RunServices } from './runservices'
+import { LearnError, LearnService, claudeLearnModel, type LearnModel } from './learn'
+import { LessonsDb } from './lessons-store'
+import { realGit } from './writeback'
+import { filesFromTags, refreshTrackerJob } from './tracker'
 import { Purger, type PurgeEvent } from './purge'
 import type { SessionKey, SessionManager } from './sessions'
 import type { Store } from './store'
 import { JsonlTail, parseLine, transcriptPath } from './transcripts'
+import { listModels } from './models'
+import { RunTransitionError } from './store'
 import { UsageTracker, isColdTurn, type CapDecision } from './usage'
+import { BUDGETS_KEY, BudgetMonitor, mergeBudgets, sanitizeBudgets, type BudgetDecision } from './usage-budgets'
+import { exportView } from './usage-export'
+import { UsageIngest, type RunSource } from './usage-ingest'
+import { cleanFilter, jobUsage, queryUsage, querySeries } from './usage-query'
+import { applyRead, exportBundle, previewRead, readSource, type ImportDeps } from './import'
+import { ProviderMonitor } from './providers'
+import { ProjectGroups } from './groups'
+import { gitChanges, listIdes, openInIde } from './projecttools'
+import { killAllOwn } from './proc'
 
 type Handlers = { [C in CoreChannel]: (...args: Parameters<IpcApi[C]>) => ReturnType<IpcApi[C]> | Promise<Awaited<ReturnType<IpcApi[C]>>> }
 
@@ -128,11 +166,39 @@ export interface OperantOptions {
   nudge?: NudgeScheduler
   cliServer?: (collab: Collab) => CliAccess
   scheduler?: Scheduler
+  // Master adapters by CLI; the Claude adapter is registered when none is given.
+  masters?: MasterRegistry
+  runs?: RunManager
+  // Discord: where bot tokens are kept (the OS keychain in the app), the connection and the front desk model.
+  discord?: { secrets?: SecretStore; gateway?: GatewayFactory; frontDesk?: FrontDeskModel }
+  // The seeded brief, subagent reader and write-back around jobs; real services when not given.
+  runServices?: RunServices
+  // The learning loop (lessons from finished jobs); the real one when not given.
+  learn?: LearnService
+  // The cheap model the learn step asks; Claude Haiku when not given.
+  learnModel?: LearnModel
+  mcp?: McpService
+  // Reads job transcripts into usage and follows the Discord front desk; real ones when not given.
+  ingest?: UsageIngest
+  // Plan limits and provider usage; real pollers when not given.
+  providers?: ProviderMonitor
+  // File pickers (the app supplies Electron's); without them `usage:export` and `data:exportFile` refuse.
+  fileDialogs?: FileDialogs
+  // Where Operant 2.8.2 kept its data and the clock/files import reads with (tests).
+  importDeps?: ImportDeps
+}
+
+export interface FileDialogs {
+  save(suggestedName: string, filter: { name: string; extensions: string[] }): Promise<string | null>
+  open(filter: { name: string; extensions: string[] }): Promise<string | null>
 }
 
 const HOUR = 60 * 60 * 1000
 // Transcripts are polled rather than watched: fs.watch is unreliable across platforms for appends.
 const USAGE_POLL_MS = 2_000
+// Job and front-desk transcripts are read at a slower pace: their agents write in bursts and many files are open.
+const RUN_USAGE_POLL_MS = 10_000
+const PROVIDER_TICK_MS = 30_000
 const NUDGE_TICK_MS = 1_000
 const JOB_SWEEP_MS = 30_000
 const EXIT_WAIT_MS = 15_000
@@ -177,6 +243,13 @@ export class OperantError extends Error {
   }
 }
 
+// Where the Hindsight API keys live in the secret store; the settings never hold them.
+const HINDSIGHT_KEY = { shared: 'hindsight-shared-key', remote: 'hindsight-remote-key' } as const
+const slotOf = (slot: unknown): keyof typeof HINDSIGHT_KEY => {
+  if (slot === 'shared' || slot === 'remote') return slot
+  throw new OperantError('BAD_ARGS', 'Key slot must be shared or remote')
+}
+
 const bad = (message: string) => new OperantError('BAD_ARGS', message)
 const notFound = (message: string) => new OperantError('NOT_FOUND', message)
 const conflict = (message: string) => new OperantError('CONFLICT', message)
@@ -186,6 +259,10 @@ export function ipcErrorOf(err: unknown): { code: IpcErrorCode; message: string 
   if (err instanceof OperantError) return { code: err.code, message: err.message }
   if (err instanceof JobError || err instanceof MessageError) return { code: err.code, message: err.message }
   if (err instanceof LaunchError) return { code: 'BAD_ARGS', message: err.message }
+  if (err instanceof DiscordError) return { code: err.code, message: err.message }
+  if (err instanceof LearnError) return { code: err.code, message: err.message }
+  if (err instanceof RunError) return { code: err.code === 'LIMIT' ? 'CONFLICT' : err.code, message: err.message }
+  if (err instanceof RunTransitionError) return { code: 'CONFLICT', message: err.message }
   const message = err instanceof Error ? err.message : String(err)
   if (err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError) return { code: 'INTERNAL', message }
   if (/UNIQUE constraint failed/i.test(message)) return { code: 'CONFLICT', message: 'That name is already in use' }
@@ -256,9 +333,21 @@ export class Operant extends EventEmitter<PushEvents> {
   readonly purger: Purger
   readonly nudge: NudgeScheduler
   readonly collab: Collab
+  readonly runs: RunManager
+  readonly discord: DiscordManager
+  private readonly secrets: SecretStore
+  private readonly hindsight: HindsightService
+  readonly runServices: RunServices
+  readonly learn: LearnService
+  readonly mcp: McpService
+  readonly masters: MasterRegistry
+  readonly ingest: UsageIngest
+  readonly providers: ProviderMonitor
+  readonly budgets: BudgetMonitor
   private readonly store: Store
   private readonly sessions: SessionManager
   private readonly indexes: CrewIndexes
+  private readonly groups: ProjectGroups
   private readonly pluginDir: string
   private readonly now: () => number
   private readonly transcriptFile: (cwd: string, sessionId: string) => string
@@ -266,6 +355,8 @@ export class Operant extends EventEmitter<PushEvents> {
   private readonly cli: CliAccess | null
   private readonly scheduler: Scheduler
   private readonly timers: unknown[] = []
+  // The longest a quit waits on any one step (Discord, the CLI socket, killing processes).
+  shutdownStepMs = 3000
   // Operators whose session Operant started and has not seen exit.
   private readonly live = new Set<number>()
   private readonly contexts = new Map<number, OperatorContext>()
@@ -277,6 +368,9 @@ export class Operant extends EventEmitter<PushEvents> {
   // Transcript followers of running Claude scratch terminals.
   private readonly scratchFeeds = new Map<number, ScratchFeed>()
   private settings: Settings
+  private budgetConfig: BudgetConfig
+  private readonly fileDialogs: FileDialogs | undefined
+  private readonly importDeps: ImportDeps
 
   constructor(opts: OperantOptions) {
     super()
@@ -284,18 +378,39 @@ export class Operant extends EventEmitter<PushEvents> {
     this.store = store
     this.sessions = sessions
     this.indexes = indexes
+    this.groups = new ProjectGroups(store.db)
     this.pluginDir = opts.pluginDir
     this.now = opts.now ?? Date.now
     this.transcriptFile = opts.transcriptFile ?? ((cwd, id) => transcriptPath(cwd, id))
     this.launch = opts.launch ?? {}
     this.scheduler = opts.scheduler ?? realScheduler
     this.settings = sanitizeSettings(store.getJson('settings'))
+    this.budgetConfig = sanitizeBudgets(store.getJson(BUDGETS_KEY))
+    this.fileDialogs = opts.fileDialogs
+    this.importDeps = opts.importDeps ?? {}
 
     this.jobs = opts.jobs ?? new JobEngine(store, this.now, () => this.jobSettings(), (n) => this.onJobNotice(n))
     this.messages = opts.messages ?? new MessageBus({ store, now: this.now, emit: (n) => this.onMessageNotice(n) })
     this.usage =
       opts.usage ??
       new UsageTracker({ store, now: this.now, config: this.usageConfig(), currentJob: (id) => this.doingJob(id) })
+    this.ingest = opts.ingest ?? new UsageIngest({ store })
+    this.providers =
+      opts.providers ??
+      new ProviderMonitor({
+        store,
+        now: this.now,
+        onAlert: (a) => this.log('provider', `${a.providerId === 'claude' ? 'Claude plan' : a.providerId}: ${a.windowId} is at ${Math.floor(a.usedPct)}% (alert at ${a.thresholdPct}%)`),
+      })
+    this.budgets = new BudgetMonitor({
+      now: this.now,
+      config: () => this.budgetConfig,
+      warnPct: () => this.settings.tokens.capWarnPct,
+      crewIds: () => store.listCrews().map((c) => c.id),
+      projectSpend: (crewId, since) => store.spendSince(since, crewId),
+      liveRuns: () => store.listRuns().filter((r) => r.status === 'working' || r.status === 'needs-you').map((r) => ({ id: r.id, crewId: r.crewId })),
+      jobSpend: (runId) => Number((store.db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS t FROM usage WHERE run_id = ?').get(runId) as { t: number }).t),
+    })
     this.purger =
       opts.purger ??
       new Purger({
@@ -313,6 +428,100 @@ export class Operant extends EventEmitter<PushEvents> {
       capPaused: (id) => this.usage.caps.isPaused(id),
       onError: (err) => this.log('error', `CLI request failed: ${err instanceof Error ? err.message : 'unexpected error'}`),
     })
+    this.masters = opts.masters ?? new MasterRegistry()
+        .register('claude', new ClaudeAdapter({ supported: opts.launch?.supported, userHooks: () => this.settings.runs.useClaudeHooks }))
+        .register('opencode', createOpenCodeAdapter())
+    this.mcp =
+      opts.mcp ??
+      new McpService({
+        log: (message) => this.log('mcp', message),
+        builtin: async (name) => {
+          if (name === 'codegraph') {
+            const ok = onPath('codegraph', this.launch.baseEnv ?? process.env, process.platform)
+            return { ok, error: ok ? undefined : 'the codegraph CLI is not on PATH' }
+          }
+          const h = await this.runServices.hindsightStatus()
+          return { ok: h.state === 'running', error: h.detail }
+        },
+      })
+    const secrets = opts.discord?.secrets ?? new MemorySecretStore()
+    this.secrets = secrets
+    // Shared mode sends and requires the shared key; remote sends the remote key; local sends none.
+    const hindsight = new HindsightService({
+      url: () => (this.settings.hindsight.mode === 'remote' ? this.settings.hindsight.url : ''),
+      lan: () => {
+        const h = this.settings.hindsight
+        return h.mode === 'lan' ? { host: h.bindHost, port: h.port, openBind: h.openBind } : null
+      },
+      key: () => (this.settings.hindsight.mode === 'local' ? null : secrets.get(HINDSIGHT_KEY[this.settings.hindsight.mode === 'lan' ? 'shared' : 'remote'])),
+      llmEnv: () => ({ HINDSIGHT_API_LLM_PROVIDER: 'claude-code' }),
+    })
+    this.hindsight = hindsight
+    this.learn =
+      opts.learn ??
+      new LearnService({
+        store,
+        db: new LessonsDb(store.db, this.now),
+        hindsight,
+        git: realGit,
+        model: opts.learnModel ?? claudeLearnModel(opts.launch?.supported),
+        settings: () => this.settings.learn,
+        log: (message, crewId) => this.log('learn', message, null, crewId || null),
+      })
+    this.runServices =
+      opts.runServices ??
+      new RunServices({
+        store,
+        hindsight,
+        lessons: (run, symbols) => this.learn.forBrief(run.crewId, run.task, symbols),
+        learn: (run) => this.learn.onRunFinished(run),
+        explorer: cliExplorer(),
+        git: realGit,
+        indexStatus: (folder) => indexes.status(folder),
+        reindex: (folder) =>
+          indexes.status(folder).initialized ? indexes.index(folder) : Promise.reject(new Error('this project has no CodeGraph index yet')),
+        reader: new SubagentReader({ store, now: this.now }),
+        onAgents: (run) => this.emit('run:agents', { crewId: run.crewId, runId: run.id }),
+        cliAvailable: () => onPath('codegraph', this.launch.baseEnv ?? process.env, process.platform),
+        log: (message, crewId) => this.log('job', message, null, crewId),
+        mcp: this.mcp,
+        mcpDir: join(this.launch.launchDir ?? join(tmpdir(), 'operant2', 'launch'), 'mcp'),
+      })
+    this.runs =
+      opts.runs ??
+      new RunManager({
+        store,
+        adapters: this.masters,
+        now: this.now,
+        brief: this.runServices.brief,
+        mcp: this.runServices.mcpLaunch,
+        onSession: (run, sessionId) => {
+          this.noteRunSession(run, sessionId)
+          this.runServices.onSession(run, sessionId)
+        },
+        onFinished: async (run) => {
+          const r = await this.runServices.onFinished(run)
+          this.finishRunUsage(run)
+          this.trackerJob(run.crewId, run, filesFromTags(r?.tags))
+          return r
+        },
+        hold: (run) => this.runHold(run.crewId),
+        runTokens: (run) => this.runTokens(run.id),
+        onChange: (n) => this.emit('run', n),
+        onError: (err) => this.log('error', `Job runner: ${err instanceof Error ? err.message : String(err)}`),
+      })
+    this.discord = new DiscordManager({
+      store,
+      runs: this.runs,
+      secrets,
+      gateway: opts.discord?.gateway ?? createDiscordJsGateway,
+      frontDesk: opts.discord?.frontDesk ?? claudeFrontDeskModel(opts.launch?.supported),
+      now: this.now,
+      log: (message, crewId) => this.log('discord', scrubSecrets(message), null, crewId ?? null),
+      onHealth: (h) => this.emit('discord:status', h),
+      onPairing: (botId) => this.emit('discord:pairing', { botId }),
+    })
+    this.on('run', (n) => this.discord.onRunChange(n))
     this.cli = opts.cliServer?.(this.collab) ?? null
     this.applySettings()
 
@@ -334,18 +543,25 @@ export class Operant extends EventEmitter<PushEvents> {
 
     const all: Handlers = {
       ...this.crewHandlers(),
+      ...this.groupHandlers(),
       ...this.squadHandlers(),
       ...this.operatorHandlers(),
       ...this.masterHandlers(),
       ...this.presetHandlers(),
+      ...this.teamHandlers(),
+      ...this.modelHandlers(),
+      ...this.runHandlers(),
+      ...this.discordHandlers(),
       ...this.jobHandlers(),
       ...this.linkHandlers(),
       ...this.messageHandlers(),
       ...this.viewHandlers(),
       ...this.scratchHandlers(),
       ...this.usageHandlers(),
+      ...this.moveHandlers(),
       ...this.graphHandlers(),
       ...this.miscHandlers(),
+      ...this.mcpHandlers(),
     }
     // Every refusal leaves core as an OperantError with a code.
     const wrapped: Record<string, (...args: unknown[]) => unknown> = {}
@@ -363,6 +579,12 @@ export class Operant extends EventEmitter<PushEvents> {
   }
 
   // Handler groups
+
+  private requireRun(runId: number): Run {
+    const run = typeof runId === 'number' ? this.store.getRun(runId) : null
+    if (!run) throw notFound(`Job ${String(runId)} not found`)
+    return run
+  }
 
   private requireCrew(crewId: number): Crew {
     const crew = typeof crewId === 'number' ? this.store.getCrew(crewId) : null
@@ -415,9 +637,32 @@ export class Operant extends EventEmitter<PushEvents> {
           next.folder = patch.folder.trim()
         }
         if (patch.pmId !== undefined) next.pmId = patch.pmId
+        if (patch.discordChannels !== undefined) {
+          if (!Array.isArray(patch.discordChannels) || patch.discordChannels.some((c) => typeof c !== 'string' || !/^\d{5,25}$/.test(c.trim()))) {
+            throw bad('Discord channel ids are numbers of 5 to 25 digits')
+          }
+          next.discordChannels = [...new Set(patch.discordChannels.map((c) => c.trim()))]
+        }
+        if (patch.trackerFile !== undefined) {
+          const f = typeof patch.trackerFile === 'string' ? patch.trackerFile.trim().replace(/\\/g, '/') : null
+          if (f == null || f.length > 300 || isAbsolute(f) || /^[a-z]:/i.test(f) || f.split('/').includes('..')) {
+            throw bad('The tracker file is a path inside the project folder')
+          }
+          next.trackerFile = f
+        }
+        if (patch.trackerJobs !== undefined) next.trackerJobs = patch.trackerJobs === true
         const updated = store.updateCrew(crewId, next)
         this.log('crew', `Crew ${updated.name} updated`, null, crewId)
         return updated
+      },
+      'crews:trackerNow': (crewId) => {
+        const crew = this.requireCrew(crewId)
+        if (!crew.trackerFile) throw bad('Set a tracker file for this project first')
+        return refreshTrackerJob(this.jobs, crew, null, [])
+      },
+      'crews:reorder': (crewIds) => {
+        if (!Array.isArray(crewIds) || crewIds.some((id) => typeof id !== 'number')) throw bad('The order must be a list of crew ids')
+        return store.reorderCrews(crewIds)
       },
       'crews:counts': (crewId) => this.crewCounts(this.requireCrew(crewId).id),
       'crews:delete': async (crewId) => {
@@ -437,6 +682,40 @@ export class Operant extends EventEmitter<PushEvents> {
         this.log('crew', `Crew ${crew.name} deleted`)
         return counts
       },
+    }
+  }
+
+  private groupHandlers(): Group<'groups'> & Group<'ide'> & Group<'git'> {
+    const store = this.store
+    const groups = this.groups
+    const ids = (v: unknown, what: string): number[] => {
+      if (!Array.isArray(v) || v.some((id) => typeof id !== 'number')) throw bad(`${what} must be a list of ids`)
+      return v
+    }
+    return {
+      'groups:list': () => groups.list(),
+      'groups:create': (name) => {
+        const group = groups.create(name)
+        this.log('crew', `Group ${group.name} created`)
+        return group
+      },
+      'groups:rename': (groupId, name) => groups.rename(groupId, name),
+      'groups:delete': (groupId) => {
+        const group = groups.get(groupId)
+        groups.delete(groupId)
+        this.log('crew', `Group ${group.name} removed; its projects are back in the list`)
+      },
+      'groups:collapse': (groupId, collapsed) => groups.setCollapsed(groupId, collapsed === true),
+      'groups:reorder': (groupIds) => groups.reorder(ids(groupIds, 'The order')),
+      'groups:move': (crewId, groupId, beforeCrewId) => {
+        this.requireCrew(crewId)
+        if (groupId !== null && typeof groupId !== 'number') throw bad('The group must be an id or null')
+        store.transaction(() => groups.move(crewId, groupId, typeof beforeCrewId === 'number' ? beforeCrewId : undefined))
+        return store.listCrews()
+      },
+      'ide:list': () => listIdes(this.settings.ide.custom),
+      'ide:open': (crewId, ide) => openInIde(this.requireCrew(crewId).folder, ide ?? this.settings.ide.default, this.settings.ide.custom),
+      'git:changes': (crewId) => gitChanges(this.requireCrew(crewId).folder),
     }
   }
 
@@ -538,6 +817,14 @@ export class Operant extends EventEmitter<PushEvents> {
     const checkPreset = (p: Partial<LaunchSettings> & { name?: unknown; roleText?: unknown }): void => {
       validateLaunchSettings(launchFields(p as Record<string, unknown>))
       if (p.roleText !== undefined) cleanRoleText(p.roleText)
+      const seat = p as Partial<SeatFields>
+      if (seat.skills !== undefined && (!Array.isArray(seat.skills) || seat.skills.length > 100 || seat.skills.some((s) => typeof s !== 'string' || !s.trim() || s.length > NAME_MAX))) {
+        throw bad('Skills must be a list of names')
+      }
+      for (const k of ['hindsight', 'codegraph'] as const) if (seat[k] !== undefined && typeof seat[k] !== 'boolean') throw bad(`${k} must be on or off`)
+      if (seat.mcpServers !== undefined && (!Array.isArray(seat.mcpServers) || seat.mcpServers.length > 100 || seat.mcpServers.some((n) => typeof n !== 'string' || !/^[A-Za-z0-9_. :-]{1,100}$/.test(n)))) {
+        throw bad('MCP servers must be a list of server names')
+      }
     }
     return {
       'presets:list': () => store.listPresets(),
@@ -614,12 +901,120 @@ export class Operant extends EventEmitter<PushEvents> {
         const operator = this.requireOperator(operatorId)
         const preset = operator.presetId == null ? null : store.getPreset(operator.presetId)
         if (!preset) throw bad('This operator has no preset to revert to')
-        const { id: _i, builtin: _b, name: _n, roleText: _r, updatedAt: _u, ...launch } = preset
+        const { id: _i, builtin: _b, name: _n, roleText: _r, updatedAt: _u, skills: _s, hindsight: _h, codegraph: _c, mcpServers: _m, ...launch } = preset
         // Through applyChange, so a running operator restarts when the plan says so.
         const { operator: after } = await this.applyChange(operatorId, { ...launch, roleText: null })
         this.log('operator', `${store.operatorAddress(operatorId)} reverted to preset ${preset.name}`, operatorId)
         return after
       },
+    }
+  }
+
+  private teamHandlers(): Group<'teams'> {
+    const store = this.store
+    const requireTeam = (teamId: number) => {
+      const team = typeof teamId === 'number' ? store.getTeam(teamId) : null
+      if (!team) throw notFound(`Team ${String(teamId)} not found`)
+      return team
+    }
+    const rules = (v: unknown): string => {
+      if (typeof v !== 'string') throw bad('Rules must be text')
+      if (v.length > ROLE_TEXT_MAX) throw bad(`Rules are longer than ${ROLE_TEXT_MAX} characters`)
+      return v
+    }
+    return {
+      'teams:list': () => store.listTeams(),
+      'teams:create': (input) => {
+        const team = store.createTeam({
+          name: cleanName(input.name, 'The team name'),
+          seats: input.seats === undefined ? [] : cleanSeats(store, input.seats),
+          limits: cleanLimits(input.limits) as TeamLimits,
+          rules: input.rules === undefined ? '' : rules(input.rules),
+        })
+        this.log('team', `Team ${team.name} created`)
+        return team
+      },
+      'teams:update': (teamId, patch) => {
+        requireTeam(teamId)
+        const next: TeamPatch = {}
+        if (patch.name !== undefined) next.name = cleanName(patch.name, 'The team name')
+        if (patch.seats !== undefined) next.seats = cleanSeats(store, patch.seats)
+        if (patch.limits !== undefined) next.limits = cleanLimits(patch.limits) as TeamLimits
+        if (patch.rules !== undefined) next.rules = rules(patch.rules)
+        const team = store.updateTeam(teamId, next)
+        this.log('team', `Team ${team.name} updated`)
+        return team
+      },
+      'teams:delete': (teamId) => {
+        const team = requireTeam(teamId)
+        store.deleteTeam(teamId)
+        this.log('team', `Team ${team.name} deleted`)
+      },
+    }
+  }
+
+  private modelHandlers(): Group<'models'> {
+    return {
+      'models:list': (agent) => {
+        if (agent !== 'claude' && agent !== 'opencode') throw bad('agent must be claude or opencode')
+        return listModels(agent)
+      },
+    }
+  }
+
+  private discordHandlers(): Group<'discord'> {
+    const d = this.discord
+    return {
+      'discord:list': () => d.list(),
+      'discord:create': (input) => d.create(input),
+      'discord:update': (botId, patch) => d.update(botId, patch),
+      'discord:delete': (botId) => d.delete(botId),
+      'discord:setToken': (botId, token) => d.setToken(botId, token),
+      'discord:clearToken': (botId) => d.clearToken(botId),
+      'discord:connect': (botId) => d.connect(botId),
+      'discord:disconnect': (botId) => d.disconnect(botId),
+      'discord:health': () => d.health(),
+      'discord:test': (botId) => d.test(botId),
+      'discord:pairings': (botId) => d.pairingsOf(botId),
+      'discord:approvePairing': (botId, code) => d.approvePairing(botId, code),
+      'discord:denyPairing': (botId, code) => d.denyPairing(botId, code),
+    }
+  }
+
+  private runHandlers(): Group<'runs'> {
+    const store = this.store
+    const requireRun = (runId: number) => {
+      const run = typeof runId === 'number' ? store.getRun(runId) : null
+      if (!run) throw notFound(`Job ${String(runId)} not found`)
+      return run
+    }
+    return {
+      'runs:list': (crewId) => store.listRuns(this.requireCrew(crewId).id),
+      'runs:get': (runId) => requireRun(runId),
+      'runs:create': (input) => {
+        const run = this.runs.submit(input)
+        this.log('job', `JOB#${run.id} ${run.status}: ${run.task.slice(0, 80)}`, null, run.crewId)
+        return run
+      },
+      'runs:stop': async (runId) => {
+        requireRun(runId)
+        const run = await this.runs.stop(runId)
+        this.log('job', `JOB#${run.id} stopped`, null, run.crewId)
+        return run
+      },
+      'runs:agents': (runId) => store.listJobAgents(requireRun(runId).id),
+      'runs:update': (runId, patch) => {
+        requireRun(runId)
+        return this.runs.update(runId, patch)
+      },
+      'runs:delete': (runId) => {
+        const run = requireRun(runId)
+        this.runs.remove(runId)
+        this.log('job', `JOB#${run.id} deleted`, null, run.crewId)
+      },
+      'runs:agentLog': (runId, agentId) => this.runServices.agentLog(requireRun(runId).id, agentId),
+      'runs:getLimit': () => this.runs.concurrency,
+      'runs:setLimit': (limit) => this.runs.setConcurrency(limit),
     }
   }
 
@@ -812,6 +1207,7 @@ export class Operant extends EventEmitter<PushEvents> {
   private usageHandlers(): Group<'usage'> & Group<'caps'> & Group<'purge'> {
     const store = this.store
     return {
+      ...this.reportHandlers(),
       'usage:series': (crewId) => {
         // Last 24 hours in hourly buckets, oldest first.
         const since = Math.floor(this.now() / HOUR) * HOUR - 23 * HOUR
@@ -873,7 +1269,36 @@ export class Operant extends EventEmitter<PushEvents> {
     }
   }
 
-  private miscHandlers(): Group<'index'> & Group<'events'> & Group<'dashboard'> & Group<'settings'> {
+  private mcpHandlers(): Group<'mcp'> {
+    const folderOf = (crewId: number | null): string | null => (crewId == null ? null : this.requireCrew(crewId).folder)
+    // Refusals from the CLIs and config files reach the page as plain messages.
+    const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
+      try {
+        return await fn()
+      } catch (err) {
+        throw err instanceof McpError ? bad(err.message) : err
+      }
+    }
+    return {
+      'mcp:list': (crewId, refresh) => guard(() => (refresh ? this.mcp.list(folderOf(crewId)) : this.mcp.cached(folderOf(crewId)))),
+      'mcp:add': (crewId, input) => guard(() => this.mcp.add(folderOf(crewId), input)),
+      'mcp:update': (crewId, id, input) => guard(() => this.mcp.update(folderOf(crewId), id, input)),
+      'mcp:setEnabled': (crewId, id, enabled) => guard(() => this.mcp.setEnabled(folderOf(crewId), id, enabled === true)),
+      'mcp:remove': (crewId, id) => guard(() => this.mcp.remove(folderOf(crewId), id)),
+      'mcp:health': async () => {
+        const presets = new Map(this.store.listPresets().map((p) => [p.id, p]))
+        const needs = this.store.listTeams().flatMap((t) =>
+          t.seats.flatMap((s) => {
+            const p = presets.get(s.presetId)
+            return p && p.mcpServers.length ? [{ seat: p.name, servers: p.mcpServers }] : []
+          }),
+        )
+        return needs.length ? guard(() => this.mcp.down(needs, null)) : []
+      },
+    }
+  }
+
+  private miscHandlers(): Group<'health'> & Group<'hindsight'> & Group<'learn'> & Group<'index'> & Group<'events'> & Group<'dashboard'> & Group<'settings'> {
     const store = this.store
     const indexes = this.indexes
     return {
@@ -882,6 +1307,48 @@ export class Operant extends EventEmitter<PushEvents> {
         return crew ? indexes.status(crew.folder) : null
       },
       'index:run': (crewId) => this.runIndex(crewId),
+      'health:project': async (crewId) => {
+        const health = await this.runServices.health(this.requireCrew(crewId).id)
+        return health!
+      },
+      'hindsight:status': () => this.runServices.hindsightStatus(),
+      'learn:status': (crewId) => this.learn.status(crewId),
+      'learn:run': (runId) => this.learn.learnRun(runId),
+      'learn:lessons': (filter) => this.learn.lessons(filter),
+      'learn:editLesson': (id, patch) => this.learn.editLesson(id, patch),
+      'learn:mergeLessons': (keepId, mergeIds) => this.learn.mergeLessons(keepId, mergeIds),
+      'learn:setLessonStatus': (id, status) => this.learn.setLessonStatus(id, status),
+      'learn:moveLesson': (id, from, to) => this.learn.moveLesson(id, from, to),
+      'learn:hindsightEntries': (crewId, query) => this.learn.hindsightEntries(crewId, query),
+      'learn:memoryFiles': (crewId) => this.learn.memoryFiles(crewId),
+      'learn:drafts': (crewId, status) => this.learn.drafts(crewId).filter((d) => !status || d.status === status),
+      'learn:editDraft': (id, patch) => this.learn.editDraft(id, patch),
+      'learn:approveDraft': (id) => this.learn.approveDraft(id),
+      'learn:rejectDraft': (id) => this.learn.rejectDraft(id),
+      'learn:deleteDraft': (id) => this.learn.deleteDraft(id),
+      'hindsight:act': (action) => {
+        if (action !== 'start' && action !== 'stop' && action !== 'restart') throw new OperantError('BAD_ARGS', 'Action must be start, stop or restart')
+        return this.runServices.hindsightAct(action)
+      },
+      'hindsight:adapters': () => listAdapters(),
+      'hindsight:test': () => this.hindsight.test(),
+      'hindsight:keyState': () => ({ shared: this.secrets.get(HINDSIGHT_KEY.shared) !== null, remote: this.secrets.get(HINDSIGHT_KEY.remote) !== null }),
+      'hindsight:setKey': (slot, key) => {
+        const k = typeof key === 'string' ? key.trim() : ''
+        if (k.length < 8 || /\s/.test(k)) throw bad('An API key is at least 8 characters with no spaces')
+        this.secrets.set(HINDSIGHT_KEY[slotOf(slot)], k)
+        return { shared: this.secrets.get(HINDSIGHT_KEY.shared) !== null, remote: this.secrets.get(HINDSIGHT_KEY.remote) !== null }
+      },
+      'hindsight:clearKey': (slot) => {
+        this.secrets.delete(HINDSIGHT_KEY[slotOf(slot)])
+        return { shared: this.secrets.get(HINDSIGHT_KEY.shared) !== null, remote: this.secrets.get(HINDSIGHT_KEY.remote) !== null }
+      },
+      // The one time a key is shown: right after it is made, so it can be copied to the other machines.
+      'hindsight:generateKey': () => {
+        const key = generateApiKey()
+        this.secrets.set(HINDSIGHT_KEY.shared, key)
+        return key
+      },
       'events:recent': (limit) => store.recentEvents(limit),
       'dashboard:summary': () => {
         const crews = store.listCrews()
@@ -930,8 +1397,189 @@ export class Operant extends EventEmitter<PushEvents> {
       openJobs: count("SELECT COUNT(*) AS n FROM jobs WHERE crew_id = ? AND state <> 'done'"),
       messages: count('SELECT COUNT(*) AS n FROM messages WHERE crew_id = ?'),
       scratch: this.store.listScratch(crewId).length,
+      lessons: count('SELECT COUNT(*) AS n FROM lessons WHERE crew_id = ?'),
       spendUsd: this.store.spendSince(0, crewId),
     }
+  }
+
+  private reportHandlers(): Pick<Handlers, 'usage:report' | 'usage:timeseries' | 'usage:job' | 'usage:exportText' | 'usage:export'> {
+    const deps = () => ({ store: this.store, now: this.now })
+    const checkView = (view: UsageView): UsageView => {
+      if (!view || typeof view !== 'object') throw bad('Unknown view')
+      if (view.kind === 'job') this.requireRun(view.runId)
+      if (view.kind === 'report') return { kind: 'report', query: { ...view.query, filter: cleanFilter(view.query?.filter) } }
+      if (view.kind === 'series') return { kind: 'series', query: { ...view.query, filter: cleanFilter(view.query?.filter) } }
+      return view
+    }
+    const query = (q: UsageQuery): UsageQuery => ({ ...q, filter: cleanFilter(q?.filter) })
+    return {
+      'usage:report': (q) => queryUsage(deps(), query(q)),
+      'usage:timeseries': (q) => querySeries(deps(), { ...q, filter: cleanFilter(q?.filter) }),
+      'usage:job': (runId) => jobUsage(deps(), this.requireRun(runId).id),
+      'usage:exportText': (view, format) => exportView(deps(), checkView(view), format),
+      'usage:export': async (view, format) => ({ saved: await this.saveExport(exportView(deps(), checkView(view), format)) }),
+    }
+  }
+
+  private moveHandlers(): Group<'budgets'> & Group<'import'> & Group<'data'> & Group<'providers'> {
+    const bundleText = (): ExportText => ({
+      filename: `operant-export-${new Date(this.now()).toISOString().slice(0, 10)}.json`,
+      mime: 'application/json',
+      text: JSON.stringify(exportBundle(this.store, this.now()), null, 2),
+    })
+    return {
+      'budgets:get': () => this.budgetStatus(),
+      'budgets:set': (patch) => {
+        this.budgetConfig = mergeBudgets(this.budgetConfig, patch)
+        this.store.setJson(BUDGETS_KEY, this.budgetConfig)
+        this.checkBudgets()
+        this.runs.pumpAll()
+        return this.budgetStatus()
+      },
+      'budgets:resume': (target) => {
+        if (target?.scope === 'day') this.resetCap('daily')
+        else if (target?.scope === 'project') this.budgets.resume({ scope: 'project', crewId: this.requireCrew(target.crewId).id })
+        else if (target?.scope === 'job') this.budgets.resume({ scope: 'job', runId: this.requireRun(target.runId).id })
+        else throw bad('The target must be the day, a project or a job')
+        this.checkBudgets()
+        this.runs.pumpAll()
+        return this.budgetStatus()
+      },
+      'import:preview': (source) => previewRead(this.store, readSource(this.importSource(source), this.importDeps)),
+      'import:apply': (source) => {
+        const result = applyRead(this.store, readSource(this.importSource(source), this.importDeps))
+        if (result.applied) this.log('import', `Imported ${result.projects.add} projects, ${result.presets.add} presets and ${result.usage.add} usage rows from ${result.location}`)
+        return result
+      },
+      'import:pickFile': () => this.pickFile(),
+      'data:export': () => bundleText(),
+      'data:exportFile': async () => ({ saved: await this.saveExport(bundleText()) }),
+      'providers:status': () => this.providers.status(),
+      'providers:refresh': () => this.providers.refresh(true),
+    }
+  }
+
+  private importSource(source: ImportSource): ImportSource {
+    if (source?.kind === 'legacy') {
+      const dir = typeof source.dir === 'string' && source.dir.trim() ? { dir: source.dir.trim() } : {}
+      const rolesDir = typeof source.rolesDir === 'string' && source.rolesDir.trim() ? { rolesDir: source.rolesDir.trim() } : {}
+      return { kind: 'legacy', ...dir, ...rolesDir }
+    }
+    if (source?.kind === 'file' && typeof source.path === 'string' && source.path.trim()) return { kind: 'file', path: source.path.trim() }
+    throw bad('Choose Operant 2.8.2 data or an export file to import')
+  }
+
+  private async pickFile(): Promise<string | null> {
+    return (await this.fileDialogs?.open({ name: 'Operant export', extensions: ['json'] })) ?? null
+  }
+
+  // Writes export text to the path the user picked; null when they cancelled.
+  private async saveExport(out: ExportText): Promise<string | null> {
+    if (!this.fileDialogs) throw bad('This build cannot ask where to save: use the copy or download option')
+    const ext = out.filename.split('.').pop() ?? 'txt'
+    const path = await this.fileDialogs.save(out.filename, { name: ext.toUpperCase(), extensions: [ext] })
+    if (!path) return null
+    writeFileSync(path, out.text, 'utf8')
+    return path
+  }
+
+  // Run usage: sessions, ingest, budgets
+
+  private noteRunSession(run: Run, sessionId: string): void {
+    const crew = this.store.getCrew(run.crewId)
+    if (crew) this.store.setJson(`run.session.${run.id}`, { cli: run.masterCli, cwd: crew.folder, sessionId })
+  }
+
+  private runSource(runId: number): RunSource | null {
+    const v = this.store.getJson(`run.session.${runId}`) as Partial<RunSource> | undefined
+    return v && typeof v.sessionId === 'string' && typeof v.cwd === 'string' && (v.cli === 'claude' || v.cli === 'opencode') ? (v as RunSource) : null
+  }
+
+  // Reads the new transcript lines of every working job and of the front desk; re-checks the caps when spend came in.
+  pollRunUsage(): void {
+    let rows = 0
+    try {
+      for (const run of this.store.listRuns()) {
+        if (run.status !== 'working' && run.status !== 'needs-you') continue
+        const src = this.runSource(run.id)
+        if (src) rows += this.ingest.syncRun(run, src)
+      }
+      rows += this.ingest.syncFrontDesk()
+    } catch (err) {
+      this.log('error', `Job usage could not be read: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    if (rows > 0) this.usage.checkCaps()
+    this.checkBudgets()
+    this.runs.enforceTokenBudgets()
+    if (this.store.listRuns().some((r) => r.status === 'queued')) this.runs.pumpAll()
+  }
+
+  // Every token (input, output, cache) of the usage attributed to the run, as the job's usage view counts them.
+  private runTokens(runId: number): number {
+    const row = this.store.db
+      .prepare('SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_w5m + cache_w1h), 0) AS t FROM usage WHERE run_id = ?')
+      .get(runId) as { t: number }
+    return Number(row.t)
+  }
+
+  // The last read of a finished job, once its agent list is final.
+  // A finished run on a project with a tracker file opens (or extends) the project manager's "Update tracker" job.
+  private trackerJob(crewId: number, run: Run, files: string[]): void {
+    try {
+      const crew = this.store.getCrew(crewId)
+      if (!crew?.trackerFile || !crew.trackerJobs || !this.settings.collab.trackerJobs) return
+      refreshTrackerJob(this.jobs, crew, run, files)
+    } catch (err) {
+      this.log('error', `Tracker job: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  private finishRunUsage(run: Run): void {
+    const src = this.runSource(run.id)
+    if (!src || this.store.getJson(`run.usage.done.${run.id}`)) return
+    try {
+      this.ingest.syncRun(run, src)
+      this.ingest.forget(src)
+      this.store.setJson(`run.usage.done.${run.id}`, true)
+    } catch (err) {
+      this.log('error', `JOB#${run.id} usage could not be read: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    this.usage.checkCaps()
+    this.checkBudgets()
+  }
+
+  // Jobs that ended while Operant was closed (or before this version recorded their usage) are read once.
+  private backfillRunUsage(): void {
+    for (const run of this.store.listRuns()) if (run.status === 'done' || run.status === 'failed') this.finishRunUsage(run)
+  }
+
+  // Why a queued job of the project must wait: the daily budget or the project's / a job's cap (empty = it may start).
+  private runHold(crewId: number): string {
+    if (this.budgetConfig.pauseQueue && this.usage.caps.dailyPaused()) return 'The daily budget is reached'
+    return this.budgets.projectHeld(crewId)
+  }
+
+  private checkBudgets(): BudgetDecision[] {
+    const decisions = this.budgets.check()
+    for (const d of decisions) this.onBudget(d)
+    return decisions
+  }
+
+  private onBudget(d: BudgetDecision): void {
+    const crew = this.store.getCrew(d.crewId)
+    const label = d.scope === 'job' ? `JOB#${d.runId}` : `Project ${crew?.name ?? d.crewId}`
+    const money = `$${d.spentUsd.toFixed(2)} of $${d.capUsd.toFixed(2)}`
+    const stops = d.scope === 'job' && this.budgetConfig.stopJobAtCap
+    if (d.action === 'warn') this.log('budget', `${label} is at ${Math.floor(d.pct)}% of its budget (${money})`, null, d.crewId)
+    else this.log('budget', `${label} reached its budget (${money}); ${stops ? 'the job is stopped and ' : ''}queued jobs wait until it is raised or resumed`, null, d.crewId)
+    this.emit('caps', { action: d.action, scope: d.scope, operatorId: null, crewId: d.crewId, ...(d.runId !== undefined ? { runId: d.runId } : {}), spentUsd: d.spentUsd, capUsd: d.capUsd, pct: d.pct })
+    if (stops && d.runId !== undefined && d.action === 'pause') void this.runs.stop(d.runId, 'Stopped: the job reached its budget').catch(() => undefined)
+  }
+
+  private budgetStatus(): BudgetStatus {
+    const held = this.budgets.heldProjects().map((h) => ({ crewId: h.crewId as number | null, reason: h.reason }))
+    if (this.budgetConfig.pauseQueue && this.usage.caps.dailyPaused()) held.unshift({ crewId: null, reason: 'The daily budget is reached' })
+    return { config: this.budgetConfig, day: this.capStatus().daily, ...this.budgets.progress(), held }
   }
 
   private capStatus(): CapStatus {
@@ -962,6 +1610,36 @@ export class Operant extends EventEmitter<PushEvents> {
     return this.settings
   }
 
+  // Startup seeds from .env (loaded by main): a Discord token goes into the encrypted store for the one bot that has
+  // none, and the Hindsight URL and key fill settings that are still unset. Nothing already stored is overwritten.
+  seedFromEnv(env: NodeJS.ProcessEnv): void {
+    const token = (env.DISCORD_BOT_TOKEN ?? '').trim()
+    const bare = token ? this.store.listDiscordBots().filter((b) => !b.tokenRef || this.secrets.get(b.tokenRef) === null) : []
+    const bot = bare.length === 1 ? bare[0] : undefined
+    if (bot) {
+      try {
+        this.secrets.set(tokenRef(bot.id), token)
+        this.store.updateDiscordBot(bot.id, { tokenRef: tokenRef(bot.id) })
+        this.log('discord', 'Discord token from .env imported into the encrypted store; you can delete it from .env')
+      } catch {
+        this.log('discord', 'Discord token from .env could not be imported: the encrypted store is unavailable')
+      }
+    }
+    const url = (env.HINDSIGHT_URL ?? '').trim()
+    if (url && !this.settings.hindsight.url) {
+      const next = sanitizeSettings({ ...this.settings, hindsight: { ...this.settings.hindsight, mode: 'remote', url } })
+      if (next.hindsight.url) this.saveSettings(next)
+    }
+    const key = (env.HINDSIGHT_API_KEY ?? '').trim()
+    if (key && this.settings.hindsight.mode === 'remote' && this.secrets.get(HINDSIGHT_KEY.remote) === null) {
+      try {
+        this.secrets.set(HINDSIGHT_KEY.remote, key)
+      } catch {
+        this.log('hindsight', 'Hindsight key from .env could not be stored: the encrypted store is unavailable')
+      }
+    }
+  }
+
   // Lifecycle
 
   // Opens the CLI socket (a failure is logged, the timers start anyway), rebuilds the cap state from stored spend, sweeps once and starts the timers.
@@ -975,25 +1653,45 @@ export class Operant extends EventEmitter<PushEvents> {
         this.log('error', `The operant CLI socket could not be opened (${err instanceof Error ? err.name : 'unexpected error'}). Operators run without the operant CLI`)
       }
     }
+    void this.discord.start()
     this.usage.checkCaps()
     this.purgeSweep()
     const every = (fn: () => void, ms: number) => this.timers.push(this.scheduler.every(fn, ms))
+    this.runs.recover()
+    this.runServices.sweepStaleLaunchFiles()
+    this.backfillRunUsage()
     every(() => this.pollUsage(), USAGE_POLL_MS)
     every(() => this.nudgeTick(), NUDGE_TICK_MS)
     every(() => this.sweepJobs(), JOB_SWEEP_MS)
     every(() => this.purgeSweep(), HOUR)
+    every(() => this.pollRunUsage(), RUN_USAGE_POLL_MS)
+    // The monitor itself only asks a provider when its own interval (10 minutes) is due.
+    every(() => void this.providers.refresh().catch(() => undefined), PROVIDER_TICK_MS)
   }
 
   stopTimers(): void {
     for (const h of this.timers.splice(0)) this.scheduler.cancel(h)
   }
 
-  // Quit path: no more timers, every token revoked, the socket closed. Sessions are the caller's.
+  // Quit path: no more timers, jobs marked interrupted, every process Operant started killed by pid, every token
+  // revoked, the socket closed. No step can hold the quit for more than shutdownStepMs. Sessions are the caller's.
   async shutdown(): Promise<void> {
+    const bounded = async (work: () => Promise<unknown> | unknown): Promise<void> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const limit = new Promise<void>((resolve) => (timer = setTimeout(resolve, this.shutdownStepMs)))
+      try {
+        await Promise.race([Promise.resolve().then(work).catch(() => undefined), limit])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
     this.stopTimers()
+    await bounded(() => this.runs.interruptAll())
+    await bounded(() => killAllOwn(this.shutdownStepMs))
+    await bounded(() => this.discord.stop())
     if (this.cli) for (const id of this.live) this.cli.revokeToken(id)
     this.messages.close()
-    await this.cli?.close()
+    await bounded(() => this.cli?.close())
   }
 
   // Timers
@@ -1102,6 +1800,7 @@ export class Operant extends EventEmitter<PushEvents> {
     if (target === 'daily') this.usage.caps.resetDaily()
     else this.usage.caps.resetOperator(target)
     this.usage.checkCaps()
+    this.runs.pumpAll()
   }
 
   // Settings
@@ -1132,6 +1831,7 @@ export class Operant extends EventEmitter<PushEvents> {
     const { nudgeIdleSeconds, nudgeBatchSeconds } = this.settings.collab
     this.nudge.setConfig({ nudgeIdleSeconds, nudgeBatchSeconds })
     this.usage.setConfig(this.usageConfig())
+    setSharedBanks(this.settings.hindsight.mode !== 'local')
   }
 
   // Operators
@@ -1154,6 +1854,7 @@ export class Operant extends EventEmitter<PushEvents> {
   }
 
   private onExit(operatorId: number, exitCode: number): void {
+    this.learnFromConversation(operatorId)
     this.live.delete(operatorId)
     this.usage.detach(operatorId)
     this.cli?.revokeToken(operatorId)
@@ -1170,6 +1871,17 @@ export class Operant extends EventEmitter<PushEvents> {
     if (!this.store.getOperator(operatorId)) return
     this.setStatus(operatorId, exitCode === 0 ? 'stopped' : 'error')
     this.log('operator', `${this.store.operatorAddress(operatorId)} stopped${exitCode ? ` (exit ${exitCode})` : ''}`, operatorId)
+  }
+
+  // A project Master's conversation ended: the learn step reads its transcript. Never throws into the exit.
+  private learnFromConversation(operatorId: number): void {
+    try {
+      const op = this.store.getOperator(operatorId)
+      const crewId = this.store.crewIdOfOperator(operatorId)
+      if (op?.kind === 'master' && crewId != null && op.sessionId && !this.restarting.has(operatorId)) void this.learn.onConversationEnd(crewId, op.sessionId)
+    } catch {
+      // learning is a bonus
+    }
   }
 
   private launchContext(crewId: number, crewFolder: string, sessionId: string, preset: Preset | null): LaunchContext {

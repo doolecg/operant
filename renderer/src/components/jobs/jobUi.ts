@@ -1,4 +1,4 @@
-import type { Job, JobState, Operator } from '@shared/types'
+import type { Job, JobState } from '@shared/types'
 import { decodeIpcError } from '@shared/ipc'
 
 export const STATES: Array<{ state: JobState; label: string }> = [
@@ -13,10 +13,8 @@ export const stateLabel = (s: JobState) => STATES.find((x) => x.state === s)!.la
 
 export const errorText = (e: unknown): string => decodeIpcError(e).message
 
-export const operatorLabel = (operators: Operator[], id: number | null, none = 'Unassigned'): string => {
-  if (id == null) return none
-  return operators.find((o) => o.id === id)?.role ?? `operator ${id}`
-}
+// Jobs store only the assignee's id, so that is all a label can show.
+export const operatorLabel = (id: number | null, none = 'Unassigned'): string => (id == null ? none : `operator ${id}`)
 
 export const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 

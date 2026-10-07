@@ -55,6 +55,7 @@ describe('update', () => {
     expect(installKind({ platform: 'darwin' })).toBe('dmg')
     expect(installKind({ platform: 'linux', env: { APPIMAGE: '/a/O.AppImage' }, execPath: '/x' })).toBe('appimage')
     expect(installKind({ platform: 'linux', env: {}, execPath: '/opt/Operant 2/operant' })).toBe('deb')
+    expect(installKind({ platform: 'linux', env: {}, execPath: '/opt/Operant 3/operant' })).toBe('deb')
     expect(installKind({ platform: 'linux', env: {}, execPath: '/home/u/dev/electron' })).toBeNull()
   })
 
@@ -74,6 +75,26 @@ describe('update', () => {
     expect(name({ platform: 'linux', arch: 'x64', kind: 'deb' })).toBe('Operant2-2.0.1-linux-amd64.deb')
     expect(name({ platform: 'linux', arch: 'arm64', kind: 'deb' })).toBeUndefined()
     expect(name({ platform: 'linux', arch: 'x64', kind: null })).toBeUndefined()
+  })
+
+  it('matches assets by platform, architecture and extension, not by the file name prefix', () => {
+    const rel = {
+      tag_name: '3.0.0',
+      assets: [
+        'Operant3-3.0.0-windows-x64.msi',
+        'Operant3-3.0.0-mac-arm64.dmg',
+        'Operant3-3.0.0-linux-x86_64.AppImage',
+        'Operant3-3.0.0-linux-amd64.deb',
+      ].map(asset),
+    }
+    const name = (o: Parameters<typeof pickAsset>[1], assets = rel.assets) => pickAsset(assets, o)?.name
+    expect(name({ platform: 'win32', arch: 'x64', kind: 'msi' })).toBe('Operant3-3.0.0-windows-x64.msi')
+    expect(name({ platform: 'darwin', arch: 'arm64', kind: 'dmg' })).toBe('Operant3-3.0.0-mac-arm64.dmg')
+    expect(name({ platform: 'linux', arch: 'x64', kind: 'deb' })).toBe('Operant3-3.0.0-linux-amd64.deb')
+    // A release carrying both prefixes (compatibility copies) still resolves to one installer.
+    const both = [...['Operant2-3.0.0-windows-x64.msi'].map(asset), ...rel.assets]
+    expect(name({ platform: 'win32', arch: 'x64', kind: 'msi' }, both)).toBe('Operant2-3.0.0-windows-x64.msi')
+    expect(newer(rel.tag_name, '2.0.0')).toBe(true)
   })
 
   it('checks sizes and sha256 digests of downloads', async () => {
@@ -97,7 +118,7 @@ describe('update', () => {
     expect(shQuote("it's")).toBe(`'it'\\''s'`)
     const mac = macInstallScript({ pid: 42, dmg: '/tmp/O.dmg', bundle: '/Applications/Operant 2.app', log: '/tmp/l', relaunch: true })
     expect(mac).toContain('while kill -0 42')
-    expect(mac).toContain(`ditto "$mnt/Operant 2.app" "$bundle.new"`)
+    expect(mac).toContain(`ditto "$mnt/Operant 3.app" "$bundle.new"`)
     expect(mac).toContain(`bundle='/Applications/Operant 2.app'`)
     expect(mac).toMatch(/open "\$bundle"\nsay done$/)
     expect(macInstallScript({ pid: 1, dmg: 'd', bundle: 'b', log: 'l', relaunch: false })).not.toContain('open "$bundle"')

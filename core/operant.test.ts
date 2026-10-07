@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import type { IpcEvents } from '../shared/ipc'
 import type { IndexStatus, CrewIndexes } from './codegraph'
 import { CORE_CHANNELS } from '../shared/ipc'
 import { Operant, OperantError, type CliAccess, type Scheduler } from './operant'
+import { MemorySecretStore } from './discord-secrets'
 import type { Purger } from './purge'
 import { SessionManager, type Pty, type PtyFactory } from './sessions'
 import { Store } from './store'
@@ -124,6 +125,7 @@ describe('Operant', () => {
       transcriptFile: (_cwd, id) => join(transcripts, `${id}.jsonl`),
       cliServer: () => cli,
       scheduler,
+      learnModel: async () => '[]',
       launch: {
         platform: 'linux',
         launchDir: '/data/launch',
@@ -515,13 +517,41 @@ describe('Operant', () => {
       await timed.start()
       expect(cli.listened).toBe(1)
       expect(sweeps).toBe(1)
-      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 30_000, 3_600_000])
+      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 30_000, 3_600_000, 10_000, 30_000])
       scheduler.run(3_600_000)
       expect(sweeps).toBe(2)
       await timed.start() // idempotent
-      expect(scheduler.jobs).toHaveLength(4)
+      expect(scheduler.jobs).toHaveLength(6)
       timed.stopTimers()
       expect(scheduler.jobs.every((j) => j.cancelled)).toBe(true)
+    })
+
+    it('start() ends jobs left working by a crash and runs their finish step', async () => {
+      const crew = store.createCrew('a', '/a')
+      const run = store.createRun({ crewId: crew.id, task: 't', masterCli: 'claude' })
+      store.setRunStatus(run.id, 'working')
+      const finished: number[] = []
+      const runServices = { onFinished: async (r: { id: number }) => void finished.push(r.id), sweepStaleLaunchFiles: () => {} } as never
+      const o = build({ runServices })
+      await o.start()
+      await new Promise((r) => setTimeout(r, 0))
+      expect(store.getRun(run.id)!.status).toBe('failed')
+      expect(finished).toEqual([run.id])
+      o.stopTimers()
+    })
+
+    it('start() deletes stale MCP launch files', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'operant-launch-'))
+      const mcpDir = join(dir, 'mcp')
+      mkdirSync(mcpDir)
+      writeFileSync(join(mcpDir, 'run-20001-mcp.json'), '{"secret":1}')
+      writeFileSync(join(mcpDir, 'keep.txt'), 'x')
+      const o = build({ launch: { platform: 'linux', launchDir: dir, baseEnv: { PATH: '/usr/bin' }, writer: { mkdir: () => {}, writeFile: () => {} } } })
+      await o.start()
+      expect(existsSync(join(mcpDir, 'run-20001-mcp.json'))).toBe(false)
+      expect(existsSync(join(mcpDir, 'keep.txt'))).toBe(true)
+      o.stopTimers()
+      rmSync(dir, { recursive: true, force: true })
     })
 
     it('the 30 s sweep puts an expired lease back to todo', async () => {
@@ -544,6 +574,17 @@ describe('Operant', () => {
       expect(cli.closed).toBe(1)
       expect(scheduler.jobs.every((j) => j.cancelled)).toBe(true)
     })
+  })
+
+  it('shutdown finishes within its step limit when Discord and the CLI socket never answer', async () => {
+    await op.start()
+    const never = () => new Promise<void>(() => {})
+    vi.spyOn(op.discord, 'stop').mockImplementation(never)
+    cli.close = never
+    op.shutdownStepMs = 50
+    const t0 = Date.now()
+    await op.shutdown()
+    expect(Date.now() - t0).toBeLessThan(1500)
   })
 
   it('logs one event per job notice and tells the pre-assigned operator', async () => {
@@ -610,7 +651,7 @@ describe('Operant', () => {
       }
       const timed = build({ cliServer: () => failing })
       await timed.start()
-      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 30_000, 3_600_000])
+      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 30_000, 3_600_000, 10_000, 30_000])
       const errors = store.recentEvents(20).filter((e) => e.kind === 'error')
       expect(errors).toHaveLength(1)
       expect(errors[0]!.message).toContain('without the operant CLI')
@@ -1509,6 +1550,105 @@ describe('Operant', () => {
       const sh = await h()['operators:create']({ squadId: squad.id, role: 'plain', agent: 'shell', model: '-' })
       await h()['operators:start'](sh.id)
       expect(ptys).toHaveLength(1)
+    })
+  })
+
+  describe('project groups and tools', () => {
+    const h = () => op.handlers
+    const refused = async (run: () => unknown) => {
+      try {
+        await run()
+      } catch (e) {
+        return (e as OperantError).code
+      }
+      return 'ok'
+    }
+
+    it('creates, renames, moves, collapses and deletes groups through the handlers, with codes the dashboard can show', async () => {
+      const a = await h()['crews:create']({ name: 'a', folder: '/code/a' })
+      const b = await h()['crews:create']({ name: 'b', folder: '/code/b' })
+      const g = await h()['groups:create']()
+      expect(g.name).toBe('New group')
+      expect(await refused(() => h()['groups:create']('new GROUP'))).toBe('CONFLICT')
+      expect(await refused(() => h()['groups:rename'](g.id, ' '))).toBe('BAD_ARGS')
+      expect(await refused(() => h()['groups:rename'](999, 'x'))).toBe('NOT_FOUND')
+      expect((await h()['groups:rename'](g.id, 'Work')).name).toBe('Work')
+      const moved = await h()['groups:move'](b.id, g.id, a.id)
+      expect(moved.map((c) => [c.name, c.groupId])).toEqual([['b', g.id], ['a', null]])
+      expect(await refused(() => h()['groups:move'](b.id, 999))).toBe('NOT_FOUND')
+      expect(await refused(() => h()['groups:move'](999, null))).toBe('NOT_FOUND')
+      expect((await h()['groups:collapse'](g.id, true)).collapsed).toBe(true)
+      expect((await h()['groups:list']())[0]!.collapsed).toBe(true)
+      expect((await h()['groups:reorder']([g.id])).map((x) => x.id)).toEqual([g.id])
+      await h()['groups:delete'](g.id)
+      expect(await h()['groups:list']()).toEqual([])
+      expect((await h()['crews:list']()).map((c) => c.groupId)).toEqual([null, null])
+    })
+
+    it('deleting a project removes its runs, jobs and tiles but not its group or any folder', async () => {
+      const a = await h()['crews:create']({ name: 'a', folder: '/code/a' })
+      const g = await h()['groups:create']('Work')
+      await h()['groups:move'](a.id, g.id)
+      await h()['crews:delete'](a.id)
+      expect(await h()['crews:list']()).toEqual([])
+      expect((await h()['groups:list']()).map((x) => x.name)).toEqual(['Work'])
+    })
+
+    it('opens a shell tile in the project folder and an agent tile with the same call', async () => {
+      const a = await h()['crews:create']({ name: 'a', folder: '/code/a' })
+      const sh = await h()['scratch:create']({ crewId: a.id, title: 'Shell', agent: 'shell' })
+      expect(sh.cwd).toBe('/code/a')
+      await h()['scratch:start'](sh.id)
+      expect(ptys).toHaveLength(1)
+      expect(ptys[0]!.opts.cwd).toBe('/code/a')
+    })
+
+    it('git:changes and ide:open refuse an unknown project; ide:list always ends with Custom', async () => {
+      expect(await refused(() => h()['git:changes'](999))).toBe('NOT_FOUND')
+      expect(await refused(() => h()['ide:open'](999))).toBe('NOT_FOUND')
+      const list = await h()['ide:list']()
+      expect(list.at(-1)!.id).toBe('custom')
+      await h()['settings:set']({ ide: { default: 'custom', custom: 'myide' } })
+      expect((await h()['ide:list']()).at(-1)!.available).toBe(true)
+    })
+  })
+
+  describe('seedFromEnv', () => {
+    const FAKE = 'fake-token-for-test'
+    it('moves a token into the store for the one bot without one, once, and never over a stored token', () => {
+      const secrets = new MemorySecretStore()
+      const o = build({ discord: { secrets } })
+      const bot = store.createDiscordBot({ name: 'desk' })
+      o.seedFromEnv({ DISCORD_BOT_TOKEN: FAKE })
+      const stored = store.getDiscordBot(bot.id)!
+      expect(secrets.get(stored.tokenRef)).toBe(FAKE)
+      const notes = store.recentEvents(50).filter((e) => /imported into the encrypted store/.test(e.message))
+      expect(notes).toHaveLength(1)
+      expect(notes.some((e) => e.message.includes(FAKE))).toBe(false)
+      o.seedFromEnv({ DISCORD_BOT_TOKEN: 'another-fake' })
+      expect(secrets.get(stored.tokenRef)).toBe(FAKE)
+      expect(store.recentEvents(50).filter((e) => /imported into the encrypted store/.test(e.message))).toHaveLength(1)
+    })
+
+    it('keeps the token unused with no bot, or with several bots lacking one', () => {
+      const secrets = new MemorySecretStore()
+      const o = build({ discord: { secrets } })
+      o.seedFromEnv({ DISCORD_BOT_TOKEN: FAKE })
+      store.createDiscordBot({ name: 'a' })
+      store.createDiscordBot({ name: 'b' })
+      o.seedFromEnv({ DISCORD_BOT_TOKEN: FAKE })
+      expect(store.listDiscordBots().every((b) => !b.tokenRef)).toBe(true)
+    })
+
+    it('seeds the Hindsight URL and key only while those are unset', () => {
+      const secrets = new MemorySecretStore()
+      const o = build({ discord: { secrets } })
+      o.seedFromEnv({ HINDSIGHT_URL: 'http://127.0.0.1:9077', HINDSIGHT_API_KEY: 'fake-key' })
+      expect(o.currentSettings.hindsight).toMatchObject({ mode: 'remote', url: 'http://127.0.0.1:9077' })
+      expect(secrets.get('hindsight-remote-key')).toBe('fake-key')
+      o.seedFromEnv({ HINDSIGHT_URL: 'http://other:1', HINDSIGHT_API_KEY: 'second' })
+      expect(o.currentSettings.hindsight.url).toBe('http://127.0.0.1:9077')
+      expect(secrets.get('hindsight-remote-key')).toBe('fake-key')
     })
   })
 })
