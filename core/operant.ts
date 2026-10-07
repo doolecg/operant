@@ -7,6 +7,7 @@ import type { CoreChannel, IpcApi, IpcEvents } from '../shared/ipc'
 import { DEFAULT_SETTINGS, mergeSettings, sanitizeSettings, type Settings } from '../shared/settings'
 import type {
   AgentKind,
+  HookReport,
   BudgetConfig,
   BudgetStatus,
   CapProgress,
@@ -26,6 +27,7 @@ import type {
   PresetPatch,
   ExportText,
   ImportSource,
+  MasterState,
   Run,
   SeatFields,
   UsageQuery,
@@ -45,6 +47,7 @@ import {
   TOKEN_PLACEHOLDER,
   buildAgentLaunch,
   buildMasterLaunch,
+  buildOpenCodeMasterLaunch,
   buildScratchLaunch,
   LaunchError,
   commandLine,
@@ -58,7 +61,12 @@ import {
   type ShellKind,
 } from './launch'
 import { ClaudeAdapter, MasterRegistry } from './master'
-import { createOpenCodeAdapter } from './opencode'
+import { createOpenCodeAdapter, listSessionMessages, watchOpenCodePhase } from './opencode'
+import { Closeout, windowTranscript } from './closeout'
+import { MasterGate } from './master-gate'
+import { MasterRuns } from './master-runs'
+import { MasterStates } from './master-state'
+import { prepareMaster, seatSubagentType, writerPrepFs, type MasterPrep } from './master-plugin'
 import { MessageBus, MessageError, type MessageNotice } from './messages'
 import { NudgeScheduler, type NudgeAction, type NudgeOperatorState } from './nudge'
 import { consoleLog } from './console'
@@ -67,7 +75,7 @@ import { discordAiModel, discordLocalModels } from './discord-ai'
 import { claudeFrontDeskModel, type FrontDeskModel } from './discord-frontdesk'
 import { createDiscordJsGateway, type GatewayFactory } from './discord-gateway'
 import { MemorySecretStore, type SecretStore } from './discord-secrets'
-import { RunError, RunManager, cleanLimits, cleanSeats } from './runs'
+import { ApprovalMarker, RunError, RunManager, cleanLimits, cleanSeats } from './runs'
 import { exportTeams, parseTeamFile } from './team-presets'
 import { SubagentReader } from './agents'
 import { cliExplorer } from './brief'
@@ -86,11 +94,11 @@ import { JsonlTail, parseLine, transcriptPath } from './transcripts'
 import { learnModelList, resolveLearnAi } from './learn-ai'
 import type { LocalLlmDeps } from './localllm'
 import { listModels } from './models'
-import { RunTransitionError } from './store'
+import { PLAYGROUND_KEPT, RunTransitionError } from './store'
 import { UsageTracker, isColdTurn, type CapDecision } from './usage'
 import { BUDGETS_KEY, BudgetMonitor, mergeBudgets, sanitizeBudgets, type BudgetDecision } from './usage-budgets'
 import { exportView } from './usage-export'
-import { UsageIngest, type RunSource } from './usage-ingest'
+import { UsageIngest, type MasterSession, type RunSource } from './usage-ingest'
 import { cleanFilter, jobUsage, queryUsage, querySeries } from './usage-query'
 import { applyRead, exportBundle, previewRead, readSource, type ImportDeps } from './import'
 import { ProviderMonitor } from './providers'
@@ -163,6 +171,8 @@ export interface OperantOptions {
   now?: () => number
   transcriptFile?: (cwd: string, sessionId: string) => string
   launch?: LaunchOptions
+  // Re-reads .env (through the loader) and returns the environment; used once when a Discord bot is added without a token.
+  reloadEnv?: () => NodeJS.ProcessEnv
   // Each is built from the store when not given; an injected one must route its notices to the
   // matching `on*` method itself.
   jobs?: JobEngine
@@ -206,6 +216,7 @@ const USAGE_POLL_MS = 2_000
 const RUN_USAGE_POLL_MS = 10_000
 const PROVIDER_TICK_MS = 30_000
 const NUDGE_TICK_MS = 1_000
+const GATE_TICK_MS = 1_000
 const JOB_SWEEP_MS = 30_000
 const EXIT_WAIT_MS = 15_000
 
@@ -341,8 +352,19 @@ export class Operant extends EventEmitter<PushEvents> {
   readonly nudge: NudgeScheduler
   readonly collab: Collab
   readonly runs: RunManager
+  // The Master as project manager: the master-mode run flow, the owner-typed approval marker and each Master's phase.
+  readonly masterRuns: MasterRuns
+  readonly approvals: ApprovalMarker
+  readonly masterStates: MasterStates
+  // Delivers master-mode jobs to the Master Terminal as fixed pointer lines and keeps their status in step.
+  readonly gate: MasterGate
+  // The close-out of an approved master-mode run: write-back, CodeGraph re-sync, then the learn step.
+  readonly closeouts: Closeout
+  private masterUsageBusy = false
+  private readonly phaseWatchers = new Map<number, AbortController>()
   readonly discord: DiscordManager
   private readonly secrets: SecretStore
+  private readonly reloadEnv?: () => NodeJS.ProcessEnv
   private readonly hindsight: HindsightService
   readonly runServices: RunServices
   readonly learn: LearnService
@@ -391,6 +413,7 @@ export class Operant extends EventEmitter<PushEvents> {
     this.now = opts.now ?? Date.now
     this.transcriptFile = opts.transcriptFile ?? ((cwd, id) => transcriptPath(cwd, id))
     this.launch = opts.launch ?? {}
+    this.reloadEnv = opts.reloadEnv
     this.scheduler = opts.scheduler ?? realScheduler
     this.settings = sanitizeSettings(store.getJson('settings'))
     this.budgetConfig = sanitizeBudgets(store.getJson(BUDGETS_KEY))
@@ -428,11 +451,54 @@ export class Operant extends EventEmitter<PushEvents> {
         emit: (e) => this.onPurge(e),
       })
     this.nudge = opts.nudge ?? new NudgeScheduler()
+    this.approvals = new ApprovalMarker({
+      now: this.now,
+      inReview: (crewId) => store.listRuns(crewId).filter((r) => r.mode === 'master' && r.status === 'review').map((r) => r.id),
+    })
+    this.masterRuns = new MasterRuns(
+      {
+        store,
+        approvals: this.approvals,
+        onChange: (run) => this.emit('run', { crewId: run.crewId, runId: run.id, status: run.status }),
+        // The owner's reply or approval reaches the Master as a fixed line at its next idle.
+        onEvent: (run, e) => {
+          if (e.kind === 'reply' && e.source !== 'master') this.gate.notify(run.crewId, 'answer', run.id)
+          this.discord.onRunEvent(run, e)
+        },
+        onApproved: (run) => this.gate.notify(run.crewId, 'approved', run.id),
+        brief: (run) => this.runServices.brief(run),
+        closeout: (run, wait) => this.closeouts.request(run.id, { wait }),
+        seatName: (run, seat) => this.seatName(run.masterCli, seat.presetId),
+      },
+      this.now,
+    )
+    this.masterStates = new MasterStates({
+      now: this.now,
+      onSession: (crewId, sessionId) => this.masterSessionChanged(crewId, sessionId),
+      onChange: (state) => {
+        this.noteMasterSession(state.crewId, state.cli, state.sessionId)
+        this.gate?.poke(state.crewId)
+      },
+    })
+    this.gate = new MasterGate({
+      store,
+      runs: this.masterRuns,
+      states: this.masterStates,
+      sessions,
+      masterKey: (crewId) => store.getMaster(crewId)?.id ?? null,
+      startMaster: (crewId, o) => this.gateStartMaster(crewId, o.resume),
+      hold: (run) => this.runHold(run.crewId),
+      onChange: (run) => this.emit('run', { crewId: run.crewId, runId: run.id, status: run.status }),
+      log: (crewId, message) => consoleLog.add('master', 'info', scrubSecrets(`${store.getCrew(crewId)?.name ?? `project ${crewId}`}: ${message}`)),
+      now: this.now,
+    })
     this.collab = new Collab({
       store,
       jobs: this.jobs,
       messages: this.messages,
       now: this.now,
+      runs: this.masterRuns,
+      onHook: (crewId, report) => this.masterHook(crewId, report),
       capPaused: (id) => this.usage.caps.isPaused(id),
       onError: (err) => this.log('error', `CLI request failed: ${err instanceof Error ? err.message : 'unexpected error'}`),
     })
@@ -495,6 +561,27 @@ export class Operant extends EventEmitter<PushEvents> {
         mcp: this.mcp,
         mcpDir: join(this.launch.launchDir ?? join(tmpdir(), 'operant2', 'launch'), 'mcp'),
       })
+    const emitRun = (run: Run) => this.emit('run', { crewId: run.crewId, runId: run.id, status: run.status })
+    this.closeouts = new Closeout({
+      store,
+      hindsight,
+      git: realGit,
+      reindex: (folder) => indexes.index(folder),
+      indexed: (folder) => indexes.status(folder).initialized,
+      learnOn: () => this.settings.learn.enabled,
+      learn: (run, transcript) => this.learn.onCloseout(run, transcript),
+      transcript: (run) =>
+        windowTranscript({ store, sessions: (crewId) => this.masterSessions(crewId), transcriptFile: this.transcriptFile, messages: (id) => listSessionMessages(id), now: this.now }, run),
+      settleUsage: (run) => this.syncMasterUsage(run.crewId).then(() => undefined),
+      masterLive: (crewId) => {
+        const master = store.getMaster(crewId)
+        return !!master && this.sessions.isRunning(master.id)
+      },
+      onChange: emitRun,
+      onEvent: (run) => emitRun(run),
+      log: (message, crewId) => this.log('job', message, null, crewId),
+      now: this.now,
+    })
     this.runs =
       opts.runs ??
       new RunManager({
@@ -515,6 +602,7 @@ export class Operant extends EventEmitter<PushEvents> {
         },
         hold: (run) => this.runHold(run.crewId),
         runTokens: (run) => this.runTokens(run.id),
+        onMasterStopped: (run) => this.gate.notify(run.crewId, 'stopped', run.id),
         onChange: (n) => this.emit('run', n),
         onError: (err) => this.log('error', `Job runner: ${err instanceof Error ? err.message : String(err)}`),
       })
@@ -534,8 +622,23 @@ export class Operant extends EventEmitter<PushEvents> {
       },
       onHealth: (h) => this.emit('discord:status', h),
       onPairing: (botId) => this.emit('discord:pairing', { botId }),
+      master: {
+        ownerMessage: (crewId, text, label) => {
+          this.masterRuns.ownerMessage(crewId, text, label)
+          return this.gate.ownerMessage(crewId)
+        },
+        command: (crewId, line) => this.gate.command(crewId, line),
+        reply: (runId, text, by) => void this.masterRuns.reply(runId, text, by),
+        approve: (runId, by, note) => void this.masterRuns.approve(runId, by, note),
+        sendBack: (runId, note, by) => void this.masterRuns.sendBack(runId, note, by),
+        stop: async (runId) => void (await this.runs.stop(runId)),
+        resume: (runId) => void this.gate.resume(runId),
+        phase: (crewId) => this.masterStates.get(crewId).phase,
+        models: (cli) => listModels(cli),
+      },
     })
     this.on('run', (n) => this.discord.onRunChange(n))
+    this.on('run', (n) => this.gate.poke(n.crewId))
     this.cli = opts.cliServer?.(this.collab) ?? null
     this.applySettings()
 
@@ -679,8 +782,17 @@ export class Operant extends EventEmitter<PushEvents> {
         return store.reorderCrews(crewIds)
       },
       'crews:counts': (crewId) => this.crewCounts(this.requireCrew(crewId).id),
+      'crews:clearHistory': (crewId) => {
+        const crew = this.requireCrew(crewId)
+        if (store.listRuns(crewId).some((r) => r.status !== 'done' && r.status !== 'failed')) throw conflict('Stop the running jobs before clearing the history')
+        const counts = this.crewCounts(crewId)
+        store.clearCrewHistory(crewId)
+        this.log('crew', `${crew.name} history cleared`, null, crewId)
+        return counts
+      },
       'crews:delete': async (crewId) => {
         const crew = this.requireCrew(crewId)
+        if (crew.kind === 'playground') throw conflict(PLAYGROUND_KEPT)
         const counts = this.crewCounts(crewId)
         const ids = (store.topology(crewId)?.squads ?? []).flatMap((squad) => squad.operators.map((s) => s.id))
         const master = store.getMaster(crewId)
@@ -825,7 +937,12 @@ export class Operant extends EventEmitter<PushEvents> {
         this.configChanged(operatorId)
       },
       'operators:delete': (operatorId) => this.deleteOperator(operatorId),
-      'operators:write': (operatorId, data) => this.sessions.write(operatorId, data),
+      'operators:write': (operatorId, data) => {
+        // The owner's keystrokes in the Master Terminal can record "approve" for a run in review (single-use, short-lived).
+        const crewId = this.store.getOperator(operatorId)?.kind === 'master' ? this.store.crewIdOfOperator(operatorId) : null
+        if (crewId != null && typeof data === 'string') this.approvals.observeInput(crewId, data)
+        this.sessions.write(operatorId, data)
+      },
       'operators:resize': (operatorId, cols, rows) => this.sessions.resize(operatorId, cols, rows),
       'operators:buffer': (operatorId) => this.sessions.buffer(operatorId),
       'operators:context': () => Object.fromEntries(this.contexts),
@@ -836,6 +953,7 @@ export class Operant extends EventEmitter<PushEvents> {
     return {
       'master:get': (crewId) => this.store.getMaster(this.requireCrew(crewId).id),
       'master:start': (crewId) => this.startMaster(this.requireCrew(crewId).id),
+      'master:state': (crewId) => this.masterStates.get(this.requireCrew(crewId).id),
       'master:stop': (crewId) => {
         const master = this.store.getMaster(this.requireCrew(crewId).id)
         if (master) this.sessions.stop(master.id)
@@ -1044,7 +1162,11 @@ export class Operant extends EventEmitter<PushEvents> {
     const d = this.discord
     return {
       'discord:list': () => d.list(),
-      'discord:create': (input) => d.create(input),
+      'discord:create': async (input) => {
+        const bot = await d.create(input)
+        if (!bot.hasToken) this.recheckEnvFor(bot.id)
+        return d.get(bot.id)
+      },
       'discord:update': (botId, patch) => d.update(botId, patch),
       'discord:delete': (botId) => d.delete(botId),
       'discord:setToken': (botId, token) => d.setToken(botId, token),
@@ -1093,6 +1215,29 @@ export class Operant extends EventEmitter<PushEvents> {
         this.log('job', `JOB#${run.id} deleted`, null, run.crewId)
       },
       'runs:agentLog': (runId, agentId) => this.runServices.agentLog(requireRun(runId).id, agentId),
+      'runs:approve': (runId, note) => {
+        const run = this.masterRuns.approve(requireRun(runId).id, 'owner-ui', note)
+        this.log('job', `JOB#${run.id} approved`, null, run.crewId)
+        return run
+      },
+      'runs:sendBack': (runId, note) => {
+        const run = this.masterRuns.sendBack(requireRun(runId).id, note, 'owner-ui')
+        this.log('job', `JOB#${run.id} sent back`, null, run.crewId)
+        return run
+      },
+      'runs:answer': (runId, text) => this.masterRuns.reply(requireRun(runId).id, text, 'owner-ui'),
+      'runs:events': (runId) => this.masterRuns.events(requireRun(runId).id),
+      'runs:resumeMaster': (runId) => {
+        const run = this.gate.resume(requireRun(runId).id)
+        this.log('job', `JOB#${run.id}: resume asked`, null, run.crewId)
+        return run
+      },
+      'runs:closeout': async (runId) => {
+        const run = requireRun(runId)
+        const retry = run.closeoutState === 'partial' || run.closeoutState === 'failed' || run.closeoutState === ''
+        await this.closeouts.request(run.id, { force: retry })
+        return requireRun(runId)
+      },
       'runs:getLimit': () => this.runs.concurrency,
       'runs:setLimit': (limit) => this.runs.setConcurrency(limit),
     }
@@ -1606,10 +1751,32 @@ export class Operant extends EventEmitter<PushEvents> {
     } catch (err) {
       this.log('error', `Job usage could not be read: ${err instanceof Error ? err.message : String(err)}`)
     }
+    if (!this.masterUsageBusy) {
+      this.masterUsageBusy = true
+      void this.pollMasterUsage().finally(() => {
+        this.masterUsageBusy = false
+      })
+    }
     if (rows > 0) this.usage.checkCaps()
     this.checkBudgets()
     this.runs.enforceTokenBudgets()
     if (this.store.listRuns().some((r) => r.status === 'queued')) this.runs.pumpAll()
+  }
+
+  // Master-mode runs that are open, or ended recently enough for a last read, assign the Master's spend by time window.
+  private async pollMasterUsage(): Promise<void> {
+    try {
+      const crews = new Set<number>()
+      for (const run of this.store.listRuns()) {
+        if (run.mode !== 'master' || run.status === 'queued') continue
+        if (run.status === 'done' || run.status === 'failed' ? !this.store.getJson(`run.master-usage.done.${run.id}`) : true) crews.add(run.crewId)
+      }
+      let rows = 0
+      for (const crewId of crews) rows += await this.syncMasterUsage(crewId)
+      if (rows > 0) this.usage.checkCaps()
+    } catch (err) {
+      this.log('error', `Master usage could not be read: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   // Every token (input, output, cache) of the usage attributed to the run, as the job's usage view counts them.
@@ -1708,22 +1875,44 @@ export class Operant extends EventEmitter<PushEvents> {
     return this.settings
   }
 
+  // The bot token in .env: DISCORD_BOT_TOKEN, DISCORD_TOKEN or BOT_TOKEN, the first non-empty one. Never logged.
+  // Goes to the one bot that has no token and enables it; `late` is the re-check after a bot was added without a
+  // token, which stays quiet unless it imports (and connects the bot, since start() has already run).
+  private seedDiscordToken(env: NodeJS.ProcessEnv, late: boolean): void {
+    const token = [env.DISCORD_BOT_TOKEN, env.DISCORD_TOKEN, env.BOT_TOKEN].map((v) => (v ?? '').trim()).find((v) => v !== '') ?? ''
+    if (!token) return
+    const bare = this.store.listDiscordBots().filter((b) => !b.tokenRef || this.secrets.get(b.tokenRef) === null)
+    const bot = bare.length === 1 ? bare[0] : undefined
+    if (!bot) {
+      if (!late) this.logDiscord(bare.length === 0 ? 'A Discord bot token is set in .env but there is no bot without a token to give it to, so it was not used (add a bot in Settings > Discord without a token, then restart Operant)' : 'A Discord bot token is set in .env but more than one bot has no token, so it was not used (add a token to the right bot in Settings > Discord)')
+      return
+    }
+    try {
+      this.secrets.set(tokenRef(bot.id), token)
+      this.store.updateDiscordBot(bot.id, { tokenRef: tokenRef(bot.id), enabled: true })
+      this.logDiscord(`Discord token from .env imported into the encrypted store for bot ${bot.name} and the bot was enabled to connect; you can delete it from .env`)
+      if (late) void this.discord.connect(bot.id).catch(() => undefined)
+    } catch {
+      this.logDiscord('Discord token from .env could not be imported: the encrypted store is unavailable')
+    }
+  }
+
+  // A bot added without a token: look in .env once more (main re-reads the file through the loader).
+  private recheckEnvFor(botId: number): void {
+    const reload = this.reloadEnv
+    if (!reload || this.store.listDiscordBots().filter((b) => !b.tokenRef || this.secrets.get(b.tokenRef) === null).length !== 1) return
+    if (this.store.getDiscordBot(botId)?.tokenRef) return
+    try {
+      this.seedDiscordToken(reload(), true)
+    } catch {
+      // the .env is optional
+    }
+  }
+
   // Startup seeds from .env (loaded by main): a Discord token goes into the encrypted store for the one bot that has
   // none, and the Hindsight URL and key fill settings that are still unset. Nothing already stored is overwritten.
   seedFromEnv(env: NodeJS.ProcessEnv): void {
-    const token = (env.DISCORD_BOT_TOKEN ?? '').trim()
-    const bare = token ? this.store.listDiscordBots().filter((b) => !b.tokenRef || this.secrets.get(b.tokenRef) === null) : []
-    const bot = bare.length === 1 ? bare[0] : undefined
-    if (token && !bot) this.logDiscord(bare.length === 0 ? 'DISCORD_BOT_TOKEN is set but there is no bot without a token to give it to, so it was not used (add a bot in Settings > Discord without a token, then restart Operant)' : 'DISCORD_BOT_TOKEN is set but more than one bot has no token, so it was not used (add a token to the right bot in Settings > Discord)')
-    if (bot) {
-      try {
-        this.secrets.set(tokenRef(bot.id), token)
-        this.store.updateDiscordBot(bot.id, { tokenRef: tokenRef(bot.id) })
-        this.logDiscord(`Discord token from .env imported into the encrypted store for bot ${bot.name}; you can delete it from .env`)
-      } catch {
-        this.logDiscord('Discord token from .env could not be imported: the encrypted store is unavailable')
-      }
-    }
+    this.seedDiscordToken(env, false)
     const url = (env.HINDSIGHT_URL ?? '').trim()
     if (url && !this.settings.hindsight.url) {
       const next = sanitizeSettings({ ...this.settings, hindsight: { ...this.settings.hindsight, mode: 'remote', url } })
@@ -1757,10 +1946,14 @@ export class Operant extends EventEmitter<PushEvents> {
     this.purgeSweep()
     const every = (fn: () => void, ms: number) => this.timers.push(this.scheduler.every(fn, ms))
     this.runs.recover()
+    this.gate.recover()
+    this.closeouts.recover()
     this.runServices.sweepStaleLaunchFiles()
     this.backfillRunUsage()
     every(() => this.pollUsage(), USAGE_POLL_MS)
     every(() => this.nudgeTick(), NUDGE_TICK_MS)
+    every(() => this.gate.tickAll(), GATE_TICK_MS)
+    every(() => this.closeouts.tick(), GATE_TICK_MS)
     every(() => this.sweepJobs(), JOB_SWEEP_MS)
     every(() => this.purgeSweep(), HOUR)
     every(() => this.pollRunUsage(), RUN_USAGE_POLL_MS)
@@ -1958,6 +2151,7 @@ export class Operant extends EventEmitter<PushEvents> {
   }
 
   private onExit(operatorId: number, exitCode: number): void {
+    this.masterGone(operatorId)
     this.learnFromConversation(operatorId)
     this.live.delete(operatorId)
     this.usage.detach(operatorId)
@@ -2065,18 +2259,29 @@ export class Operant extends EventEmitter<PushEvents> {
     this.launchOperator(operatorId)
   }
 
-  // Starts the session; returns the failure message when the launch failed (already logged), else null.
-  private launchOperator(operatorId: number): string | null {
+  // Starts the session; returns the failure message when the launch failed (already logged), else null. `resume` reopens
+  // the Master's last conversation (Claude --resume with the stored session id, OpenCode --continue).
+  private launchOperator(operatorId: number, opts: { resume?: boolean } = {}): string | null {
     const operator = this.store.getOperator(operatorId)
     const crewId = this.store.crewIdOfOperator(operatorId)
     const crew = crewId == null ? null : this.store.getCrew(crewId)
     if (!operator || !crew || this.sessions.isRunning(operatorId)) return null
     const address = this.store.operatorAddress(operatorId)!
-    const sessionId = randomUUID()
+    const mainCli = this.settings.mainCli
+    const resume = !!opts.resume && operator.kind === 'master' && (mainCli === 'opencode' || operator.sessionId != null)
+    const sessionId = resume && mainCli !== 'opencode' ? operator.sessionId! : randomUUID()
     try {
       const preset = operator.presetId != null ? this.store.getPreset(operator.presetId) : null
       const ctx = this.launchContext(crew.id, crew.folder, sessionId, preset)
-      const launch = operator.kind === 'master' ? buildMasterLaunch(ctx, operator) : buildAgentLaunch(operator, preset, ctx)
+      const main = this.settings
+      const prepared = operator.kind === 'master' ? this.prepareMasterFor(crew, main.mainCli, ctx) : null
+      const prep = prepared && resume ? { ...prepared, resume: true } : prepared
+      const launch =
+        operator.kind !== 'master'
+          ? buildAgentLaunch(operator, preset, ctx)
+          : main.mainCli === 'opencode'
+            ? buildOpenCodeMasterLaunch(ctx, main.mainModel, prep ?? undefined)
+            : buildMasterLaunch(ctx, { ...operator, model: operator.model || main.mainModel, effort: operator.effort || main.mainEffort }, prep ?? undefined)
       if (launch) this.writeFiles(launch)
       const firstInput = launch ? this.checkedFirstInput(launch) : null
       const env = launch ? this.sessionEnv(launch.env, operatorId) : {}
@@ -2093,6 +2298,7 @@ export class Operant extends EventEmitter<PushEvents> {
         this.store.setOperatorSession(operatorId, sessionId)
         this.usage.attach(operatorId, this.transcriptFile(crew.folder, sessionId), sessionId)
       }
+      if (operator.kind === 'master') this.masterStarted(crew.id, operatorId, crew.folder, main.mainCli, launch?.file === 'claude' ? sessionId : null)
       this.setStatus(operatorId, 'running')
       this.log('operator', `${address} started`, operatorId, crew.id)
       return null
@@ -2102,6 +2308,123 @@ export class Operant extends EventEmitter<PushEvents> {
       this.setStatus(operatorId, 'error')
       this.log('error', `${address} failed to start: ${message}`, operatorId, crew.id)
       return message
+    }
+  }
+
+  // (Re)generates the Master's role file, plugin dir (hooks, seat agents), MCP union and OpenCode seat files. A failure is
+  // logged and the Master starts as before, without them.
+  private prepareMasterFor(crew: { id: number; name: string; folder: string }, cli: 'claude' | 'opencode', ctx: LaunchContext): MasterPrep | null {
+    try {
+      const seats = this.store
+        .listPresets()
+        .filter((p) => p.agent === cli)
+        .map((preset) => {
+          const file = preset.builtin ? ROLE_FILE_BY_PRESET[preset.builtin] : undefined
+          return { preset, roleText: preset.roleText ?? (file ? this.readShippedRole(file) : '') }
+        })
+      const servers = [...new Set(seats.flatMap((s) => s.preset.mcpServers))]
+      const prep = prepareMaster({
+        cli,
+        crew,
+        platform: ctx.platform,
+        launchDir: ctx.launchDir,
+        rolesDir: ctx.rolesDir,
+        roleText: this.readShippedRole('master-pm.md'),
+        seats,
+        mcpConfig: cli === 'claude' ? this.mcp.claudeConfigFor(servers, crew.folder) : null,
+        ...(this.launch.writer ? { fs: writerPrepFs(this.launch.writer) } : {}),
+      })
+      if (prep.skipped.length) this.log('error', `Master seat files left alone (not ours): ${prep.skipped.join(', ')}`, null, crew.id)
+      return prep
+    } catch (err) {
+      this.log('error', `Could not prepare the Master Terminal files: ${err instanceof Error ? err.message : String(err)}`, null, crew.id)
+      return null
+    }
+  }
+
+  private seatName(cli: 'claude' | 'opencode', presetId: number): string {
+    const preset = this.store.getPreset(presetId)
+    return preset ? seatSubagentType(cli, preset) : `seat-${presetId}`
+  }
+
+  private masterStarted(crewId: number, operatorId: number, folder: string, cli: 'claude' | 'opencode', sessionId: string | null): void {
+    this.masterStates.started(crewId, cli, sessionId)
+    this.phaseWatchers.get(operatorId)?.abort()
+    if (cli !== 'opencode') return
+    const ac = new AbortController()
+    this.phaseWatchers.set(operatorId, ac)
+    void watchOpenCodePhase({
+      cwd: folder,
+      signal: ac.signal,
+      onPhase: (phase, event, sid) => this.masterStates.phase(crewId, phase, event, sid),
+    })
+  }
+
+  private masterGone(operatorId: number): void {
+    this.phaseWatchers.get(operatorId)?.abort()
+    this.phaseWatchers.delete(operatorId)
+    const crewId = this.store.crewIdOfOperator(operatorId)
+    if (crewId != null && this.store.getOperator(operatorId)?.kind === 'master') this.masterStates.exited(crewId)
+  }
+
+  // A /clear or resume gave the Claude Master a new session id: usage and the learn step follow it.
+  private masterSessionChanged(crewId: number, sessionId: string): void {
+    const master = this.store.getMaster(crewId)
+    const crew = this.store.getCrew(crewId)
+    if (!master || !crew || !this.sessions.isRunning(master.id)) return
+    this.store.setOperatorSession(master.id, sessionId)
+    this.usage.attach(master.id, this.transcriptFile(crew.folder, sessionId), sessionId)
+  }
+
+  // Every session the project's Master Terminal has had (a resume or /clear starts a new one): master-mode run
+  // usage and the close-out transcript read them all.
+  private noteMasterSession(crewId: number, cli: MasterSession['cli'], sessionId: string | null): void {
+    if (!sessionId) return
+    try {
+      const key = `master.sessions.${crewId}`
+      const list = (this.store.getJson(key) as MasterSession[] | undefined) ?? []
+      if (!list.some((s) => s.sessionId === sessionId)) this.store.setJson(key, [...list, { cli, sessionId }].slice(-20))
+    } catch {
+      // the next session is noted
+    }
+  }
+
+  private masterSessions(crewId: number): MasterSession[] {
+    const list = (this.store.getJson(`master.sessions.${crewId}`) as MasterSession[] | undefined) ?? []
+    return Array.isArray(list) ? list.filter((s) => s && typeof s.sessionId === 'string' && (s.cli === 'claude' || s.cli === 'opencode')) : []
+  }
+
+  // Reads the Master's usage of a project into the master-mode runs it belongs to (see UsageIngest.syncMaster).
+  private async syncMasterUsage(crewId: number): Promise<number> {
+    const crew = this.store.getCrew(crewId)
+    if (!crew) return 0
+    return this.ingest.syncMaster(crewId, crew.folder, this.masterSessions(crewId))
+  }
+
+  // Starts the project's Master Terminal when it is not running and returns its state. The gate calls this when a
+  // master-mode run is queued; a failed start shows in the state ('exited') and the console log.
+  ensureMaster(crewId: number): MasterState {
+    const master = this.store.ensureMaster(this.requireCrew(crewId).id)
+    if (!this.sessions.isRunning(master.id)) this.startOperator(master.id)
+    return this.masterStates.get(crewId)
+  }
+
+  // The gate's start of the Master Terminal (for a queued job, or the owner's Resume). Returns the failure, or null.
+  private gateStartMaster(crewId: number, resume: boolean): string | null {
+    const master = this.store.ensureMaster(this.requireCrew(crewId).id)
+    if (this.sessions.isRunning(master.id)) return null
+    return this.launchOperator(master.id, { resume })
+  }
+
+  // A hook report from the Claude Master. A submitted prompt that is not the pointer line Operant typed is the owner's:
+  // it may record a standalone approval, and it answers an open question in the terminal. The prompt text goes nowhere else.
+  private masterHook(crewId: number, report: HookReport): void {
+    this.masterStates.hook(crewId, report)
+    if (report.event !== 'UserPromptSubmit' || !report.prompt?.trim()) return
+    if (this.gate.onPrompt(crewId, report.prompt)) return
+    this.approvals.observePrompt(crewId, report.prompt.trim())
+    for (const run of this.store.listRuns(crewId)) {
+      if (run.mode === 'master' && run.status === 'needs-you' && run.waiting === 'question') this.masterRuns.questionAnsweredInTerminal(run.id)
     }
   }
 
@@ -2165,7 +2488,7 @@ export class Operant extends EventEmitter<PushEvents> {
     if (patch.dailyCapUsd !== undefined) next.dailyCapUsd = cleanCap(patch.dailyCapUsd)
     if (patch.roleText !== undefined) next.roleText = cleanRoleText(patch.roleText)
     if (patch.model !== undefined) next.model = patch.model.trim()
-    validateLaunchSettings({ ...launchFields(next as Record<string, unknown>), agent: patch.agent ?? operator.agent })
+    validateLaunchSettings({ ...launchFields(next as Record<string, unknown>), agent: patch.agent ?? operator.agent }, operator.kind === 'master')
     if (patch.squadId !== undefined && this.store.getSquad(patch.squadId)?.crewId !== this.store.crewIdOfOperator(operator.id)) {
       throw bad('An operator can only move to a squad in its own project')
     }

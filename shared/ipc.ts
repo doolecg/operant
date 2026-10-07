@@ -71,6 +71,8 @@ import type {
   PurgeOutcome,
   PurgeStatus,
   Run,
+  RunEvent,
+  MasterState,
   RunInput,
   RunStatus,
   ScratchInput,
@@ -118,6 +120,8 @@ export interface IpcApi {
   'crews:counts': (crewId: number) => CrewCounts
   // Stops every session, then removes the crew with its jobs, messages, spend history and tiles.
   'crews:delete': (crewId: number) => CrewCounts
+  // Deletes a project's runs, messages and lessons (the Playground's "Clear history"); no file on disk is touched.
+  'crews:clearHistory': (crewId: number) => CrewCounts
 
   // Project groups. Removing a group puts its projects back in the list; no folder is touched.
   'groups:list': () => ProjectGroup[]
@@ -187,6 +191,8 @@ export interface IpcApi {
   'master:get': (crewId: number) => Operator | null
   'master:start': (crewId: number) => Operator
   'master:stop': (crewId: number) => void
+  // Where the project's Master Terminal is (fed by the plugin hooks, or OpenCode's service events).
+  'master:state': (crewId: number) => MasterState
 
   // Presets
   'presets:list': () => Preset[]
@@ -255,6 +261,21 @@ export interface IpcApi {
   // The tail of one job agent's transcript as plain text lines (secrets removed, size-capped).
   'runs:agentLog': (runId: number, agentId: number) => string[]
   // Jobs that may run at once per project (default 1).
+  // Approves a job in review: it is done and its close-out is pending.
+  'runs:approve': (runId: number, note?: string) => Run
+  // Sends a job in review back to the front of its queue with the owner's note (required).
+  'runs:sendBack': (runId: number, note: string) => Run
+  // The owner's reply to the Master's question (or a note while it works); the Master reads it with `operant run answer`.
+  'runs:answer': (runId: number, text: string) => RunEvent
+  // The job's conversation: progress, questions, replies, review, approval.
+  'runs:events': (runId: number) => RunEvent[]
+  // Retry or Resume for a master-mode job waiting on the Master (did not start, did not pick up the task, stopped, or
+  // Operant was closed): starts the Master when it is not running (Claude --resume, OpenCode --continue), then types
+  // the job's pointer line at the next idle. Also restarts the Master for a queued job whose automatic start was used.
+  'runs:resumeMaster': (runId: number) => Run
+  // Starts the close-out of an approved master-mode job (write-back, CodeGraph, learn) or retries a partial / failed
+  // one; a running or finished one is left alone. Does not wait: closeoutState and the 'closeout' run events show progress.
+  'runs:closeout': (runId: number) => Run
   'runs:getLimit': () => number
   'runs:setLimit': (limit: number) => number
 
@@ -504,6 +525,7 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'crews:reorder',
   'crews:counts',
   'crews:delete',
+  'crews:clearHistory',
   'groups:list',
   'groups:create',
   'groups:rename',
@@ -550,6 +572,7 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'master:get',
   'master:start',
   'master:stop',
+  'master:state',
   'presets:list',
   'presets:create',
   'presets:update',
@@ -590,6 +613,12 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'runs:update',
   'runs:delete',
   'runs:agentLog',
+  'runs:approve',
+  'runs:sendBack',
+  'runs:answer',
+  'runs:events',
+  'runs:resumeMaster',
+  'runs:closeout',
   'runs:getLimit',
   'runs:setLimit',
   'discord:list',

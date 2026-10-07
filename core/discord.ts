@@ -1,9 +1,11 @@
-import { randomInt } from 'node:crypto'
-import { DISCORD_THREAD_ARCHIVES } from '../shared/types'
-import type { Crew, DiscordAiTestResult, DiscordBot, DiscordBotAi, DiscordBotInput, DiscordBotPatch, DiscordBotView, DiscordChannelCheck, DiscordHealth, DiscordPairing, DiscordTestResult, Run, RunInput } from '../shared/types'
-import { isIntentsError, type DiscordGateway, type GatewayFactory, type GatewayMessage, type GatewayReaction } from './discord-gateway'
+import { randomBytes, randomInt } from 'node:crypto'
+import { DISCORD_MIRRORS, DISCORD_THREAD_ARCHIVES } from '../shared/types'
+import type { Crew, DiscordAiTestResult, DiscordBot, DiscordBotAi, DiscordBotInput, DiscordBotPatch, DiscordBotView, DiscordChannelCheck, DiscordHealth, DiscordPairing, DiscordTestResult, Run, RunEvent, RunInput } from '../shared/types'
+import { commandDefs, handleInteraction, type CommandHost, type DiscordMasterPort } from './discord-commands'
+import { isIntentsError, type DiscordGateway, type GatewayFactory, type GatewayInteraction, type GatewayMessage, type GatewayReaction } from './discord-gateway'
 import { discordOutcome } from './discord-format'
-import { askFrontDesk, findProject, type FrontDeskModel } from './discord-frontdesk'
+import { DiscordMirrorService } from './discord-mirror'
+import { askFrontDesk, findProject, projectLabel, type FrontDeskModel } from './discord-frontdesk'
 import { aiThreadTitle, jobThreadName, threadTitle, uniqueThreadName } from './discord-threads'
 import type { SecretStore } from './discord-secrets'
 import type { Store } from './store'
@@ -31,6 +33,16 @@ const PAIRING_MAX = 20
 // New codes one Discord user may ask for per hour; past it they get no new code (an existing one still answers).
 const PAIRING_PER_USER = 3
 const CONFIRM_TTL = 10 * 60 * 1000
+// A message that clearly asks for a new task starts with one of these words and a colon ("task: add a login page").
+const NEW_TASK_RE = /^(?:please\s+)?(?:new\s+(?:task|job)|task|job|todo)\s*:\s*([\s\S]+)$/i
+// The permissions whose absence stops commands, threads or mirroring, with the words Discord's own UI uses.
+const GAP_LABELS: Record<string, string> = {
+  'Use Slash Commands': 'Use Application Commands',
+  'Create Public Threads': 'Create Public Threads',
+  'Send Messages in Threads': 'Send Messages in Threads',
+  'Manage Threads': 'Manage Threads',
+  'Send Messages': 'Send Messages',
+}
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 // Splits text into pieces of at most `max` characters, breaking at a line, then a space, then anywhere.
@@ -73,6 +85,10 @@ export interface DiscordManagerOptions {
   onHealth?: (h: DiscordHealth) => void
   // A new pairing request arrived for the bot (the settings page lists it without a refresh).
   onPairing?: (botId: number) => void
+  // How Discord reaches a project's Master. Without it, project channels start headless jobs and there are no commands.
+  master?: DiscordMasterPort
+  // Runs `fn` after `ms`; the mirror's progress batching uses it (tests pass their own clock).
+  later?: (fn: () => void, ms: number) => void
 }
 
 interface Live {
@@ -109,10 +125,22 @@ export class DiscordManager {
   private readonly pairingAsks = new Map<string, number[]>()
   private readonly threadWarned = new Set<string>()
   private readonly origins = new Map<number, Origin>()
+  private readonly gapsReported = new Set<string>()
+  private readonly starts = new Map<string, { input: RunInput; userId: string; at: number }>()
+  private readonly mirror: DiscordMirrorService
   private readonly now: () => number
 
   constructor(private readonly o: DiscordManagerOptions) {
     this.now = o.now ?? Date.now
+    this.mirror = new DiscordMirrorService({
+      store: o.store,
+      now: this.now,
+      later: o.later ?? ((fn, ms) => void setTimeout(fn, ms).unref?.()),
+      scrub: (t) => scrubSecrets(t),
+      bots: () => [...this.live].flatMap(([id, l]) => { const bot = o.store.getDiscordBot(id); return bot ? [{ bot, gateway: l.gateway }] : [] }),
+      log: (m) => o.log?.(m),
+      gap: (botId, channelId, text) => void this.reportGap(botId, channelId, text),
+    })
   }
 
   // Lifecycle
@@ -328,12 +356,24 @@ export class DiscordManager {
     const crews = this.o.store.listCrews()
     const crew = (owned?.crewId != null ? crews.find((c) => c.id === owned.crewId) : undefined) ?? crews.find((c) => c.discordChannels.some((ch) => channels.includes(ch)))
     if (!crew && !owned && !channels.some((c) => c === bot.homeChannel || c === bot.generalChannel)) return
+    // A project channel (or a thread of one) is the project's Master: no front desk model there. Only allowlisted users
+    // talk to it; a message that clearly asks for a new task goes through the request flow below.
+    let request = text
+    if (crew && this.o.master) {
+      if (!allowed) return
+      const task = NEW_TASK_RE.exec(text)?.[1]?.trim()
+      if (!task) {
+        void this.react(botId, m, ACK)
+        return this.toMaster(bot, m, text, crew, owned)
+      }
+      request = task
+    }
     void this.react(botId, m, ACK)
     let at = m
     // Inside any thread the reply stays there; otherwise an allowlisted request gets its own thread.
     let inPlace = m.parentId != null
     if (!inPlace && allowed && bot.threadPerRequest) {
-      const thread = await this.openThread(bot, m, text, crew ?? null)
+      const thread = await this.openThread(bot, m, request, crew ?? null)
       if (thread) {
         at = { ...m, channelId: thread, parentId: m.channelId }
         inPlace = true
@@ -342,8 +382,26 @@ export class DiscordManager {
     const asked = owned?.runId != null ? `${text}
 
 (This thread is about JOB#${owned.runId}.)` : text
-    if (crew && allowed) return this.startOrConfirm(bot, at, crew, text, inPlace)
+    if (crew && allowed) return this.startOrConfirm(bot, at, crew, request, inPlace)
     return this.deskReply(bot, at, asked, inPlace)
+  }
+
+  // A message to the project's Master. In the thread of a run that is working or waiting for an answer it is the answer
+  // (or a note); otherwise it is stored as an owner message and the gate types one fixed line to make the Master read it.
+  private async toMaster(bot: DiscordBot, m: GatewayMessage, text: string, crew: Crew, owned: ReturnType<Store['getDiscordThread']>): Promise<void> {
+    const port = this.o.master!
+    const run = owned?.runId != null ? this.o.store.getRun(owned.runId) : null
+    if (run && (run.status === 'working' || run.status === 'needs-you') && run.mode === 'master') {
+      try {
+        port.reply(run.id, text, 'owner-discord')
+      } catch (err) {
+        return this.say(bot.id, m.channelId, `Could not send that to JOB#${run.id}: ${scrubSecrets(errText(err))}`)
+      }
+      return this.react(bot.id, m, CONFIRM)
+    }
+    const err = port.ownerMessage(crew.id, run ? `(In the thread of JOB#${run.id}, which is ${run.status}.) ${text}` : text, `Discord: ${m.authorName}`)
+    if (err) await this.say(bot.id, m.channelId, scrubSecrets(err))
+    else void this.react(bot.id, m, CONFIRM)
   }
 
   // Makes the request's thread and remembers it; null means reply in the channel (off, or Discord refused).
@@ -416,7 +474,7 @@ export class DiscordManager {
   // Starts the job, or with confirmStart asks for a reaction from the same user first.
   private async startOrConfirm(bot: DiscordBot, m: GatewayMessage, crew: Crew, task: string, direct: boolean): Promise<void> {
     if (!bot.confirmStart) return this.startJob(bot, m, crew.id, task, direct)
-    const sentId = await this.live.get(bot.id)?.gateway.send(m.channelId, `Start this on PRJ${crew.prjNumber} ${crew.name}? React ${CONFIRM} to confirm.\n${task.slice(0, 1500)}`)
+    const sentId = await this.live.get(bot.id)?.gateway.send(m.channelId, `Start this on ${projectLabel(crew)}? React ${CONFIRM} to confirm.\n${task.slice(0, 1500)}`)
     if (!sentId) return
     for (const [k, p] of this.pending) if (this.now() - p.at > CONFIRM_TTL) this.pending.delete(k)
     this.pending.set(sentId, { botId: bot.id, userId: m.authorId, crewId: crew.id, task, channelId: m.channelId, originMessageId: m.id, inPlace: direct, at: this.now() })
@@ -443,6 +501,10 @@ export class DiscordManager {
     }
     this.o.log?.(`Discord bot ${bot.name} started JOB#${run.id}`, crewId)
     void this.attachJob(bot, at.channelId, run.id, crewId)
+    // The mirror reports a Master run in its thread. The older single-status path remains for headless runs, for bots
+    // without the Master port, and where the mirror has no place to post (a direct message to a project without a channel).
+    const mirrored = !!this.o.master && run.mode === 'master' && bot.mirror !== 'off' && (this.o.store.getDiscordThread(bot.id, at.channelId) != null || (this.o.store.getCrew(crewId)?.discordChannels.length ?? 0) > 0)
+    if (mirrored) return
     const origin: Origin = { botId: bot.id, channelId: at.channelId, messageId: at.id, last: '', chain: Promise.resolve(), target: null }
     this.origins.set(run.id, origin)
     origin.chain = this.progress(origin, run, direct)
@@ -469,12 +531,19 @@ export class DiscordManager {
 
   // Called for each `run` event: posts the new status to the job's thread.
   onRunChange(n: { runId: number }): void {
+    const changed = this.o.master ? this.o.store.getRun(n.runId) : null
+    if (changed) this.mirror.onChange(changed)
     const origin = this.origins.get(n.runId)
     if (!origin) return
     origin.chain = origin.chain.then(() => {
       const run = this.o.store.getRun(n.runId)
       return run ? this.progress(origin, run, false) : undefined
     })
+  }
+
+  // Called for each run event (question, review, progress, approval, close-out): mirrors it by code into the run's thread.
+  onRunEvent(run: Run, e: RunEvent): void {
+    if (this.o.master) this.mirror.onEvent(run, e)
   }
 
   private async progress(origin: Origin, run: Run, direct: boolean): Promise<void> {
@@ -540,6 +609,7 @@ export class DiscordManager {
     const fail = (err: unknown) => this.o.log?.(`Discord bot ${bot.name}: ${scrubSecrets(errText(err), token)}`)
     gateway.onMessage((m) => void this.onMessage(id, m).catch(fail))
     gateway.onReaction((r) => void this.onReaction(id, r).catch(fail))
+    gateway.onInteraction?.((i) => void this.onInteraction(id, i).catch(fail))
     gateway.onClosed((reason) => this.setHealth(id, { state: 'error', error: scrubSecrets(reason, token) }))
     gateway.onRestored(() => this.setHealth(id, { state: 'connected', error: '', guilds: gateway.guilds().length }))
     try {
@@ -547,6 +617,7 @@ export class DiscordManager {
       this.live.set(id, { gateway, selfId: me.userId })
       this.setHealth(id, { state: 'connected', username: me.username, guilds: gateway.guilds().length, error: '' })
       this.o.log?.(`Discord bot ${bot.name} connected`)
+      if (this.o.master) void this.setupCommands(id).catch(fail)
     } catch (err) {
       await gateway.disconnect().catch(() => undefined)
       const message = scrubSecrets(errText(err), token)
@@ -554,6 +625,69 @@ export class DiscordManager {
       this.o.log?.(`Discord bot ${bot.name} could not connect: ${message}`)
       throw new DiscordError('BAD_ARGS', message)
     }
+  }
+
+  // Slash commands
+
+  // Registers the commands in every server (replacing the set, so repeating is safe), then checks the channels'
+  // permissions. Each problem is reported once in a channel, with the permission needed.
+  private async setupCommands(id: number): Promise<void> {
+    const gateway = this.live.get(id)?.gateway
+    const bot = this.o.store.getDiscordBot(id)
+    if (!gateway || !bot) return
+    if (gateway.registerCommands) {
+      const r = await gateway.registerCommands(commandDefs())
+      const where = bot.homeChannel || this.o.store.listCrews().flatMap((c) => c.discordChannels)[0]
+      if (where) for (const f of r.failed) await this.reportGap(id, where, `I could not set up my slash commands in ${f.guild}: ${scrubSecrets(f.reason)}`)
+    }
+    if (!gateway.inspect) return
+    const checks = await this.checkChannels(bot, gateway)
+    for (const c of checks) {
+      const missing = c.missing.filter((p) => p in GAP_LABELS).map((p) => GAP_LABELS[p]!)
+      if (c.found && missing.length) await this.reportGap(id, c.id, `I am missing permissions in this channel: ${missing.join(', ')}. Give them to my role (channel settings, Permissions) so commands, threads and updates work.`)
+    }
+  }
+
+  // Says a problem once per bot, channel and text.
+  private async reportGap(botId: number, channelId: string, text: string): Promise<void> {
+    const key = `${botId}:${channelId}:${text}`
+    if (this.gapsReported.has(key)) return
+    this.gapsReported.add(key)
+    this.o.log?.(`Discord bot ${this.o.store.getDiscordBot(botId)?.name ?? botId}: ${scrubSecrets(text)}`)
+    await this.say(botId, channelId, text).catch(() => undefined)
+  }
+
+  private async onInteraction(botId: number, i: GatewayInteraction): Promise<void> {
+    const bot = this.o.store.getDiscordBot(botId)
+    const port = this.o.master
+    if (!bot || !port) return i.type === 'autocomplete' ? i.choices([]) : i.reply('Commands are not available right now.')
+    for (const [k, s] of this.starts) if (this.now() - s.at > CONFIRM_TTL) this.starts.delete(k)
+    const host: CommandHost = {
+      bot,
+      store: this.o.store,
+      port,
+      submit: (input) => this.o.runs.submit(input),
+      restart: () => this.restartBot(botId),
+      now: this.now,
+      scrub: (t) => scrubSecrets(t),
+      hold: (input, userId) => {
+        const nonce = randomBytes(6).toString('hex')
+        this.starts.set(nonce, { input, userId, at: this.now() })
+        return nonce
+      },
+      take: (nonce) => {
+        const s = this.starts.get(nonce)
+        this.starts.delete(nonce)
+        return s ? { input: s.input, userId: s.userId } : null
+      },
+    }
+    await handleInteraction(host, i)
+  }
+
+  // Restarts this bot's Discord connection only; the app and the other bots stay up. Commands are registered again.
+  private async restartBot(id: number): Promise<void> {
+    await this.dropConnection(id)
+    await this.connectBot(id)
   }
 
   private async dropConnection(id: number): Promise<void> {
@@ -614,6 +748,14 @@ export class DiscordManager {
     if (p.allowlist !== undefined) {
       if (!Array.isArray(p.allowlist) || p.allowlist.some((u) => typeof u !== 'string' || !ID_RE.test(u.trim()))) throw new DiscordError('BAD_ARGS', 'Discord user ids are numbers of 5 to 25 digits')
       out.allowlist = [...new Set(p.allowlist.map((u) => u.trim()))]
+    }
+    if (p.admins !== undefined) {
+      if (!Array.isArray(p.admins) || p.admins.some((u) => typeof u !== 'string' || !ID_RE.test(u.trim()))) throw new DiscordError('BAD_ARGS', 'Discord user ids are numbers of 5 to 25 digits')
+      out.admins = [...new Set(p.admins.map((u) => u.trim()))]
+    }
+    if (p.mirror !== undefined) {
+      if (!DISCORD_MIRRORS.includes(p.mirror)) throw new DiscordError('BAD_ARGS', 'mirror must be off, results or progress')
+      out.mirror = p.mirror
     }
     for (const key of ['homeChannel', 'generalChannel'] as const) {
       const v = p[key]

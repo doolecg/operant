@@ -14,7 +14,10 @@ import { Button } from '@/components/ui/button'
 import { ResizeHandle } from '@/components/ui/resize-handle'
 import { usePanelWidth } from '@/lib/layout'
 import { cn } from '@/lib/utils'
-import { useMaster, useRuns, useStartMaster, useStopMaster } from '@/lib/queries'
+import { MASTER_PHASE_HINT, MASTER_PHASE_LABEL, runNeedsOwner } from '@/components/jobs/runUi'
+import { onNeedsYouRequest, takeNeedsYouRequest } from '@/components/jobs/openRuns'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useMaster, useMasterState, useRuns, useStartMaster, useStopMaster } from '@/lib/queries'
 import { OperatorTerminal } from './OperatorTerminal'
 
 type Tab = 'runs' | 'board' | 'messages' | 'activity' | 'usage' | 'git'
@@ -47,6 +50,9 @@ export function Workspace({ crewId }: { crewId: number }) {
   const stop = useStopMaster()
   const [error, setError] = useState<string | null>(null)
   const [openRun, setOpenRun] = useState<number | null>(null)
+  const masterState = useMasterState(crewId).data
+  const [needsOnly, setNeedsOnly] = useState(() => takeNeedsYouRequest())
+  const terminal = useRef<HTMLElement>(null)
   const [tab, setTab] = useState<Tab>(() => (takeUsageRequest() ? 'usage' : takeGitRequest() ? 'git' : 'runs'))
   const [usageJob, setUsageJob] = useState<number | null>(null)
   const [wide, setWide] = useState(false)
@@ -66,6 +72,17 @@ export function Workspace({ crewId }: { crewId: number }) {
   // The header's limit badge opens the Usage tab.
   useEffect(() => onUsageRequest(() => takeUsageRequest() && setTab('usage')), [])
 
+  // The status pill's "needs you" chip opens the Runs tab filtered to the jobs that need the owner.
+  useEffect(
+    () =>
+      onNeedsYouRequest(() => {
+        if (!takeNeedsYouRequest()) return
+        setTab('runs')
+        setNeedsOnly(true)
+      }),
+    [],
+  )
+
   // The branch chip opens the Git tab.
   useEffect(() => onGitRequest(() => takeGitRequest() && setTab('git')), [])
 
@@ -80,13 +97,30 @@ export function Workspace({ crewId }: { crewId: number }) {
 
   return (
     <div className="relative flex h-full min-h-0">
-      <section aria-label="Master Terminal" className="flex min-w-0 flex-1 flex-col">
+      <section ref={terminal} tabIndex={-1} aria-label="Master Terminal" className="flex min-w-0 flex-1 flex-col outline-none">
         <div className="flex h-11 shrink-0 items-center gap-3 border-b px-4">
           <span aria-hidden className={running ? 'size-2 rounded-full bg-emerald-400' : 'bg-muted-foreground size-2 rounded-full'} />
           <h2 className="text-sm font-medium">Master Terminal</h2>
           <Button variant="ghost" size="sm" disabled={start.isPending || stop.isPending} onClick={toggle}>
             {running ? <Square /> : <Play />} {running ? 'Stop' : 'Start'}
           </Button>
+          {masterState && (() => {
+            const phase = running ? masterState.phase : 'exited'
+            return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={0}
+                  data-master-phase={phase}
+                  className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs outline-none"
+                >
+                  {MASTER_PHASE_LABEL[phase]}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">{MASTER_PHASE_HINT[phase]}</TooltipContent>
+            </Tooltip>
+            )
+          })()}
         </div>
         <div className="min-h-0 flex-1">
           {running && master ? (
@@ -94,7 +128,10 @@ export function Workspace({ crewId }: { crewId: number }) {
           ) : (
             <div className="text-muted-foreground grid h-full place-items-center p-4 text-center text-sm">
               <div className="space-y-3">
-                <p>The Master Terminal is not running. Starting a task starts it.</p>
+                <p>The Master Terminal starts when you send it a task</p>
+                <Button size="sm" disabled={start.isPending} onClick={toggle}>
+                  <Play /> Start
+                </Button>
                 {error && (
                   <p role="alert" className="text-destructive text-xs">
                     {error}
@@ -123,7 +160,7 @@ export function Workspace({ crewId }: { crewId: number }) {
           {...panel.handle}
         />}
         <div role="tablist" aria-label="Workspace panels" className="flex h-11 shrink-0 items-stretch gap-0.5 border-b px-2">
-          <TabButton id="runs" label="Runs" active={tab === 'runs'} badge={runs.length} onSelect={setTab} />
+          <TabButton id="runs" label="Runs" active={tab === 'runs'} badge={runs.filter(runNeedsOwner).length} onSelect={setTab} />
           <TabButton id="board" label="Board" active={tab === 'board'} badge={boardBadge} onSelect={setTab} />
           <TabButton id="messages" label="Messages" active={tab === 'messages'} badge={unread} onSelect={setTab} />
           <TabButton id="activity" label="Activity" active={tab === 'activity'} onSelect={setTab} />
@@ -131,7 +168,7 @@ export function Workspace({ crewId }: { crewId: number }) {
           <TabButton id="git" label="Git" active={tab === 'git'} onSelect={setTab} />
         </div>
         <div role="tabpanel" id="workspace-tabpanel" aria-labelledby={`workspace-tab-${tab}`} className="flex min-h-0 flex-1 flex-col">
-          {tab === 'runs' && <RunGrid runs={runs} selectedId={openRun} onOpen={(r) => setOpenRun(r.id)} onDeleted={(id) => setOpenRun((cur) => (cur === id ? null : cur))} />}
+          {tab === 'runs' && <RunGrid runs={runs} needsOnly={needsOnly} onNeedsOnlyChange={setNeedsOnly} selectedId={openRun} onOpen={(r) => setOpenRun(r.id)} onDeleted={(id) => setOpenRun((cur) => (cur === id ? null : cur))} />}
           {tab === 'board' && <JobsPanel crewId={crewId} />}
           {tab === 'messages' && <MessagesPanel crewId={crewId} />}
           {tab === 'activity' && <ActivityPanel crewId={crewId} />}
@@ -143,6 +180,10 @@ export function Workspace({ crewId }: { crewId: number }) {
       {openRun != null && <RunPanel
           runId={openRun}
           onClose={() => setOpenRun(null)}
+          onOpenMaster={() => {
+            setOpenRun(null)
+            terminal.current?.focus()
+          }}
           onOpenUsage={(id) => {
             setUsageJob(id)
             setTab('usage')

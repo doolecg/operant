@@ -103,7 +103,7 @@ export interface AgentCounts {
   waiting: number
 }
 
-// Running = jobs working, idle = queued, waiting = needs you, done = finished since `sinceMs`.
+// Running = jobs working, idle = queued, waiting = needs you (a question, a permission, a stopped Master or a review), done = finished since `sinceMs`.
 export function agentCounts(
   runs: Array<{ status: string; finishedAt?: number | null }>,
   sinceMs: number,
@@ -112,7 +112,7 @@ export function agentCounts(
   for (const r of runs) {
     if (r.status === 'working') c.running++
     else if (r.status === 'queued') c.idle++
-    else if (r.status === 'needs-you') c.waiting++
+    else if (r.status === 'needs-you' || r.status === 'review') c.waiting++
     else if (r.status === 'done' && (r.finishedAt ?? 0) >= sinceMs) c.done++
   }
   return c

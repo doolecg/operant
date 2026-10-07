@@ -20,8 +20,8 @@ const read = (name: string): string => lf(readFileSync(join(rolesDir, `${name}.m
 const skill = lf(readFileSync(join(plugin, 'skills', 'operant', 'SKILL.md'), 'utf8'))
 
 describe('role files', () => {
-  it('ships exactly the common file and the seven roles', () => {
-    expect(readdirSync(rolesDir).sort()).toEqual(['_common.md', ...ROLES.map((r) => `${r}.md`)].sort())
+  it('ships exactly the common file, the Master PM role and the seven roles', () => {
+    expect(readdirSync(rolesDir).sort()).toEqual(['_common.md', 'master-pm.md', ...ROLES.map((r) => `${r}.md`)].sort())
   })
 
   it('keeps _common.md at or under 200 words', () => {

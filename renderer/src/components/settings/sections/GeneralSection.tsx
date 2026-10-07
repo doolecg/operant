@@ -1,5 +1,6 @@
 import { Download, Loader2, RefreshCw } from 'lucide-react'
 import type { UpdateStatus } from '@shared/types'
+import { ModelEffortSelect } from '@/components/jobs/ModelEffortSelect'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -86,20 +87,32 @@ export function GeneralSection() {
           <CardDescription>Defaults for new operators, and the shell every operator runs in.</CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
-          <Row label="Default Claude Code model" hint="An alias like sonnet or opus, or a full model id." htmlFor="m-claude">
-            <CommitInput
-              id="m-claude"
-              className="w-48 font-mono"
-              value={s.defaultModels.claude}
-              onCommit={(v) => save.mutate({ defaultModels: { claude: v } })}
-            />
+          <Row
+            label="Main CLI"
+            hint="The CLI the Master Terminal starts, and the one the Plus menu, the MCP Add dialog and new seats pick first. Each of those can still be changed where you use it. The learning AI keeps its own setting."
+            htmlFor="main-cli"
+          >
+            <Select
+              value={s.mainCli}
+              onValueChange={(v) => save.mutate({ mainCli: v as 'claude' | 'opencode', mainModel: '', mainEffort: '' })}
+            >
+              <SelectTrigger id="main-cli" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="claude">Claude Code</SelectItem>
+                <SelectItem value="opencode">OpenCode</SelectItem>
+              </SelectContent>
+            </Select>
           </Row>
-          <Row label="Default Codex model" htmlFor="m-codex">
-            <CommitInput
-              id="m-codex"
-              className="w-48 font-mono"
-              value={s.defaultModels.codex}
-              onCommit={(v) => save.mutate({ defaultModels: { codex: v } })}
+          <Row label="Default model" hint="The model and effort the main CLI starts with. Leave the default to let the CLI choose. Applies to anything started from now on.">
+            <ModelEffortSelect
+              label="Main"
+              cli={s.mainCli}
+              model={s.mainModel}
+              onModelChange={(v) => save.mutate(s.mainCli === 'claude' ? { mainModel: v, defaultModels: { claude: v || 'sonnet' } } : { mainModel: v })}
+              effort={s.mainEffort}
+              onEffortChange={(v) => save.mutate({ mainEffort: v })}
             />
           </Row>
           <Row label="Shell" hint="Leave empty for the system default. Applies to operators started from now on." htmlFor="shell">

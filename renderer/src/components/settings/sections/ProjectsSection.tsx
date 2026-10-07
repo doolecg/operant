@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from '@/lib/toast'
-import { useCreateGroup, useCrews, useDeleteGroup, useGroups, useIdes, useMoveToGroup, useRenameGroup, useSaveSettings, useSettings } from '@/lib/queries'
+import { useCreateGroup, useCrews, useDeleteGroup, useGroups, useIdes, useMoveToGroup, useRenameGroup, useSaveSettings, useSettings, useUpdateCrew } from '@/lib/queries'
 import { CommitInput, Row } from '../parts'
 
 const NONE = 'none'
@@ -24,6 +24,7 @@ export function ProjectsSection() {
   const renameGroup = useRenameGroup()
   const deleteGroup = useDeleteGroup()
   const moveTo = useMoveToGroup()
+  const updateCrew = useUpdateCrew()
   const [edit, setEdit] = useState<Crew | null>(null)
   const [remove, setRemove] = useState<Crew | null>(null)
   const s = settings.data
@@ -106,13 +107,25 @@ export function ProjectsSection() {
             <div key={c.id} data-testid={`project-row-${c.id}`} className="flex items-center justify-between gap-4 py-3">
               <div className="min-w-0">
                 <div className="truncate text-sm">
-                  <span className="text-muted-foreground mr-2 font-mono text-[10px]">PRJ#{c.prjNumber}</span>
+                  {c.kind !== 'playground' && <span className="text-muted-foreground mr-2 font-mono text-[10px]">PRJ#{c.prjNumber}</span>}
                   {c.name}
                 </div>
                 <p className="text-muted-foreground truncate font-mono text-xs">{c.folder}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Select value={c.groupId == null ? NONE : String(c.groupId)} onValueChange={(v) => moveTo.mutate([c.id, v === NONE ? null : Number(v)], { onError: failed })}>
+                {c.kind === 'playground' && (
+                  <CommitInput
+                    id={`playground-channels-${c.id}`}
+                    aria-label={`Discord channel of ${c.name}`}
+                    placeholder="Discord channel ID"
+                    className="w-44 font-mono text-xs"
+                    value={c.discordChannels.join(', ')}
+                    onCommit={(v) =>
+                      updateCrew.mutate([c.id, { discordChannels: v.split(/[\s,]+/).filter(Boolean) }], { onError: failed })
+                    }
+                  />
+                )}
+                {c.kind !== 'playground' && <Select value={c.groupId == null ? NONE : String(c.groupId)} onValueChange={(v) => moveTo.mutate([c.id, v === NONE ? null : Number(v)], { onError: failed })}>
                   <SelectTrigger aria-label={`Group of ${c.name}`} className="w-40">
                     <SelectValue />
                   </SelectTrigger>
@@ -124,11 +137,17 @@ export function ProjectsSection() {
                       </SelectItem>
                     ))}
                   </SelectContent>
-                </Select>
+                </Select>}
                 <Button variant="ghost" size="icon-sm" aria-label={`Edit ${c.name}`} onClick={() => setEdit(c)}>
                   <Pencil />
                 </Button>
-                <Button variant="ghost" size="icon-sm" aria-label={`Delete ${c.name}`} onClick={() => setRemove(c)}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={c.kind === 'playground' ? `Clear history of ${c.name}` : `Delete ${c.name}`}
+                  title={c.kind === 'playground' ? 'Clear history (runs, messages and lessons)' : undefined}
+                  onClick={() => setRemove(c)}
+                >
                   <Trash2 />
                 </Button>
               </div>
@@ -138,7 +157,7 @@ export function ProjectsSection() {
       </Card>
 
       {edit && <EditCrewDialog crew={edit} open onOpenChange={(o) => !o && setEdit(null)} />}
-      {remove && <DeleteCrewDialog crewId={remove.id} crewName={remove.name} open onOpenChange={(o) => !o && setRemove(null)} />}
+      {remove && <DeleteCrewDialog crewId={remove.id} crewName={remove.name} playground={remove.kind === 'playground'} open onOpenChange={(o) => !o && setRemove(null)} />}
     </>
   )
 }

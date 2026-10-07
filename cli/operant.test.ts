@@ -128,3 +128,38 @@ describe('main', () => {
     expect((await main(['--help'], {})).code).toBe(0)
   })
 })
+
+describe('run and hook commands', () => {
+  it('parses the Master run commands', () => {
+    expect(req(['run', 'show', '20003'])).toMatchObject({ cmd: 'run.show', args: { id: 20003 } })
+    expect(req(['run', 'progress', '20003', '--text', 'step one'])).toMatchObject({ cmd: 'run.progress', args: { id: 20003, text: 'step one' } })
+    expect(req(['run', 'ask', '20003', '--text', 'Which?', '--option', 'A', '--option', 'B']).args).toEqual({ id: 20003, text: 'Which?', option: ['A', 'B'] })
+    expect(req(['run', 'review', '20003', '--summary', '-']).stdin).toBe('summary')
+    expect(req(['run', 'next']).cmd).toBe('run.next')
+    expect(req(['run', 'closeout', '20003']).cmd).toBe('run.closeout')
+    expect(err(['run', 'review', '20003'])).toMatch(/--summary is required/)
+    expect(err(['run', 'bogus'])).toMatch(/Unknown command "run bogus"/)
+    expect(err(['run', 'ask', '20003', '--text', 'q', '--text', 'r'])).toMatch(/given twice/)
+  })
+
+  it('reads --summary @file and keeps @@ literal', async () => {
+    const { readAtFile } = await import('./operant')
+    expect(readAtFile('@report.md', () => 'from file')).toBe('from file')
+    expect(readAtFile('@@mention')).toBe('@mention')
+    expect(readAtFile('plain')).toBe('plain')
+  })
+
+  it('hook sends the known JSON fields and is silent whatever happens', async () => {
+    const { hookArgs } = await import('./operant')
+    expect(hookArgs('Notification', JSON.stringify({ session_id: 's', notification_type: 'permission_prompt', message: 'm', prompt: 'secret', n: 1 }))).toEqual({
+      event: 'Notification',
+      sessionId: 's',
+      notificationType: 'permission_prompt',
+      message: 'm',
+    })
+    expect(hookArgs('UserPromptSubmit', JSON.stringify({ session_id: 's', prompt: 'approve' }))).toEqual({ event: 'UserPromptSubmit', sessionId: 's', prompt: 'approve' })
+    expect(hookArgs('Stop', 'not json')).toEqual({ event: 'Stop' })
+    expect(await main(['hook', 'Stop'], {}, Readable.from(['{}']))).toEqual({ stdout: '', stderr: '', code: 0 })
+    expect(await main(['hook', 'Stop'], { OPERANT_SOCKET: '/nonexistent/x.sock', OPERANT_TOKEN: 'a'.repeat(64) }, Readable.from(['{}']))).toEqual({ stdout: '', stderr: '', code: 0 })
+  })
+})

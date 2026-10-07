@@ -8,8 +8,45 @@ export const nudgeLine = (unread: number): string =>
 
 const NUDGE_RE = /^Operant: you have \d+ unread messages?\. Run: operant inbox$/
 
+// The Master gate's pointer lines (core/master-gate.ts): a closed vocabulary whose only variable part is a JOB# number
+// from the store. Task text, answers, notes and agent output never go into a line; the Master reads them with the CLI.
+export type PointerKind = 'new' | 'sent-back' | 'answer' | 'approved' | 'stopped' | 'resume' | 'next' | 'owner'
+const JOB_ID_RE = /^[1-9]\d{4,8}$/
+const POINTER_TEXT: Record<Exclude<PointerKind, 'next' | 'owner'>, (id: number) => string> = {
+  new: (id) => `Operant: new task JOB#${id}. Run: operant run show ${id}`,
+  'sent-back': (id) => `Operant: JOB#${id} was sent back. Run: operant run show ${id}`,
+  answer: (id) => `Operant: the owner answered JOB#${id}. Run: operant run answer ${id}`,
+  approved: (id) => `Operant: the owner approved JOB#${id}. Run: operant run closeout ${id}`,
+  stopped: (id) => `Operant: JOB#${id} was stopped by the owner`,
+  resume: (id) => `Operant: resume JOB#${id}. Run: operant run show ${id}`,
+}
+const NEXT_LINE = 'Operant: next task. Run: operant run next'
+// The owner wrote to the project's Master in Discord; the text itself is read with the CLI as data.
+const OWNER_LINE = 'Operant: the owner wrote in Discord. Run: operant run inbox'
+
+// Master commands the owner may send from Discord: a closed vocabulary, typed as a bare line with no arguments.
+export const MASTER_COMMAND_LINES = ['/compact', '/clear', '/cost'] as const
+export type MasterCommandLine = (typeof MASTER_COMMAND_LINES)[number]
+export const isMasterCommandLine = (line: string): line is MasterCommandLine => (MASTER_COMMAND_LINES as readonly string[]).includes(line)
+
+// Builds a pointer line; throws for an id that is not a JOB# number (5 to 9 digits).
+export function fixedLine(kind: PointerKind, runId?: number): string {
+  if (kind === 'next') return NEXT_LINE
+  if (kind === 'owner') return OWNER_LINE
+  if (!Number.isSafeInteger(runId) || !JOB_ID_RE.test(String(runId))) throw new Error('not a JOB# number')
+  return POINTER_TEXT[kind](runId as number)
+}
+
+// True only for a line that fixedLine rebuilds exactly from the number it carries (so both numbers agree).
+export function isPointerLine(line: string): boolean {
+  if (line === NEXT_LINE || line === OWNER_LINE) return true
+  const id = /JOB#(\d+)/.exec(line)?.[1]
+  if (!id || !JOB_ID_RE.test(id)) return false
+  return Object.values(POINTER_TEXT).some((f) => f(Number(id)) === line)
+}
+
 // The only lines Operant ever types into an agent's PTY on its own (launch commands excepted).
-export const isFixedLine = (line: string): boolean => line === CLEAR_LINE || line === EXIT_LINE || NUDGE_RE.test(line)
+export const isFixedLine = (line: string): boolean => line === CLEAR_LINE || line === EXIT_LINE || isMasterCommandLine(line) || NUDGE_RE.test(line) || isPointerLine(line)
 
 export interface NudgeConfig {
   nudgeIdleSeconds: number

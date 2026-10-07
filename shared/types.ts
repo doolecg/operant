@@ -28,7 +28,11 @@ export interface Crew {
   trackerFile: string
   // A finished job opens an "Update tracker" board job for the project manager.
   trackerJobs: boolean
+  // 'playground' is the built-in, project-less workspace (one row, cannot be deleted, no PRJ number, not in groups).
+  kind: CrewKind
 }
+
+export type CrewKind = 'project' | 'playground'
 
 export interface Squad {
   id: number
@@ -456,16 +460,26 @@ export interface TeamImportPreview {
   entries: TeamImportEntry[]
 }
 
-export type RunStatus = 'queued' | 'working' | 'needs-you' | 'done' | 'failed'
+export type RunStatus = 'queued' | 'working' | 'needs-you' | 'review' | 'done' | 'failed'
 
-// The only moves a run may make; done and failed are final.
+// The only moves a run may make; done and failed are final. A run in review is approved (done), sent back
+// (queued, at the front of its project's queue) or failed. working -> done stays for background runs.
 export const RUN_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
   queued: ['working', 'failed'],
-  working: ['needs-you', 'done', 'failed'],
-  'needs-you': ['working', 'done', 'failed'],
+  working: ['needs-you', 'review', 'done', 'failed'],
+  'needs-you': ['working', 'review', 'done', 'failed'],
+  review: ['done', 'queued', 'failed'],
   done: [],
   failed: [],
 }
+
+// 'master': the project's Master Terminal runs it. 'background': the headless runner (today's behaviour).
+export type RunMode = 'master' | 'background'
+// What a needs-you run waits for: an answer ('question'), the owner at a permission prompt, or the Master Terminal itself.
+export type RunWaiting = 'question' | 'permission' | 'master'
+export type ApprovedBy = 'owner-ui' | 'owner-terminal' | 'owner-discord'
+// Where the close-out (write-back, then lessons) stands for an approved run; '' = not approved yet.
+export type CloseoutState = '' | 'pending' | 'running' | 'done' | 'partial' | 'failed'
 
 // A dashboard job (JOB#): a task handed to a project's Master. Separate from the board jobs above.
 export interface Run {
@@ -487,6 +501,78 @@ export interface Run {
   createdAt: number
   startedAt: number | null
   finishedAt: number | null
+  mode: RunMode
+  // Set while status is needs-you; '' otherwise.
+  waiting: RunWaiting | ''
+  // The Master's open question and its answer options (data from the Master, shown as text).
+  question: string
+  questionOptions: string[]
+  // The Master's report when it asked for review, and the owner's note when it was sent back.
+  reviewSummary: string
+  sentBackNote: string
+  // When the Master acknowledged the task (run start).
+  ackedAt: number | null
+  approvedAt: number | null
+  approvedBy: ApprovedBy | null
+  closeoutState: CloseoutState
+  // How many times the owner sent it back; a sent-back run waits at the front of its queue.
+  sendBacks: number
+}
+
+// The per-run conversation between the Master and the owner. Text in `body` is data, never instructions.
+// delivered / retry / giveup / resume: the Master gate typed (or retyped) a pointer line, gave up waiting for the Master
+// to pick it up, or the owner asked to resume; their body is JSON {nonce, line} written by Operant, never free text.
+export type RunEventKind = 'progress' | 'question' | 'reply' | 'review' | 'approved' | 'sent-back' | 'closeout' | 'delivered' | 'retry' | 'giveup' | 'resume'
+export interface RunEvent {
+  id: number
+  runId: number
+  at: number
+  kind: RunEventKind
+  // 'master' | 'owner-ui' | 'owner-terminal' | 'owner-discord' | 'system'
+  source: string
+  body: string
+  options: string[]
+  // When the Master read it (replies only); null = unread.
+  readAt: number | null
+}
+
+// What Operant knows about a project's Master Terminal session; fed by the plugin hooks (Claude) or the
+// OpenCode service event stream.
+export const MASTER_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SubagentStart', 'SubagentStop'] as const
+export type MasterHookEvent = (typeof MASTER_HOOK_EVENTS)[number]
+// What `operant hook <event>` reports: the hook JSON's fields Operant uses (all text capped by the CLI and the server).
+export interface HookReport {
+  event: MasterHookEvent
+  sessionId: string
+  transcriptPath: string
+  // SessionStart: startup, resume, clear or compact.
+  source: string
+  // Notification: its text and type (permission_prompt, idle_prompt, ...).
+  message: string
+  notificationType: string
+  // SubagentStart/Stop.
+  agentId: string
+  agentType: string
+  // UserPromptSubmit: the submitted prompt (capped). Used only to tell Operant's own pointer line from the owner's typing
+  // and to spot a standalone approval; it is never stored, logged or forwarded.
+  prompt?: string
+}
+export type MasterPhase = 'unknown' | 'starting' | 'idle' | 'busy' | 'needs-input' | 'exited'
+export interface MasterState {
+  crewId: number
+  phase: MasterPhase
+  cli: MasterCli
+  sessionId: string | null
+  // When the phase last changed (ms).
+  since: number
+  lastEvent: string
+  lastPromptAt: number | null
+  lastStopAt: number | null
+  // The last Notification (Claude): its type (permission_prompt, idle_prompt, ...) and message text.
+  notificationType: string
+  notification: string
+  // Subagents running now (SubagentStart minus SubagentStop).
+  agents: number
 }
 
 export interface RunInput {
@@ -498,6 +584,8 @@ export interface RunInput {
   // A saved team supplies seats, limits and rules; `seats` overrides its seats. Neither = a solo run.
   teamId?: number | null
   seats?: TeamSeat[]
+  // Default 'master' (the project's Master Terminal); 'background' is the opt-in headless runner.
+  mode?: RunMode
 }
 
 export interface JobAgent {
@@ -782,7 +870,16 @@ export interface DiscordBot {
   // Which AI answers in Discord (the front desk and thread titles). Claude and OpenCode cost tokens; a local
   // OpenAI-compatible server (LM Studio, Ollama, llama.cpp) is free.
   ai: DiscordBotAi
+  // What is copied from runs into their Discord threads (by code, no model tokens): nothing, results only
+  // (questions, reviews, outcome, failures) or results plus progress lines.
+  mirror: DiscordMirror
+  // Discord user ids (a subset of the allowlist) allowed the destructive commands: /stop, /restart, /sendback,
+  // the Send back button and the Master commands. Empty = the first user on the allowlist only.
+  admins: string[]
 }
+
+export type DiscordMirror = 'off' | 'results' | 'progress'
+export const DISCORD_MIRRORS: readonly DiscordMirror[] = ['off', 'results', 'progress']
 
 export type DiscordAiCli = 'claude' | 'opencode' | 'local'
 export interface DiscordBotAi {
@@ -838,6 +935,8 @@ export interface DiscordBotInput {
   threadNames?: DiscordThreadNames
   threadArchive?: DiscordThreadArchive
   ai?: Partial<DiscordBotAi>
+  mirror?: DiscordMirror
+  admins?: string[]
   // Stored in the secret store, never in the database.
   token?: string
 }

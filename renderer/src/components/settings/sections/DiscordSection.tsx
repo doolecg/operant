@@ -263,7 +263,7 @@ function ProjectChannels({ crew, run }: { crew: Crew; run: Runner }) {
   return (
     <li className="space-y-2 py-3">
       <div className="text-sm">
-        <span className="text-muted-foreground mr-2 font-mono text-xs">PRJ{crew.prjNumber}</span>
+        {crew.kind !== 'playground' && <span className="text-muted-foreground mr-2 font-mono text-xs">PRJ{crew.prjNumber}</span>}
         {crew.name}
       </div>
       <IdList

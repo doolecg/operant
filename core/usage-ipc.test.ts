@@ -82,7 +82,7 @@ describe('usage, budgets, export, import and providers over IPC', () => {
     spend('b', 0.2)
     op.pollRunUsage()
     expect(caps.at(-1)).toMatchObject({ action: 'pause', scope: 'project', crewId })
-    const run = await op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude' })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude' })
     await tick()
     expect(started).toBe(0)
     expect((await op.handlers['runs:get'](run.id)).status).toBe('queued')
@@ -100,7 +100,7 @@ describe('usage, budgets, export, import and providers over IPC', () => {
     await op.handlers['budgets:set']({ projectDailyUsd: { [String(crewId)]: 1 } })
     spend('a', 1.5)
     op.pollRunUsage()
-    const run = await op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude' })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude' })
     await tick()
     expect(started).toBe(0)
     await op.handlers['budgets:resume']({ scope: 'project', crewId })
@@ -112,7 +112,7 @@ describe('usage, budgets, export, import and providers over IPC', () => {
 
   it('stops a job that passes its own cap when asked to, and the daily budget holds every queue', async () => {
     await op.handlers['budgets:set']({ jobDefaultUsd: 0.5, stopJobAtCap: true })
-    const run = await op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude' })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude' })
     await tick()
     expect((await op.handlers['runs:get'](run.id)).status).toBe('working')
     spend('j1', 0.6, { runId: run.id })
@@ -126,7 +126,7 @@ describe('usage, budgets, export, import and providers over IPC', () => {
     spend('j2', 1, {})
     op.usage.checkCaps()
     op.pollRunUsage()
-    const next = await op.handlers['runs:create']({ crewId, task: 'again', masterCli: 'claude' })
+    const next = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'again', masterCli: 'claude' })
     await tick()
     expect((await op.handlers['runs:get'](next.id)).status).toBe('queued')
     expect((await op.handlers['budgets:get']()).held[0]).toEqual({ crewId: null, reason: expect.stringMatching(/daily budget/) })
@@ -136,7 +136,7 @@ describe('usage, budgets, export, import and providers over IPC', () => {
   })
 
   it('reports, series, job breakdown and export through the handlers', async () => {
-    const run = await op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude' })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude' })
     spend('r1', 0.5, { runId: run.id })
     spend('r2', 0.25, { runId: run.id })
     const report = await op.handlers['usage:report']({ groupBy: ['run'], filter: { crewId, bogus: 1 } as never })
@@ -185,7 +185,7 @@ describe('usage, budgets, export, import and providers over IPC', () => {
     const file = join(projects, encodeProjectDir(cwd), 'sess9.jsonl')
     const m = (id: string, n: number) => JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id, model: 'claude-haiku-4-5', usage: { input_tokens: n, output_tokens: 1 }, content: [] } })
     writeFileSync(file, m('m1', 100) + '\n')
-    const run = await op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude' })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude' })
     await tick()
     ;(op as unknown as { noteRunSession(r: unknown, s: string): void }).noteRunSession(store.getRun(run.id), 'sess9')
     op.pollRunUsage()

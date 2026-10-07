@@ -45,11 +45,12 @@ describe('agent counts', () => {
       { status: 'working' },
       { status: 'queued' },
       { status: 'needs-you' },
+      { status: 'review' },
       { status: 'done', finishedAt: 2000 },
       { status: 'done', finishedAt: 500 },
       { status: 'failed', finishedAt: 2000 },
     ]
-    expect(agentCounts(runs, 1000)).toEqual({ running: 2, idle: 1, done: 1, waiting: 1 })
+    expect(agentCounts(runs, 1000)).toEqual({ running: 2, idle: 1, done: 1, waiting: 2 })
     expect(agentCounts([], 1000)).toEqual({ running: 0, idle: 0, done: 0, waiting: 0 })
   })
 })

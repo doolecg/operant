@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { coverage, realWindow } from './winapi.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'out/e2e')
 const shots = resolve('docs/specs/screenshots')
@@ -75,6 +76,8 @@ try {
   await inv('learn:run', runs[5].id)
   await page.reload()
   await page.waitForFunction(() => !!window.operant)
+  await page.getByRole('heading', { level: 1 }).first().waitFor()
+  if (!(await page.getByRole('heading', { name: 'alpha', level: 1 }).count())) await page.getByText('alpha', { exact: true }).first().click()
   await page.getByRole('heading', { name: 'alpha', level: 1 }).waitFor()
 
   const win = (fn, arg) => app.evaluate(({ BrowserWindow, screen }, a) => new Function('w', 's', 'a', `return (${a.fn})(w, s, a.arg)`)(BrowserWindow.getAllWindows()[0], screen, a), { fn: fn.toString(), arg })
@@ -91,6 +94,54 @@ try {
   const mode = (l) => page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: l, exact: true })
   const termRows = () => page.evaluate(() => document.querySelector('.xterm-rows')?.children.length ?? 0)
   const zoom = () => win((w) => w.webContents.getZoomFactor())
+
+  // The REAL OS window: ShowWindow(SW_MAXIMIZE) through user32, then what is on the display must fill the client area
+  // (the page used to stay at the old size in the top-left corner, the rest black), with automatic and fixed scales.
+  const pid = await app.evaluate(() => process.pid)
+  const real = realWindow(pid)
+  const filled = async (label) => {
+    await sleep(1800)
+    const m = real.measure()
+    const c = coverage(m)
+    console.log('real window', label, JSON.stringify(m), `coverage ${(c * 100).toFixed(1)}%`)
+    assert.ok(m.zoomed, `${label}: the OS window is maximized`)
+    assert.ok(c >= 0.98, `${label}: the painted area covers the client area (${m.paintedBox} of ${m.client})`)
+  }
+  for (const [label, setting] of [['auto', 0], ['fixed 100%', 1], ['fixed 175%', 1.75]]) {
+    await inv('settings:set', { uiScale: setting })
+    await sleep(600)
+    real.maximize()
+    await filled(`maximize, ${label}`)
+    real.restore()
+    await sleep(1000)
+  }
+  await inv('settings:set', { uiScale: 0 })
+  await sleep(600)
+
+  // Other Windows display scales: the same real maximize at device scale factors 1.25 and 1.75, automatic and fixed.
+  for (const dsf of ['1.25', '1.75']) {
+    const dir = mkdtempSync(join(tmpdir(), 'operant-scale-dsf-'))
+    const a2 = await electron.launch({ args: ['.', `--force-device-scale-factor=${dsf}`], env: { ...env, OPERANT_DATA_DIR: dir } })
+    try {
+      const p2 = await a2.firstWindow()
+      await p2.waitForFunction(() => !!window.operant)
+      const w2 = realWindow(await a2.evaluate(() => process.pid))
+      for (const [label, setting] of [['auto', 0], ['fixed 100%', 1]]) {
+        await p2.evaluate((u) => window.operant.invoke('settings:set', { uiScale: u }), setting)
+        await sleep(800)
+        w2.maximize()
+        await sleep(1800)
+        const m = w2.measure()
+        console.log('real window', `scale factor ${dsf}`, label, JSON.stringify(m), `coverage ${(coverage(m) * 100).toFixed(1)}%`)
+        assert.ok(m.zoomed && coverage(m) >= 0.98, `device scale ${dsf}, ${label}: the painted area covers the client area (${m.paintedBox} of ${m.client})`)
+        w2.restore()
+        await sleep(800)
+      }
+    } finally {
+      await a2.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
 
   // Master Terminal running (fake claude stays alive), at the default window size first.
   await page.getByRole('button', { name: 'Start', exact: true }).click()
@@ -247,6 +298,7 @@ try {
   const pn = await box(page.getByRole('region', { name: 'Workspace panels' }))
   const nv = await view()
   assert.ok(pn.x + pn.width >= nv.w - 2, 'right column reaches the edge after unmaximize')
+
   console.log('scale e2e passed; screenshots in', shots)
 } finally {
   await app.close()

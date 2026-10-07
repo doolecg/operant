@@ -3,7 +3,7 @@ import { MASTER_CLIS, validateLaunchSettings, validateMasterCli, validateModel }
 import type { MasterEvent, MasterMcp, MasterRegistry, MasterRun } from './master'
 import type { Store } from './store'
 
-export type RunErrorCode = 'BAD_ARGS' | 'NOT_FOUND' | 'LIMIT' | 'CONFLICT'
+export type RunErrorCode = 'BAD_ARGS' | 'NOT_FOUND' | 'LIMIT' | 'CONFLICT' | 'FORBIDDEN'
 
 export class RunError extends Error {
   constructor(
@@ -105,6 +105,8 @@ export interface RunManagerOptions {
   hold?: (run: Run) => string
   // Tokens spent so far by usage attributed to the run; with it, `enforceTokenBudgets` stops runs over their team's budget.
   runTokens?: (run: Run) => number
+  // A master-mode run that had reached the Master was stopped: the gate tells the Master with the fixed stop line.
+  onMasterStopped?: (run: Run) => void
 }
 
 export class RunManager {
@@ -112,6 +114,8 @@ export class RunManager {
   private readonly starting = new Set<number>()
   private readonly stopping = new Set<number>()
   private readonly stopReason = new Map<number, string>()
+  // Master-mode runs already moved to needs-you for their token budget (once each: Resume lets the Master go on).
+  private readonly overBudget = new Set<number>()
   private closing = false
 
   constructor(private readonly o: RunManagerOptions) {}
@@ -159,7 +163,9 @@ export class RunManager {
     const limits = { maxWorkers: 0, topTier: '' as const, tokenBudget: 0, ...team?.limits }
     checkLimits(seats, limits)
 
-    const run = store.createRun({ crewId: input.crewId, task, masterCli, masterModel, masterEffort, teamId: team?.id ?? null, seats, limits, rules: team?.rules ?? '' })
+    // The project's Master Terminal by default (the gate in core/master-gate.ts delivers it); 'background' is the opt-in headless runner.
+    const mode = input.mode === 'background' ? 'background' : 'master'
+    const run = store.createRun({ crewId: input.crewId, task, masterCli, masterModel, masterEffort, teamId: team?.id ?? null, seats, limits, rules: team?.rules ?? '', mode })
     this.changed(run)
     this.pump(run.crewId)
     return store.getRun(run.id)!
@@ -207,16 +213,18 @@ export class RunManager {
         this.o.onError?.(err)
       }
       this.finish(runId, 'failed', reason ?? 'Stopped by you')
+      // A master-mode run has no process of its own: the Master session keeps running and is told with a fixed line.
+      if (run.mode === 'master') this.o.onMasterStopped?.(store.getRun(runId)!)
     }
     return store.getRun(runId)!
   }
 
-  // Quit path: ends every working run as interrupted without waiting for its CLI (the caller kills the processes),
-  // and starts nothing more (no queue pump, no learn step).
+  // Quit path: ends every working background run as interrupted without waiting for its CLI (the caller kills the
+  // processes), and starts nothing more (no queue pump, no learn step). Master-mode runs wait for Resume (MasterGate.recover).
   interruptAll(): void {
     this.closing = true
     for (const run of this.o.store.listRuns()) {
-      if (run.status === 'working' || run.status === 'needs-you') {
+      if (run.mode === 'background' && (run.status === 'working' || run.status === 'needs-you')) {
         const handle = this.active.get(run.id)
         void handle?.stop().catch(() => undefined)
         this.finish(run.id, 'failed', 'Interrupted: Operant was closed while it ran')
@@ -224,11 +232,12 @@ export class RunManager {
     }
   }
 
-  // Runs left working by a previous process cannot be resumed: they end as failed, then queues start.
+  // Background runs left working by a previous process cannot be resumed: they end as failed, then queues start.
+  // Master-mode runs are the gate's (MasterGate.recover).
   recover(): void {
     const { store } = this.o
     for (const run of store.listRuns()) {
-      if (run.status === 'working' || run.status === 'needs-you') this.finish(run.id, 'failed', 'Interrupted: Operant was closed while it ran')
+      if (run.mode === 'background' && (run.status === 'working' || run.status === 'needs-you')) this.finish(run.id, 'failed', 'Interrupted: Operant was closed while it ran')
     }
     for (const crew of store.listCrews()) this.pump(crew.id)
   }
@@ -246,14 +255,17 @@ export class RunManager {
     for (const crew of this.o.store.listCrews()) this.pump(crew.id)
   }
 
-  // Stops every working run whose tokens passed the token budget its team set (0 = no limit). Returns the runs stopped.
+  // Stops every working background run whose tokens passed the token budget its team set (0 = no limit). A master-mode
+  // run is not stopped (that would end the Master's turn mid-work): it goes to needs-you with the reason, once.
+  // Returns the runs stopped or flagged.
   enforceTokenBudgets(): number[] {
-    const { runTokens } = this.o
+    const { runTokens, store } = this.o
     if (!runTokens) return []
     const over: number[] = []
-    for (const run of this.o.store.listRuns()) {
+    for (const run of store.listRuns()) {
       const budget = run.limits.tokenBudget
       if (!budget || (run.status !== 'working' && run.status !== 'needs-you') || this.stopping.has(run.id)) continue
+      if (run.mode === 'master' && (run.status !== 'working' || this.overBudget.has(run.id))) continue
       let used = 0
       try {
         used = runTokens(run)
@@ -262,20 +274,26 @@ export class RunManager {
       }
       if (used <= budget) continue
       over.push(run.id)
+      if (run.mode === 'master') {
+        this.overBudget.add(run.id)
+        const msg = `Over budget: the job used ${used.toLocaleString('en-US')} tokens, over its team's budget of ${budget.toLocaleString('en-US')}. Stop it, or press Resume to let the Master go on`
+        this.changed(store.transitionRun(run.id, 'needs-you', { waiting: 'master' }, msg))
+        continue
+      }
       void this.stop(run.id, `Stopped: the job used ${used.toLocaleString('en-US')} tokens, over its team's budget of ${budget.toLocaleString('en-US')}`).catch((err) => this.o.onError?.(err))
     }
     return over
   }
 
   private activeCount(crewId: number): number {
-    return this.o.store.listRuns(crewId).filter((r) => r.status === 'working' || r.status === 'needs-you').length
+    return this.o.store.listRuns(crewId).filter((r) => r.mode === 'background' && (r.status === 'working' || r.status === 'needs-you')).length
   }
 
   private pump(crewId: number): void {
     const { store } = this.o
     for (;;) {
       if (this.activeCount(crewId) >= this.concurrency) return
-      const next = store.listRuns(crewId).find((r) => r.status === 'queued' && !this.starting.has(r.id) && !this.held(r))
+      const next = store.listRuns(crewId).find((r) => r.mode === 'background' && r.status === 'queued' && !this.starting.has(r.id) && !this.held(r))
       if (!next) return
       this.begin(next)
     }
@@ -353,6 +371,91 @@ export class RunManager {
 
   private changed(run: Run): void {
     this.o.onChange?.({ crewId: run.crewId, runId: run.id, status: run.status })
+  }
+}
+
+// Records that the owner typed an approval for a run in review (the Master Terminal path). The renderer's
+// operators:write feeds every keystroke chunk into observeInput; only a whole typed line that is just an approval
+// word (optionally with the JOB# or its number) counts, only while exactly one run of the project is in review
+// (or the line names the run), and the mark is single-use and short-lived. Pasted text and agent output never count.
+export const APPROVAL_TTL_MS = 10 * 60_000
+const APPROVAL_LINE = /^(?:looks good[,.!]?\s+)?(?:i\s+)?(?:approve|approved|lgtm)(?:\s+(?:it|this)|\s+(?:job\s*)?#?(\d{5,9}))?\s*[.!]?$/i
+const LINE_MAX = 80
+
+export interface ApprovalMarkerOptions {
+  now?: () => number
+  ttlMs?: number
+  // Ids of the project's runs that are in review now.
+  inReview: (crewId: number) => number[]
+}
+
+export class ApprovalMarker {
+  private readonly lines = new Map<number, string>()
+  private readonly marks = new Map<number, number>()
+  private readonly now: () => number
+  private readonly ttl: number
+
+  constructor(private readonly o: ApprovalMarkerOptions) {
+    this.now = o.now ?? Date.now
+    this.ttl = o.ttlMs ?? APPROVAL_TTL_MS
+  }
+
+  // Keystrokes the owner typed in the project's Master Terminal. Returns the run marked, if this chunk finished an approval line.
+  observeInput(crewId: number, data: string): number | null {
+    if (data.includes('\x1b[200~')) {
+      this.lines.delete(crewId)
+      return null
+    }
+    let line = this.lines.get(crewId) ?? ''
+    let marked: number | null = null
+    // Escape sequences (arrows, function keys) are dropped whole; their letters are never text.
+    // eslint-disable-next-line no-control-regex
+    for (const ch of data.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b./g, '')) {
+      if (ch === '\r' || ch === '\n') {
+        marked = this.finishLine(crewId, line) ?? marked
+        line = ''
+      } else if (ch === '\x7f' || ch === '\b') line = line.slice(0, -1)
+      else if (ch === '\x15' || ch === '\x03') line = ''
+      else if (ch >= ' ' && line.length < LINE_MAX) line += ch
+      else if (ch >= ' ') line = 'x'.repeat(LINE_MAX)
+    }
+    if (line) this.lines.set(crewId, line)
+    else this.lines.delete(crewId)
+    return marked
+  }
+
+  // The prompt the owner submitted in the Master Terminal (the UserPromptSubmit hook): marks a run only when the whole
+  // prompt is a standalone approval line, as for typed keystrokes.
+  observePrompt(crewId: number, prompt: string): number | null {
+    return prompt.length <= LINE_MAX && !/[\r\n]/.test(prompt) ? this.finishLine(crewId, prompt) : null
+  }
+
+  private finishLine(crewId: number, line: string): number | null {
+    const m = APPROVAL_LINE.exec(line.trim())
+    if (!m) return null
+    const review = this.o.inReview(crewId)
+    const named = m[1] ? Number(m[1]) : null
+    const id = named ?? (review.length === 1 ? review[0]! : null)
+    if (id === null || !review.includes(id)) return null
+    this.marks.set(id, this.now() + this.ttl)
+    return id
+  }
+
+  // True once for a live mark; the mark is spent.
+  consume(runId: number): boolean {
+    const until = this.marks.get(runId)
+    this.marks.delete(runId)
+    return until !== undefined && until > this.now()
+  }
+
+  // A mark without spending it.
+  has(runId: number): boolean {
+    const until = this.marks.get(runId)
+    return until !== undefined && until > this.now()
+  }
+
+  forget(runId: number): void {
+    this.marks.delete(runId)
   }
 }
 

@@ -350,7 +350,7 @@ export function exportBundle(store: Store, now: number): Bundle {
   const bundle = emptyBundle('operant-export', now)
   bundle.origin = machineId(store)
   const crews = store.listCrews()
-  bundle.projects = crews.map((c) => ({ name: c.name, folder: c.folder }))
+  bundle.projects = crews.filter((c) => c.kind !== 'playground').map((c) => ({ name: c.name, folder: c.folder }))
   bundle.presets = store
     .listPresets()
     .filter((p) => p.builtin == null)

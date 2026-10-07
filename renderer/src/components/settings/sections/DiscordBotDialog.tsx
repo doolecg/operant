@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { DiscordAiCli, DiscordAiTestResult, DiscordBotView, DiscordThreadArchive, DiscordThreadNames, MasterCli } from '@shared/types'
+import type { DiscordAiCli, DiscordAiTestResult, DiscordBotView, DiscordMirror, DiscordThreadArchive, DiscordThreadNames, MasterCli } from '@shared/types'
 import { DEFAULT_DISCORD_AI } from '@shared/types'
 import { decodeIpcError } from '@shared/ipc'
 import { Button } from '@/components/ui/button'
@@ -29,6 +29,8 @@ export function DiscordBotDialog({ bot, onClose }: { bot: DiscordBotView | null;
   const [threadPerRequest, setThreadPerRequest] = useState(bot?.threadPerRequest ?? true)
   const [threadNames, setThreadNames] = useState<DiscordThreadNames>(bot?.threadNames ?? 'auto')
   const [threadArchive, setThreadArchive] = useState<DiscordThreadArchive>(bot?.threadArchive ?? 1440)
+  const [mirror, setMirror] = useState<DiscordMirror>(bot?.mirror ?? 'progress')
+  const [admins, setAdmins] = useState((bot?.admins ?? []).join('\n'))
   const [ai, setAi] = useState(bot?.ai ?? DEFAULT_DISCORD_AI)
   const [localModels, setLocalModels] = useState<string[]>([])
   const [aiResult, setAiResult] = useState<DiscordAiTestResult | null>(null)
@@ -67,7 +69,7 @@ export function DiscordBotDialog({ bot, onClose }: { bot: DiscordBotView | null;
     setError(null)
     setBusy(true)
     try {
-      const fields = { name, rules, homeChannel: home.trim(), generalChannel: general.trim(), mentionOnly, confirmStart, masterCli, threadPerRequest, threadNames, threadArchive, ai }
+      const fields = { name, rules, homeChannel: home.trim(), generalChannel: general.trim(), mentionOnly, confirmStart, masterCli, threadPerRequest, threadNames, threadArchive, ai, mirror, admins: admins.split(/[\s,]+/).filter(Boolean) }
       if (!bot) {
         await create.mutateAsync([{ ...fields, ...(token.trim() ? { token: token.trim() } : {}) }])
       } else {
@@ -89,7 +91,7 @@ export function DiscordBotDialog({ bot, onClose }: { bot: DiscordBotView | null;
         <DialogHeader>
           <DialogTitle>{bot ? `Edit bot: ${bot.name}` : 'Add a Discord bot'}</DialogTitle>
           <DialogDescription>
-            The bot answers in Discord as the front desk. Create it in the Discord developer portal and paste its token here.
+            The bot answers in Discord as the front desk (home and general channels, direct messages). In a project's channel it talks to that project's Master instead; start a task there with "task: ..." or /newsolo. Create the bot in the Discord developer portal and paste its token here.
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -283,6 +285,29 @@ export function DiscordBotDialog({ bot, onClose }: { bot: DiscordBotView | null;
               </div>
             </div>
           )}
+          <div className="space-y-1.5">
+            <Label htmlFor="bot-mirror">Mirror jobs into their threads</Label>
+            <Select value={mirror} onValueChange={(v) => setMirror(v as DiscordMirror)}>
+              <SelectTrigger id="bot-mirror" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">Off</SelectItem>
+                <SelectItem value="results">Results only</SelectItem>
+                <SelectItem value="progress">Results and progress</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-muted-foreground text-xs">
+              Copies a job's questions, review requests, outcome and failures (and with progress, its progress lines) into its Discord thread, with buttons to answer, approve or send back. Done by Operant itself, so it costs no tokens. The Master's own chat text and tool output are never copied.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="bot-admins">Admins (Discord user IDs)</Label>
+            <Textarea id="bot-admins" rows={2} value={admins} onChange={(e) => setAdmins(e.target.value)} placeholder="One user ID per line" />
+            <p className="text-muted-foreground text-xs">
+              Only these users can use /stop, /restart, /sendback, the Send back button and the Master commands (/master compact, clear, cost). Everyone on the allowlist can approve and answer. Empty means only the first person on the allowlist.
+            </p>
+          </div>
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label htmlFor="bot-mention">Answer only when mentioned</Label>

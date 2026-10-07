@@ -66,9 +66,9 @@ describe('teams, jobs and presets over IPC', () => {
   it('refuses a job over its team limits and starts one within them', async () => {
     const preset = (await op.handlers['presets:list']())[0]!
     const team = await op.handlers['teams:create']({ name: 'duo', seats: [{ presetId: preset.id, count: 3, model: 'claude-sonnet-5-5' }], limits: { maxWorkers: 2, topTier: '', tokenBudget: 0 } })
-    await expect(async () => op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude', teamId: team.id })).rejects.toMatchObject({ code: 'CONFLICT', message: /allows 2 workers and the run asks for 3/ })
+    await expect(async () => op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude', teamId: team.id })).rejects.toMatchObject({ code: 'CONFLICT', message: /allows 2 workers and the run asks for 3/ })
     expect(await op.handlers['runs:list'](crewId)).toEqual([])
-    const run = await op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude', teamId: team.id, seats: [{ presetId: preset.id, count: 2, model: 'claude-sonnet-5-5' }] })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude', teamId: team.id, seats: [{ presetId: preset.id, count: 2, model: 'claude-sonnet-5-5' }] })
     expect(run.id).toBe(20001)
     await new Promise((r) => setTimeout(r, 0))
     expect(started).toHaveLength(1)
@@ -79,8 +79,8 @@ describe('teams, jobs and presets over IPC', () => {
   })
 
   it('edits a queued job, deletes a finished one and refuses the rest', async () => {
-    const a = await op.handlers['runs:create']({ crewId, task: 'one', masterCli: 'claude' })
-    const b = await op.handlers['runs:create']({ crewId, task: 'two', masterCli: 'claude' })
+    const a = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'one', masterCli: 'claude' })
+    const b = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'two', masterCli: 'claude' })
     await new Promise((r) => setTimeout(r, 0))
     expect((await op.handlers['runs:update'](b.id, { task: 'two v2' })).task).toBe('two v2')
     await expect(async () => op.handlers['runs:update'](a.id, { task: 'x' })).rejects.toMatchObject({ code: 'CONFLICT' })
@@ -92,7 +92,7 @@ describe('teams, jobs and presets over IPC', () => {
   })
 
   it('returns an agent log, and [] for an unknown agent', async () => {
-    const run = await op.handlers['runs:create']({ crewId, task: 'one', masterCli: 'claude' })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'one', masterCli: 'claude' })
     expect(await op.handlers['runs:agentLog'](run.id, 12345)).toEqual([])
     await expect(async () => op.handlers['runs:agentLog'](99999, 1)).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })

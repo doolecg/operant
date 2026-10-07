@@ -6,6 +6,8 @@ import {
   Code2,
   Crown,
   Download,
+  FlaskConical,
+  FolderOpen,
   FolderPlus,
   GripVertical,
   MoreHorizontal,
@@ -52,7 +54,7 @@ interface Props {
   onSelect: (id: number) => void
   // A group id adds the new project to that group.
   onNewCrew: (groupId?: number) => void
-  actions: Omit<ProjectMenuHandlers, 'moveTo'> & { openMaster: (c: Crew) => void }
+  actions: Omit<ProjectMenuHandlers, 'moveTo'> & { openMaster: (c: Crew) => void; openPlayground: () => void }
   // Hides the panel (the same toggle as the keyboard shortcut).
   onHide?: () => void
   // Icon buttons on the bottom row: the usage, learning and MCP badges and the Console and terminal toggles.
@@ -164,7 +166,10 @@ const tiny = 'text-muted-foreground hover:text-foreground size-5 shrink-0'
 const headerBtn = 'text-muted-foreground hover:text-foreground hover:bg-foreground/[.08] size-[22px] rounded-md [&_svg]:size-3'
 const ring = 'shadow-[inset_0_0_0_1.5px_var(--primary)]'
 
-export function Sidebar({ crews, selected, onSelect, onNewCrew, actions, onHide, footer }: Props) {
+export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, actions, onHide, footer }: Props) {
+  // The Playground is pinned above the list; every list below works on the real projects only.
+  const playground = allCrews.find((c) => c.kind === 'playground')
+  const crews = allCrews.filter((c) => c.kind !== 'playground')
   const update = useUpdateStatus()
   const qc = useQueryClient()
   const reorder = useReorderCrews()
@@ -441,6 +446,43 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, actions, onHide,
     )
   }
 
+  const playgroundRow = (pg: Crew) => {
+    const isSelected = pg.id === selected
+    return (
+      <div
+        role="treeitem"
+        aria-selected={isSelected}
+        data-playground-row={pg.id}
+        className={cn(
+          'group relative flex h-7 items-center gap-[5px] rounded-md pr-1 pl-2 text-[13px] transition-colors',
+          isSelected ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
+        )}
+      >
+        <button type="button" onClick={() => onSelect(pg.id)} title={pg.folder} className="flex h-full min-w-0 flex-1 items-center gap-[6px] text-left outline-none">
+          <FlaskConical aria-hidden className={cn('size-3.5 shrink-0', isSelected ? 'text-primary' : 'text-orange-400')} />
+          <span className={cn('max-w-[60%] shrink-0 truncate font-semibold', isSelected && 'text-primary')}>{pg.name}</span>
+          <RowGit crewId={pg.id} />
+          <span className="flex-1" />
+          <RowRuns crewId={pg.id} />
+          <span className="group-hover:hidden group-focus-within:hidden">
+            <CrewUnread crewId={pg.id} />
+          </span>
+        </button>
+        <div className={cn('shrink-0 items-center', hoverOnly)}>
+          <Button variant="ghost" size="icon" className={tiny} aria-label={`New shell in ${pg.name}`} title="New shell here" onClick={() => actions.newShell(pg)}>
+            <SquareTerminal className="size-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className={tiny} aria-label={`Open ${pg.name} in ${ideName}`} title={`Open in ${ideName}`} onClick={() => actions.openIde(pg)}>
+            <Code2 className="size-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className={tiny} aria-label={`Open the folder of ${pg.name}`} title="Open folder" onClick={() => actions.openFolder(pg)}>
+            <FolderOpen className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   const groupBlock = (g: ProjectGroup, index: number) => {
     const members = inGroup(g.id)
     const key = `g:${g.id}`
@@ -578,6 +620,9 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, actions, onHide,
       />
       <div data-testid="project-panel-header" className="flex h-8 shrink-0 items-center gap-0.5 pr-1.5 pl-3.5">
         <span className="text-primary mr-auto text-[10.5px] font-semibold tracking-[.09em] uppercase">Projects</span>
+        <Button variant="ghost" size="icon" className={headerBtn} onClick={actions.openPlayground} disabled={!playground} aria-label="Open Playground" title="Open Playground (starts its Master Terminal)">
+          <FlaskConical />
+        </Button>
         <Button variant="ghost" size="icon" className={headerBtn} onClick={() => onNewCrew()} aria-label="Add project" title="Add project">
           <Plus />
         </Button>
@@ -594,6 +639,12 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, actions, onHide,
           <PanelLeftClose />
         </Button>
       </div>
+
+      {playground && (
+        <div role="group" aria-label="Playground" className="shrink-0 border-b px-1.5 pb-1.5">
+          {playgroundRow(playground)}
+        </div>
+      )}
 
       <ScrollArea className="min-h-0 flex-1 px-1.5">
         <div

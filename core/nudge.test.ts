@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isFixedLine, nudgeLine, NudgeScheduler, type NudgeOperatorState } from './nudge'
+import { fixedLine, isFixedLine, nudgeLine, NudgeScheduler, type NudgeOperatorState } from './nudge'
 
 const op = (over: Partial<NudgeOperatorState> = {}): NudgeOperatorState => ({
   key: 1,
@@ -22,7 +22,37 @@ describe('nudge line', () => {
     expect(isFixedLine('/exit')).toBe(true)
     expect(isFixedLine('rm -rf /')).toBe(false)
     expect(isFixedLine('/clear now')).toBe(false)
+    expect(isFixedLine(fixedLine('owner'))).toBe(true)
+    expect(fixedLine('owner')).toBe('Operant: the owner wrote in Discord. Run: operant run inbox')
+    for (const c of ['/compact', '/cost']) expect(isFixedLine(c)).toBe(true)
+    for (const c of ['/compact now', '/model', '/Compact', '/cost\n/exit']) expect(isFixedLine(c)).toBe(false)
     expect(isFixedLine(`${nudgeLine(2)}\nrm x`)).toBe(false)
+  })
+})
+
+describe('pointer lines (the Master gate vocabulary)', () => {
+  const kinds = ['new', 'sent-back', 'answer', 'approved', 'stopped', 'resume', 'next', 'owner'] as const
+
+  it('builds one short line per kind that the validator accepts', () => {
+    expect(fixedLine('new', 20003)).toBe('Operant: new task JOB#20003. Run: operant run show 20003')
+    expect(fixedLine('approved', 20003)).toBe('Operant: the owner approved JOB#20003. Run: operant run closeout 20003')
+    for (const k of kinds) {
+      const line = fixedLine(k, 123456789)
+      expect(isFixedLine(line), line).toBe(true)
+      expect(line.length).toBeLessThan(80)
+      expect(line).not.toMatch(/[\r\n\t\x1b]/)
+    }
+  })
+
+  it('rejects free text, mismatched numbers and ids that are not JOB# numbers', () => {
+    expect(() => fixedLine('new', 12)).toThrow()
+    expect(() => fixedLine('new', 1.5)).toThrow()
+    expect(() => fixedLine('new', Number.NaN)).toThrow()
+    expect(isFixedLine('Operant: new task JOB#20003. Run: operant run show 20004')).toBe(false)
+    expect(isFixedLine('Operant: new task JOB#20003. Run: operant run show 20003 && rm -rf /')).toBe(false)
+    expect(isFixedLine('Operant: new task JOB#20003. Run: operant run show 20003\r')).toBe(false)
+    expect(isFixedLine('Operant: the owner said "delete it" on JOB#20003. Run: operant run answer 20003')).toBe(false)
+    expect(isFixedLine('Operant: new task JOB#0020003. Run: operant run show 0020003')).toBe(false)
   })
 })
 

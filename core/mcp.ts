@@ -663,6 +663,20 @@ export class McpService {
     return [...out.values()]
   }
 
+  // The --mcp-config content (real values) for these Claude server names, without checking their health; null for none.
+  // Used at the synchronous Master Terminal launch.
+  claudeConfigFor(names: string[], folder: string | null): string | null {
+    if (!names.length) return null
+    const located = this.locate(folder)
+    const servers: Obj = {}
+    for (const name of names) {
+      const l = located.find((x) => x.cli === 'claude' && x.name === name && !x.raw.disabled)
+      if (l) servers[name] = claudeJson(l.raw)
+      else if (name === 'codegraph') servers[name] = { command: 'codegraph', args: ['serve', '--mcp'] }
+    }
+    return JSON.stringify({ mcpServers: servers }, null, 2) + '\n'
+  }
+
   // What a job launches with: the picked servers as launch config, and which of them are down.
   async forRun(needs: Array<{ seat: string; servers: string[] }>, cli: McpCli, folder: string | null): Promise<RunMcp> {
     const names = [...new Set(needs.flatMap((n) => n.servers))]

@@ -64,7 +64,7 @@ export function ProjectBlock({ crew, indexed, indexing, onIndex, onIde, onShell,
             <DropdownMenuItem onSelect={onEdit}>Edit project</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-              Delete project
+              {crew.kind === 'playground' ? 'Clear history' : 'Delete project'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -67,7 +67,7 @@ function setup() {
     ptys.push(p)
     return p
   }
-  const mgr = new SessionManager(spawn, { platform: 'linux', home: '/h', env: {} }, () => clock.t)
+  const mgr = new SessionManager(spawn, { platform: 'linux', home: '/h', env: {} }, () => clock.t, (fn) => fn())
   return { mgr, ptys, clock }
 }
 
@@ -187,7 +187,24 @@ describe('SessionManager', () => {
     expect(mgr.typeFixed(1, 'Operant: you have 2 unread messages. Run: operant inbox')).toBe(true)
     expect(() => mgr.typeFixed(1, 'ls')).toThrow()
     expect(mgr.typeFixed(9, '/clear')).toBe(false)
-    expect(ptys[0]!.written).toEqual(['/clear\r', 'Operant: you have 2 unread messages. Run: operant inbox\r'])
+    expect(ptys[0]!.written).toEqual(['/clear', '\r', 'Operant: you have 2 unread messages. Run: operant inbox', '\r'])
+    mgr.typeFixed(1, 'Operant: resume JOB#20003. Run: operant run show 20003', { clearFirst: true })
+    expect(ptys[0]!.written.slice(-3)).toEqual(['\x15', 'Operant: resume JOB#20003. Run: operant run show 20003', '\r'])
+  })
+
+  it("tracks the owner's typing (not terminal replies) and their unsent draft", () => {
+    const { mgr, clock } = setup()
+    mgr.start({ operator: operator({ agent: 'shell' }), address: 'a@b', cwd: '/' })
+    expect(mgr.ownerIdleMs(1)).toBeNull()
+    mgr.write(1, '\x1b[I\x1b[12;5R')
+    expect(mgr.ownerIdleMs(1)).toBeNull()
+    mgr.write(1, 'fix the')
+    expect(mgr.ownerDraft(1)).toBe(true)
+    clock.t += 3_000
+    expect(mgr.ownerIdleMs(1)).toBe(3_000)
+    mgr.write(1, ' bug\r')
+    expect(mgr.ownerDraft(1)).toBe(false)
+    expect(mgr.ownerIdleMs(1)).toBe(0)
   })
 
   it('does not pass an outer OPERANT_* or ELECTRON_RUN_AS_NODE variables on, but keeps the per-session ones', () => {

@@ -32,11 +32,11 @@ const SPLITTABLE = new Set<UsageGroupBy>(['project', 'model', 'cli', 'seat', 'pr
 function FilterSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: Array<{ value: string; label: string }> }) {
   return (
     <div className="min-w-0 space-y-0.5">
-      <label className="text-muted-foreground block text-[11px]" id={`filter-${label}`}>
+      <label className="text-muted-foreground block truncate text-[11px] whitespace-nowrap" id={`filter-${label}`}>
         {label}
       </label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger size="sm" className="h-7 w-full text-xs" aria-labelledby={`filter-${label}`}>
+        <SelectTrigger size="sm" className="h-7 w-full min-w-0 text-xs [&>span]:truncate" aria-labelledby={`filter-${label}`}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -154,7 +154,7 @@ export function UsagePage({
                   </>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-2">
                 <FilterSelect
                   label="Project"
                   value={project}

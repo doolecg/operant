@@ -13,8 +13,8 @@ const DOTS = [
 const TONE = { ok: 'bg-emerald-400', warn: 'bg-amber-400', bad: 'bg-red-500' } as const
 
 // The one status pill: running, idle and done jobs of the open project, Memory (CodeGraph and Hindsight health in one
-// dot) and, only when something waits for the user, a "needs you" chip. `labels` off leaves just dots and numbers.
-export function StatusPill({ crewId, jobs, labels }: { crewId: number | null; jobs: boolean; labels: boolean }) {
+// dot) and, only when something waits for the user, a "needs you" chip (questions and reviews) that opens the Runs tab filtered to those. `labels` off leaves just dots and numbers.
+export function StatusPill({ crewId, jobs, labels, onNeedsYou }: { crewId: number | null; jobs: boolean; labels: boolean; onNeedsYou?: () => void }) {
   const runs = useRuns(crewId)
   const health = useProjectHealth(crewId).data
   const c = agentCounts(runs.data ?? [], new Date().setHours(0, 0, 0, 0))
@@ -57,7 +57,16 @@ export function StatusPill({ crewId, jobs, labels }: { crewId: number | null; jo
           </TooltipContent>
         </Tooltip>
       )}
-      {c.waiting > 0 && <span className="rounded-full bg-amber-400/15 px-1.5 text-[10px] font-medium text-amber-400">needs you {c.waiting}</span>}
+      {c.waiting > 0 && (
+        <button
+          type="button"
+          aria-label={`${c.waiting} jobs need you. Show them`}
+          onClick={onNeedsYou}
+          className="rounded-full bg-amber-400/15 px-1.5 text-[10px] font-medium text-amber-400 hover:bg-amber-400/25"
+        >
+          needs you {c.waiting}
+        </button>
+      )}
     </div>
   )
 }

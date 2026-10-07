@@ -124,7 +124,7 @@ describe('the queue hold', () => {
   afterEach(() => store.close())
 
   it('keeps a held run queued until the hold lifts and pumpAll runs', async () => {
-    const run = mgr.submit({ crewId, task: 'one', masterCli: 'claude' })
+    const run = mgr.submit({ mode: 'background', crewId, task: 'one', masterCli: 'claude' })
     await tick()
     expect(adapter.starts).toHaveLength(0)
     expect(store.getRun(run.id)!.status).toBe('queued')
@@ -137,7 +137,7 @@ describe('the queue hold', () => {
 
   it('stops a working run with the reason given', async () => {
     reason = ''
-    const run = mgr.submit({ crewId, task: 'one', masterCli: 'claude' })
+    const run = mgr.submit({ mode: 'background', crewId, task: 'one', masterCli: 'claude' })
     await tick()
     const ended = await mgr.stop(run.id, 'Stopped: the job reached its budget')
     expect(ended).toMatchObject({ status: 'failed', outcome: 'Stopped: the job reached its budget' })

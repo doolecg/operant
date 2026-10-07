@@ -87,8 +87,10 @@ const TOOL_RE = /^[A-Za-z]{1,40}$/
 const RULE_RE = /^[A-Za-z][A-Za-z0-9_]{0,60}(\([^\0\r\n]{1,300}\))?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-// 'auto' is left out on purpose: its classifier calls cost tokens.
+// 'auto' is left out on purpose: its classifier calls cost tokens. Only the Master Terminal accepts it (MASTER_MODES).
 const MODES = ['acceptEdits', 'bypassPermissions', 'manual', 'dontAsk', 'plan']
+// Only the Master Terminal may use 'auto' (unattended PM work); its classifier calls cost some tokens, so it is never a default.
+const MASTER_MODES = [...MODES, 'auto']
 const TTLS = ['auto', '5m', '1h']
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\0-\x1f\x7f]/
@@ -117,8 +119,9 @@ function checkEffort(effort: string, agent?: string): string {
   return effort
 }
 
-function checkMode(mode: string): string {
-  if (typeof mode !== 'string' || !MODES.includes(mode)) throw new LaunchError('permissionMode', `must be one of ${MODES.join(', ')}`)
+function checkMode(mode: string, master = false): string {
+  const modes = master ? MASTER_MODES : MODES
+  if (typeof mode !== 'string' || !modes.includes(mode)) throw new LaunchError('permissionMode', `must be one of ${modes.join(', ')}`)
   return mode
 }
 
@@ -162,12 +165,12 @@ export function validateModel(model: string, agent?: string): string {
 
 // Checks the launch fields present in `patch` with the same rules the launch builders apply, so a bad
 // value is refused when it is saved instead of when the operator starts.
-export function validateLaunchSettings(patch: Partial<LaunchSettings>): void {
+export function validateLaunchSettings(patch: Partial<LaunchSettings>, master = false): void {
   const agent = patch.agent
   if (agent !== undefined && !AGENT_KINDS.includes(agent)) throw new LaunchError('agent', 'must be claude, opencode, codex or shell')
   if (patch.model !== undefined && agent !== 'shell' && patch.model !== '') checkModel(patch.model, agent)
   if (patch.effort !== undefined) checkEffort(patch.effort, agent)
-  if (patch.permissionMode !== undefined && patch.permissionMode !== '') checkMode(patch.permissionMode)
+  if (patch.permissionMode !== undefined && patch.permissionMode !== '') checkMode(patch.permissionMode, master)
   if (patch.tools !== undefined) checkTools(patch.tools)
   if (patch.allow !== undefined) checkRules('allow', patch.allow)
   if (patch.deny !== undefined) checkRules('deny', patch.deny)
@@ -428,7 +431,16 @@ export function buildAgentLaunch(operator: Operator, source: LaunchSource, ctx: 
 // The Master Terminal: the user's ordinary interactive Claude Code, no preset or role file. The only
 // settings Operant adds are the ones edited on the Master slot (model, effort, permission mode); empty
 // (or 'default') means Claude Code's own default.
-export function buildMasterLaunch(ctx: LaunchContext, master?: Pick<Operator, 'model' | 'effort' | 'permissionMode'>): LaunchResult {
+// What prepareMaster (core/master-plugin.ts) made for the launch: the PM role file, the generated plugin dir and the MCP union.
+export interface MasterLaunchPrep {
+  role: LaunchFile
+  pluginDir?: string | null
+  mcpConfigPath?: string | null
+  // Relaunch the conversation (--resume) instead of starting a new session id.
+  resume?: boolean
+}
+
+export function buildMasterLaunch(ctx: LaunchContext, master?: Pick<Operator, 'model' | 'effort' | 'permissionMode'>, prep?: MasterLaunchPrep): LaunchResult {
   assertShell(ctx)
   const sessionId = checkSessionId(ctx.sessionId)
   const supported = ctx.supported
@@ -438,10 +450,25 @@ export function buildMasterLaunch(ctx: LaunchContext, master?: Pick<Operator, 'm
   }
   if (master?.model) add('--model', checkModel(master.model))
   if (master?.effort && !isHaiku(master.model)) add('--effort', checkEffort(master.effort))
-  if (master?.permissionMode && master.permissionMode !== 'default') add('--permission-mode', checkMode(master.permissionMode))
+  if (master?.permissionMode && master.permissionMode !== 'default') add('--permission-mode', checkMode(master.permissionMode, true))
+  if (prep) add('--append-system-prompt-file', checkPath('role', prep.role.path))
   add('--plugin-dir', checkPath('pluginDir', ctx.pluginDir))
-  add('--session-id', sessionId)
-  return { file: 'claude', args, env: operantEnv(ctx), files: [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: null }
+  if (prep?.pluginDir) add('--plugin-dir', checkPath('masterPluginDir', prep.pluginDir))
+  // Not strict: the owner's own MCP servers stay available to the Master.
+  if (prep?.mcpConfigPath) add('--mcp-config', checkPath('mcpConfig', prep.mcpConfigPath))
+  add(prep?.resume ? '--resume' : '--session-id', sessionId)
+  return { file: 'claude', args, env: operantEnv(ctx), files: prep ? [prep.role] : [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: null }
+}
+
+// The Master Terminal on OpenCode: its TUI in the project folder, with --model provider/model when one is set.
+// With `prep`, its first line points the TUI at the PM role file (the one fixed pointer line Operant types).
+// With `prep.resume`, --continue reopens the last session of the folder, which already read its role (no pointer line).
+export function buildOpenCodeMasterLaunch(ctx: LaunchContext, model = '', prep?: Pick<MasterLaunchPrep, 'role' | 'resume'>): LaunchResult {
+  assertShell(ctx)
+  const args = model ? ['--model', checkModel(model, 'opencode')] : []
+  if (prep?.resume) args.push('--continue')
+  const role = prep && !prep.resume ? checkPath('role', prep.role.path) : null
+  return { file: 'opencode', args, env: operantEnv(ctx), files: prep ? [prep.role] : [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: role ? `Read ${role} and follow it as your role.` : null }
 }
 
 export interface RunLaunch {

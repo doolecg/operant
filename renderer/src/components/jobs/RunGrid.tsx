@@ -10,7 +10,8 @@ import { timeAgo } from '@/lib/format'
 import { useDeleteRun, useStopRun, useUpdateRun } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { RunStatusBadge } from './RunStatusBadge'
-import { runActive } from './runUi'
+import { useRunEvents } from '@/lib/queries'
+import { lastProgress, runActive, runNeedsOwner, sortNeedsYouFirst } from './runUi'
 
 interface Props {
   runs: Run[]
@@ -18,6 +19,9 @@ interface Props {
   onOpen: (run: Run) => void
   // Called after a card's job was deleted, so an open panel for it can close.
   onDeleted?: (runId: number) => void
+  // Show only the jobs that need the owner (a question, a permission, a stopped Master or a review).
+  needsOnly?: boolean
+  onNeedsOnlyChange?: (v: boolean) => void
 }
 
 // Stop, edit task and delete on a card, with the same rules as the job panel: stop while it is queued or working,
@@ -111,18 +115,47 @@ function RunCardActions({ run, onDeleted }: { run: Run; onDeleted?: (runId: numb
   )
 }
 
-// The job card grid: one card per JOB#, newest first. Status comes live from the run push event.
-export function RunGrid({ runs, selectedId, onOpen, onDeleted }: Props) {
+// The one-line last progress of a job that is still going; reads the job's events only while it is active.
+function LastProgress({ run }: { run: Run }) {
+  const events = useRunEvents(run.id, run.mode === 'master' && runActive(run.status)).data
+  const line = lastProgress(events ?? [])
+  return line ? <p className="text-muted-foreground truncate text-xs">{line}</p> : null
+}
+
+// The job card grid: one card per JOB#, newest first, or the jobs that need you first. Status comes live from the run push event.
+export function RunGrid({ runs, selectedId, onOpen, onDeleted, needsOnly = false, onNeedsOnlyChange }: Props) {
+  const [needsFirst, setNeedsFirst] = useState(false)
+  const shown = needsOnly ? runs.filter(runNeedsOwner) : needsFirst ? sortNeedsYouFirst(runs) : runs
   return (
     <ScrollArea className="min-h-0 flex-1">
       {runs.length === 0 ? (
         <p className="text-muted-foreground px-4 py-6 text-center text-xs">No jobs yet. Start a new task to create one.</p>
       ) : (
+        <>
+        <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-2 text-xs">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={needsFirst} disabled={needsOnly} onChange={(e) => setNeedsFirst(e.target.checked)} />
+            Jobs that need you first
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={needsOnly} onChange={(e) => onNeedsOnlyChange?.(e.target.checked)} />
+            Only jobs that need you
+          </label>
+        </div>
+        {shown.length === 0 && <p className="text-muted-foreground px-4 py-6 text-center text-xs">No job needs you right now.</p>}
         <ul className="grid grid-cols-1 gap-2 p-3 2xl:grid-cols-2">
-          {runs.map((run) => {
+          {shown.map((run) => {
             const seats = run.seats.reduce((n, s) => n + s.count, 0)
             return (
-              <li key={run.id} className={cn('bg-card space-y-2 rounded-md border p-2.5', run.id === selectedId && 'border-primary')}>
+              <li
+                key={run.id}
+                className={cn(
+                  'bg-card space-y-2 rounded-md border p-2.5',
+                  run.status === 'needs-you' && 'border-amber-400/70',
+                  run.status === 'review' && 'border-violet-400/70',
+                  run.id === selectedId && 'border-primary',
+                )}
+              >
                 <button
                   type="button"
                   onClick={() => onOpen(run)}
@@ -132,10 +165,14 @@ export function RunGrid({ runs, selectedId, onOpen, onDeleted }: Props) {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-xs font-semibold">JOB#{run.id}</span>
-                    <RunStatusBadge status={run.status} />
+                    <RunStatusBadge status={run.status} waiting={run.waiting} />
                   </div>
                   <p className="line-clamp-2 text-xs break-words">{run.task}</p>
-                  {run.outcome && <p className="text-muted-foreground line-clamp-2 text-[11px] break-words">{markdownToPlain(run.outcome, 160)}</p>}
+                  {run.status === 'needs-you' && run.waiting === 'question' && run.question && (
+                    <p className="line-clamp-2 text-xs font-medium break-words">{markdownToPlain(run.question, 160)}</p>
+                  )}
+                  <LastProgress run={run} />
+                  {run.outcome && <p className="text-muted-foreground line-clamp-2 text-xs break-words">{markdownToPlain(run.outcome, 160)}</p>}
                   <p className="text-muted-foreground font-mono text-[10px]">
                     {run.masterCli} · {seats > 0 ? `${seats} seats` : 'solo'} · {timeAgo(run.createdAt)}
                   </p>
@@ -145,6 +182,7 @@ export function RunGrid({ runs, selectedId, onOpen, onDeleted }: Props) {
             )
           })}
         </ul>
+        </>
       )}
     </ScrollArea>
   )

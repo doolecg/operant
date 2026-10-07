@@ -55,12 +55,15 @@ export function statusReport(crews: Crew[], runs: Run[]): string {
   const recent = runs.filter((r) => r.status === 'done' || r.status === 'failed').slice(0, 5)
   const line = (r: Run) => {
     const crew = crews.find((c) => c.id === r.crewId)
-    return `JOB#${r.id} [${r.status}] PRJ${crew?.prjNumber ?? '?'} ${crew?.name ?? ''}: ${r.task.replace(/\s+/g, ' ').slice(0, 100)}`
+    return `JOB#${r.id} [${r.status}] ${crew ? projectLabel(crew) : 'PRJ?'}: ${r.task.replace(/\s+/g, ' ').slice(0, 100)}`
   }
   const parts = [live.length ? `Running or waiting:\n${live.map(line).join('\n')}` : 'Nothing is running right now.']
   if (recent.length) parts.push(`Recently finished:\n${recent.map(line).join('\n')}`)
   return parts.join('\n\n')
 }
+
+// "PRJ1001 Name" for a project, "Playground" for the built-in Playground (it has no PRJ number).
+export const projectLabel = (c: Pick<Crew, 'kind' | 'prjNumber' | 'name'>): string => (c.kind === 'playground' ? c.name : `PRJ${c.prjNumber} ${c.name}`)
 
 export function findProject(crews: Crew[], ref: string): Crew | null {
   const q = ref.trim().toLowerCase()
@@ -83,7 +86,8 @@ function buildPrompt(c: FrontDeskContext): string {
   } else {
     lines.push(
       'Use action "start" only when the user clearly asks for coding work. "project" is the PRJ number or name from the list; "task" is the full task text. If the project is unclear, ask in "reply" and set action to null.',
-      `Projects:\n${c.crews.map((p) => `PRJ${p.prjNumber} ${p.name}`).join('\n') || '(none)'}`,
+      `Projects:\n${c.crews.map(projectLabel).join('\n') || '(none)'}`,
+      ...(c.crews.some((p) => p.kind === 'playground') ? ['A message that starts with "playground" is for the Playground project (the general-purpose workspace); use its name as "project".'] : []),
       `Jobs:\n${statusReport(c.crews, c.runs)}`,
     )
   }

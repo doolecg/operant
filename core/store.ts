@@ -32,6 +32,12 @@ import type {
   MasterCli,
   Run,
   RunStatus,
+  RunMode,
+  RunWaiting,
+  RunEvent,
+  RunEventKind,
+  ApprovedBy,
+  CloseoutState,
   SeatFields,
   DiscordBot,
   DiscordBotAi,
@@ -393,7 +399,39 @@ export const MIGRATIONS: string[] = [
    ALTER TABLE teams ADD COLUMN description TEXT;
    ALTER TABLE teams ADD COLUMN modified INTEGER NOT NULL DEFAULT 0;
    CREATE UNIQUE INDEX teams_builtin ON teams (builtin) WHERE builtin IS NOT NULL;`,
+  // The Master as project manager: a run's mode (rows that exist now ran headless, so they stay 'background'),
+  // what it waits for, the open question, the review report, the owner's approval and the close-out, plus the
+  // per-run conversation (run_events). All additive.
+  `ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'background';
+   ALTER TABLE runs ADD COLUMN waiting TEXT NOT NULL DEFAULT '';
+   ALTER TABLE runs ADD COLUMN question TEXT NOT NULL DEFAULT '';
+   ALTER TABLE runs ADD COLUMN question_options TEXT NOT NULL DEFAULT '[]';
+   ALTER TABLE runs ADD COLUMN review_summary TEXT NOT NULL DEFAULT '';
+   ALTER TABLE runs ADD COLUMN sent_back_note TEXT NOT NULL DEFAULT '';
+   ALTER TABLE runs ADD COLUMN sendbacks INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE runs ADD COLUMN acked_at INTEGER;
+   ALTER TABLE runs ADD COLUMN approved_at INTEGER;
+   ALTER TABLE runs ADD COLUMN approved_by TEXT;
+   ALTER TABLE runs ADD COLUMN closeout_state TEXT NOT NULL DEFAULT '';
+   CREATE TABLE run_events (
+     id INTEGER PRIMARY KEY,
+     run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+     at INTEGER NOT NULL,
+     kind TEXT NOT NULL,
+     source TEXT NOT NULL,
+     body TEXT NOT NULL DEFAULT '',
+     options TEXT NOT NULL DEFAULT '[]',
+     read_at INTEGER
+   );
+   CREATE INDEX run_events_run ON run_events (run_id);`,
+  // Discord as the Master's channel: what is mirrored into run threads and who may use the destructive commands.
+  `ALTER TABLE discord_bots ADD COLUMN mirror TEXT NOT NULL DEFAULT 'progress';
+   ALTER TABLE discord_bots ADD COLUMN admins TEXT NOT NULL DEFAULT '[]';`,
+  // The built-in Playground is a project row of its own kind ('project' | 'playground').
+  `ALTER TABLE crews ADD COLUMN kind TEXT NOT NULL DEFAULT 'project';`,
 ]
+
+export const PLAYGROUND_KEPT = 'The Playground cannot be deleted; you can rename it or change its folder'
 
 type Row = Record<string, unknown>
 
@@ -410,6 +448,7 @@ const toCrew = (r: Row): Crew => ({
   groupId: r.group_id == null ? null : Number(r.group_id),
   trackerFile: String(r.tracker_file ?? ''),
   trackerJobs: Number(r.tracker_jobs ?? 1) === 1,
+  kind: r.kind === 'playground' ? 'playground' : 'project',
 })
 const toSquad = (r: Row): Squad => ({
   id: Number(r.id),
@@ -537,6 +576,8 @@ const toDiscordBot = (r: Row): DiscordBot => ({
   threadNames: r.thread_names === 'ai' ? 'ai' : 'auto',
   ai: toBotAi(r.ai),
   threadArchive: [60, 4320, 10080].includes(Number(r.thread_archive)) ? (Number(r.thread_archive) as DiscordThreadArchive) : 1440,
+  mirror: r.mirror === 'off' || r.mirror === 'results' ? r.mirror : 'progress',
+  admins: parseList(r.admins),
 })
 const toDiscordThread = (r: Row): DiscordThread => ({
   botId: Number(r.bot_id),
@@ -583,6 +624,27 @@ const toRun = (r: Row): Run => ({
   createdAt: Number(r.created_at),
   startedAt: r.started_at == null ? null : Number(r.started_at),
   finishedAt: r.finished_at == null ? null : Number(r.finished_at),
+  mode: r.mode === 'master' ? 'master' : 'background',
+  waiting: (r.waiting ?? '') as RunWaiting | '',
+  question: String(r.question ?? ''),
+  questionOptions: parseList(r.question_options),
+  reviewSummary: String(r.review_summary ?? ''),
+  sentBackNote: String(r.sent_back_note ?? ''),
+  ackedAt: r.acked_at == null ? null : Number(r.acked_at),
+  approvedAt: r.approved_at == null ? null : Number(r.approved_at),
+  approvedBy: r.approved_by == null ? null : (r.approved_by as ApprovedBy),
+  closeoutState: (r.closeout_state ?? '') as CloseoutState,
+  sendBacks: Number(r.sendbacks ?? 0),
+})
+const toRunEvent = (r: Row): RunEvent => ({
+  id: Number(r.id),
+  runId: Number(r.run_id),
+  at: Number(r.at),
+  kind: r.kind as RunEventKind,
+  source: String(r.source),
+  body: String(r.body),
+  options: parseList(r.options),
+  readAt: r.read_at == null ? null : Number(r.read_at),
 })
 const toJobAgent = (r: Row): JobAgent => ({
   id: Number(r.id),
@@ -603,6 +665,24 @@ export interface NewRun {
   seats?: TeamSeat[]
   limits?: TeamLimits
   rules?: string
+  // Default 'master'.
+  mode?: RunMode
+}
+
+// The run fields the Master/owner flow changes besides the status (see Store.updateRun).
+export type RunPatch = Partial<Pick<Run, 'waiting' | 'question' | 'questionOptions' | 'reviewSummary' | 'sentBackNote' | 'ackedAt' | 'approvedAt' | 'approvedBy' | 'closeoutState' | 'sendBacks'>>
+
+const RUN_PATCH_COLUMNS: Record<keyof RunPatch, string> = {
+  waiting: 'waiting',
+  question: 'question',
+  questionOptions: 'question_options',
+  reviewSummary: 'review_summary',
+  sentBackNote: 'sent_back_note',
+  ackedAt: 'acked_at',
+  approvedAt: 'approved_at',
+  approvedBy: 'approved_by',
+  closeoutState: 'closeout_state',
+  sendBacks: 'sendbacks',
 }
 
 export class RunTransitionError extends Error {
@@ -1025,6 +1105,31 @@ export class Store {
     })
   }
 
+  // Exactly one Playground row: created once with the given folder, left alone (name, folder, channels) after.
+  ensurePlayground(folder: string): Crew {
+    const row = this.db.prepare("SELECT * FROM crews WHERE kind = 'playground' ORDER BY id LIMIT 1").get() as Row | undefined
+    if (row) return toCrew(row)
+    return toCrew(
+      this.db
+        .prepare("INSERT INTO crews (name, folder, created_at, prj_number, sort_order, kind) VALUES ('Playground', ?, ?, 0, 0, 'playground') RETURNING *")
+        .get(folder, this.now()) as Row,
+    )
+  }
+
+  getPlayground(): Crew | null {
+    const row = this.db.prepare("SELECT * FROM crews WHERE kind = 'playground' ORDER BY id LIMIT 1").get() as Row | undefined
+    return row ? toCrew(row) : null
+  }
+
+  // Deletes the project's lessons, messages and finished runs; files on disk are never touched.
+  clearCrewHistory(crewId: number): void {
+    this.tx(() => {
+      this.db.prepare('DELETE FROM runs WHERE crew_id = ?').run(crewId)
+      this.db.prepare('DELETE FROM messages WHERE crew_id = ?').run(crewId)
+      this.db.prepare('DELETE FROM lessons WHERE crew_id = ?').run(crewId)
+    })
+  }
+
   listCrews(): Crew[] {
     return (this.db.prepare('SELECT * FROM crews ORDER BY sort_order, id').all() as Row[]).map(toCrew)
   }
@@ -1057,7 +1162,7 @@ export class Store {
   // Saved order of the project list: the given crews take positions 1..n, any other crew follows.
   reorderCrews(ids: number[]): Crew[] {
     this.tx(() => {
-      const current = (this.db.prepare('SELECT id FROM crews ORDER BY sort_order, id').all() as Row[]).map((r) => Number(r.id))
+      const current = (this.db.prepare("SELECT id FROM crews WHERE kind != 'playground' ORDER BY sort_order, id").all() as Row[]).map((r) => Number(r.id))
       const first = ids.filter((id, i) => current.includes(id) && ids.indexOf(id) === i)
       const order = [...first, ...current.filter((id) => !first.includes(id))]
       const set = this.db.prepare('UPDATE crews SET sort_order = ? WHERE id = ?')
@@ -1093,6 +1198,7 @@ export class Store {
   }
 
   deleteCrew(id: number): void {
+    if (this.getCrew(id)?.kind === 'playground') throw new Error(PLAYGROUND_KEPT)
     this.db.prepare('DELETE FROM crews WHERE id = ?').run(id)
   }
 
@@ -1617,8 +1723,8 @@ export class Store {
   createDiscordBot(input: DiscordBotInput): DiscordBot {
     const row = this.db
       .prepare(
-        `INSERT INTO discord_bots (name, rules, allowlist, home_channel, general_channel, mention_only, confirm_start, enabled, master_cli, thread_per_request, thread_names, thread_archive, ai, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+        `INSERT INTO discord_bots (name, rules, allowlist, home_channel, general_channel, mention_only, confirm_start, enabled, master_cli, thread_per_request, thread_names, thread_archive, ai, mirror, admins, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       )
       .get(
         input.name,
@@ -1634,6 +1740,8 @@ export class Store {
         input.threadNames ?? 'auto',
         input.threadArchive ?? 1440,
         JSON.stringify({ ...DEFAULT_DISCORD_AI, ...input.ai }),
+        input.mirror ?? 'progress',
+        JSON.stringify(input.admins ?? []),
         this.now(),
       ) as Row
     return toDiscordBot(row)
@@ -1655,7 +1763,7 @@ export class Store {
       .prepare(
         `UPDATE discord_bots SET name = ?, rules = ?, allowlist = ?, home_channel = ?, general_channel = ?, token_ref = ?,
            mention_only = ?, confirm_start = ?, enabled = ?, master_cli = ?,
-           thread_per_request = ?, thread_names = ?, thread_archive = ?, ai = ?, updated_at = ? WHERE id = ? RETURNING *`,
+           thread_per_request = ?, thread_names = ?, thread_archive = ?, ai = ?, mirror = ?, admins = ?, updated_at = ? WHERE id = ? RETURNING *`,
       )
       .get(
         patch.name ?? cur.name,
@@ -1672,6 +1780,8 @@ export class Store {
         patch.threadNames ?? cur.threadNames,
         patch.threadArchive ?? cur.threadArchive,
         JSON.stringify({ ...cur.ai, ...patch.ai }),
+        patch.mirror ?? cur.mirror,
+        JSON.stringify(patch.admins ?? cur.admins),
         this.now(),
         id,
       ) as Row
@@ -1842,8 +1952,8 @@ export class Store {
   createRun(input: NewRun): Run {
     const row = this.db
       .prepare(
-        `INSERT INTO runs (crew_id, task, master_cli, master_model, master_effort, team_id, seats, limits, rules, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?) RETURNING *`,
+        `INSERT INTO runs (crew_id, task, master_cli, master_model, master_effort, team_id, seats, limits, rules, status, created_at, mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?) RETURNING *`,
       )
       .get(
         input.crewId,
@@ -1856,6 +1966,7 @@ export class Store {
         JSON.stringify({ ...DEFAULT_LIMITS, ...input.limits }),
         input.rules ?? '',
         this.now(),
+        input.mode ?? 'master',
       ) as Row
     return toRun(row)
   }
@@ -1883,9 +1994,53 @@ export class Store {
     const started = status === 'working' && cur.startedAt == null ? now : cur.startedAt
     const finished = status === 'done' || status === 'failed' ? now : cur.finishedAt
     const row = this.db
-      .prepare('UPDATE runs SET status = ?, outcome = ?, started_at = ?, finished_at = ? WHERE id = ? RETURNING *')
-      .get(status, outcome ?? cur.outcome, started, finished, id) as Row
+      .prepare("UPDATE runs SET status = ?, outcome = ?, started_at = ?, finished_at = ?, waiting = CASE WHEN ? = 'needs-you' THEN waiting ELSE '' END WHERE id = ? RETURNING *")
+      .get(status, outcome ?? cur.outcome, started, finished, status, id) as Row
     return toRun(row)
+  }
+
+  // Changes the Master/owner flow fields of a run (not its status); only RunPatch keys are accepted.
+  updateRun(id: number, patch: RunPatch): Run {
+    const sets: string[] = []
+    const values: Array<string | number | null> = []
+    for (const [key, value] of Object.entries(patch) as Array<[keyof RunPatch, unknown]>) {
+      const column = RUN_PATCH_COLUMNS[key]
+      if (!column) throw new Error(`Unknown run field "${key}"`)
+      sets.push(`${column} = ?`)
+      values.push(key === 'questionOptions' ? JSON.stringify(value) : (value as string | number | null))
+    }
+    if (!sets.length) return this.getRun(id) ?? this.missingRun(id)
+    const row = this.db.prepare(`UPDATE runs SET ${sets.join(', ')} WHERE id = ? RETURNING *`).get(...values, id) as Row | undefined
+    return row ? toRun(row) : this.missingRun(id)
+  }
+
+  private missingRun(id: number): never {
+    throw new Error(`Job ${id} not found`)
+  }
+
+  // Status move and field changes as one step.
+  transitionRun(id: number, status: RunStatus, patch: RunPatch = {}, outcome?: string): Run {
+    return this.tx(() => {
+      this.setRunStatus(id, status, outcome)
+      return this.updateRun(id, patch)
+    })
+  }
+
+  addRunEvent(runId: number, e: { kind: RunEventKind; source: string; body?: string; options?: string[] }): RunEvent {
+    if (!this.getRun(runId)) throw new Error(`Job ${runId} not found`)
+    const row = this.db
+      .prepare('INSERT INTO run_events (run_id, at, kind, source, body, options) VALUES (?, ?, ?, ?, ?, ?) RETURNING *')
+      .get(runId, this.now(), e.kind, e.source, e.body ?? '', JSON.stringify(e.options ?? [])) as Row
+    return toRunEvent(row)
+  }
+
+  listRunEvents(runId: number, filter: { kind?: RunEventKind; unread?: boolean } = {}): RunEvent[] {
+    const rows = this.db.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY id').all(runId) as Row[]
+    return rows.map(toRunEvent).filter((e) => (!filter.kind || e.kind === filter.kind) && (!filter.unread || e.readAt == null))
+  }
+
+  markRunEventsRead(runId: number, kind: RunEventKind): number {
+    return Number(this.db.prepare('UPDATE run_events SET read_at = ? WHERE run_id = ? AND kind = ? AND read_at IS NULL').run(this.now(), runId, kind).changes)
   }
 
   // Only a queued run's task can change; any other status is the caller's to refuse first.

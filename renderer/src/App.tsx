@@ -5,6 +5,7 @@ import { useConsole } from '@/components/console/useConsole'
 import { DeleteCrewDialog, EditCrewDialog, NewCrewDialog } from '@/components/dashboard/Dialogs'
 import { GitChangesDialog } from '@/components/dashboard/GitChangesDialog'
 import { requestGitTab } from '@/components/git/openGit'
+import { requestNeedsYouRuns } from '@/components/jobs/openRuns'
 import { projectActions } from '@/components/dashboard/projectActions'
 import { TerminalDrawer } from '@/components/terminal/TerminalDrawer'
 import { useTerminals } from '@/components/terminal/useTerminals'
@@ -30,6 +31,9 @@ import { iconBtn } from '@/components/topbar/pill'
 import { useBarTier } from '@/components/topbar/useBarTier'
 import { mediaCommand } from '@/components/topbar/useMedia'
 import { matches } from '@/lib/keys'
+import { bridge } from '@/lib/bridge'
+import { toast } from '@/lib/toast'
+import { decodeIpcError } from '@shared/ipc'
 import { effectiveScale, stepScale, useUiScale } from '@/lib/uiScale'
 import { useAction, useCrews, useIndexStatus, useLiveUpdates, useMcpHealth, useMoveToGroup, useSaveSettings, useSettings } from '@/lib/queries'
 import type { Crew } from '@shared/types'
@@ -78,6 +82,8 @@ export function App() {
   const [barRef, tier] = useBarTier()
   const [statusOpen, setStatusOpen] = useState(false)
   const [taskOpen, setTaskOpen] = useState(false)
+  // The Welcome screen shows while there is no project, until the Playground has been opened.
+  const [playgroundSeen, setPlaygroundSeen] = useState(false)
 
   const setMode = (m: Mode) => {
     setModeState(m)
@@ -92,7 +98,7 @@ export function App() {
   useEffect(() => {
     const list = crews.data
     if (!list) return
-    if (crewId == null || !list.some((r) => r.id === crewId)) setCrewId(list[0]?.id ?? null)
+    if (crewId == null || !list.some((r) => r.id === crewId)) setCrewId((list.find((r) => r.kind !== 'playground') ?? list[0])?.id ?? null)
   }, [crews.data, crewId])
 
   useEffect(() => {
@@ -116,7 +122,7 @@ export function App() {
   // The status pill and the git branch chip sit in the bar, or in one menu once the bar is too narrow for them.
   const chips = (labels: boolean) => (
     <>
-      <StatusPill crewId={crewId} jobs={!!tb?.agentPill} labels={labels} />
+      <StatusPill crewId={crewId} jobs={!!tb?.agentPill} labels={labels} onNeedsYou={() => (setPage('dashboard'), setMode('workspace'), requestNeedsYouRuns())} />
       <GitChip crewId={crewId} onOpen={() => crew && setChangesTarget(crew)} />
     </>
   )
@@ -134,6 +140,23 @@ export function App() {
     defaults: () => openSettingsAt('projects'),
     remove: (c: Crew) => setDeleteTarget(c),
     openMaster: (c: Crew) => (setCrewId(c.id), setPage('dashboard'), setMode('workspace')),
+    // Selects the Playground and starts its Master Terminal when it is stopped.
+    openPlayground: () => {
+      const pg = crews.data?.find((c) => c.kind === 'playground')
+      if (!pg) return
+      setCrewId(pg.id)
+      setPlaygroundSeen(true)
+      setPage('dashboard')
+      setMode('workspace')
+      void (async () => {
+        try {
+          const m = await bridge().invoke('master:get', pg.id)
+          if (!m || m.status === 'stopped' || m.status === 'error') await bridge().invoke('master:start', pg.id)
+        } catch (e) {
+          toast(decodeIpcError(e).message, true)
+        }
+      })()
+    },
   }
 
   // Rebindable shortcuts from Settings; dialogs and the key recorder take keys first.
@@ -152,6 +175,7 @@ export function App() {
         [binds.newShell, () => crew && (dash(), void terminals.openTab(crew, 'shell'))],
         [binds.toggleSidebar, () => setSidebarOpen((v) => !v)],
         [binds.openInIde, () => crew && void projectActions.openIde(crew)],
+        [binds.openPlayground, () => projectMenu.openPlayground()],
         [binds.mediaPlayPause, () => mediaCommand('toggle')],
         [binds.mediaNext, () => mediaCommand('next')],
         [binds.mediaPrev, () => mediaCommand('prev')],
@@ -167,7 +191,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [settings.data?.keybinds, settings.data?.uiScale, saveSettings, crewId, runIndex, crew, terminals.openTab])
+  }, [settings.data?.keybinds, settings.data?.uiScale, saveSettings, crewId, runIndex, crew, terminals.openTab, crews.data])
 
   return (
     <TooltipProvider>
@@ -251,7 +275,7 @@ export function App() {
           <Sidebar
             crews={crews.data ?? []}
             selected={page === 'dashboard' ? crewId : null}
-            onSelect={(id) => (setCrewId(id), setPage('dashboard'))}
+            onSelect={(id) => (setCrewId(id), setPage('dashboard'), crews.data?.find((c) => c.id === id)?.kind === 'playground' && setPlaygroundSeen(true))}
             onNewCrew={(groupId) => (setNewCrewGroup(groupId), setNewCrew(true))}
             actions={projectMenu}
             onHide={() => setSidebarOpen(false)}
@@ -324,7 +348,7 @@ export function App() {
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {page === 'settings' ? (
             <SettingsPage initialSection={settingsSection} onClose={() => setPage('dashboard')} />
-          ) : crews.data && crews.data.length === 0 ? (
+          ) : crews.data && !playgroundSeen && crews.data.every((c) => c.kind === 'playground') ? (
             <Welcome onNewCrew={() => setNewCrew(true)} />
           ) : (
             <>
@@ -381,7 +405,8 @@ export function App() {
           crewName={crew.name}
           open
           onOpenChange={(o) => !o && setCrewDialog(null)}
-          onDeleted={() => terminals.dropCrew(crew.id)}
+          playground={crew.kind === 'playground'}
+          onDeleted={() => crew.kind !== 'playground' && terminals.dropCrew(crew.id)}
         />
       )}
       {deleteTarget && (
@@ -390,7 +415,8 @@ export function App() {
           crewName={deleteTarget.name}
           open
           onOpenChange={(o) => !o && setDeleteTarget(null)}
-          onDeleted={() => terminals.dropCrew(deleteTarget.id)}
+          playground={deleteTarget.kind === 'playground'}
+          onDeleted={() => deleteTarget.kind !== 'playground' && terminals.dropCrew(deleteTarget.id)}
         />
       )}
       {changesTarget && (

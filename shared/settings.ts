@@ -14,6 +14,7 @@ export type KeyAction =
   | 'newShell'
   | 'toggleSidebar'
   | 'openInIde'
+  | 'openPlayground'
   | 'mediaPlayPause'
   | 'mediaNext'
   | 'mediaPrev'
@@ -33,7 +34,12 @@ export interface Settings {
   // bindHost so other machines can connect) or remote (url; Operant never starts or stops it). API keys live in the
   // encrypted secret store, never here. openBind records that the user confirmed a non-loopback bind with no key.
   hindsight: { mode: HindsightMode; bindHost: string; port: number; url: string; openBind: boolean }
-  defaultModels: { claude: string; codex: string }
+  // The Claude Code default model (older key, still read for new presets and terminals).
+  defaultModels: { claude: string }
+  // The app's main CLI and its default model and effort: new tasks, MCP servers and seats start on it, and so does the Master Terminal.
+  mainCli: 'claude' | 'opencode'
+  mainModel: string
+  mainEffort: string
   // Empty file means the system default shell.
   shell: { file: string; args: string }
   // The IDE "Open in IDE" launches; `custom` is the command used when the default is Custom (the folder is appended).
@@ -91,6 +97,7 @@ export const KEY_ACTIONS: Array<{ id: KeyAction; label: string }> = [
   { id: 'newShell', label: 'New shell in the project folder' },
   { id: 'toggleSidebar', label: 'Show or hide the project list' },
   { id: 'openInIde', label: 'Open the project in the IDE' },
+  { id: 'openPlayground', label: 'Open the Playground terminal' },
   { id: 'mediaPlayPause', label: 'Media: play or pause' },
   { id: 'mediaNext', label: 'Media: next track' },
   { id: 'mediaPrev', label: 'Media: previous track' },
@@ -103,7 +110,10 @@ export const KEY_ACTIONS: Array<{ id: KeyAction; label: string }> = [
 export const DEFAULT_SETTINGS: Settings = {
   learn: DEFAULT_LEARN_SETTINGS,
   dailyBudgetUsd: 0,
-  defaultModels: { claude: 'sonnet', codex: 'gpt-5' },
+  defaultModels: { claude: 'sonnet' },
+  mainCli: 'claude',
+  mainModel: '',
+  mainEffort: '',
   hindsightUrl: '',
   hindsight: { mode: 'local', bindHost: '127.0.0.1', port: 9077, url: '', openBind: false },
   shell: { file: '', args: '' },
@@ -117,6 +127,7 @@ export const DEFAULT_SETTINGS: Settings = {
     newShell: 'Alt+Shift+T',
     toggleSidebar: 'Alt+B',
     openInIde: 'Alt+Shift+O',
+    openPlayground: 'Mod+Shift+P',
     mediaPlayPause: '',
     mediaNext: '',
     mediaPrev: '',
@@ -211,6 +222,7 @@ export function sanitizeSettings(raw: unknown): Settings {
   const runs = r.runs ?? {}
   const layout = r.layout ?? {}
   const flag = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
+  const mainCli = r.mainCli === 'opencode' ? 'opencode' : 'claude'
   return {
     learn: {
       enabled: flag(learn.enabled, d.learn.enabled),
@@ -226,10 +238,10 @@ export function sanitizeSettings(raw: unknown): Settings {
     },
     dailyBudgetUsd: num(r.dailyBudgetUsd, d.dailyBudgetUsd, 0, 100_000),
     ...hindsightSettings(r),
-    defaultModels: {
-      claude: str(models.claude, d.defaultModels.claude) || d.defaultModels.claude,
-      codex: str(models.codex, d.defaultModels.codex) || d.defaultModels.codex,
-    },
+    defaultModels: { claude: str(models.claude, d.defaultModels.claude) || d.defaultModels.claude },
+    mainCli,
+    mainModel: MODEL_ID.test(str(r.mainModel, '', 200)) ? str(r.mainModel, '', 200) : '',
+    mainEffort: EFFORT_ID.test(str(r.mainEffort, '', 40)) ? str(r.mainEffort, '', 40) : '',
     shell: { file: str(shell.file, d.shell.file, 500), args: str(shell.args, d.shell.args, 500) },
     ide: {
       default: (IDE_IDS as readonly string[]).includes(ide.default) ? (ide.default as IdeId) : d.ide.default,

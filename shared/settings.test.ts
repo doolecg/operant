@@ -11,10 +11,11 @@ describe('settings', () => {
       keybinds: { newCrew: 'Mod+Shift+N', addSquad: 'Mod+Shift+P', tabCost: 'Mod+3', bogus: 'X' },
     })
     expect(s.dailyBudgetUsd).toBe(0)
-    expect(s.defaultModels).toEqual({ claude: 'opus', codex: 'gpt-5' })
+    expect(s.defaultModels).toEqual({ claude: 'opus' })
+    expect(s).toMatchObject({ mainCli: 'claude', mainModel: '', mainEffort: '' })
     expect(s.updates).toEqual({ channel: 'stable', checkHours: 24, installOnQuit: true })
     expect(s.keybinds.newCrew).toBe('Mod+Shift+N')
-    expect(Object.keys(s.keybinds).sort()).toEqual(['indexCrew', 'mediaNext', 'mediaPlayPause', 'mediaPrev', 'mediaShuffle', 'newCrew', 'newShell', 'openInIde', 'openSettings', 'toggleConsole', 'toggleSidebar', 'zoomIn', 'zoomOut', 'zoomReset'])
+    expect(Object.keys(s.keybinds).sort()).toEqual(['indexCrew', 'mediaNext', 'mediaPlayPause', 'mediaPrev', 'mediaShuffle', 'newCrew', 'newShell', 'openInIde', 'openPlayground', 'openSettings', 'toggleConsole', 'toggleSidebar', 'zoomIn', 'zoomOut', 'zoomReset'])
     expect('defaultReview' in s).toBe(false)
   })
 
@@ -22,6 +23,12 @@ describe('settings', () => {
     expect(sanitizeSettings({}).learn).toMatchObject({ cli: 'claude', model: '', effort: '' })
     expect(sanitizeSettings({ learn: { cli: 'opencode', model: 'openai/gpt-5-mini', effort: 'low' } }).learn).toMatchObject({ cli: 'opencode', model: 'openai/gpt-5-mini', effort: 'low' })
     expect(sanitizeSettings({ learn: { cli: 'codex', model: '--evil flag', effort: '-x' } }).learn).toMatchObject({ cli: 'claude', model: '', effort: '' })
+  })
+
+  it('sanitises the main CLI choice', () => {
+    expect(sanitizeSettings({ mainCli: 'opencode' })).toMatchObject({ mainCli: 'opencode', mainModel: '', mainEffort: '' })
+    expect(sanitizeSettings({ mainCli: 'opencode', mainModel: 'openai/gpt-5', mainEffort: 'high' })).toMatchObject({ mainModel: 'openai/gpt-5', mainEffort: 'high' })
+    expect(sanitizeSettings({ mainCli: 'codex', mainModel: '--x', mainEffort: '-y' })).toMatchObject({ mainCli: 'claude', mainModel: '', mainEffort: '' })
   })
 
   it('sanitises the dragged panel widths', () => {

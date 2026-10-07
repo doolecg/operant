@@ -59,28 +59,44 @@ export interface WritebackResult {
   tags: string[]
 }
 
-// On finish: the outcome goes to the project's Hindsight bank tagged with the diff's files and symbols,
-// then CodeGraph re-syncs. Each store is tried on its own; a skipped one is reported, never thrown.
-export async function writeBack(deps: WritebackDeps, run: Run, folder: string): Promise<WritebackResult> {
+export interface WritebackExtra {
+  // The Master's review summary (already scrubbed): kept in the same Hindsight entry as the outcome.
+  summary?: string
+}
+
+// Step 1 of the write-back: the outcome goes to the project's Hindsight bank, tagged with the diff's files and symbols.
+// `result` is 'written', or 'skipped: why'. Never throws.
+export async function retainOutcome(deps: Pick<WritebackDeps, 'hindsight' | 'git'>, run: Run, folder: string, extra: WritebackExtra = {}): Promise<{ result: 'written' | string; tags: string[] }> {
   const diff = await diffInfo(deps.git, folder)
   const tags = writebackTags(run, diff)
   const lines = [
     `JOB#${run.id} ${run.status}: ${run.task}`,
     `Outcome: ${run.outcome || '(none)'}`,
+    extra.summary ? `Review summary: ${extra.summary}` : '',
     diff.files.length ? `Files changed: ${diff.files.join(', ')}` : 'No files changed.',
     diff.symbols.length ? `Symbols touched: ${diff.symbols.join(', ')}` : '',
   ].filter(Boolean)
-  const result: WritebackResult = { hindsight: 'written', codegraph: 'synced', tags }
   try {
-    const r = await deps.hindsight.retain(bankFor(folder), lines.join('\n'), tags)
-    if (!r.ok) result.hindsight = `skipped: ${r.error}`
+    const r = await deps.hindsight.retain(bankFor(folder), lines.join(String.fromCharCode(10)), tags)
+    return { result: r.ok ? 'written' : `skipped: ${r.error}`, tags }
   } catch (err) {
-    result.hindsight = `skipped: ${err instanceof Error ? err.message : String(err)}`
+    return { result: `skipped: ${err instanceof Error ? err.message : String(err)}`, tags }
   }
+}
+
+// Step 2: CodeGraph re-syncs. 'synced', or 'skipped: why'. Never throws.
+export async function syncCodegraph(reindex: WritebackDeps['reindex'], folder: string): Promise<'synced' | string> {
   try {
-    await deps.reindex(folder)
+    await reindex(folder)
+    return 'synced'
   } catch (err) {
-    result.codegraph = `skipped: ${err instanceof Error ? err.message : String(err)}`
+    return `skipped: ${err instanceof Error ? err.message : String(err)}`
   }
-  return result
+}
+
+// On finish: the outcome goes to the project's Hindsight bank tagged with the diff's files and symbols,
+// then CodeGraph re-syncs. Each store is tried on its own; a skipped one is reported, never thrown.
+export async function writeBack(deps: WritebackDeps, run: Run, folder: string): Promise<WritebackResult> {
+  const h = await retainOutcome(deps, run, folder)
+  return { hindsight: h.result, codegraph: await syncCodegraph(deps.reindex, folder), tags: h.tags }
 }

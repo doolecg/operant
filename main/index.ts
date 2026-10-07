@@ -1,6 +1,7 @@
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawn as spawnPty } from '@lydell/node-pty'
-import { app, BrowserWindow, dialog, nativeTheme, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, nativeTheme, safeStorage, screen, shell } from 'electron'
 import { scrubLogLine } from '../core/agents'
 import { CliServer } from '../core/cli-server'
 import { CrewIndexes } from '../core/codegraph'
@@ -16,9 +17,11 @@ import { loadEnv } from './env'
 import { isAppUrl, type AppOrigin } from './guard'
 import { push, registerIpc } from './ipc'
 import { createUpdater } from './updater'
+import { attachWindowSync } from './windowSync'
 
 // A .env file sets variables the real environment lacks: the repo root in dev, the app data folder when installed.
-loadEnv({ dir: app.isPackaged ? appDataDir() : app.getAppPath(), log: (line) => console.log(line) })
+const envDir = app.isPackaged ? appDataDir() : app.getAppPath()
+loadEnv({ dir: envDir, log: (line) => console.log(line) })
 
 // Keep data apart from Operant 1, which owns the plain "Operant" folder.
 app.setPath('userData', appDataDir())
@@ -82,11 +85,19 @@ function createWindow(): void {
   if (devUrl) void win.loadURL(devUrl)
   else void win.loadFile(appOrigin.indexFile)
 
+  attachWindowSync(win, (cb) => {
+    screen.on('display-metrics-changed', cb)
+    screen.on('display-added', cb)
+    screen.on('display-removed', cb)
+  })
+
   win.on('closed', () => (win = null))
 }
 
 app.whenReady().then(() => {
   store = new Store(join(app.getPath('userData'), 'operant.db'))
+  const playground = store.ensurePlayground(join(app.getPath('userData'), 'Playground'))
+  mkdirSync(playground.folder, { recursive: true })
   consoleLog.setScrubber(scrubLogLine)
   sessions = new SessionManager((file, args, opts) => spawnPty(file, args, { name: 'xterm-256color', ...opts }))
   const indexes = new CrewIndexes(
@@ -105,6 +116,11 @@ app.whenReady().then(() => {
       operantNode: process.execPath,
     },
     cliServer: (collab) => new CliServer({ collab }),
+    // A bot added without a token re-checks .env once, through the same loader.
+    reloadEnv: () => {
+      loadEnv({ dir: envDir, log: (line) => console.log(line) })
+      return process.env
+    },
     // Where usage exports are saved and import files are picked.
     fileDialogs: {
       save: async (defaultPath, filter) => {

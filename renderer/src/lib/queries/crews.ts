@@ -23,6 +23,7 @@ export const useCrewCounts = (crewId: number | null, enabled = true) =>
 export const useCreateCrew = () => useMutate('crews:create')
 export const useUpdateCrew = () => useMutate('crews:update')
 export const useDeleteCrew = () => useMutate('crews:delete')
+export const useClearCrewHistory = () => useMutate('crews:clearHistory')
 // Saves the project list order. The list reorders at once and rolls back if the save fails.
 export function useReorderCrews() {
   const qc = useQueryClient()

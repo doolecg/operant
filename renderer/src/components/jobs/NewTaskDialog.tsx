@@ -7,8 +7,9 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { useCreateRun, useCreateTeam, usePresets, useTeams } from '@/lib/queries'
+import { useCreateRun, useCreateTeam, usePresets, useSettings, useTeams } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { ModelEffortSelect } from './ModelEffortSelect'
 
@@ -28,9 +29,11 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
   const teams = teamsQuery.data ?? []
   const shown = teams.filter((t) => !t.hidden)
   const presets = presetsQuery.data ?? []
+  const main = useSettings().data
   const create = useCreateRun()
   const saveTeam = useCreateTeam()
   const [mode, setMode] = useState<'solo' | 'team'>('solo')
+  const [background, setBackground] = useState(false)
   const [task, setTask] = useState('')
   const [cli, setCli] = useState<MasterCli>('claude')
   const [masterModel, setMasterModel] = useState('')
@@ -43,10 +46,11 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
   useEffect(() => {
     if (!open) return
     setMode('solo')
+    setBackground(false)
     setTask('')
-    setCli('claude')
-    setMasterModel('')
-    setMasterEffort('')
+    setCli(main?.mainCli ?? 'claude')
+    setMasterModel(main?.mainModel ?? '')
+    setMasterEffort(main?.mainEffort ?? '')
     setTeamId(CUSTOM)
     setSeats([])
     setError(null)
@@ -64,7 +68,7 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
 
   const patchSeat = (i: number, patch: Partial<TeamSeat>) => setSeats((all) => all.map((s, j) => (j === i ? { ...s, ...patch } : s)))
   const addSeat = () => {
-    const first = presets[0]
+    const first = presets.find((p) => p.agent === main?.mainCli) ?? presets[0]
     if (first) setSeats((all) => [...all, { presetId: first.id, count: 1, model: first.model, effort: first.effort }])
   }
 
@@ -97,6 +101,7 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
           masterCli: cli,
           ...(masterModel ? { masterModel } : {}),
           ...(masterEffort ? { masterEffort } : {}),
+          mode: background ? ('background' as const) : ('master' as const),
           ...(mode === 'team' ? { teamId: teamId === CUSTOM ? null : Number(teamId), seats } : {}),
         },
       ],
@@ -119,7 +124,11 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Start new task</DialogTitle>
-            <DialogDescription>The project's Master runs it alone, or with a team of seats as its own subagents.</DialogDescription>
+            <DialogDescription>
+              {background
+                ? "The headless runner does this task without the Master Terminal."
+                : `This project's Master Terminal (${cli === 'opencode' ? 'OpenCode' : 'Claude Code'}) gets the task and runs it alone, or with a team of seats as its own subagents.`}
+            </DialogDescription>
           </DialogHeader>
 
           <DialogBody>
@@ -156,6 +165,14 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
                 <SelectItem value="opencode">OpenCode</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="run-background">Run in background</Label>
+              <p className="text-muted-foreground text-xs">Runs without the Master Terminal, no review step.</p>
+            </div>
+            <Switch id="run-background" checked={background} onCheckedChange={setBackground} />
           </div>
 
           <ModelEffortSelect

@@ -21,6 +21,7 @@ import {
   useResetTeam,
   useRunLimit,
   useSetRunLimit,
+  useSettings,
   useTeamImportPreview,
   useTeams,
   useUpdateTeam,
@@ -54,7 +55,7 @@ function QueueCard() {
         <CardDescription>Jobs beyond the limit wait in the queue until one finishes.</CardDescription>
       </CardHeader>
       <CardContent>
-        <Row label="Jobs running at once" hint="From 1 to 10." htmlFor="run-limit">
+        <Row label="Jobs running at once" hint="From 1 to 10. Background jobs only: the Master Terminal runs one job at a time per project." htmlFor="run-limit">
           {limit.data == null ? (
             <span className="text-muted-foreground text-sm">Loading…</span>
           ) : (
@@ -91,6 +92,7 @@ const whole = (v: string, min: number) => Math.max(min, Math.round(Number(v) || 
 export function TeamDialog({ team, presets, onClose }: { team: Team | null; presets: Preset[]; onClose: () => void }) {
   const create = useCreateTeam()
   const update = useUpdateTeam()
+  const mainCli = useSettings().data?.mainCli
   const [form, setForm] = useState(() => toForm(team))
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }))
@@ -117,7 +119,7 @@ export function TeamDialog({ team, presets, onClose }: { team: Team | null; pres
   }
 
   const addSeat = () => {
-    const first = presets[0]
+    const first = presets.find((p) => p.agent === mainCli) ?? presets[0]
     if (first) set({ seats: [...form.seats, { presetId: first.id, count: 1, model: first.model, effort: first.effort }] })
   }
 

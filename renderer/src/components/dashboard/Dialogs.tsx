@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { usd } from '@/lib/format'
-import { pickFolder, useAction, useCrewCounts, useDeleteCrew, useRuns, useUpdateCrew } from '@/lib/queries'
+import { pickFolder, useAction, useClearCrewHistory, useCrewCounts, useDeleteCrew, useRuns, useUpdateCrew } from '@/lib/queries'
 
 interface ShellProps {
   open: boolean
@@ -241,15 +241,20 @@ export function DeleteCrewDialog({
   open,
   onOpenChange,
   onDeleted,
+  playground,
 }: {
   crewId: number
   crewName: string
   open: boolean
   onOpenChange: (o: boolean) => void
   onDeleted?: () => void
+  // The Playground cannot be deleted: the dialog clears its history instead.
+  playground?: boolean
 }) {
   const counts = useCrewCounts(crewId, open)
-  const remove = useDeleteCrew()
+  const del = useDeleteCrew()
+  const clear = useClearCrewHistory()
+  const remove = playground ? clear : del
   const runCount = useRuns(open ? crewId : null).data?.length
   const c = counts.data
   useEffect(() => {
@@ -260,9 +265,9 @@ export function DeleteCrewDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Delete project ${crewName}`}
+      title={playground ? `Clear history of ${crewName}` : `Delete project ${crewName}`}
       description="This cannot be undone."
-      submitLabel="Delete project"
+      submitLabel={playground ? 'Clear history' : 'Delete project'}
       destructive
       canSubmit={!!c && runCount != null}
       pending={remove.isPending}
@@ -276,7 +281,14 @@ export function DeleteCrewDialog({
         })
       }
     >
-      {c ? (
+      {c && playground ? (
+        <div className="space-y-2 text-sm">
+          <p>
+            This removes {plural(runCount ?? 0, 'run')}, {plural(c.messages, 'message')} and {plural(c.lessons, 'lesson')}. The Playground itself stays.
+          </p>
+          <p className="text-muted-foreground">The folder and every file in it are not touched.</p>
+        </div>
+      ) : c ? (
         <div className="space-y-2 text-sm">
           <p>
             Deleting the project removes {plural(runCount ?? 0, 'run')}, {plural(c.jobs, 'job')} ({c.openJobs} open),{' '}

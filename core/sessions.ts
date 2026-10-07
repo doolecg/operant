@@ -59,7 +59,21 @@ interface Session {
   pty: Pty
   buffer: string
   lastOutputAt: number
+  // The owner's own keystrokes (write(), the renderer path), never Operant's typed lines.
+  lastOwnerInputAt: number | null
+  // The owner typed text since their last Enter (or Ctrl+C / Ctrl+U / Esc), so a typed line would land in their draft.
+  ownerDraft: boolean
 }
+
+// Delay between a fixed line's text and its Enter: ConPTY and the TUIs' paste detection would otherwise read the CR
+// that arrives in the same chunk as part of a paste.
+export const ENTER_DELAY_MS = 30
+// Ctrl+U: clears the input line in Claude Code and OpenCode (checked on ConPTY) before a retyped line.
+export const CLEAR_INPUT_KEY = '\x15'
+
+// Terminal replies and key sequences (focus reports, cursor reports, arrows, bracketed paste markers).
+// eslint-disable-next-line no-control-regex
+const SEQUENCE_RE = /\x1b\[[0-9;?<>]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bO./g
 
 export interface SessionEvents {
   // Operator sessions only (numeric keys), kept for existing listeners.
@@ -78,6 +92,7 @@ export class SessionManager extends EventEmitter<SessionEvents> {
     private readonly spawn: PtyFactory,
     private readonly pathEnv?: PathEnv,
     private readonly now: () => number = Date.now,
+    private readonly later: (fn: () => void, ms: number) => void = (fn, ms) => void setTimeout(fn, ms),
   ) {
     super()
   }
@@ -102,7 +117,7 @@ export class SessionManager extends EventEmitter<SessionEvents> {
       ...extraEnv,
     }) as Record<string, string>
     const pty = this.spawn(sh.file, sh.args, { cwd, cols, rows, env })
-    const session: Session = { pty, buffer: '', lastOutputAt: this.now() }
+    const session: Session = { pty, buffer: '', lastOutputAt: this.now(), lastOwnerInputAt: null, ownerDraft: false }
     this.sessions.set(key, session)
 
     pty.onData((data) => {
@@ -136,13 +151,30 @@ export class SessionManager extends EventEmitter<SessionEvents> {
     return ms !== null && ms >= idleSeconds * 1000
   }
 
-  // Types one of Operant's fixed lines (nudge, /clear, /exit) plus Enter. Anything else is refused.
-  typeFixed(key: SessionKey, line: string): boolean {
+  // Types one of Operant's fixed lines (nudge, /clear, /exit, the Master pointer lines), then Enter as a separate write
+  // ENTER_DELAY_MS later (checked on ConPTY with Claude Code and OpenCode). `clearFirst` sends Ctrl+U before the text
+  // (a retyped pointer line, in case the first one is still in the input box). Anything else is refused.
+  typeFixed(key: SessionKey, line: string, opts: { clearFirst?: boolean } = {}): boolean {
     if (!isFixedLine(line)) throw new Error('not a fixed Operant line')
     const s = this.sessions.get(key)
     if (!s) return false
-    s.pty.write(`${line}\r`)
+    if (opts.clearFirst) s.pty.write(CLEAR_INPUT_KEY)
+    s.pty.write(line)
+    this.later(() => {
+      if (this.sessions.get(key) === s) s.pty.write('\r')
+    }, ENTER_DELAY_MS)
     return true
+  }
+
+  // Milliseconds since the owner last typed into the session; null when they never did or it is not running.
+  ownerIdleMs(key: SessionKey): number | null {
+    const s = this.sessions.get(key)
+    return s && s.lastOwnerInputAt !== null ? this.now() - s.lastOwnerInputAt : null
+  }
+
+  // True while the owner has text in the input line that they have not sent.
+  ownerDraft(key: SessionKey): boolean {
+    return this.sessions.get(key)?.ownerDraft ?? false
   }
 
   stop(operatorId: SessionKey): void {
@@ -171,8 +203,20 @@ export class SessionManager extends EventEmitter<SessionEvents> {
     return true
   }
 
+  // The owner's keystrokes (the renderer's operators:write and scratch:write). Terminal replies (focus and cursor
+  // reports) are not typing; Enter, Ctrl+C, Ctrl+U and Esc end a draft.
   write(operatorId: SessionKey, data: string): void {
-    this.sessions.get(operatorId)?.pty.write(data)
+    const s = this.sessions.get(operatorId)
+    if (!s) return
+    const keys = data.replace(SEQUENCE_RE, '')
+    if (keys || data === '\x1b') {
+      s.lastOwnerInputAt = this.now()
+      for (const ch of keys) {
+        if (ch === '\r' || ch === '\n' || ch === '\x03' || ch === '\x15' || ch === '\x1b') s.ownerDraft = false
+        else if (ch >= ' ' && ch !== '\x7f') s.ownerDraft = true
+      }
+    }
+    s.pty.write(data)
   }
 
   resize(operatorId: SessionKey, cols: number, rows: number): void {

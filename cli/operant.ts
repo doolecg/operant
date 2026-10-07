@@ -1,12 +1,14 @@
 // The `operant` command agents run. Parses argv, sends one JSON line to the app's local socket with the
 // session token, prints the answer and exits with its code. Built on its own to out/cli/operant.cjs and
 // run by the app binary as Node; it has no dependencies and imports nothing from the app.
+import { readFileSync } from 'node:fs'
 import { connect } from 'node:net'
 
 export const EXIT_USAGE = 2
 export const EXIT_UNREACHABLE = 7
 
-type Kind = 'bool' | 'int' | 'num' | 'str' | 'ids' | 'int?' | 'addr?'
+// 'strs' may be given more than once and arrives as a list.
+type Kind = 'bool' | 'int' | 'num' | 'str' | 'strs' | 'ids' | 'int?' | 'addr?'
 
 interface CommandSpec {
   // Positional names; a trailing `...` takes the rest of the words joined by spaces; `?` = optional.
@@ -52,10 +54,24 @@ const COMMANDS: Record<string, CommandSpec> = {
     },
     usage: 'operant job edit N [--title T] [--body T] [--note T] [--priority P] [--estimate M|none] [--review MODE] [--for ADDR|none] [--after N,N] [--not-after N,N]',
   },
+  // Master Terminal only: the dashboard job (JOB#) it works on. Text from the owner or agents comes back as data.
+  'run.show': { pos: ['id'], flags: {}, usage: 'operant run show N' },
+  'run.start': { pos: ['id'], flags: {}, usage: 'operant run start N' },
+  'run.progress': { pos: ['id'], flags: { text: 'str' }, required: ['text'], usage: 'operant run progress N --text <text|->' },
+  'run.ask': { pos: ['id'], flags: { text: 'str', option: 'strs' }, required: ['text'], usage: 'operant run ask N --text <text|-> [--option A --option B ...]' },
+  'run.answer': { pos: ['id'], flags: {}, usage: 'operant run answer N' },
+  'run.review': { pos: ['id'], flags: { summary: 'str' }, required: ['summary'], usage: 'operant run review N --summary <markdown|@file|->' },
+  'run.approve': { pos: ['id'], flags: { note: 'str' }, usage: 'operant run approve N [--note T]' },
+  'run.fail': { pos: ['id'], flags: { text: 'str' }, required: ['text'], usage: 'operant run fail N --text <reason|->' },
+  'run.next': { pos: [], flags: {}, usage: 'operant run next' },
+  'run.inbox': { pos: [], flags: {}, usage: 'operant run inbox' },
+  'run.closeout': { pos: ['id'], flags: { wait: 'bool' }, usage: 'operant run closeout N [--wait]' },
+  // Internal: the Master plugin's hooks call it; the hook JSON arrives on stdin. Always silent and exits 0.
+  hook: { pos: ['event'], flags: {}, usage: 'operant hook <event>' },
 }
 
 // Text values that may be `-` (read from stdin).
-const TEXT = new Set(['text', 'title', 'body', 'note', 'reason'])
+const TEXT = new Set(['text', 'title', 'body', 'note', 'reason', 'summary'])
 
 export const HELP = [
   'Usage (exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 forbidden, 6 limited/cap, 7 Operant not reachable):',
@@ -96,6 +112,8 @@ function convert(kind: Kind, name: string, v: string): unknown {
     }
     case 'addr?':
       return v === 'none' ? null : v
+    case 'strs':
+      return v
     default:
       return v
   }
@@ -118,13 +136,14 @@ export function parseArgs(argv: string[]): Parsed {
   const first = words[0]
   if (first === undefined) return tail.length ? { kind: 'error', message: 'Missing command. Run: operant --help' } : { kind: 'help', text: HELP }
   if (first.startsWith('-')) return { kind: 'error', message: 'Put the command first. Run: operant --help' }
-  const name = first === 'job' ? `job.${words[1] ?? ''}` : first
+  const group = first === 'job' || first === 'run'
+  const name = group ? `${first}.${words[1] ?? ''}` : first
   const spec = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined
-  if (!spec) return { kind: 'error', message: `Unknown command "${first === 'job' ? `job ${words[1] ?? ''}`.trim() : first}". Run: operant --help` }
+  if (!spec) return { kind: 'error', message: `Unknown command "${group ? `${first} ${words[1] ?? ''}`.trim() : first}". Run: operant --help` }
   const args: Record<string, unknown> = {}
   const pos: string[] = []
   try {
-    for (let i = first === 'job' ? 2 : 1; i < words.length; i++) {
+    for (let i = group ? 2 : 1; i < words.length; i++) {
       const a = words[i]!
       if (a === '--json') {
         json = true
@@ -145,7 +164,7 @@ export function parseArgs(argv: string[]): Parsed {
       const kind = Object.hasOwn(spec.flags, flag) ? spec.flags[flag] : undefined
       if (!kind) throw new Error(`Unknown option --${flag}. Usage: ${spec.usage}`)
       const key = camel(flag)
-      if (key in args) throw new Error(`--${flag} given twice`)
+      if (key in args && kind !== 'strs') throw new Error(`--${flag} given twice`)
       if (kind === 'bool') {
         if (eq > 0) throw new Error(`--${flag} takes no value`)
         args[key] = true
@@ -153,7 +172,8 @@ export function parseArgs(argv: string[]): Parsed {
       }
       const value: string | undefined = eq > 0 ? a.slice(eq + 1) : words[++i]
       if (value === undefined) throw new Error(`--${flag} needs a value`)
-      args[key] = convert(kind, flag, value)
+      if (kind === 'strs') args[key] = [...((args[key] as string[] | undefined) ?? []), value]
+      else args[key] = convert(kind, flag, value)
     }
   } catch (err) {
     return { kind: 'error', message: (err as Error).message }
@@ -262,21 +282,74 @@ export async function readStdin(input: NodeJS.ReadableStream & { isTTY?: boolean
   return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '')
 }
 
-export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string; code: number }> {
+// The hook JSON fields `operant hook` forwards (Claude Code's own names on the left).
+const HOOK_FIELDS: Record<string, string> = {
+  session_id: 'sessionId',
+  transcript_path: 'transcriptPath',
+  source: 'source',
+  message: 'message',
+  notification_type: 'notificationType',
+  agent_id: 'agentId',
+  agent_type: 'agentType',
+  prompt: 'prompt',
+}
+
+// What the hook sends: the event name from argv plus the known fields of the JSON on stdin (text only, capped).
+export function hookArgs(event: string, stdin: string): Record<string, unknown> {
+  const args: Record<string, unknown> = { event }
+  try {
+    const body = JSON.parse(stdin) as Record<string, unknown>
+    for (const [from, to] of Object.entries(HOOK_FIELDS)) {
+      // The prompt only from UserPromptSubmit: Operant compares it with its own pointer line and an approval word.
+      if (from === 'prompt' && event !== 'UserPromptSubmit') continue
+      const v = body[from]
+      if (typeof v === 'string') args[to] = v.slice(0, 600)
+    }
+  } catch {
+    // no JSON on stdin: the event name alone still tells the app what happened
+  }
+  return args
+}
+
+// A hook must never disturb Claude Code: no output, exit 0, whatever happens.
+async function hookMain(event: string, env: NodeJS.ProcessEnv, input: NodeJS.ReadableStream & { isTTY?: boolean }): Promise<{ stdout: string; stderr: string; code: number }> {
+  const quiet = { stdout: '', stderr: '', code: 0 }
+  const socketPath = env.OPERANT_SOCKET
+  const token = env.OPERANT_TOKEN
+  if (!socketPath || !token) return quiet
+  try {
+    const stdin = await readStdin(input).catch(() => '')
+    await request(socketPath, JSON.stringify({ token, cmd: 'hook', args: hookArgs(event, stdin) }), 5000)
+  } catch {
+    // Operant is not reachable: nothing to tell
+  }
+  return quiet
+}
+
+// `--summary @file` reads the file (up to 64 KB); `@@x` is the text `@x`.
+export function readAtFile(v: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): string {
+  if (v.startsWith('@@')) return v.slice(1)
+  if (!v.startsWith('@') || v.length === 1) return v
+  const text = read(v.slice(1))
+  if (text.length > STDIN_MAX) throw new Error('The file is over 64 KB')
+  return text
+}
+
+export async function main(argv: string[], env: NodeJS.ProcessEnv, input: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin): Promise<{ stdout: string; stderr: string; code: number }> {
   const parsed = parseArgs(argv)
+  if (parsed.kind === 'request' && parsed.cmd === 'hook') return hookMain(String(parsed.args.event), env, input)
   if (parsed.kind === 'help') return { stdout: `${parsed.text}\n`, stderr: '', code: 0 }
   if (parsed.kind === 'error') return render({ exit: EXIT_USAGE, error: parsed.message }, argv.includes('--json'))
   const socketPath = env.OPERANT_SOCKET
   const token = env.OPERANT_TOKEN
   if (!socketPath || !token) return unreachable('OPERANT_SOCKET or OPERANT_TOKEN is not set', parsed.json)
-  if (parsed.stdin) {
-    try {
-      parsed.args[parsed.stdin] = await readStdin()
-    } catch (err) {
-      return render({ exit: EXIT_USAGE, error: (err as Error).message }, parsed.json)
-    }
+  try {
+    if (parsed.stdin) parsed.args[parsed.stdin] = await readStdin(input)
+    if (typeof parsed.args.summary === 'string') parsed.args.summary = readAtFile(parsed.args.summary)
+  } catch (err) {
+    return render({ exit: EXIT_USAGE, error: (err as Error).message }, parsed.json)
   }
-  const wait = typeof parsed.args.wait === 'number' ? parsed.args.wait : 0
+  const wait = typeof parsed.args.wait === 'number' ? parsed.args.wait : parsed.args.wait === true ? 125 : 0
   try {
     const reply = await request(socketPath, JSON.stringify({ token, cmd: parsed.cmd, args: parsed.args }), (Math.min(wait, 600) + 30) * 1000)
     return render(reply, parsed.json)

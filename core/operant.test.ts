@@ -351,7 +351,7 @@ describe('Operant', () => {
     const master = store.ensureMaster(crew.id)
     await op.handlers['operators:applyChange'](master.id, { model: 'claude-opus-5-5', effort: 'high', permissionMode: 'plan' })
     op.startMaster(crew.id)
-    expect(ptys[0]!.written[0]).toMatch(/^claude --model claude-opus-5-5 --effort high --permission-mode plan --plugin-dir \/plugin --session-id /)
+    expect(ptys[0]!.written[0]).toMatch(/^claude --model claude-opus-5-5 --effort high --permission-mode plan --append-system-prompt-file \S+master-pm-[0-9a-f]{12}\.md --plugin-dir \/plugin --plugin-dir \S+master-\d+(?: --mcp-config \S+)? --session-id /)
     // A running Master restarts with the new setting.
     await op.handlers['operators:applyChange'](master.id, { permissionMode: '' })
     expect(ptys).toHaveLength(2)
@@ -359,13 +359,36 @@ describe('Operant', () => {
     expect(ptys[1]!.written[0]).toContain('--model claude-opus-5-5')
   })
 
-  it('starts the Master Terminal without a preset or role file, with a token', async () => {
+  it('starts the Master Terminal with its PM role file, generated plugin and a token', async () => {
     const { crew } = await seedOperator()
     const master = op.startMaster(crew.id)
     expect(master.kind).toBe('master')
-    expect(ptys[0]!.written[0]).toMatch(/^claude --plugin-dir \/plugin --session-id [0-9a-f-]{36}\r$/)
+    expect(ptys[0]!.written[0]).toMatch(/^claude --append-system-prompt-file \S+master-pm-[0-9a-f]{12}\.md --plugin-dir \/plugin --plugin-dir \S+master-\d+(?: --mcp-config \S+)? --session-id [0-9a-f-]{36}\r$/)
     expect(ptys[0]!.opts.env.OPERANT_TOKEN).toBe(`token-${master.id}`)
-    expect(written).toEqual([])
+    expect(written.map((f) => f.path.replace(/\\/g, '/'))).toEqual(
+      expect.arrayContaining([expect.stringMatching(/roles\/master-pm-/), expect.stringMatching(/master-\d+\/hooks\/hooks\.json$/), expect.stringMatching(/master-\d+\/\.claude-plugin\/plugin\.json$/)]),
+    )
+    expect(op.masterStates.get(crew.id)).toMatchObject({ phase: 'starting', cli: 'claude' })
+  })
+
+  it('approves and sends back runs from the app, records an approval typed in the Master Terminal and fills the state from hooks', async () => {
+    const { crew } = await seedOperator()
+    const master = op.startMaster(crew.id)
+    const run = store.createRun({ crewId: crew.id, task: 't', masterCli: 'claude' })
+    store.setRunStatus(run.id, 'working')
+    store.setRunStatus(run.id, 'review')
+    await op.handlers['operators:write'](master.id, 'approve\r')
+    expect(op.approvals.has(run.id)).toBe(true)
+    expect((await op.handlers['runs:approve'](run.id, 'ok')).status).toBe('done')
+    const second = store.createRun({ crewId: crew.id, task: 'u', masterCli: 'claude' })
+    store.setRunStatus(second.id, 'working')
+    store.setRunStatus(second.id, 'review')
+    expect(() => op.handlers['runs:sendBack'](second.id, '')).toThrow(/Note is required/)
+    expect((await op.handlers['runs:sendBack'](second.id, 'more tests')).status).toBe('queued')
+    expect((await op.handlers['runs:events'](second.id)).map((e) => e.kind)).toEqual(['sent-back'])
+    op.masterStates.hook(crew.id, { event: 'Stop', sessionId: '', transcriptPath: '', source: '', message: '', notificationType: '', agentId: '', agentType: '' })
+    expect((await op.handlers['master:state'](crew.id)).phase).toBe('idle')
+    expect(op.ensureMaster(crew.id).phase).toBe('idle')
   })
 
   it('persists settings, pushes them, and applies the shell override to new operators', async () => {
@@ -467,7 +490,8 @@ describe('Operant', () => {
       expect(op.nudgeTick()).toEqual([]) // not idle long enough
       clock += 20_000
       expect(op.nudgeTick()).toEqual([{ key: operator.id, kind: 'nudge', line: 'Operant: you have 1 unread message. Run: operant inbox' }])
-      expect(ptys[0]!.written.at(-1)).toBe('Operant: you have 1 unread message. Run: operant inbox\r')
+      // The Enter follows as its own write ENTER_DELAY_MS later.
+      expect(ptys[0]!.written.at(-1)).toBe('Operant: you have 1 unread message. Run: operant inbox')
       expect(op.nudgeTick()).toEqual([])
       clock += 130_000
       expect(op.nudgeTick()).toHaveLength(1)
@@ -517,19 +541,21 @@ describe('Operant', () => {
       await timed.start()
       expect(cli.listened).toBe(1)
       expect(sweeps).toBe(1)
-      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 30_000, 3_600_000, 10_000, 30_000])
+      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 1_000, 1_000, 30_000, 3_600_000, 10_000, 30_000])
       scheduler.run(3_600_000)
       expect(sweeps).toBe(2)
       await timed.start() // idempotent
-      expect(scheduler.jobs).toHaveLength(6)
+      expect(scheduler.jobs).toHaveLength(8)
       timed.stopTimers()
       expect(scheduler.jobs.every((j) => j.cancelled)).toBe(true)
     })
 
-    it('start() ends jobs left working by a crash and runs their finish step', async () => {
+    it('start() ends background jobs left working by a crash and runs their finish step; a Master job waits for Resume', async () => {
       const crew = store.createCrew('a', '/a')
-      const run = store.createRun({ crewId: crew.id, task: 't', masterCli: 'claude' })
+      const run = store.createRun({ crewId: crew.id, task: 't', masterCli: 'claude', mode: 'background' })
       store.setRunStatus(run.id, 'working')
+      const pm = store.createRun({ crewId: crew.id, task: 't', masterCli: 'claude', mode: 'master' })
+      store.setRunStatus(pm.id, 'working')
       const finished: number[] = []
       const runServices = { onFinished: async (r: { id: number }) => void finished.push(r.id), sweepStaleLaunchFiles: () => {} } as never
       const o = build({ runServices })
@@ -537,6 +563,7 @@ describe('Operant', () => {
       await new Promise((r) => setTimeout(r, 0))
       expect(store.getRun(run.id)!.status).toBe('failed')
       expect(finished).toEqual([run.id])
+      expect(store.getRun(pm.id)).toMatchObject({ status: 'needs-you', waiting: 'master' })
       o.stopTimers()
     })
 
@@ -651,7 +678,7 @@ describe('Operant', () => {
       }
       const timed = build({ cliServer: () => failing })
       await timed.start()
-      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 30_000, 3_600_000, 10_000, 30_000])
+      expect(scheduler.jobs.map((j) => j.ms)).toEqual([2_000, 1_000, 1_000, 1_000, 30_000, 3_600_000, 10_000, 30_000])
       const errors = store.recentEvents(20).filter((e) => e.kind === 'error')
       expect(errors).toHaveLength(1)
       expect(errors[0]!.message).toContain('without the operant CLI')
@@ -1628,6 +1655,18 @@ describe('Operant', () => {
       o.seedFromEnv({ DISCORD_BOT_TOKEN: 'another-fake' })
       expect(secrets.get(stored.tokenRef)).toBe(FAKE)
       expect(store.recentEvents(50).filter((e) => /imported into the encrypted store/.test(e.message))).toHaveLength(1)
+    })
+
+    it('accepts the alias names, enables the bot, and re-checks the file when a bot is added without a token', async () => {
+      const secrets = new MemorySecretStore()
+      const o = build({ discord: { secrets }, reloadEnv: () => ({ BOT_TOKEN: ' ', DISCORD_TOKEN: FAKE }) })
+      const bot = store.createDiscordBot({ name: 'desk' })
+      o.seedFromEnv({ DISCORD_BOT_TOKEN: '', DISCORD_TOKEN: FAKE })
+      expect(secrets.get(store.getDiscordBot(bot.id)!.tokenRef)).toBe(FAKE)
+      expect(store.getDiscordBot(bot.id)!.enabled).toBe(true)
+      const o2 = build({ discord: { secrets }, reloadEnv: () => ({ BOT_TOKEN: FAKE }) })
+      const created = await o2.handlers['discord:create']({ name: 'late' })
+      expect(created.hasToken).toBe(true)
     })
 
     it('keeps the token unused with no bot, or with several bots lacking one', () => {

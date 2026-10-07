@@ -60,7 +60,7 @@ describe('run services around a job', () => {
   afterEach(() => store.close())
 
   it('gives the Master a first prompt with both parts', async () => {
-    manager(services()).submit({ crewId, task: 'Fix `tierOf`', masterCli: 'opencode' })
+    manager(services()).submit({ mode: 'background', crewId, task: 'Fix `tierOf`', masterCli: 'opencode' })
     await tick()
     expect(starts[0]!.prompt).toContain('old lesson')
     expect(starts[0]!.prompt).toContain('graph')
@@ -72,7 +72,7 @@ describe('run services around a job', () => {
       explorer: { explore: async () => { throw new Error('y') } },
     })
     const m = manager(svc)
-    const run = m.submit({ crewId, task: 'Fix `tierOf`', masterCli: 'opencode' })
+    const run = m.submit({ mode: 'background', crewId, task: 'Fix `tierOf`', masterCli: 'opencode' })
     await tick()
     expect(starts[0]!.prompt).toMatch(/could not be reached/)
     ends[0]!({ ok: true, text: 'done anyway' })
@@ -82,7 +82,7 @@ describe('run services around a job', () => {
 
   it('reads subagents while the job works, then writes back and re-syncs when it ends', async () => {
     const m = manager(services())
-    const run = m.submit({ crewId, task: 'Fix `tierOf`', masterCli: 'opencode' })
+    const run = m.submit({ mode: 'background', crewId, task: 'Fix `tierOf`', masterCli: 'opencode' })
     await tick()
     starts[0]!.onEvent({ kind: 'session', text: 'ses_1' })
     await tick()
@@ -100,7 +100,7 @@ describe('run services around a job', () => {
   it('tells listeners when the agent list changes, and only then', async () => {
     const seen: number[] = []
     const m = manager(services({ onAgents: (r) => void seen.push(r.id) }))
-    const run = m.submit({ crewId, task: 't', masterCli: 'opencode' })
+    const run = m.submit({ mode: 'background', crewId, task: 't', masterCli: 'opencode' })
     await tick()
     starts[0]!.onEvent({ kind: 'session', text: 'ses_1' })
     await tick()
@@ -116,8 +116,8 @@ describe('run services around a job', () => {
   it('does not write back a job cancelled before it started', async () => {
     const m = manager(services())
     m.setConcurrency(1)
-    m.submit({ crewId, task: 'first', masterCli: 'opencode' })
-    const second = m.submit({ crewId, task: 'second', masterCli: 'opencode' })
+    m.submit({ mode: 'background', crewId, task: 'first', masterCli: 'opencode' })
+    const second = m.submit({ mode: 'background', crewId, task: 'second', masterCli: 'opencode' })
     await m.stop(second.id)
     await tick()
     expect(retained).toEqual([])

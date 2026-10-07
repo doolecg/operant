@@ -47,7 +47,7 @@ describe('Update tracker job', () => {
 
   // Starts a run and ends it (a stop fails it), then waits for the finish hook to settle.
   const finishRun = async (): Promise<number> => {
-    const run = await op.handlers['runs:create']({ crewId, task: 'go', masterCli: 'claude' })
+    const run = await op.handlers['runs:create']({ mode: 'background', crewId, task: 'go', masterCli: 'claude' })
     await new Promise((r) => setTimeout(r, 0))
     await op.handlers['runs:stop'](run.id)
     await new Promise((r) => setTimeout(r, 30))

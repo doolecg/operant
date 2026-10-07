@@ -207,7 +207,7 @@ describe('RunManager', () => {
   afterEach(() => store.close())
 
   const submit = (task = 'do it', over: Partial<Parameters<RunManager['submit']>[0]> = {}) =>
-    manager.submit({ crewId, task, masterCli: 'claude', ...over })
+    manager.submit({ mode: 'background', crewId, task, masterCli: 'claude', ...over })
   const statuses = () => store.listRuns(crewId).map((r) => r.status)
 
   it('starts the first job at once and queues the second', async () => {
@@ -275,7 +275,7 @@ describe('RunManager', () => {
 
   it('keeps projects independent', async () => {
     submit('one')
-    manager.submit({ crewId: other, task: 'elsewhere', masterCli: 'claude' })
+    manager.submit({ mode: 'background', crewId: other, task: 'elsewhere', masterCli: 'claude' })
     await tick()
     expect(adapter.starts.map((s) => s.cwd)).toEqual(['/work/a', '/work/b'])
   })
@@ -336,7 +336,7 @@ describe('RunManager', () => {
     expect(() => submit('   ')).toThrow(/task/)
     expect(() => submit('x', { masterCli: 'codex' as never })).toThrow(/claude or opencode/)
     expect(() => submit('x', { teamId: 999 })).toThrow(/not found/)
-    expect(() => manager.submit({ crewId: 999, task: 'x', masterCli: 'claude' })).toThrow(/not found/)
+    expect(() => manager.submit({ mode: 'background', crewId: 999, task: 'x', masterCli: 'claude' })).toThrow(/not found/)
     const codex = store.createPreset({ name: 'cx', agent: 'codex', model: 'gpt-5', permissionMode: 'dontAsk' })
     expect(() => submit('x', { seats: [{ presetId: codex.id, count: 1, model: 'gpt-5' }] })).toThrow(/claude or opencode/)
     expect(() => submit('x', { seats: [{ presetId: preset.id, count: 0, model: 'sonnet' }] })).toThrow(/count/)
@@ -363,9 +363,9 @@ describe('RunManager', () => {
   })
 
   it('recovers jobs left running by a previous process and starts the queue', async () => {
-    const stale = store.createRun({ crewId, task: 'stale', masterCli: 'claude' })
+    const stale = store.createRun({ crewId, task: 'stale', masterCli: 'claude', mode: 'background' })
     store.setRunStatus(stale.id, 'working')
-    const waiting = store.createRun({ crewId, task: 'waiting', masterCli: 'claude' })
+    const waiting = store.createRun({ crewId, task: 'waiting', masterCli: 'claude', mode: 'background' })
     manager.recover()
     await tick()
     expect(store.getRun(stale.id)).toMatchObject({ status: 'failed' })
@@ -406,8 +406,8 @@ describe('run edit, delete and Master choice', () => {
   afterEach(() => store.close())
 
   it('edits the task of a queued run only', async () => {
-    const first = mgr.submit({ crewId, task: 'one', masterCli: 'claude' })
-    const queued = mgr.submit({ crewId, task: 'two', masterCli: 'claude' })
+    const first = mgr.submit({ mode: 'background', crewId, task: 'one', masterCli: 'claude' })
+    const queued = mgr.submit({ mode: 'background', crewId, task: 'two', masterCli: 'claude' })
     expect(queued.status).toBe('queued')
     expect(mgr.update(queued.id, { task: '  two, better ' }).task).toBe('two, better')
     expect(() => mgr.update(queued.id, { task: ' ' })).toThrow(/cannot be empty/)
@@ -421,8 +421,8 @@ describe('run edit, delete and Master choice', () => {
   })
 
   it('deletes finished runs with their agents and refuses queued or working ones', async () => {
-    const a = mgr.submit({ crewId, task: 'one', masterCli: 'claude' })
-    const b = mgr.submit({ crewId, task: 'two', masterCli: 'claude' })
+    const a = mgr.submit({ mode: 'background', crewId, task: 'one', masterCli: 'claude' })
+    const b = mgr.submit({ mode: 'background', crewId, task: 'two', masterCli: 'claude' })
     await tick()
     expect(() => mgr.remove(a.id)).toThrow(/stop it before deleting/)
     expect(() => mgr.remove(b.id)).toThrow(/queued/)
@@ -436,12 +436,12 @@ describe('run edit, delete and Master choice', () => {
   })
 
   it('passes the run Master model and effort to the adapter and validates them', async () => {
-    mgr.submit({ crewId, task: 't', masterCli: 'claude', masterModel: 'claude-opus-5-5', masterEffort: 'high' })
+    mgr.submit({ mode: 'background', crewId, task: 't', masterCli: 'claude', masterModel: 'claude-opus-5-5', masterEffort: 'high' })
     await tick()
     expect(adapter.starts[0]).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' })
     expect(store.listRuns(crewId)[0]).toMatchObject({ masterModel: 'claude-opus-5-5', masterEffort: 'high' })
-    expect(() => mgr.submit({ crewId, task: 't', masterCli: 'claude', masterModel: 'bad model!' })).toThrow(RunError)
-    expect(() => mgr.submit({ crewId, task: 't', masterCli: 'claude', masterEffort: 'extreme' })).toThrow(RunError)
+    expect(() => mgr.submit({ mode: 'background', crewId, task: 't', masterCli: 'claude', masterModel: 'bad model!' })).toThrow(RunError)
+    expect(() => mgr.submit({ mode: 'background', crewId, task: 't', masterCli: 'claude', masterEffort: 'extreme' })).toThrow(RunError)
   })
 })
 
@@ -467,12 +467,12 @@ describe('team token budget', () => {
 
   const submitWith = (tokenBudget: number) => {
     const team = store.createTeam({ name: `t${tokenBudget}`, limits: { maxWorkers: 0, topTier: '', tokenBudget } })
-    return manager.submit({ crewId, task: 'do it', masterCli: 'claude', teamId: team.id })
+    return manager.submit({ mode: 'background', crewId, task: 'do it', masterCli: 'claude', teamId: team.id })
   }
 
   it('stops a working run over its budget with a clear outcome and starts the next', async () => {
     const run = submitWith(1000)
-    const next = manager.submit({ crewId, task: 'next', masterCli: 'claude' })
+    const next = manager.submit({ mode: 'background', crewId, task: 'next', masterCli: 'claude' })
     await tick()
     tokens[run.id] = 1000
     expect(manager.enforceTokenBudgets()).toEqual([])
@@ -487,7 +487,7 @@ describe('team token budget', () => {
   it('never stops a run whose team set no budget, a queued run, or an ended run', async () => {
     const free = submitWith(0)
     tokens[free.id] = 9_999_999
-    const plain = manager.submit({ crewId, task: 'plain', masterCli: 'claude' })
+    const plain = manager.submit({ mode: 'background', crewId, task: 'plain', masterCli: 'claude' })
     tokens[plain.id] = 9_999_999
     await tick()
     expect(manager.enforceTokenBudgets()).toEqual([])

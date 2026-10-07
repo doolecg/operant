@@ -82,6 +82,10 @@ try {
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: 'Send' }).isDisabled().then((d) => assert.ok(d, 'Send must wait for a task'))
   await dialog.getByLabel('Task').fill('Add a health check to app.ts')
+  // Master mode is the default; the switch opts into the headless runner, which this flow drives.
+  assert.equal(await dialog.getByRole('switch', { name: 'Run in background' }).getAttribute('aria-checked'), 'false')
+  await dialog.getByText('Runs without the Master Terminal, no review step.').waitFor()
+  await dialog.getByRole('switch', { name: 'Run in background' }).click()
   await dialog.getByRole('button', { name: 'Team', exact: true }).click()
   await dialog.getByLabel('Team', { exact: true }).click()
   // Built-in teams come first in their own group, the user's after.
@@ -178,7 +182,7 @@ try {
   // A second job waits in the queue: its card edits the task, then stops it (the panel is closed so the cards show).
   await panel.getByRole('button', { name: 'Close job panel' }).click()
   await panel.waitFor({ state: 'detached' })
-  const second = await inv('runs:create', { crewId: ids.alpha, task: 'Second task', masterCli: 'claude' })
+  const second = await inv('runs:create', { crewId: ids.alpha, task: 'Second task', masterCli: 'claude', mode: 'background' })
   const secondCard = page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${second.id}` }) })
   await secondCard.getByText('Second task').waitFor()
   await secondCard.getByRole('button', { name: `Edit task of JOB#${second.id}` }).click()
@@ -213,7 +217,7 @@ try {
     'export const ok = () => true',
     '```',
   ].join('\n')
-  const third = await inv('runs:create', { crewId: ids.alpha, task: 'Third task', masterCli: 'claude' })
+  const third = await inv('runs:create', { crewId: ids.alpha, task: 'Third task', masterCli: 'claude', mode: 'background' })
   await inv('runs:stop', third.id)
   const mdDb = new DatabaseSync(join(dataDir, 'operant.db'))
   mdDb.exec('PRAGMA busy_timeout = 5000')
@@ -269,6 +273,85 @@ try {
   await panel.waitFor({ state: 'detached' })
   await page.getByText('No jobs yet.').waitFor()
   assert.equal((await inv('runs:list', ids.alpha)).length, 0)
+
+  // Master-mode jobs: the question, the review and the stopped Master are answered from the job panel. The rows are
+  // seeded the way the Master would leave them (the Master Terminal itself is not driven here).
+  const seedRun = async (task, patch) => {
+    const r = await inv('runs:create', { crewId: ids.alpha, task, masterCli: 'claude', mode: 'background' })
+    await inv('runs:stop', r.id)
+    const d = new DatabaseSync(join(dataDir, 'operant.db'))
+    d.exec('PRAGMA busy_timeout = 5000')
+    d.prepare(
+      'UPDATE runs SET mode = ?, status = ?, waiting = ?, question = ?, question_options = ?, review_summary = ?, finished_at = NULL WHERE id = ?',
+    ).run('master', patch.status, patch.waiting ?? '', patch.question ?? '', JSON.stringify(patch.options ?? []), patch.review ?? '', r.id)
+    d.prepare("INSERT INTO run_events (run_id, at, kind, source, body, options) VALUES (?, ?, 'progress', 'master', ?, '[]')").run(r.id, Date.now(), 'Reading the health check code')
+    d.close()
+    return r.id
+  }
+  const qId = await seedRun('Pick a port', { status: 'needs-you', waiting: 'question', question: 'Which **port** should the health check use?', options: ['3000', '8080'] })
+  const rvId = await seedRun('Add a health check', { status: 'review', review: '## Done\n\n- added `/health`\n- tests pass' })
+  const sbId = await seedRun('Tidy the logs', { status: 'review', review: 'Logs tidied.' })
+  const mId = await seedRun('Long migration', { status: 'needs-you', waiting: 'master' })
+  await page.reload()
+  await page.waitForFunction(() => !!window.operant)
+  await page.locator(`[data-crew-row="${ids.alpha}"]`).getByText('alpha', { exact: true }).click({ position: { x: 4, y: 4 } })
+  const cardOf = (id) => page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${id}` }) })
+  await cardOf(qId).getByText('Needs you: question').waitFor()
+  await cardOf(qId).getByText('Reading the health check code').waitFor()
+  await cardOf(rvId).getByText('Review', { exact: true }).waitFor()
+  await cardOf(mId).getByText('Needs you: Master stopped').waitFor()
+  await page.getByRole('tab', { name: /^Runs/ }).getByText('4', { exact: true }).waitFor()
+  // The status pill chip opens the Runs tab filtered to the jobs that need the owner.
+  await page.getByRole('button', { name: /jobs need you/ }).click()
+  assert.equal(await page.getByRole('checkbox', { name: 'Only jobs that need you' }).isChecked(), true)
+
+  // Question: option buttons and a free text answer.
+  await page.getByRole('button', { name: `Open JOB#${qId}` }).click()
+  const qPanel = page.getByRole('region', { name: `Job panel JOB#${qId}` })
+  await qPanel.getByRole('heading', { name: 'Question' }).waitFor()
+  await qPanel.getByText('Reading the health check code').waitFor()
+  await shot('run-question')
+  await qPanel.getByRole('button', { name: '8080' }).click()
+  await qPanel.getByText('Answered by you, in Operant').waitFor()
+  assert.ok((await inv('runs:events', qId)).some((e) => e.kind === 'reply' && e.body === '8080'))
+  await qPanel.getByLabel('Your answer').fill('Use 9000')
+  await qPanel.getByRole('button', { name: 'Send answer' }).click()
+  await qPanel.getByText('Use 9000').waitFor()
+  await qPanel.getByRole('button', { name: 'Close job panel' }).click()
+
+  // Review: the summary is Markdown; Approve moves to done and shows the close-out.
+  await page.getByRole('button', { name: `Open JOB#${rvId}` }).click()
+  const rPanel = page.getByRole('region', { name: `Job panel JOB#${rvId}` })
+  await rPanel.locator('[data-review] [data-markdown]').getByRole('heading', { name: 'Done' }).waitFor()
+  await shot('run-review')
+  await rPanel.getByRole('button', { name: 'Approve' }).click()
+  await rPanel.getByRole('heading', { name: 'Close-out' }).waitFor()
+  assert.equal((await inv('runs:get', rvId)).status, 'done')
+  await rPanel.getByText('Approved by you, in Operant').waitFor()
+  await rPanel.getByRole('button', { name: 'Close job panel' }).click()
+
+  // Send back needs a note and queues the job again.
+  await page.getByRole('button', { name: `Open JOB#${sbId}` }).click()
+  const sPanel = page.getByRole('region', { name: `Job panel JOB#${sbId}` })
+  await sPanel.getByRole('button', { name: 'Send back' }).click()
+  const sbDialog = page.getByRole('dialog')
+  assert.ok(await sbDialog.getByRole('button', { name: 'Send back' }).isDisabled(), 'Send back needs a note')
+  await sbDialog.locator('textarea').fill('Also remove the debug lines')
+  await sbDialog.getByRole('button', { name: 'Send back' }).click()
+  await sbDialog.waitFor({ state: 'detached' })
+  const sent = await inv('runs:get', sbId)
+  assert.equal(sent.sentBackNote, 'Also remove the debug lines')
+  assert.notEqual(sent.status, 'review')
+  await sPanel.getByRole('button', { name: 'Close job panel' }).click()
+
+  // A stopped Master: Resume Master asks the backend to start it again (the fake claude sends no ready signal, so the
+  // job itself stays put here); the click must not fail.
+  await page.getByRole('button', { name: `Open JOB#${mId}` }).click()
+  const mPanel = page.getByRole('region', { name: `Job panel JOB#${mId}` })
+  await mPanel.getByRole('button', { name: 'Resume Master' }).click()
+  await page.waitForTimeout(1500)
+  assert.equal(await mPanel.getByRole('alert').count(), 0, 'Resume Master must not fail')
+  await mPanel.getByRole('button', { name: 'Close job panel' }).click()
 
   // Reorder by dragging a row by its handle; the order is saved and survives a restart.
   assert.deepEqual(await order(), ['alpha', 'beta', 'gamma'])

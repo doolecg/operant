@@ -208,6 +208,9 @@ export class LearnService {
 
   onRunFinished = (run: Run): Promise<LearnRunInfo | null> => this.queue(() => this.learn(run.crewId, run, null))
 
+  // The close-out of an approved master-mode run: the transcript is the run's window of the Master session, built by the caller.
+  onCloseout = (run: Run, transcript: string): Promise<LearnRunInfo | null> => this.queue(() => this.learn(run.crewId, run, null, transcript))
+
   onConversationEnd = (crewId: number, sessionId: string | null): Promise<LearnRunInfo | null> => this.queue(() => this.learn(crewId, null, sessionId))
 
   // "Learn now" for a chosen finished run.
@@ -229,7 +232,7 @@ export class LearnService {
 
   // The step
 
-  private async learn(crewId: number, run: Run | null, sessionId: string | null): Promise<LearnRunInfo | null> {
+  private async learn(crewId: number, run: Run | null, sessionId: string | null, transcript?: string): Promise<LearnRunInfo | null> {
     const { store, db } = this.d
     const settings = this.d.settings()
     const crew = store.getCrew(crewId)
@@ -251,7 +254,7 @@ export class LearnService {
     try {
       const diff = await diffInfo(this.d.git, crew.folder)
       const session = run ? ((store.getJson(`run.session.${run.id}`) as { sessionId?: string } | undefined)?.sessionId ?? null) : sessionId
-      const tail = this.d.transcript ? this.d.transcript(crew.folder, session) : readTranscript(crew.folder, session, this.read)
+      const tail = transcript ?? (this.d.transcript ? this.d.transcript(crew.folder, session) : readTranscript(crew.folder, session, this.read))
       const known = db.listLessons({ crewId, status: 'active' }).slice(0, 40)
       lessons = parseLessons(
         await this.d.model(this.prompt(run, tail, diff, known), (u) => {

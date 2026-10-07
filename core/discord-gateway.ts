@@ -40,6 +40,67 @@ export interface ChannelCheck {
   missing: string[]
 }
 
+// Slash commands, buttons and modals. A gateway without them still serves messages (every member below is optional).
+export interface CommandOptionDef {
+  name: string
+  description: string
+  type: 'string' | 'integer'
+  required?: boolean
+  // Discord asks for choices while the user types (type 'autocomplete'). Cannot be combined with `choices`.
+  autocomplete?: boolean
+  choices?: string[]
+}
+
+export interface CommandDef {
+  name: string
+  description: string
+  options?: CommandOptionDef[]
+}
+
+export interface ButtonDef {
+  id: string
+  label: string
+  style?: 'primary' | 'secondary' | 'success' | 'danger'
+}
+
+export interface ModalDef {
+  id: string
+  title: string
+  label: string
+  long?: boolean
+}
+
+// One interaction from a user. Every reply is private to them (ephemeral). Answer within 3 seconds, or defer first.
+export interface GatewayInteraction {
+  type: 'command' | 'autocomplete' | 'button' | 'modal'
+  userId: string
+  userName: string
+  channelId: string
+  // For an interaction inside a thread: the channel the thread hangs off.
+  parentId: string | null
+  guildId: string | null
+  // The slash command's name (command and autocomplete).
+  name: string
+  options: Record<string, string | number>
+  focused: { name: string; value: string } | null
+  // Button or modal id.
+  customId: string
+  // The text typed into a modal.
+  text: string
+  reply(text: string, buttons?: ButtonDef[]): Promise<void>
+  // Shows "thinking" privately; the next reply replaces it.
+  defer(): Promise<void>
+  choices(list: Array<{ name: string; value: string }>): Promise<void>
+  modal(def: ModalDef): Promise<void>
+  // Removes the buttons of the message a button (or a modal opened from one) belongs to.
+  clearButtons(): Promise<void>
+}
+
+export interface CommandRegistration {
+  guilds: number
+  failed: Array<{ guild: string; reason: string }>
+}
+
 export interface DiscordGateway {
   // Logs in; rejects (with a plain-language message) when the token or the intents are refused.
   connect(token: string, opts?: ConnectOptions): Promise<GatewayIdentity>
@@ -62,6 +123,13 @@ export interface DiscordGateway {
   onLog?(cb: (line: string) => void): void
   // Permission gaps in the given channels, read-only.
   inspect?(channelIds: string[]): Promise<ChannelCheck[]>
+  // Registers the application commands in every server the bot is in. Replaces the whole set, so repeating it is harmless.
+  registerCommands?(defs: CommandDef[]): Promise<CommandRegistration>
+  onInteraction?(cb: (i: GatewayInteraction) => void): void
+  // A message with buttons under it; returns its id.
+  sendRich?(channelId: string, text: string, buttons: ButtonDef[]): Promise<string>
+  // Replaces a message's text; `buttons` (when given, [] removes them) replaces its buttons.
+  edit?(channelId: string, messageId: string, text: string, buttons?: ButtonDef[]): Promise<void>
 }
 
 export class ThreadPermissionError extends Error {
@@ -155,12 +223,88 @@ export function createDiscordJsGateway(opts: DiscordJsGatewayOptions = {}): Disc
   const reactionCbs: Array<(r: GatewayReaction) => void> = []
   const closedCbs: Array<(reason: string) => void> = []
   const restoredCbs: Array<() => void> = []
+  const interactionCbs: Array<(i: GatewayInteraction) => void> = []
   let closing = false
 
   const textChannel = async (id: string) => {
     const ch = await client!.channels.fetch(id)
     if (!ch || !ch.isTextBased() || !('send' in ch)) throw new Error('That channel cannot be written to')
     return ch
+  }
+
+  const rows = (buttons: ButtonDef[]) => {
+    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = dj!
+    const styles = { primary: ButtonStyle.Primary, secondary: ButtonStyle.Secondary, success: ButtonStyle.Success, danger: ButtonStyle.Danger }
+    const out: Array<import('discord.js').ActionRowBuilder<import('discord.js').ButtonBuilder>> = []
+    for (let i = 0; i < buttons.length && out.length < 5; i += 5) {
+      out.push(
+        new ActionRowBuilder<import('discord.js').ButtonBuilder>().addComponents(
+          buttons.slice(i, i + 5).map((b) => new ButtonBuilder().setCustomId(b.id.slice(0, 100)).setLabel(b.label.slice(0, 80)).setStyle(styles[b.style ?? 'secondary'])),
+        ),
+      )
+    }
+    return out
+  }
+
+  // Wraps a discord.js interaction as a GatewayInteraction.
+  const wrap = (it: import('discord.js').Interaction): GatewayInteraction | null => {
+    const { MessageFlags, ModalBuilder, ActionRowBuilder, TextInputBuilder, TextInputStyle } = dj!
+    const channel = it.channel
+    const base = {
+      userId: it.user.id,
+      userName: it.user.username,
+      channelId: it.channelId ?? '',
+      parentId: channel && channel.isThread() ? (channel.parentId ?? null) : null,
+      guildId: it.guildId,
+      name: '',
+      options: {} as Record<string, string | number>,
+      focused: null as { name: string; value: string } | null,
+      customId: '',
+      text: '',
+    }
+    const noop = async () => undefined
+    if (it.isAutocomplete()) {
+      for (const o of it.options.data) if (typeof o.value === 'string' || typeof o.value === 'number') base.options[o.name] = o.value
+      const f = it.options.getFocused(true)
+      return {
+        ...base,
+        type: 'autocomplete',
+        name: it.commandName,
+        focused: { name: f.name, value: String(f.value) },
+        reply: noop,
+        defer: noop,
+        choices: (list) => it.respond(list.slice(0, 25).map((c) => ({ name: c.name.slice(0, 100), value: c.value.slice(0, 100) }))),
+        modal: noop,
+        clearButtons: noop,
+      }
+    }
+    if (!it.isChatInputCommand() && !it.isButton() && !it.isModalSubmit()) return null
+    const respond = async (text: string, buttons?: ButtonDef[]) => {
+      const body = { content: text.slice(0, 2000), allowedMentions: { parse: [] as never[] }, ...(buttons?.length ? { components: rows(buttons) } : {}) }
+      if (it.deferred || it.replied) await it.editReply(body)
+      else await it.reply({ ...body, flags: MessageFlags.Ephemeral })
+    }
+    const common = {
+      reply: respond,
+      defer: async () => {
+        if (!it.deferred && !it.replied) await it.deferReply({ flags: MessageFlags.Ephemeral })
+      },
+      choices: noop,
+      modal: async (def: ModalDef) => {
+        if (it.isModalSubmit()) return
+        const input = new TextInputBuilder().setCustomId('text').setLabel(def.label.slice(0, 45)).setStyle(def.long ? TextInputStyle.Paragraph : TextInputStyle.Short).setRequired(true).setMaxLength(1000)
+        await it.showModal(new ModalBuilder().setCustomId(def.id.slice(0, 100)).setTitle(def.title.slice(0, 45)).addComponents(new ActionRowBuilder<import('discord.js').TextInputBuilder>().addComponents(input)))
+      },
+      clearButtons: async () => {
+        if (it.isButton() || (it.isModalSubmit() && it.isFromMessage())) await it.message.edit({ components: [] })
+      },
+    }
+    if (it.isChatInputCommand()) {
+      for (const o of it.options.data) if (typeof o.value === 'string' || typeof o.value === 'number') base.options[o.name] = o.value
+      return { ...base, ...common, type: 'command', name: it.commandName }
+    }
+    if (it.isButton()) return { ...base, ...common, type: 'button', customId: it.customId }
+    return { ...base, ...common, type: 'modal', customId: it.customId, text: it.fields.getTextInputValue('text') }
   }
 
   return {
@@ -200,6 +344,14 @@ export function createDiscordJsGateway(opts: DiscordJsGatewayOptions = {}): Disc
           mentionsBot: c.user ? m.mentions.users.has(c.user.id) : false,
         }
         for (const cb of messageCbs) cb(msg)
+      })
+      c.on(Events.InteractionCreate, (it) => {
+        try {
+          const wrapped = wrap(it)
+          if (wrapped) for (const cb of interactionCbs) cb(wrapped)
+        } catch (err) {
+          say(`Interaction error: ${describeConnectError(err)}`)
+        }
       })
       c.on(Events.MessageReactionAdd, (r, u) => {
         const rx: GatewayReaction = { channelId: r.message.channelId, messageId: r.message.id, userId: u.id, emoji: r.emoji.name ?? '' }
@@ -259,6 +411,46 @@ export function createDiscordJsGateway(opts: DiscordJsGatewayOptions = {}): Disc
     onClosed: (cb) => void closedCbs.push(cb),
     onRestored: (cb) => void restoredCbs.push(cb),
     onLog: (cb) => void logCbs.push(cb),
+    onInteraction: (cb) => void interactionCbs.push(cb),
+    async registerCommands(defs) {
+      const c = client
+      const result: CommandRegistration = { guilds: 0, failed: [] }
+      if (!c || !dj) return result
+      const { ApplicationCommandOptionType } = dj
+      const api = defs.map((d) => ({
+        name: d.name,
+        description: d.description.slice(0, 100),
+        options: (d.options ?? []).map((o) => ({
+          type: o.type === 'integer' ? ApplicationCommandOptionType.Integer : ApplicationCommandOptionType.String,
+          name: o.name,
+          description: o.description.slice(0, 100),
+          required: o.required === true,
+          ...(o.autocomplete ? { autocomplete: true } : {}),
+          ...(o.choices && !o.autocomplete ? { choices: o.choices.map((v) => ({ name: v, value: v })) } : {}),
+        })),
+      }))
+      for (const g of c.guilds.cache.values()) {
+        try {
+          await g.commands.set(api as never)
+          result.guilds++
+        } catch (err) {
+          const code = (err as { code?: number }).code
+          result.failed.push({ guild: g.name, reason: code === 50001 || code === 50013 ? 'Missing Access: invite the bot again with the applications.commands scope' : describeConnectError(err) })
+        }
+      }
+      say(`Slash commands registered in ${result.guilds} server${result.guilds === 1 ? '' : 's'}${result.failed.length ? `, ${result.failed.length} failed` : ''}`)
+      return result
+    },
+    async sendRich(channelId, text, buttons) {
+      const ch = await textChannel(channelId)
+      const sent = await (ch as unknown as { send(c: unknown): Promise<{ id: string }> }).send({ content: text, components: rows(buttons), allowedMentions: { parse: [] } })
+      return sent.id
+    },
+    async edit(channelId, messageId, text, buttons) {
+      const ch = await textChannel(channelId)
+      const msg = await ch.messages.fetch(messageId)
+      await msg.edit({ content: text, allowedMentions: { parse: [] }, ...(buttons ? { components: rows(buttons) } : {}) })
+    },
     async inspect(channelIds) {
       const c = client
       if (!c || !dj) return []
