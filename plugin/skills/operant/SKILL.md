@@ -1,6 +1,6 @@
 ---
 name: operant
-description: Operant crew CLI for operators launched by Operant. Use when you need to message operators, read the inbox, or manage jobs. Run `operant --help` for commands.
+description: Operant project CLI for operators launched by Operant. Use when you need to message operators, read the inbox, or manage jobs. Run `operant --help` for commands.
 ---
 
 # Operant CLI

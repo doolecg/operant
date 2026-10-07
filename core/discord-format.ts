@@ -168,7 +168,9 @@ export function chunkForDiscord(text: string, max = DISCORD_MESSAGE_LIMIT): stri
         used = true
         return
       }
-      if (used) {
+      // A line that fits a fresh message moves to one; a longer line fills what is left of this one first
+      // (so a short header is not posted alone).
+      if (used && (rest.length <= room(closing) || room(closing) - cur.length - 1 < 40)) {
         flush()
         continue
       }

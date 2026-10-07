@@ -4,7 +4,7 @@ import { LEARN_STORES, LESSON_KINDS, type LearnStore, type Lesson, type LessonFi
 import type { Crew } from '@shared/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
 import { Label } from '@/components/ui/label'
@@ -25,14 +25,15 @@ function EditDialog({ lesson, onClose }: { lesson: Lesson; onClose: () => void }
   const save = () => edit.mutate([lesson.id, { text, kind, files: csv(files), symbols: csv(symbols) }], { onSuccess: onClose })
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>Edit lesson {lesson.id}</DialogTitle>
           <DialogDescription>
             Changes reach Operant and the personal memory file. A copy already written to Hindsight stays as it was: Hindsight has no edit call.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <DialogBody>
+          <div className="space-y-3">
           <div className="space-y-1">
             <Label htmlFor="lesson-text">Lesson text</Label>
             <Textarea id="lesson-text" rows={4} value={text} onChange={(e) => setText(e.target.value)} />
@@ -62,6 +63,7 @@ function EditDialog({ lesson, onClose }: { lesson: Lesson; onClose: () => void }
           </div>
         </div>
         <ErrorLine error={edit.error} />
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -80,14 +82,15 @@ function DeleteDialog({ lesson, onClose }: { lesson: Lesson; onClose: () => void
   const rejecting = lesson.status === 'pending'
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>
             {rejecting ? 'Reject' : 'Delete'} lesson {lesson.id}
           </DialogTitle>
           <DialogDescription>&quot;{lesson.text}&quot;</DialogDescription>
         </DialogHeader>
-        <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
+        <DialogBody>
+          <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
           <li>It stops appearing in job briefs and is removed from the personal memory folder.</li>
           <li>
             Taught by {lesson.sourceJobs.length === 0 ? 'no job' : `${lesson.sourceJobs.length} job${lesson.sourceJobs.length === 1 ? '' : 's'}`}; seen {lesson.hits}{' '}
@@ -96,6 +99,7 @@ function DeleteDialog({ lesson, onClose }: { lesson: Lesson; onClose: () => void
           {lesson.stores.includes('hindsight') && <li>A copy already in Hindsight cannot be deleted from here.</li>}
         </ul>
         <ErrorLine error={set.error} />
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -114,12 +118,13 @@ function MergeDialog({ lessons, onClose, onDone }: { lessons: Lesson[]; onClose:
   const [keep, setKeep] = useState(lessons[0]!.id)
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>Merge {lessons.length} lessons</DialogTitle>
           <DialogDescription>Pick the lesson to keep. The others are deleted; their files, symbols, jobs and hit counts move onto it.</DialogDescription>
         </DialogHeader>
-        <div role="radiogroup" aria-label="Lesson to keep" className="space-y-2">
+        <DialogBody>
+          <div role="radiogroup" aria-label="Lesson to keep" className="space-y-2">
           {lessons.map((l) => (
             <label key={l.id} className="flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm">
               <input type="radio" name="keep" checked={keep === l.id} onChange={() => setKeep(l.id)} aria-label={`Keep lesson ${l.id}`} className="mt-1" />
@@ -130,6 +135,7 @@ function MergeDialog({ lessons, onClose, onDone }: { lessons: Lesson[]; onClose:
           ))}
         </div>
         <ErrorLine error={merge.error} />
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel

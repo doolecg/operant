@@ -18,12 +18,12 @@ import { decodeIpcError } from '@shared/ipc'
 import type { Preset, Team } from '@shared/types'
 import { PresetEditor } from '@/components/presets/PresetEditor'
 import { SeatDialog } from '@/components/settings/sections/SeatDialog'
-import { TeamDialog, limitText, seatText } from '@/components/settings/sections/TeamsSection'
+import { TeamDialog, TeamRow, limitText, seatText } from '@/components/settings/sections/TeamsSection'
 import { summary } from '@/components/settings/sections/PresetsSection'
 import { ConfirmDialog } from '@/components/settings/parts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { useDeletePreset, useDeleteTeam, useDuplicatePreset, usePresets, useSettings, useTeams } from '@/lib/queries'
+import { useDeletePreset, useDeleteTeam, useDuplicatePreset, useHideTeam, usePresets, useSettings, useTeams } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
 type View = 'nodes' | 'list'
@@ -55,6 +55,7 @@ interface Actions {
   deleteSeat: (p: Preset) => void
   editTeam: (t: Team) => void
   deleteTeam: (t: Team) => void
+  error: (message: string) => void
 }
 
 type SeatNodeData = { preset: Preset; teams: number; actions: Actions } & Record<string, unknown>
@@ -272,25 +273,11 @@ function ListView({ presets, teams, actions }: { presets: Preset[]; teams: Team[
       </ListSection>
       <ListSection title="Teams" count={teams.length}>
         {teams.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No teams. Create one to give jobs a crew of seats.</p>
+          <p className="text-muted-foreground text-sm">No teams. Create one to give jobs a set of seats.</p>
         ) : (
           <ul className="divide-y rounded-md border">
             {teams.map((t) => (
-              <li key={t.id} className="flex items-center justify-between gap-4 px-3 py-2.5">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{t.name}</div>
-                  <div className="text-muted-foreground truncate text-xs">{seatText(t, presets)}</div>
-                  <div className="text-muted-foreground truncate text-xs">{limitText(t)}</div>
-                </div>
-                <div className="flex shrink-0 gap-1">
-                  <IconButton label={`Edit ${t.name}`} onClick={() => actions.editTeam(t)}>
-                    <Pencil />
-                  </IconButton>
-                  <IconButton label={`Delete ${t.name}`} onClick={() => actions.deleteTeam(t)}>
-                    <Trash2 />
-                  </IconButton>
-                </div>
-              </li>
+              <TeamRow key={t.id} team={t} presets={presets} onEdit={actions.editTeam} onDelete={actions.deleteTeam} onError={actions.error} />
             ))}
           </ul>
         )}
@@ -307,6 +294,7 @@ export function SeatEditor() {
   const duplicate = useDuplicatePreset()
   const removeSeat = useDeletePreset()
   const removeTeam = useDeleteTeam()
+  const hideTeam = useHideTeam()
   const [view, setViewState] = useState<View>(readView)
   const [editingSeat, setEditingSeat] = useState<Preset | 'new' | null>(null)
   const [settingsSeat, setSettingsSeat] = useState<Preset | null>(null)
@@ -316,7 +304,7 @@ export function SeatEditor() {
   const [error, setError] = useState<string | null>(null)
 
   const presets = presetsQ.data ?? []
-  const teams = teamsQ.data ?? []
+  const teams = (teamsQ.data ?? []).filter((t) => !t.hidden)
 
   const setView = (v: View) => {
     setViewState(v)
@@ -337,10 +325,15 @@ export function SeatEditor() {
       },
       deleteSeat: (p) => (setError(null), setDelSeat(p)),
       editTeam: setEditingTeam,
-      deleteTeam: (t) => (setError(null), setDelTeam(t)),
+      deleteTeam: (t) => {
+        setError(null)
+        if (t.builtin) hideTeam.mutateAsync([t.id, true]).catch((e: unknown) => setError(decodeIpcError(e).message))
+        else setDelTeam(t)
+      },
+      error: (m) => setError(m || null),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [duplicate.mutateAsync],
+    [duplicate.mutateAsync, hideTeam.mutateAsync],
   )
 
   const confirmDelete = async () => {

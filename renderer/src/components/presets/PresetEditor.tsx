@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { decodeIpcError } from '@shared/ipc'
 import type { AgentKind, CacheTtl, LaunchSettings, McpMode, Preset, PresetPatch } from '@shared/types'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -170,7 +170,7 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
 
   return (
     <>
-      <div className="grid max-h-[62vh] gap-4 overflow-y-auto py-1 pr-2 sm:grid-cols-2">
+      <DialogBody className="sm:grid-cols-2">
         <Field id="preset-name" label="Name">
           <Input id="preset-name" value={form.name} onChange={(e) => set({ name: e.target.value })} maxLength={80} />
         </Field>
@@ -344,13 +344,13 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
             <RoleTextEditor value={form.roleText} onChange={(v) => set({ roleText: v })} shipped={shipped} isBuiltin={!!preset?.builtin} />
           </div>
         )}
-      </div>
 
-      {error && (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
-        </p>
-      )}
+        {error && (
+          <p role="alert" className="text-destructive text-sm sm:col-span-2">
+            {error}
+          </p>
+        )}
+      </DialogBody>
 
       <DialogFooter>
         <Button variant="ghost" onClick={onClose}>
@@ -371,7 +371,7 @@ export function PresetEditor({ open, ...props }: Props & { open: boolean }) {
   const ready = !needsShipped || shipped.data !== undefined
   return (
     <Dialog open={open} onOpenChange={(o) => !o && props.onClose()}>
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{preset ? `Edit ${preset.name}` : 'New preset'}</DialogTitle>
           <DialogDescription>

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { errorText } from './jobUi'
 
@@ -34,13 +34,14 @@ export function ReasonDialog({
   }
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <form onSubmit={submit} className="space-y-4">
+      <DialogContent size="md">
+        <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-1.5">
+          <DialogBody>
+            <div className="space-y-1.5">
             <Label htmlFor="job-reason">Reason</Label>
             <textarea
               id="job-reason"
@@ -51,6 +52,7 @@ export function ReasonDialog({
             />
           </div>
           {error != null && <p className="text-destructive text-xs">{errorText(error)}</p>}
+          </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel

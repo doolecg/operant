@@ -6,6 +6,8 @@ export interface SecretStore {
   get(key: string): string | null
   set(key: string, secret: string): void
   delete(key: string): void
+  // Why the last get() of this key found nothing even though a value was stored (unreadable, OS encryption unavailable).
+  problem?(key: string): string | null
 }
 
 export class MemorySecretStore implements SecretStore {
@@ -33,10 +35,23 @@ const KEY_RE = /^[A-Za-z0-9._-]{1,64}$/
 // One encrypted file per key, outside the database. With no OS encryption available it refuses to store
 // anything rather than writing the token in the clear.
 export class FileSecretStore implements SecretStore {
+  private readonly problems = new Map<string, string>()
+
   constructor(
     private readonly dir: string,
     private readonly cipher: SecretCipher,
+    private readonly log?: (line: string) => void,
   ) {}
+
+  problem(key: string): string | null {
+    return this.problems.get(key) ?? null
+  }
+
+  private fail(key: string, why: string): null {
+    if (this.problems.get(key) !== why) this.log?.(`Secret ${key}: ${why}`)
+    this.problems.set(key, why)
+    return null
+  }
 
   private file(key: string): string {
     if (!KEY_RE.test(key)) throw new Error('Invalid secret key')
@@ -45,11 +60,14 @@ export class FileSecretStore implements SecretStore {
 
   get(key: string): string | null {
     const file = this.file(key)
-    if (!existsSync(file) || !this.cipher.isAvailable()) return null
+    if (!existsSync(file)) return null
+    if (!this.cipher.isAvailable()) return this.fail(key, 'The OS keychain is not available, so the saved token cannot be read')
     try {
-      return this.cipher.decrypt(readFileSync(file))
+      const plain = this.cipher.decrypt(readFileSync(file))
+      this.problems.delete(key)
+      return plain
     } catch {
-      return null
+      return this.fail(key, 'The saved token could not be decrypted (it was saved by another Windows user or on another machine). Paste the token again')
     }
   }
 

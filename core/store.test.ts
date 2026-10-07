@@ -216,7 +216,7 @@ describe('Store', () => {
       expect(() => store.addJobDep(a.id, c.id)).toThrow(/cycle/)
       expect(() => store.addJobDep(a.id, a.id)).toThrow(/itself/)
       const other = store.createJob({ crewId: store.createCrew('o', '/o').id, title: 'x' })
-      expect(() => store.addJobDep(a.id, other.id)).toThrow(/same crew/)
+      expect(() => store.addJobDep(a.id, other.id)).toThrow(/same project/)
       store.updateJob(a.id, { state: 'done' })
       expect(store.getJob(b.id)!.blocked).toBe(false)
       expect(store.getJob(c.id)!.blocked).toBe(true)
@@ -277,7 +277,7 @@ describe('Store', () => {
       const link = store.createLink(crew.id, a.id, b.id, 'reviews')
       expect(store.listLinks(crew.id)).toEqual([link])
       expect(store.updateLink(link.id, { label: 'asks', toId: c.id })).toMatchObject({ label: 'asks', fromId: a.id, toId: c.id })
-      expect(() => store.createLink(crew.id, a.id, foreign.id)).toThrow(/same crew/)
+      expect(() => store.createLink(crew.id, a.id, foreign.id)).toThrow(/same project/)
       expect(() => store.createLink(crew.id, a.id, a.id)).toThrow(/different/)
       store.deleteOperator(c.id)
       expect(store.getLink(link.id)).toBeNull()
@@ -326,7 +326,7 @@ describe('Store', () => {
         model: 'gpt',
         squadId: s2.id,
       })
-      expect(() => store.updateOperator(op.id, { squadId: other.id })).toThrow(/own crew/)
+      expect(() => store.updateOperator(op.id, { squadId: other.id })).toThrow(/own project/)
       expect(() => store.updateOperator(op.id, { role: 'b' })).toThrow(/already used/)
       expect(store.updateOperator(op.id, { role: 'lead' }).role).toBe('lead')
     })

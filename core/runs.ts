@@ -131,7 +131,7 @@ export class RunManager {
   // Validates, stores the run as queued and starts it when its project has a free slot.
   submit(input: RunInput): Run {
     const { store } = this.o
-    if (!input || typeof input.crewId !== 'number' || !store.getCrew(input.crewId)) throw new RunError('NOT_FOUND', `Crew ${String(input?.crewId)} not found`)
+    if (!input || typeof input.crewId !== 'number' || !store.getCrew(input.crewId)) throw new RunError('NOT_FOUND', `Project ${String(input?.crewId)} not found`)
     const task = typeof input.task === 'string' ? input.task.trim() : ''
     if (!task) throw new RunError('BAD_ARGS', 'The task cannot be empty')
     if (task.length > TASK_MAX) throw new RunError('BAD_ARGS', `The task is longer than ${TASK_MAX} characters`)

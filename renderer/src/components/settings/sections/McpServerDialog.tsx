@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { decodeIpcError } from '@shared/ipc'
 import type { McpCli, McpScope, McpServer, McpServerInput, McpTransport } from '@shared/types'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -87,7 +87,7 @@ export function McpServerDialog({ crewId, server, onClose }: { crewId: number | 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{server ? `Edit ${server.name}` : 'Add MCP server'}</DialogTitle>
           <DialogDescription>
@@ -96,14 +96,16 @@ export function McpServerDialog({ crewId, server, onClose }: { crewId: number | 
               : 'Saved with the CLI’s own command, in the scope you pick.'}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <DialogBody>
+          <div className="grid gap-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
             <Label htmlFor="mcp-name" className="text-sm">
               Name
             </Label>
             <Input id="mcp-name" value={name} disabled={!!server} onChange={(e) => setName(e.target.value)} className="font-mono text-xs" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="contents">
             <div className="space-y-1.5">
               <Label htmlFor="mcp-cli" className="text-sm">
                 CLI
@@ -151,8 +153,9 @@ export function McpServerDialog({ crewId, server, onClose }: { crewId: number | 
               </SelectContent>
             </Select>
           </div>
+          </div>
           {transport === 'stdio' ? (
-            <>
+            <div className="grid gap-3 lg:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="mcp-command" className="text-sm">
                   Command and arguments
@@ -175,13 +178,13 @@ export function McpServerDialog({ crewId, server, onClose }: { crewId: number | 
                   onChange={(e) => setEnv(e.target.value)}
                   placeholder="API_KEY=value"
                   spellCheck={false}
-                  className="min-h-16 font-mono text-xs"
+                  className="min-h-28 font-mono text-xs"
                 />
                 <p className="text-muted-foreground text-xs">One KEY=value per line. Values are hidden after saving; leave *** to keep one.</p>
               </div>
-            </>
+            </div>
           ) : (
-            <>
+            <div className="grid gap-3 lg:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="mcp-url" className="text-sm">
                   URL
@@ -204,11 +207,11 @@ export function McpServerDialog({ crewId, server, onClose }: { crewId: number | 
                   onChange={(e) => setHeaders(e.target.value)}
                   placeholder="Authorization: Bearer value"
                   spellCheck={false}
-                  className="min-h-16 font-mono text-xs"
+                  className="min-h-28 font-mono text-xs"
                 />
                 <p className="text-muted-foreground text-xs">One Name: value per line. Values are hidden after saving; leave *** to keep one.</p>
               </div>
-            </>
+            </div>
           )}
         </div>
         {error && (
@@ -216,6 +219,7 @@ export function McpServerDialog({ crewId, server, onClose }: { crewId: number | 
             {error}
           </p>
         )}
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel

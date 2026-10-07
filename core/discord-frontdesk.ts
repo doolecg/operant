@@ -2,10 +2,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import type { Crew, DiscordBot, Run } from '../shared/types'
+import type { ChatModel } from './chatmodel'
 import { ClaudeAdapter, MODEL_TIMEOUT_MS, resultWithin, type MasterAdapter } from './master'
 
 // Sends one prompt to the cheapest model and returns its text.
 export type FrontDeskModel = (prompt: string) => Promise<string>
+
+// Any ChatModel (Claude, OpenCode or a local server) as the front desk's one-prompt model.
+export const chatFrontDeskModel =
+  (chat: ChatModel): FrontDeskModel =>
+  (prompt) =>
+    chat.chat([{ role: 'user', content: prompt }], { json: true })
 
 export const FRONT_DESK_MODEL = 'claude-haiku-4-5'
 
@@ -85,12 +92,34 @@ function buildPrompt(c: FrontDeskContext): string {
   return lines.join('\n\n')
 }
 
+// Every top-level {...} in the text, in order (string-aware), so JSON wrapped in prose or code fences is found.
+function jsonObjects(raw: string): string[] {
+  const out: string[] = []
+  for (let start = raw.indexOf('{'); start >= 0; start = raw.indexOf('{', start + 1)) {
+    let depth = 0
+    let inStr = false
+    for (let i = start; i < raw.length; i++) {
+      const ch = raw[i]!
+      if (inStr) {
+        if (ch === '\\') i++
+        else if (ch === '"') inStr = false
+      } else if (ch === '"') inStr = true
+      else if (ch === '{') depth++
+      else if (ch === '}' && --depth === 0) {
+        out.push(raw.slice(start, i + 1))
+        start = i
+        break
+      }
+    }
+  }
+  return out
+}
+
 function parseReply(raw: string): FrontDeskReply {
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start >= 0 && end > start) {
+  for (const cand of jsonObjects(raw)) {
     try {
-      const o = JSON.parse(raw.slice(start, end + 1)) as { reply?: unknown; action?: { type?: unknown; project?: unknown; task?: unknown } | null }
+      const o = JSON.parse(cand) as { reply?: unknown; action?: { type?: unknown; project?: unknown; task?: unknown } | null }
+      if (!o || typeof o !== 'object' || (!('reply' in o) && !('action' in o))) continue
       const reply = typeof o.reply === 'string' ? o.reply : ''
       const a = o.action
       const action =
@@ -99,10 +128,11 @@ function parseReply(raw: string): FrontDeskReply {
           : null
       return { reply, action }
     } catch {
-      // Fall through: plain text is still a reply.
+      // Try the next candidate.
     }
   }
-  return { reply: raw.trim(), action: null }
+  // Plain text is still a reply (code fences and a leading "reply:" label from a small model are dropped).
+  return { reply: raw.replace(/```(?:json)?/gi, '').replace(/^\s*reply\s*:\s*/i, '').trim(), action: null }
 }
 
 export async function askFrontDesk(model: FrontDeskModel, c: FrontDeskContext): Promise<FrontDeskReply> {

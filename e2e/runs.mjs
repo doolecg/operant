@@ -84,6 +84,10 @@ try {
   await dialog.getByLabel('Task').fill('Add a health check to app.ts')
   await dialog.getByRole('button', { name: 'Team', exact: true }).click()
   await dialog.getByLabel('Team', { exact: true }).click()
+  // Built-in teams come first in their own group, the user's after.
+  await page.getByText('Built-in', { exact: true }).waitFor()
+  await page.getByText('Yours', { exact: true }).waitFor()
+  await page.getByRole('option', { name: 'Build and review' }).waitFor()
   await page.getByRole('option', { name: 'duo' }).click()
   await dialog.getByLabel('Master model').waitFor()
   await dialog.getByLabel('Seat 2 preset').waitFor()
@@ -94,6 +98,14 @@ try {
   await dialog.getByLabel('Seat 3 count').waitFor()
   await dialog.getByRole('button', { name: 'Remove seat 3' }).click()
   assert.equal(await dialog.getByLabel('Seat 3 count').count(), 0)
+  // Save the chosen seats as a team of the user's own; it is picked straight away.
+  await dialog.getByRole('button', { name: 'Save as team' }).click()
+  await dialog.getByLabel('Team name').fill('duo plus')
+  await dialog.getByRole('button', { name: 'Save team' }).click()
+  await dialog.getByLabel('Team name').waitFor({ state: 'detached' })
+  const savedTeam = (await inv('teams:list')).find((t) => t.name === 'duo plus')
+  assert.ok(savedTeam && savedTeam.builtin === null, 'Save as team makes a user team')
+  assert.deepEqual(savedTeam.seats.map((s) => [s.count, s.model]), [[1, 'opus'], [3, 'haiku']])
   await shot('plus-menu')
 
   await dialog.getByRole('button', { name: 'Send' }).click()
@@ -103,7 +115,7 @@ try {
   const runs = await inv('runs:list', ids.alpha)
   assert.equal(runs.length, 1)
   assert.equal(runs[0].task, 'Add a health check to app.ts')
-  assert.equal(runs[0].teamId, ids.team)
+  assert.equal(runs[0].teamId, savedTeam.id)
   assert.deepEqual(
     runs[0].seats.map((s) => [s.count, s.model]),
     [
@@ -215,7 +227,7 @@ try {
   })
   const mdCard = page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${third.id}` }) })
   await mdCard.getByText('Health check added').waitFor()
-  assert.ok(!(await mdCard.textContent()).includes('#'), 'the card preview is plain text')
+  assert.ok(!(await mdCard.textContent()).replace(/JOB#\d+/g, '').includes('#'), 'the card preview is plain text')
   await mdCard.getByRole('button', { name: `Open JOB#${third.id}` }).click()
   const mdPanel = page.getByRole('region', { name: `Job panel JOB#${third.id}` })
   const md = mdPanel.locator('[data-outcome] [data-markdown]')
@@ -284,6 +296,41 @@ try {
   await seat.getByLabel('effort', { exact: true }).waitFor()
   await shot('settings-seat-dialog')
   await seat.getByRole('button', { name: 'Cancel' }).click()
+
+  // Built-in teams: badge, description and seat chips; duplicate, hide, edit and reset; never deleted.
+  await page.getByRole('button', { name: 'Teams', exact: true }).click()
+  const teamRow = (name) => page.locator(`[data-team="${name}"]`)
+  await teamRow('Build and review').getByText('Built-in', { exact: true }).waitFor()
+  await teamRow('Build and review').getByText('One implementor writes the change').waitFor()
+  await teamRow('Full team').getByText('6 × ', { exact: false }).count()
+  assert.equal(await teamRow('Build and review').getByRole('button', { name: /^Delete / }).count(), 0)
+  const teamNames = await page.locator('[data-team]').evaluateAll((els) => els.map((e) => e.getAttribute('data-team')))
+  assert.deepEqual(teamNames.slice(0, 6), ['Build and review', 'Full team', 'Research', 'Bug fix', 'Design to build', 'Quality pass'])
+  assert.deepEqual(teamNames.slice(6).sort(), ['duo', 'duo plus'])
+  await page.getByText('Full team').first().scrollIntoViewIfNeeded()
+  await shot('team-presets')
+  await page.getByRole('button', { name: 'Duplicate Research' }).click()
+  await teamRow('Research copy').waitFor()
+  await page.getByRole('button', { name: 'Delete Research copy' }).click()
+  await page.getByRole('button', { name: 'Delete team' }).click()
+  await teamRow('Research copy').waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: 'Hide Quality pass' }).click()
+  await teamRow('Quality pass').waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: 'Show hidden (1)' }).click()
+  await teamRow('Quality pass').getByText('Hidden', { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Show Quality pass' }).click()
+  await teamRow('Quality pass').getByText('Hidden', { exact: true }).waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: 'Edit Bug fix' }).click()
+  await page.getByLabel('Description').fill('Changed by me')
+  await page.getByRole('button', { name: 'Save team' }).click()
+  await teamRow('Bug fix').getByText('Modified', { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Reset Bug fix' }).click()
+  await teamRow('Bug fix').getByText('An implementor fixes the bug').waitFor()
+  await teamRow('Bug fix').getByText('Modified', { exact: true }).waitFor({ state: 'detached' })
+  await inv('teams:delete', (await inv('teams:list')).find((t) => t.name === 'Full team').id).then(
+    () => assert.fail('a built-in team must not be deleted'),
+    () => {},
+  )
 
   const closeStart = Date.now()
   await app.close()

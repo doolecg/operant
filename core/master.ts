@@ -86,20 +86,20 @@ export interface ClaudeChild {
 
 export type ClaudeSpawn = (file: string, args: string[], opts: { cwd: string }) => ClaudeChild
 
-// Tests and e2e runs must never reach the owner's real `claude` (it costs money and runs their hooks): the first
-// `claude` on PATH has to be a fixture, and unit tests have to inject a spawn.
-export function assertFakeClaude(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): void {
+// Tests and e2e runs must never reach the owner's real `claude` or `opencode` (they cost money and run their hooks):
+// the first one on PATH has to be a fixture, and unit tests have to inject a spawn.
+export function assertFakeClaude(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, cli: 'claude' | 'opencode' = 'claude'): void {
   if (!env.VITEST && !env.OPERANT_E2E) return
-  if (env.VITEST) throw new Error('A test tried to start the real claude: inject a spawn or a model instead')
+  if (env.VITEST) throw new Error(`A test tried to start the real ${cli}: inject a spawn or a model instead`)
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-  const names = platform === 'win32' ? ['claude.cmd', 'claude.exe', 'claude.bat', 'claude'] : ['claude']
+  const names = platform === 'win32' ? [`${cli}.cmd`, `${cli}.exe`, `${cli}.bat`, cli] : [cli]
   for (const dir of (env[key] ?? '').split(platform === 'win32' ? ';' : ':')) {
     if (dir && names.some((n) => existsSync(join(dir, n)))) {
       if (/[\\/]fixtures[\\/]/.test(`${dir}/`)) return
       break
     }
   }
-  throw new Error('An e2e run tried to start the real claude: put e2e/fixtures/bin first on PATH')
+  throw new Error(`An e2e run tried to start the real ${cli}: put e2e/fixtures/bin first on PATH`)
 }
 
 // A settings file whose only content turns hooks off; `claude --settings` layers it over the user's own settings.

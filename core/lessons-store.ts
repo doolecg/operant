@@ -44,6 +44,10 @@ export const LESSONS_MIGRATION = `CREATE TABLE lessons (
      error TEXT NOT NULL DEFAULT ''
    );`
 
+// Which AI each learn run asked (additive).
+export const LEARN_AI_MIGRATION = `ALTER TABLE learn_runs ADD COLUMN cli TEXT NOT NULL DEFAULT '';
+   ALTER TABLE learn_runs ADD COLUMN model TEXT NOT NULL DEFAULT '';`
+
 type Row = Record<string, unknown>
 
 const list = (v: unknown): string[] => {
@@ -95,6 +99,8 @@ const toRun = (r: Row): LearnRunInfo => ({
   queued: Number(r.queued),
   skipped: JSON.parse(String(r.skipped)) as LearnSkip[],
   error: String(r.error),
+  cli: String(r.cli ?? ''),
+  model: String(r.model ?? ''),
 })
 
 export interface NewLesson {
@@ -189,8 +195,8 @@ export class LessonsDb {
   addLearnRun(r: Omit<LearnRunInfo, 'id' | 'at'>): LearnRunInfo {
     const at = this.now()
     const res = this.db
-      .prepare('INSERT INTO learn_runs (crew_id, run_id, source, at, extracted, written, merged, staled, queued, skipped, error) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-      .run(r.crewId, r.runId, r.source, at, r.extracted, r.written, r.merged, r.staled, r.queued, JSON.stringify(r.skipped), r.error)
+      .prepare('INSERT INTO learn_runs (crew_id, run_id, source, at, extracted, written, merged, staled, queued, skipped, error, cli, model) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(r.crewId, r.runId, r.source, at, r.extracted, r.written, r.merged, r.staled, r.queued, JSON.stringify(r.skipped), r.error, r.cli, r.model)
     return { ...r, id: Number(res.lastInsertRowid), at }
   }
 

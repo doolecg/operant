@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { runHidden, type spawnHidden } from './proc'
-import { IDES, findIde, gitChanges, listIdes, openInIde, type IdeProbe, type LaunchDeps } from './projecttools'
+import { IDES, findIde, gitChanges, gitInfo, listIdes, openInIde, parseGitInfo, type IdeProbe, type LaunchDeps } from './projecttools'
 
 const probe = (over: Partial<IdeProbe> & { files?: string[]; dirs?: Record<string, string[]>; path?: Record<string, string[]> } = {}): IdeProbe => ({
   platform: 'win32',
@@ -71,19 +71,19 @@ function fakeLaunch(behave: (child: EventEmitter & { unref(): void }) => void, p
 }
 
 describe('openInIde', () => {
-  it('launches an .exe detached and hidden-spawned, with the folder as its own argument', async () => {
+  it('launches an .exe hidden-spawned and not detached on Windows, with the folder as its own argument', async () => {
     const { calls, deps } = fakeLaunch(() => {})
     await openInIde('C:\\code\\my project', 'cursor', '', deps)
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ file: 'C:\\x\\Cursor.exe', args: ['C:\\code\\my project'] })
-    expect(calls[0]!.opts).toMatchObject({ detached: true, stdio: 'ignore', shell: false, quiet: true, cwd: 'C:\\code\\my project' })
+    expect(calls[0]!.opts).toMatchObject({ detached: false, stdio: 'ignore', shell: false, quiet: true, cwd: 'C:\\code\\my project' })
   })
 
   it('runs a .cmd launcher through the shell with both parts quoted', async () => {
     const { calls, deps } = fakeLaunch(() => {})
     await openInIde('C:\\code\\my project', 'code', '', deps)
     expect(calls[0]).toMatchObject({ file: '"C:\\x\\code.cmd" "C:\\code\\my project"', args: [] })
-    expect(calls[0]!.opts).toMatchObject({ shell: true, detached: true })
+    expect(calls[0]!.opts).toMatchObject({ shell: true, detached: false })
   })
 
   it('refuses folder names a shell could misread, before anything is spawned', async () => {
@@ -160,5 +160,26 @@ describe('gitChanges', () => {
     )
     expect(r.files).toHaveLength(4)
     expect(readFileSync(join(repo, 'a.txt'), 'utf8')).toBe('changed')
+  })
+})
+
+describe('gitInfo', () => {
+  it('reads the branch, ahead and behind counts and the changed files from porcelain v2', () => {
+    const out = ['# branch.oid abcdef1234567', '# branch.head feature/x', '# branch.upstream origin/feature/x', '# branch.ab +2 -1', '1 .M N... 100644 100644 100644 a b a.txt', '? new.txt'].join('\n')
+    expect(parseGitInfo(out)).toEqual({ branch: 'feature/x', ahead: 2, behind: 1, changes: 2, detached: false })
+  })
+
+  it('shows the short commit id for a detached HEAD, and zero counts without an upstream', () => {
+    expect(parseGitInfo('# branch.oid abcdef1234567\n# branch.head (detached)\n')).toEqual({ branch: 'abcdef1', ahead: 0, behind: 0, changes: 0, detached: true })
+  })
+
+  it('answers null outside a repository', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'operant-nogit-'))
+    try {
+      const r = await gitInfo(plain)
+      if (r === null) expect(r).toBeNull()
+    } finally {
+      rmSync(plain, { recursive: true, force: true })
+    }
   })
 })

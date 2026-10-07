@@ -3,47 +3,68 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* The Dark theme's tokens, so the first paint is right before any script runs. The app writes the chosen theme's
+   variables onto <html> (renderer/src/lib/theme.ts, from shared/themes.ts) and sets data-theme and data-scheme. */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #1f1f23;
+  --popover-foreground: #fafafa;
+  --primary: #d97757;
+  --primary-foreground: #0f0e0d;
+  --secondary: #171719;
+  --secondary-foreground: #fafafa;
+  --muted: #1c1c1e;
+  --muted-foreground: #a1a1aa;
+  --accent: #262628;
+  --accent-foreground: #fafafa;
+  --destructive: #f85149;
+  --border: #303031;
+  --input: #39393b;
+  --ring: #d97757;
+  --chart-1: #8fa9c7;
+  --chart-2: #e3b27a;
+  --chart-3: #9cb88a;
+  --chart-4: #c89ab8;
+  --chart-5: #8dbab3;
+  --chart-6: #f0883e;
+  --chart-other: #83838a;
+  --chart-model: #7aa6e3;
+  --sidebar: #18181b;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #d97757;
+  --sidebar-primary-foreground: #0f0e0d;
+  --sidebar-accent: #2f2f31;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #303031;
+  --sidebar-ring: #d97757;
+  --success: #9cb88a;
+  --warning: #f0b35a;
+  --info: #7aa6e3;
+  --working: #f0883e;
+  --agent: #e3b27a;
+  --link: #d97757;
+  --glow: #1c1917;
+  --overlay: rgb(0 0 0 / 0.6);
+  --xy-minimap-mask: rgb(0 0 0 / 0.45);
+  --syn-k: #c89ab8;
+  --syn-s: #9cb88a;
+  --syn-n: #e3b27a;
+  --syn-f: #8fa9c7;
+  --syn-t: #8dbab3;
 }
 
-.dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
+/* Tailwind's palette colours used for status dots and text are dark-theme shades; light schemes get readable ones. */
+:root[data-scheme='light'] {
+  --color-amber-400: #b45309;
+  --color-amber-500: #b45309;
+  --color-emerald-400: #047857;
+  --color-red-400: #b91c1c;
+  --color-sky-400: #0369a1;
+  --color-zinc-400: #71717a;
 }
 
 @theme inline {
@@ -69,6 +90,25 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-working: var(--working);
+  --color-agent: var(--agent);
+  --color-link: var(--link);
 }
 
 @layer base {
@@ -93,7 +133,7 @@
   --xy-node-border: 1px solid var(--border);
   --xy-edge-stroke: var(--muted-foreground);
   --xy-minimap-background-color: var(--card);
-  --xy-minimap-mask-background-color: oklch(0 0 0 / 45%);
+  --xy-minimap-mask-background-color: var(--xy-minimap-mask);
   --xy-controls-button-background-color: var(--card);
   --xy-controls-button-background-color-hover: var(--accent);
   --xy-controls-button-color: var(--foreground);

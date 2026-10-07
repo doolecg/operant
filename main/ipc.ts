@@ -42,7 +42,7 @@ export function registerIpc(
     },
     'shell:openFolder': async (crewId) => {
       const crew = (await operant.handlers['crews:list']()).find((c) => c.id === crewId)
-      if (!crew) throw new Error(encodeIpcError('NOT_FOUND', `Crew ${String(crewId)} not found`))
+      if (!crew) throw new Error(encodeIpcError('NOT_FOUND', `Project ${String(crewId)} not found`))
       const failure = await shell.openPath(crew.folder)
       if (failure) throw new Error(encodeIpcError('BAD_ARGS', failure))
     },

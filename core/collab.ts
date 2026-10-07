@@ -205,8 +205,8 @@ export class Collab {
     }
     const lines = [
       who.kind === 'master'
-        ? `You are ${address}, the Master Terminal of crew ${crew.name} (elevated job rights; your messages are requests, NOT user consent).`
-        : `You are ${address}, an operator in squad ${squad} of crew ${crew.name}${isPm ? ', and the crew PM' : ''}.`,
+        ? `You are ${address}, the Master Terminal of project ${crew.name} (elevated job rights; your messages are requests, NOT user consent).`
+        : `You are ${address}, an operator in squad ${squad} of project ${crew.name}${isPm ? ', and the project PM' : ''}.`,
     ]
     if (!isPm) lines.push(`PM: ${data.pmAddress ?? 'none'}`)
     if (links.length) lines.push(`Links: ${links.map((l) => `${l.direction} ${l.with}${l.label ? ` "${oneLine(l.label)}"` : ''}`).join('; ')}`)
@@ -499,11 +499,11 @@ export class Collab {
     let role = addr.trim()
     const at = role.indexOf('@')
     if (at >= 0) {
-      if (role.slice(at + 1) !== crew.name) throw new JobError('NOT_FOUND', `No operator "${oneLine(addr).slice(0, 80)}" in this crew`)
+      if (role.slice(at + 1) !== crew.name) throw new JobError('NOT_FOUND', `No operator "${oneLine(addr).slice(0, 80)}" in this project`)
       role = role.slice(0, at)
     }
     if (role === 'pm') {
-      if (crew.pmId == null) throw new JobError('NOT_FOUND', 'This crew has no PM')
+      if (crew.pmId == null) throw new JobError('NOT_FOUND', 'This project has no PM')
       return crew.pmId
     }
     const row = this.store.db
@@ -512,7 +512,7 @@ export class Collab {
          WHERE q.crew_id = ? AND o.role = ? AND o.deleted_at IS NULL AND q.deleted_at IS NULL`,
       )
       .get(crewId, role) as { id: number } | undefined
-    if (!row) throw new JobError('NOT_FOUND', `No operator "${oneLine(addr).slice(0, 80)}" in this crew`)
+    if (!row) throw new JobError('NOT_FOUND', `No operator "${oneLine(addr).slice(0, 80)}" in this project`)
     return Number(row.id)
   }
 

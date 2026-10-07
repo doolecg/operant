@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Activity, AlertTriangle, ChevronDown, Code2, Loader2, MoreHorizontal, Network, Plus, Settings, SquareTerminal, Terminal } from 'lucide-react'
+import { Activity, AlertTriangle, Plus, Settings, SquareTerminal, Terminal } from 'lucide-react'
 import { ConsoleDrawer } from '@/components/console/ConsoleDrawer'
 import { useConsole } from '@/components/console/useConsole'
 import { DeleteCrewDialog, EditCrewDialog, NewCrewDialog } from '@/components/dashboard/Dialogs'
 import { GitChangesDialog } from '@/components/dashboard/GitChangesDialog'
+import { requestGitTab } from '@/components/git/openGit'
 import { projectActions } from '@/components/dashboard/projectActions'
 import { TerminalDrawer } from '@/components/terminal/TerminalDrawer'
 import { useTerminals } from '@/components/terminal/useTerminals'
@@ -17,17 +18,14 @@ import { MemoryPage } from '@/components/memory/MemoryPage'
 import { ProviderLimitBadge } from '@/components/cost/ProviderBadge'
 import { SettingsPage } from '@/components/settings/SettingsPage'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { StatusPill } from '@/components/topbar/StatusPill'
 import { ClockPill } from '@/components/topbar/ClockPill'
+import { GitChip } from '@/components/topbar/GitChip'
 import { MediaBar } from '@/components/topbar/MediaBar'
+import { ProjectBlock } from '@/components/topbar/ProjectBlock'
+import { ViewSwitcher, type Mode } from '@/components/topbar/ViewSwitcher'
 import { iconBtn } from '@/components/topbar/pill'
 import { useBarTier } from '@/components/topbar/useBarTier'
 import { mediaCommand } from '@/components/topbar/useMedia'
@@ -35,14 +33,11 @@ import { matches } from '@/lib/keys'
 import { effectiveScale, stepScale, useUiScale } from '@/lib/uiScale'
 import { useAction, useCrews, useIndexStatus, useLiveUpdates, useMcpHealth, useMoveToGroup, useSaveSettings, useSettings } from '@/lib/queries'
 import type { Crew } from '@shared/types'
-import { cn } from '@/lib/utils'
 
 const LAST_CREW = 'operant.lastCrew'
 const MODE = 'operant.mode'
 
-type Mode = 'workspace' | 'seats' | 'memory'
-const MODES: Mode[] = ['workspace', 'seats', 'memory']
-const MODE_LABEL: Record<Mode, string> = { workspace: 'Workspace', seats: 'Seats', memory: 'Memory' }
+const Divider = () => <span aria-hidden className="bg-border h-5 w-px shrink-0" />
 
 function readMode(): Mode {
   try {
@@ -118,31 +113,11 @@ export function App() {
   const crew = crews.data?.find((c) => c.id === crewId)
   const tb = settings.data?.topBar
 
-  // The status pill and alerts sit in the bar, or in one menu once the bar is too narrow for them.
-  const pills = (inMenu: boolean) => (
+  // The status pill and the git branch chip sit in the bar, or in one menu once the bar is too narrow for them.
+  const chips = (labels: boolean) => (
     <>
-      <StatusPill crewId={crewId} jobs={!!tb?.agentPill} labels={inMenu || tier < 2} />
-      <ProviderLimitBadge onOpen={() => setPage('dashboard')} />
-      <LearningBadge onOpen={() => setMode('memory')} />
-      {mcpDown.length > 0 && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive gap-1 px-2"
-              aria-label={`MCP servers down: ${mcpDown.map((d) => d.server).join(', ')}`}
-              onClick={() => (setSettingsSection('mcp'), setPage('settings'))}
-            >
-              <AlertTriangle className="size-4" />
-              <span className="text-xs">{mcpDown.length}</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {mcpDown.map((d) => `${d.server} (${d.state === 'missing' ? 'not configured' : d.state}) for ${d.seats.join(', ')}`).join('; ')}
-          </TooltipContent>
-        </Tooltip>
-      )}
+      <StatusPill crewId={crewId} jobs={!!tb?.agentPill} labels={labels} />
+      <GitChip crewId={crewId} onOpen={() => crew && setChangesTarget(crew)} />
     </>
   )
 
@@ -197,134 +172,52 @@ export function App() {
   return (
     <TooltipProvider>
       <div className="flex h-full flex-col">
-      <header
-        ref={barRef}
-        className={cn('bg-background/80 flex h-[42px] shrink-0 items-center border-b px-3.5 text-xs backdrop-blur', tier >= 6 ? 'gap-2' : 'gap-3')}
-      >
-        <div className="flex min-w-0 flex-1 basis-0 items-center gap-3">
-          <div className="group/proj flex min-w-0 shrink items-center gap-2.5">
-            <span aria-hidden className="text-[26px] leading-none text-[#d97757]">
+      <header ref={barRef} className="bg-background/80 grid h-[38px] shrink-0 grid-cols-[minmax(auto,1fr)_auto_minmax(auto,1fr)] items-center gap-3 border-b px-3 text-xs backdrop-blur">
+        <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2">
+            <span aria-hidden className="text-[20px] leading-none text-[#d97757]">
               ◈
             </span>
-            <div className="min-w-0 leading-tight">
-              <div className="text-[12.5px] font-semibold">Operant 3</div>
-              <div className="flex min-w-0 items-baseline gap-1.5 text-[11px]">
-                {crew ? <h1 className="max-w-[60%] min-w-[4ch] shrink-0 truncate text-[11px] font-medium">{crew.name}</h1> : <span>&nbsp;</span>}
-                <span className="text-muted-foreground min-w-0 truncate font-mono text-[10px]" title={crew?.folder}>
-                  {crew?.folder}
-                </span>
-              </div>
-            </div>
-            {crew && (
-              <div className="flex shrink-0 items-center max-w-0 overflow-hidden opacity-0 transition-[max-width,opacity] duration-200 group-hover/proj:max-w-[140px] group-hover/proj:opacity-100 group-focus-within/proj:max-w-[140px] group-focus-within/proj:opacity-100">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className={iconBtn}
-                      onClick={() => crewId != null && runIndex.mutate([crewId])}
-                      disabled={index.data?.indexing || runIndex.isPending}
-                      aria-label={index.data?.initialized ? 'Update index' : 'Index with CodeGraph'}
-                    >
-                      {index.data?.indexing || runIndex.isPending ? <Loader2 className="animate-spin" /> : <Network />}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{index.data?.initialized ? 'Update index' : 'Index with CodeGraph'}</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button type="button" className={iconBtn} aria-label={`Open ${crew.name} in IDE`} onClick={() => projectMenu.openIde(crew)}>
-                      <Code2 />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>Open in IDE</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button type="button" className={iconBtn} aria-label={`New shell in ${crew.name}`} onClick={() => projectMenu.newShell(crew)}>
-                      <SquareTerminal />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>New shell here</TooltipContent>
-                </Tooltip>
-                <DropdownMenu>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <DropdownMenuTrigger asChild>
-                        <button type="button" className={iconBtn} aria-label={`Actions for crew ${crew.name}`}>
-                          <MoreHorizontal />
-                        </button>
-                      </DropdownMenuTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>Project actions</TooltipContent>
-                  </Tooltip>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuItem onSelect={() => setCrewDialog('edit')}>Edit crew</DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onSelect={() => setCrewDialog('delete')}>
-                      Delete crew
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
+            {tier < 3 && <span className="text-[13px] font-semibold whitespace-nowrap">Operant 3</span>}
           </div>
-          <div role="group" aria-label="Dashboard mode" className="bg-foreground/5 flex shrink-0 gap-1 rounded-full p-[3px]">
-            {tier >= 6 ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button type="button" className="flex h-[22px] items-center gap-0.5 rounded-full bg-[#d97757]/20 pl-2.5 pr-1.5 text-xs font-medium text-[#d97757]">
-                    {MODE_LABEL[mode]}
-                    <ChevronDown className="size-3" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {MODES.map((m) => (
-                    <DropdownMenuItem key={m} onSelect={() => setMode(m)}>
-                      {MODE_LABEL[m]}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              MODES.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  aria-pressed={m === mode}
-                  onClick={() => setMode(m)}
-                  className={cn(
-                    'h-[22px] rounded-full text-xs transition-[padding,background-color,color] duration-[350ms] ease-[cubic-bezier(.05,.9,.1,1.05)]',
-                    m === mode ? 'bg-[#d97757]/20 px-3.5 font-medium text-[#d97757]' : 'text-muted-foreground hover:text-foreground px-2.5',
-                  )}
-                >
-                  {MODE_LABEL[m]}
-                </button>
-              ))
-            )}
-          </div>
-          {tb?.mediaControls && tier < 4 && <MediaBar enabled size={tb.mediaSize} tier={tier} />}
+          {crew && (
+            <>
+              <Divider />
+              <ProjectBlock
+                crew={crew}
+                indexed={!!index.data?.initialized}
+                indexing={!!index.data?.indexing || runIndex.isPending}
+                onIndex={() => runIndex.mutate([crew.id])}
+                onIde={() => projectMenu.openIde(crew)}
+                onShell={() => projectMenu.newShell(crew)}
+                onEdit={() => setCrewDialog('edit')}
+                onDelete={() => setCrewDialog('delete')}
+              />
+            </>
+          )}
+          <Divider />
+          <ViewSwitcher mode={mode} onMode={setMode} menu={tier >= 7} />
+          {tb?.mediaControls && tier < 5 && <MediaBar enabled size={tb.mediaSize} tier={tier} />}
         </div>
-        <div className="flex shrink-0 justify-center">{tb && tier < 5 && <ClockPill format={tb.clockFormat} seconds={tb.clockSeconds} date={tb.clockDate && tier < 2} />}</div>
-        <div className={cn('flex items-center justify-end gap-1', tier < 3 ? 'min-w-0 flex-1 basis-0' : 'shrink-0')}>
-          {tier < 3 ? (
-            pills(false)
+        <div className="flex shrink-0 justify-center">{tb && tier < 6 && <ClockPill format={tb.clockFormat} seconds={tb.clockSeconds} date={tb.clockDate && tier < 2} />}</div>
+        <div className="flex items-center justify-end gap-1.5">
+          {tier < 7 ? (
+            chips(tier < 4)
           ) : (
             <DropdownMenu open={statusOpen} onOpenChange={setStatusOpen}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
-                    <button type="button" className={iconBtn} aria-label={mcpDown.length > 0 ? `Status and alerts, ${mcpDown.length} MCP servers down` : 'Status and alerts'}>
+                    <button type="button" className={iconBtn} aria-label="Status and branch">
                       <Activity />
-                      {mcpDown.length > 0 && <span aria-hidden className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-red-500" />}
                     </button>
                   </DropdownMenuTrigger>
                 </TooltipTrigger>
-                <TooltipContent>Status and alerts</TooltipContent>
+                <TooltipContent>Status and branch</TooltipContent>
               </Tooltip>
-              <DropdownMenuContent align="end" aria-label="Status and alerts" className="w-auto p-2">
+              <DropdownMenuContent align="end" aria-label="Status and branch" className="w-auto p-2">
                 <div className="flex flex-col items-start gap-1.5" onClick={() => setStatusOpen(false)}>
-                  {pills(true)}
+                  {chips(true)}
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -345,7 +238,7 @@ export function App() {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <button type="button" className={iconBtn} aria-label="Settings" onClick={() => (setSettingsSection(undefined), setPage('settings'))}>
+              <button type="button" className={iconBtn} aria-label="Settings" onClick={() => openSettingsAt()}>
                 <Settings />
               </button>
             </TooltipTrigger>
@@ -358,17 +251,37 @@ export function App() {
           <Sidebar
             crews={crews.data ?? []}
             selected={page === 'dashboard' ? crewId : null}
-            settingsOpen={page === 'settings'}
             onSelect={(id) => (setCrewId(id), setPage('dashboard'))}
             onNewCrew={(groupId) => (setNewCrewGroup(groupId), setNewCrew(true))}
-            onOpenSettings={() => (setSettingsSection(undefined), setPage('settings'))}
             actions={projectMenu}
+            onHide={() => setSidebarOpen(false)}
             footer={
               <>
+                <ProviderLimitBadge onOpen={() => setPage('dashboard')} />
+                <LearningBadge onOpen={() => setMode('memory')} />
+                {mcpDown.length > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive gap-1 px-2"
+                        aria-label={`MCP servers down: ${mcpDown.map((d) => d.server).join(', ')}`}
+                        onClick={() => openSettingsAt('mcp')}
+                      >
+                        <AlertTriangle className="size-4" />
+                        <span className="text-xs">{mcpDown.length}</span>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {mcpDown.map((d) => `${d.server} (${d.state === 'missing' ? 'not configured' : d.state}) for ${d.seats.join(', ')}`).join('; ')}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {terminals.tabs.length > 0 && (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon" aria-label="Terminals" aria-pressed={terminals.open} onClick={() => terminals.setOpen(!terminals.open)}>
+                      <Button variant="ghost" size="icon-sm" aria-label="Terminals" aria-pressed={terminals.open} onClick={() => terminals.setOpen(!terminals.open)}>
                         <SquareTerminal />
                       </Button>
                     </TooltipTrigger>
@@ -379,7 +292,7 @@ export function App() {
                   <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
-                      size="icon"
+                      size="icon-sm"
                       className="relative"
                       aria-label={bgConsole.errors > 0 ? `Console, ${bgConsole.errors} new errors` : 'Console'}
                       aria-pressed={consoleOpen}
@@ -394,6 +307,14 @@ export function App() {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Console</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="Settings" aria-pressed={page === 'settings'} onClick={() => openSettingsAt()}>
+                      <Settings />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Settings (Ctrl+,)</TooltipContent>
                 </Tooltip>
               </>
             }
@@ -472,7 +393,13 @@ export function App() {
           onDeleted={() => terminals.dropCrew(deleteTarget.id)}
         />
       )}
-      {changesTarget && <GitChangesDialog crew={changesTarget} onClose={() => setChangesTarget(null)} />}
+      {changesTarget && (
+        <GitChangesDialog
+          crew={changesTarget}
+          onClose={() => setChangesTarget(null)}
+          onOpenPage={(c) => (setCrewId(c.id), setPage('dashboard'), setMode('workspace'), requestGitTab())}
+        />
+      )}
       <Toaster />
     </TooltipProvider>
   )
@@ -487,7 +414,7 @@ function Welcome({ onNewCrew }: { onNewCrew: () => void }) {
         </div>
         <h1 className="text-2xl font-semibold">Welcome to Operant 3</h1>
         <p className="text-muted-foreground text-sm">
-          Create a crew for a project folder, hand it jobs, and let a Master Terminal run your seats and teams of coding agents
+          Add a project folder, hand it jobs, and let a Master Terminal run your seats and teams of coding agents
           while you watch from here.
         </p>
         <Button onClick={onNewCrew}>

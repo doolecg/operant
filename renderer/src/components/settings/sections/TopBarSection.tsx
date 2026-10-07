@@ -21,7 +21,7 @@ export function TopBarSection() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Display</CardTitle>
-          <CardDescription>The whole interface scales live: text, icons, dialogs and the terminals. Also under General, and the 100% button next to the gear.</CardDescription>
+          <CardDescription>The whole interface scales live: text, icons, dialogs and the terminals.</CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
           <Row label="UI scale" hint="Automatic follows the window size." htmlFor="top-ui-scale">

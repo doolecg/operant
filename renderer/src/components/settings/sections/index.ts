@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { AppearanceSection } from "./AppearanceSection";
 import { BudgetsSection } from "./BudgetsSection";
 import { CollaborationSection } from "./CollaborationSection";
 import { DiscordSection } from "./DiscordSection";
@@ -21,6 +22,7 @@ export const SETTINGS_SECTIONS: Array<{
   component: ComponentType;
 }> = [
   { id: "general", label: "General", component: GeneralSection },
+  { id: "appearance", label: "Appearance", component: AppearanceSection },
   {
     id: "collaboration",
     label: "Collaboration",

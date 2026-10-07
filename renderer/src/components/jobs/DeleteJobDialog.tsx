@@ -1,6 +1,6 @@
 import type { JobRecord } from '@shared/types'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useDeleteJob } from '@/lib/queries'
 import { errorText, operatorLabel, stateLabel } from './jobUi'
 
@@ -22,20 +22,22 @@ export function DeleteJobDialog({
   }
   return (
     <Dialog open={job != null} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>Delete job</DialogTitle>
           <DialogDescription>
             Delete &quot;{job?.title}&quot; ({job ? stateLabel(job.state) : ''})? This cannot be undone.
           </DialogDescription>
         </DialogHeader>
-        <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
+        <DialogBody>
+          <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
           {holder && <li>{holder} holds this job and will be told it was deleted.</li>}
           <li>
             {dependents === 0 ? 'No other job waits for it.' : `${dependents} other ${dependents === 1 ? 'job waits' : 'jobs wait'} for it and will be unblocked.`}
           </li>
         </ul>
         {del.error != null && <p className="text-destructive text-xs">{errorText(del.error)}</p>}
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={close}>
             Cancel

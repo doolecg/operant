@@ -100,7 +100,7 @@ describe('teams, seats and projects', () => {
     expect(team.limits).toEqual({ maxWorkers: 0, topTier: '', tokenBudget: 0 })
     const edited = store.updateTeam(team.id, { name: 'crew2', limits: { maxWorkers: 3, topTier: 'sonnet', tokenBudget: 100 } })
     expect(edited).toMatchObject({ name: 'crew2', rules: 'be nice', limits: { maxWorkers: 3, topTier: 'sonnet', tokenBudget: 100 } })
-    expect(store.listTeams()).toHaveLength(1)
+    expect(store.listTeams().filter((t) => !t.builtin)).toHaveLength(1)
     store.deleteTeam(team.id)
     expect(store.getTeam(team.id)).toBeNull()
     expect(() => store.updateTeam(team.id, { name: 'x' })).toThrow(/not found/)

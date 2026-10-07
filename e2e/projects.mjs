@@ -127,13 +127,13 @@ try {
   // Open in IDE through a fake IDE; a broken command shows an error toast.
   await inv('settings:set', { ide: { default: 'custom', custom: `node "${resolve('e2e/fixtures/fake-ide.mjs')}"` } })
   await row('shop').hover()
-  await page.getByRole('button', { name: /^Open shop in/ }).click()
+  await page.getByRole('complementary', { name: 'Projects' }).getByRole('button', { name: /^Open shop in/ }).click()
   for (const end = Date.now() + 15_000; !existsSync(ideOut) && Date.now() < end; await page.waitForTimeout(200));
   assert.ok(existsSync(ideOut), 'the fake IDE was started')
   assert.equal(readFileSync(ideOut, 'utf8').trim(), folders.shop)
   await inv('settings:set', { ide: { custom: 'operant-no-such-ide-command-xyz' } })
   await row('shop').hover()
-  await page.getByRole('button', { name: /^Open shop in/ }).click()
+  await page.getByRole('complementary', { name: 'Projects' }).getByRole('button', { name: /^Open shop in/ }).click()
   await page.getByRole('alert').filter({ hasText: /could not start/ }).waitFor({ timeout: 15_000 })
 
   // Show changes reads git status of the project folder.
@@ -146,12 +146,10 @@ try {
   await page.getByRole('menuitem', { name: 'Open in VS Code' }).waitFor()
   await page.screenshot({ path: join(outDir, 'project-menu.png') })
   await page.getByRole('menuitem', { name: 'Show changes' }).click()
-  const changes = page.getByTestId('git-changes')
+  const changes = page.getByTestId('git-files')
   await changes.getByText('readme.txt').waitFor()
   await changes.getByText('extra.txt').waitFor()
-  await changes.getByText(/2 changed files/).waitFor()
-  await page.keyboard.press('Escape')
-  await changes.waitFor({ state: 'detached' })
+  await page.getByTestId('git-page').getByRole('tab', { name: /^Changes\s*2$/ }).waitFor()
 
   // Terminal drawer: a shell in the project folder, a second tab, closing tabs.
   await row('shop').click({ button: 'right' })
@@ -239,12 +237,12 @@ try {
   await row('blog').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Delete project…' }).click()
   const dialog = page.getByRole('dialog')
-  await dialog.getByText(/Deleting the crew removes 0 runs/).waitFor()
+  await dialog.getByText(/Deleting the project removes 0 runs/).waitFor()
   await dialog.getByText(/Its lessons \(0\) are deleted too/).waitFor()
   await dialog.getByText(/spend history/).waitFor()
   await dialog.getByText(/folder and every file in it are not touched/).waitFor()
   await page.screenshot({ path: join(outDir, 'project-delete.png') })
-  await dialog.getByRole('button', { name: 'Delete crew' }).click()
+  await dialog.getByRole('button', { name: 'Delete project' }).click()
   await row('blog').waitFor({ state: 'detached' })
   assert.ok(existsSync(join(folders.blog, 'readme.txt')), 'the folder is untouched')
   assert.equal((await inv('groups:list')).length, 2, 'the group stays')

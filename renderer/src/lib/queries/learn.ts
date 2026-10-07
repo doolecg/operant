@@ -24,6 +24,14 @@ export const useDrafts = (crewId?: number, status?: DraftStatus) =>
   useQuery({ queryKey: ['learn', 'drafts', crewId ?? null, status ?? null] as const, queryFn: () => call('learn:drafts', crewId, status) })
 
 export const useLearnNow = () => useMutate('learn:run', [LEARN, ['events']])
+// The AI the learn step asks now, an empty model resolved to the cheap default (OpenCode's is looked up at run time).
+export const useLearnAi = () => useQuery({ queryKey: ['learn', 'ai'] as const, queryFn: () => call('learn:ai'), staleTime: 60_000 })
+export const useTestLearnAi = () => useMutate('learn:test', [])
+// What the local server offers; the URL is in the key so a changed endpoint asks again.
+export const useLocalModels = (url: string, enabled: boolean) =>
+  useQuery({ queryKey: ['learn', 'localModels', url] as const, queryFn: () => call('learn:localModels'), enabled, retry: false })
+export const useLocalKey = () => useQuery({ queryKey: ['learn', 'localKey'] as const, queryFn: () => call('learn:localKey') })
+export const useSetLocalKey = () => useMutate('learn:setLocalKey', [['learn', 'localKey'], ['learn', 'ai']])
 export const useEditLesson = () => useMutate('learn:editLesson', [LEARN])
 export const useMergeLessons = () => useMutate('learn:mergeLessons', [LEARN])
 export const useSetLessonStatus = () => useMutate('learn:setLessonStatus', [LEARN])
@@ -40,5 +48,5 @@ registerLive((b, qc) => [
   }),
   b.on('run', () => void qc.invalidateQueries({ queryKey: ['learn', 'status'] })),
   // The switches and review mode are part of the status.
-  b.on('settings', () => void qc.invalidateQueries({ queryKey: ['learn', 'status'] })),
+  b.on('settings', () => void Promise.all([qc.invalidateQueries({ queryKey: ['learn', 'status'] }), qc.invalidateQueries({ queryKey: ['learn', 'ai'] }), qc.invalidateQueries({ queryKey: ['learn', 'localModels'] })])),
 ])

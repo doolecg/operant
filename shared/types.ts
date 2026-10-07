@@ -429,11 +429,32 @@ export interface Team {
   seats: TeamSeat[]
   limits: TeamLimits
   rules: string
+  // Stable key of a team shipped with Operant; null for a team the user made.
+  builtin: string | null
+  description: string
+  // A built-in the user has edited; Reset restores it.
+  modified: boolean
+  // A built-in the user hid from the lists.
+  hidden: boolean
   updatedAt: number
 }
 
-export type TeamInput = Pick<Team, 'name'> & Partial<Pick<Team, 'seats' | 'limits' | 'rules'>>
+export type TeamInput = Pick<Team, 'name'> & Partial<Pick<Team, 'seats' | 'limits' | 'rules' | 'description'>>
 export type TeamPatch = Partial<TeamInput>
+
+// What importing a team file would do, one row per team in it.
+export interface TeamImportEntry {
+  key: string
+  name: string
+  seats: number
+  action: 'add' | 'skip' | 'invalid'
+  reason: string
+}
+
+export interface TeamImportPreview {
+  path: string
+  entries: TeamImportEntry[]
+}
 
 export type RunStatus = 'queued' | 'working' | 'needs-you' | 'done' | 'failed'
 
@@ -752,6 +773,50 @@ export interface DiscordBot {
   enabled: boolean
   // The CLI jobs started from this bot run on; unset = claude.
   masterCli?: MasterCli
+  // Each request from an allowlisted user in a server channel gets its own named thread, and every reply goes there.
+  threadPerRequest: boolean
+  // 'auto' names the thread by code; 'ai' asks the front desk model for a title (a few tokens), falling back to code.
+  threadNames: DiscordThreadNames
+  // Minutes of quiet before Discord archives the thread: 60, 1440, 4320 or 10080.
+  threadArchive: DiscordThreadArchive
+  // Which AI answers in Discord (the front desk and thread titles). Claude and OpenCode cost tokens; a local
+  // OpenAI-compatible server (LM Studio, Ollama, llama.cpp) is free.
+  ai: DiscordBotAi
+}
+
+export type DiscordAiCli = 'claude' | 'opencode' | 'local'
+export interface DiscordBotAi {
+  cli: DiscordAiCli
+  // Empty = the cheap default (Claude Haiku) or, for a local server, whatever it has loaded.
+  model: string
+  effort: string
+  localUrl: string
+}
+export const DEFAULT_DISCORD_AI: DiscordBotAi = { cli: 'claude', model: '', effort: '', localUrl: 'http://127.0.0.1:1234' }
+
+export interface DiscordAiTestResult {
+  ok: boolean
+  answer: string
+  error: string
+  ms: number
+}
+
+export type DiscordThreadNames = 'auto' | 'ai'
+export type DiscordThreadArchive = 60 | 1440 | 4320 | 10080
+export const DISCORD_THREAD_ARCHIVES: readonly DiscordThreadArchive[] = [60, 1440, 4320, 10080]
+
+// A thread the bot made for a request; kept so a restart still routes replies in it.
+export interface DiscordThread {
+  botId: number
+  threadId: string
+  parentId: string
+  userId: string
+  crewId: number | null
+  runId: number | null
+  // The title without the JOB# prefix, and the name the thread has now.
+  title: string
+  name: string
+  createdAt: number
 }
 
 export interface DiscordBotView extends DiscordBot {
@@ -769,6 +834,10 @@ export interface DiscordBotInput {
   confirmStart?: boolean
   enabled?: boolean
   masterCli?: MasterCli
+  threadPerRequest?: boolean
+  threadNames?: DiscordThreadNames
+  threadArchive?: DiscordThreadArchive
+  ai?: Partial<DiscordBotAi>
   // Stored in the secret store, never in the database.
   token?: string
 }
@@ -783,14 +852,28 @@ export interface DiscordHealth {
   username: string
   guilds: number
   error: string
+  // The most recent error, kept after the bot disconnects or reconnects. Plain language, never a token.
+  lastError: string
   // Epoch ms of the last state change.
   since: number
+}
+
+// One configured channel as the bot sees it; `missing` lists the permissions it lacks there.
+export interface DiscordChannelCheck {
+  id: string
+  found: boolean
+  name: string
+  guild: string
+  missing: string[]
 }
 
 export interface DiscordTestResult {
   tokenValid: boolean
   username: string
   guilds: Array<{ id: string; name: string }>
+  // 'missing' when Discord refused the privileged Message Content intent (switch it on in the developer portal).
+  intents: 'ok' | 'missing' | 'unknown'
+  channels: DiscordChannelCheck[]
   // Why the token failed, or why nothing could be checked (no token saved).
   error: string
 }

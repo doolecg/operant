@@ -42,7 +42,7 @@ export function TokensSection() {
           </CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
-          <Row label="Daily budget (USD)" hint="All crews and scratch terminals together. 0 turns it off." htmlFor="budget">
+          <Row label="Daily budget (USD)" hint="All projects and scratch terminals together. 0 turns it off." htmlFor="budget">
             <NumberField
               id="budget"
               min={0}

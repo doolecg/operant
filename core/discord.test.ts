@@ -19,7 +19,7 @@ const BOT_ID = '9000000009'
 class FakeGateway implements DiscordGateway {
   sent: Array<{ channelId: string; text: string; id: string }> = []
   reactions: Array<{ channelId: string; messageId: string; emoji: string }> = []
-  threads: Array<{ channelId: string; messageId: string; name: string; id: string }> = []
+  threads: Array<{ channelId: string; messageId: string; name: string; id: string; archive?: number }> = []
   connectedWith: string | null = null
   disconnected = false
   failWith: string | null = null
@@ -61,9 +61,15 @@ class FakeGateway implements DiscordGateway {
   async react(channelId: string, messageId: string, emoji: string) {
     this.reactions.push({ channelId, messageId, emoji })
   }
-  async createThread(channelId: string, messageId: string, name: string) {
+  threadError: (Error & { permission?: boolean }) | null = null
+  renames: Array<{ threadId: string; name: string }> = []
+  async renameThread(threadId: string, name: string) {
+    this.renames.push({ threadId, name })
+  }
+  async createThread(channelId: string, messageId: string, name: string, autoArchiveMinutes?: number) {
+    if (this.threadError) throw this.threadError
     const id = `thread-${++this.n}`
-    this.threads.push({ channelId, messageId, name, id })
+    this.threads.push({ channelId, messageId, name, id, archive: autoArchiveMinutes })
     return id
   }
 
@@ -125,7 +131,7 @@ describe('DiscordManager', () => {
   afterEach(() => store.close())
 
   const makeBot = async (extra: Record<string, unknown> = {}) => {
-    const bot = await mgr.create({ name: 'desk', token: TOKEN, allowlist: [OWNER], homeChannel: HOME, mentionOnly: false, confirmStart: false, ...extra })
+    const bot = await mgr.create({ name: 'desk', token: TOKEN, allowlist: [OWNER], homeChannel: HOME, mentionOnly: false, confirmStart: false, threadPerRequest: false, ...extra })
     await mgr.connect(bot.id)
     return bot
   }
@@ -185,7 +191,7 @@ describe('DiscordManager', () => {
       const bot = await mgr.create({ name: 'desk' })
       expect(await mgr.test(bot.id)).toMatchObject({ tokenValid: false, error: 'No token is saved for this bot' })
       await mgr.setToken(bot.id, TOKEN)
-      expect(await mgr.test(bot.id)).toEqual({ tokenValid: true, username: 'operant-bot', guilds: [{ id: '1', name: 'Test server' }], error: '' })
+      expect(await mgr.test(bot.id)).toEqual({ tokenValid: true, username: 'operant-bot', guilds: [{ id: '1', name: 'Test server' }], intents: 'ok', channels: [], error: '' })
       expect(gw.disconnected).toBe(true)
       gw.failWith = 'An invalid token was provided: %TOKEN%'
       const bad = await mgr.test(bot.id)

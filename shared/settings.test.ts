@@ -18,6 +18,12 @@ describe('settings', () => {
     expect('defaultReview' in s).toBe(false)
   })
 
+  it('sanitises the learning AI choice', () => {
+    expect(sanitizeSettings({}).learn).toMatchObject({ cli: 'claude', model: '', effort: '' })
+    expect(sanitizeSettings({ learn: { cli: 'opencode', model: 'openai/gpt-5-mini', effort: 'low' } }).learn).toMatchObject({ cli: 'opencode', model: 'openai/gpt-5-mini', effort: 'low' })
+    expect(sanitizeSettings({ learn: { cli: 'codex', model: '--evil flag', effort: '-x' } }).learn).toMatchObject({ cli: 'claude', model: '', effort: '' })
+  })
+
   it('sanitises the dragged panel widths', () => {
     expect(sanitizeSettings({ layout: { sidebarWidth: 301.4, rightWidth: 'wide' } }).layout).toEqual({ sidebarWidth: 301, rightWidth: 0 })
     expect(sanitizeSettings({ layout: { sidebarWidth: -9, rightWidth: 99999 } }).layout).toEqual({ sidebarWidth: 0, rightWidth: 4000 })

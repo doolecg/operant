@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { spawn as spawnPty } from '@lydell/node-pty'
-import { app, BrowserWindow, dialog, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, nativeTheme, safeStorage, shell } from 'electron'
 import { scrubLogLine } from '../core/agents'
 import { CliServer } from '../core/cli-server'
 import { CrewIndexes } from '../core/codegraph'
@@ -11,6 +11,7 @@ import { Operant } from '../core/operant'
 import { appDataDir } from '../core/paths'
 import { SessionManager } from '../core/sessions'
 import { Store } from '../core/store'
+import { DEFAULT_APPEARANCE, windowBackground } from '../shared/themes'
 import { loadEnv } from './env'
 import { isAppUrl, type AppOrigin } from './guard'
 import { push, registerIpc } from './ipc'
@@ -51,7 +52,7 @@ function createWindow(): void {
     minWidth: 1000,
     minHeight: 640,
     show: false,
-    backgroundColor: '#0a0a0b',
+    backgroundColor: windowBackground(operant?.currentSettings.appearance ?? DEFAULT_APPEARANCE, nativeTheme.shouldUseDarkColors),
     title: 'Operant 3',
     icon: iconFile,
     autoHideMenuBar: true,

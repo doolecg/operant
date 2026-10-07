@@ -2,6 +2,7 @@ import { DEFAULT_LEARN_SETTINGS, type LearnSettings } from './learn'
 import { IDE_IDS, type IdeId } from './projects'
 import type { CacheTtl } from './types'
 import type { ClockFormat, MediaSize, TopBarSettings } from './media'
+import { DEFAULT_APPEARANCE, sanitizeAppearance, type Appearance } from './themes'
 
 export type HindsightMode = 'local' | 'lan' | 'remote'
 
@@ -42,6 +43,8 @@ export interface Settings {
   keybinds: Record<KeyAction, string>
   // UI scale: 0 follows the window size (bigger windows get a bigger UI), otherwise a fixed factor from 0.8 to 2.
   uiScale: number
+  // Colour theme, accent override, terminal colours and the user's own themes. All apply live.
+  appearance: Appearance
   // Side panel widths in px that the user dragged; 0 keeps the built-in size. The window clamps them live.
   layout: { sidebarWidth: number; rightWidth: number }
   // The top bar: Windows media controls, the clock and date pill and the agent counts. All apply live.
@@ -81,8 +84,8 @@ export interface Settings {
 }
 
 export const KEY_ACTIONS: Array<{ id: KeyAction; label: string }> = [
-  { id: 'newCrew', label: 'New crew' },
-  { id: 'indexCrew', label: 'Index crew with CodeGraph' },
+  { id: 'newCrew', label: 'New project' },
+  { id: 'indexCrew', label: 'Index project with CodeGraph' },
   { id: 'openSettings', label: 'Open settings' },
   { id: 'toggleConsole', label: 'Show or hide the console' },
   { id: 'newShell', label: 'New shell in the project folder' },
@@ -123,6 +126,7 @@ export const DEFAULT_SETTINGS: Settings = {
     zoomReset: 'Mod+0',
   },
   uiScale: 0,
+  appearance: DEFAULT_APPEARANCE,
   layout: { sidebarWidth: 0, rightWidth: 0 },
   topBar: {
     mediaControls: typeof process !== 'undefined' && process.platform === 'win32',
@@ -164,6 +168,9 @@ const ttl = (v: unknown, fallback: CacheTtl): CacheTtl => (v === 'auto' || v ===
 const num = (v: unknown, fallback: number, min: number, max: number) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
 
+// A model id for either CLI (provider/model:tag, claude-haiku-4-5, sonnet[1m]) and an effort name; neither can start with a dash.
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:+@/[\]-]*$/
+const EFFORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 const HTTP_URL = /^https?:\/\/[^\s]+$/i
 const HOST_RE = /^[A-Za-z0-9.:_-]{1,100}$/
 
@@ -211,6 +218,11 @@ export function sanitizeSettings(raw: unknown): Settings {
       codegraph: flag(learn.codegraph, d.learn.codegraph),
       memory: flag(learn.memory, d.learn.memory),
       review: learn.review === 'auto' || learn.review === 'queue' ? learn.review : d.learn.review,
+      cli: learn.cli === 'claude' || learn.cli === 'opencode' || learn.cli === 'local' ? learn.cli : d.learn.cli,
+      model: MODEL_ID.test(str(learn.model, '', 200)) ? str(learn.model, '', 200) : '',
+      effort: EFFORT_ID.test(str(learn.effort, '', 40)) ? str(learn.effort, '', 40) : '',
+      localUrl: HTTP_URL.test(str(learn.localUrl, '', 300)) ? str(learn.localUrl, '', 300) : d.learn.localUrl,
+      localInsecureOk: flag(learn.localInsecureOk, d.learn.localInsecureOk),
     },
     dailyBudgetUsd: num(r.dailyBudgetUsd, d.dailyBudgetUsd, 0, 100_000),
     ...hindsightSettings(r),
@@ -231,6 +243,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     keybinds: Object.fromEntries(
       KEY_ACTIONS.map(({ id }) => [id, str(keys[id], d.keybinds[id], 40)]),
     ) as Record<KeyAction, string>,
+    appearance: sanitizeAppearance(r.appearance),
     uiScale: r.uiScale === 0 ? 0 : num(r.uiScale, d.uiScale, 0.8, 2),
     layout: {
       sidebarWidth: Math.round(num(layout.sidebarWidth, d.layout.sidebarWidth, 0, 4000)),

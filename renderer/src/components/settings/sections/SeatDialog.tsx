@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { decodeIpcError } from '@shared/ipc'
 import type { AgentKind, Preset, PresetPatch } from '@shared/types'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -60,12 +60,13 @@ export function SeatDialog({ preset, onClose }: { preset: Preset; onClose: () =>
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>Seat settings: {preset.name}</DialogTitle>
           <DialogDescription>How this preset behaves when a team seats it on a job.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <DialogBody>
+          <div className="grid items-start gap-4 lg:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="seat-agent" className="text-sm">
               Agent
@@ -127,7 +128,7 @@ export function SeatDialog({ preset, onClose }: { preset: Preset; onClose: () =>
           </div>
           <div className="space-y-1.5">
             <Label className="text-sm">Other MCP servers</Label>
-            <ul aria-label="MCP servers" className="max-h-32 space-y-1 overflow-y-auto rounded-md border p-2">
+            <ul aria-label="MCP servers" className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
               {options.length === 0 && <li className="text-muted-foreground text-xs">No other servers are configured.</li>}
               {options.map((o) => (
                 <li key={o.name}>
@@ -153,6 +154,7 @@ export function SeatDialog({ preset, onClose }: { preset: Preset; onClose: () =>
             {error}
           </p>
         )}
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel

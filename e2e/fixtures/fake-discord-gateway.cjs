@@ -32,5 +32,6 @@ exports.createGateway = () => {
     send: async () => 'sent-1',
     react: async () => {},
     createThread: async () => 'thread-1',
+    renameThread: async () => {},
   }
 }

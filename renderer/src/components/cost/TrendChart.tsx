@@ -2,8 +2,8 @@ import type { UsageSeriesPoint } from '@shared/types'
 import { usd } from '@/lib/format'
 
 // Colours for the split series; the legend and every bar's title also print the values, so colour is not the only cue.
-const SERIES_COLORS = ['#60a5fa', '#fbbf24', '#34d399', '#c084fc', '#f472b6', '#fb923c']
-const OTHER_COLOR = '#94a3b8'
+const SERIES_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)']
+const OTHER_COLOR = 'var(--chart-other)'
 const MAX_SERIES = SERIES_COLORS.length
 const DAY_RE = /^\d{4}-\d\d-\d\d$/
 

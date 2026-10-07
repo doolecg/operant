@@ -1,8 +1,9 @@
-// Top bar (one 42 px row): the media block, the clock pill and the job counts, at four window widths and two UI scales,
+// Top bar (one 38 px row): brand, project block, view switcher, media block, clock, status pill and git branch chip, at four window widths and two UI scales,
 // with live settings. The media bar (fake helper speaking the real JSON lines). Runs in the background with throwaway data.
 // Usage: node e2e/topbar.mjs [outDir]   (screenshots for the spec go to docs/specs/screenshots when given as that dir)
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
@@ -11,6 +12,13 @@ const outDir = resolve(process.argv[2] ?? 'out/e2e')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-e2e-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-proj-'))
+const git = (...a) => execFileSync('git', a, { cwd: project })
+git('init', '-q', '-b', 'feature/topbar')
+writeFileSync(join(project, 'a.txt'), '1')
+git('add', '.')
+git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'first')
+writeFileSync(join(project, 'a.txt'), '2')
+writeFileSync(join(project, 'b.txt'), '2')
 const logFile = join(mkdtempSync(join(tmpdir(), 'operant-media-')), 'commands.log')
 
 const env = {
@@ -107,17 +115,23 @@ try {
       await win((win, n) => win.setContentSize(n, 700), w)
       await page.waitForTimeout(1200)
       const m = await page.evaluate(() => {
+        // The groups of the bar never run into each other: each child's content ends before the next one starts.
+        const overlaps = (head) => {
+          const kids = [...head.children].filter((k) => k.getBoundingClientRect().width > 0)
+          return kids.some((k, i) => i > 0 && k.getBoundingClientRect().left < kids[i - 1].getBoundingClientRect().right - 0.5)
+        }
         const h = document.querySelector('header')
         const h1 = h.querySelector('h1')
-        return { doc: document.documentElement.scrollWidth, win: window.innerWidth, headScroll: h.scrollWidth, headClient: h.clientWidth, height: h.getBoundingClientRect().height, name: [h1.clientWidth, h1.scrollWidth], status: !!h.querySelector('[aria-label="Status and alerts"]') }
+        return { doc: document.documentElement.scrollWidth, win: window.innerWidth, headScroll: h.scrollWidth, headClient: h.clientWidth, height: h.getBoundingClientRect().height, name: [h1.clientWidth, h1.scrollWidth], status: !!h.querySelector('[aria-label="Status and branch"]'), git: !!h.querySelector('[aria-label^="Git: "]'), overlap: overlaps(h) }
       })
       const label = `${w}px at ${scale * 100}%`
       assert.ok(m.doc <= m.win, `page overflows at ${label}: ${JSON.stringify(m)}`)
       assert.ok(m.headScroll <= m.headClient + 1, `header overflows at ${label}: ${JSON.stringify(m)}`)
-      assert.equal(Math.round(m.height), 42, `one 42 px row at ${label}: ${JSON.stringify(m)}`)
+      assert.equal(Math.round(m.height), 38, `one 38 px row at ${label}: ${JSON.stringify(m)}`)
+      assert.ok(!m.overlap, `the groups of the bar overlap at ${label}: ${JSON.stringify(m)}`)
       if (scale === 1) assert.ok(m.name[0] >= m.name[1], `the project name is readable at ${label}: ${JSON.stringify(m)}`)
-      if (scale === 1 && w === 1000) assert.ok(m.status, 'status and alerts collapsed into the menu at 1000')
-      if (scale === 1 && w >= 1920) assert.ok(!m.status, 'pills stay in the bar when there is room')
+      if (scale === 1) assert.ok(!m.status && m.git, `the status pill and the branch chip stay in the bar at ${label}: ${JSON.stringify(m)}`)
+      if (scale === 2 && w === 1000) assert.ok(m.status, 'status and branch collapsed into the menu at 500 css px')
       if (scale === 1) await shot(`top-bar-${w}.png`)
     }
   }
@@ -128,23 +142,45 @@ try {
   await page.waitForTimeout(800)
   await bar.screenshot({ path: join(outDir, 'media-bar.png') })
 
-  // The '+' opens the new task dialog; the Console toggle lives on the sidebar's bottom row next to Settings; the project
+  // The '+' opens the new task dialog; the Console toggle lives on the sidebar's bottom row; the project
   // block at the top left has its mini buttons on hover.
   await page.getByRole('button', { name: 'Start new task' }).click()
   await page.getByRole('dialog').getByText('Start new task').first().waitFor()
   await page.keyboard.press('Escape')
   await page.getByRole('complementary', { name: 'Projects' }).getByRole('button', { name: /^Console/ }).waitFor()
-  await page.getByRole('heading', { level: 1 }).hover()
-  for (const n of [/^(Update index|Index with CodeGraph)$/, /^Open .* in IDE$/, /^New shell in /, /^Actions for crew /]) await page.getByRole('button', { name: n }).waitFor()
+  await page.getByRole('heading', { level: 1 }).hover({ position: { x: 4, y: 4 } })
+  for (const n of [/^(Update index|Index with CodeGraph)$/, /^Open .* in IDE$/, /^New shell in /, /^Actions for project /]) await page.getByRole('button', { name: n }).waitFor()
   await page.mouse.move(5, 500)
 
-  // The status menu holds the pills when the bar is narrow.
-  await win((w) => w.setContentSize(1000, 700))
-  await page.waitForTimeout(800)
-  await page.getByRole('button', { name: 'Status and alerts' }).click()
-  await page.getByRole('status', { name: /^Jobs:/ }).waitFor()
+  // The git chip shows the branch and the changed files, the sidebar row too; clicking the chip opens the changes.
+  const chip = page.getByRole('button', { name: /^Git: Branch feature\/topbar, 2 changed files/ })
+  await chip.waitFor()
+  assert.match((await chip.textContent()) ?? '', /feature\/topbar\s*2/)
+  await page.getByRole('complementary', { name: 'Projects' }).getByText('feature/topbar').waitFor()
+  await chip.click()
+  await page.getByTestId('git-page').getByRole('tab', { name: /^Changes/ }).waitFor()
+
+  // The sidebar's bottom row holds the badges and drawer toggles as icons; it has no Settings text button, the gear does it.
+  const foot = page.getByTestId('sidebar-footer')
+  await foot.getByRole('button', { name: /^Learning health/ }).waitFor()
+  await foot.getByRole('button', { name: /^Provider limits: / }).waitFor()
+  assert.match((await foot.getByRole('button', { name: /^Provider limits: / }).textContent()) ?? '', /--%/, 'the usage badge shows --% without data')
+  const cog = foot.getByRole('button', { name: 'Settings' })
+  await cog.waitFor()
+  await cog.click()
+  await page.getByRole('heading', { name: 'Settings' }).waitFor()
   await page.keyboard.press('Escape')
-  await win((w) => w.setContentSize(1280, 700))
+  await page.getByRole('region', { name: 'Master Terminal' }).waitFor()
+  await page.screenshot({ path: join(outDir, 'sidebar-footer.png'), clip: { x: 0, y: 600, width: 260, height: 100 } })
+
+  // The status menu holds the pills and the branch chip when the bar is narrow.
+  await page.evaluate(() => window.operant.invoke('settings:set', { uiScale: 2 }))
+  await page.waitForTimeout(800)
+  await page.getByRole('button', { name: 'Status and branch' }).click()
+  await page.getByRole('status', { name: /^Jobs:/ }).waitFor()
+  await page.getByRole('button', { name: /^Git: / }).waitFor()
+  await page.keyboard.press('Escape')
+  await page.evaluate(() => window.operant.invoke('settings:set', { uiScale: 1 }))
   await page.waitForTimeout(800)
 
   // Live settings: seconds, 12 hour, compact media, and the pills off.

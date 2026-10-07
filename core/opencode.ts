@@ -258,6 +258,7 @@ export function createOpenCodeAdapter(deps: Partial<OpenCodeDeps> = {}): MasterA
     }
 
     let text = ''
+    let errText = ''
     let finished = false
     let spawnError: Error | null = null
     const abort = new AbortController()
@@ -268,7 +269,10 @@ export function createOpenCodeAdapter(deps: Partial<OpenCodeDeps> = {}): MasterA
         text += s
         o.onEvent({ kind: 'output', text: s })
       })
-      child.stderr?.on('data', (b) => o.onEvent({ kind: 'stderr', text: String(b) }))
+      child.stderr?.on('data', (b) => {
+        errText = (errText + String(b)).slice(-2000)
+        o.onEvent({ kind: 'stderr', text: String(b) })
+      })
       child.on('error', (e) => {
         spawnError = missing(e)
         finished = true
@@ -279,7 +283,7 @@ export function createOpenCodeAdapter(deps: Partial<OpenCodeDeps> = {}): MasterA
         if (spawnError) return
         finished = true
         abort.abort()
-        resolve({ ok: code === 0, text: text.trim() })
+        resolve({ ok: code === 0, text: text.trim() || (code === 0 ? '' : errText.trim() || `opencode exited with code ${code ?? 'unknown'}`) })
       })
     })
     done.catch(() => {})

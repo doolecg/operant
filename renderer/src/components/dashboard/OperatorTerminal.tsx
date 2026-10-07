@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { bridge } from '@/lib/bridge'
+import { useTerminalColors } from '@/lib/theme'
 
 interface Props {
   // A session key: `operator:<id>` or `scratch:<id>`. A bare operator id (the drawer) is the same as `operator:<id>`.
@@ -22,6 +23,10 @@ function parseKey(key: string): Target | null {
 // Attaches an xterm view to a running session: replays its buffer, then streams live output.
 export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true }: Props) {
   const host = useRef<HTMLDivElement>(null)
+  const colors = useTerminalColors()
+  const colorsRef = useRef(colors)
+  colorsRef.current = colors
+  const termRef = useRef<Terminal | null>(null)
   const key = sessionKey ?? (operatorId != null ? `operator:${operatorId}` : '')
 
   useEffect(() => {
@@ -34,8 +39,9 @@ export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true }: P
       fontFamily: "'Cascadia Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', monospace",
       fontSize: 13,
       scrollback: 5000,
-      theme: { background: '#09090b', foreground: '#e4e4e7', cursor: '#e4e4e7', selectionBackground: '#3f3f46' },
+      theme: colorsRef.current,
     })
+    termRef.current = term
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
@@ -82,8 +88,14 @@ export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true }: P
       input.dispose()
       offData()
       term.dispose()
+      termRef.current = null
     }
   }, [key, autoFocus])
 
-  return <div ref={host} className="h-full w-full bg-[#09090b] p-2" />
+  // A theme change restyles the open terminal; its text and scrollback stay.
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = colors
+  }, [colors])
+
+  return <div ref={host} className="h-full w-full p-2" style={{ backgroundColor: colors.background }} />
 }

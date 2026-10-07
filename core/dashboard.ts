@@ -164,7 +164,7 @@ export function usageBreakdown(d: BreakdownDeps, crewId: number, period: UsagePe
     }
   })
 
-  // Per job: every operator of this crew that spent on it.
+  // Per job: every operator of this project that spent on it.
   const byJob = new Map<number, JobUsage>()
   const jobRows = db
     .prepare(
@@ -255,7 +255,7 @@ export function usageBreakdown(d: BreakdownDeps, crewId: number, period: UsagePe
           kind: 'job-cost',
           operatorId: null,
           jobId: j.jobId,
-          text: `Job ${j.jobId} cost $${j.costUsd.toFixed(2)}, over ${WASTE.jobCostMultiple}x the crew's median job ($${medianJobCostUsd.toFixed(2)})`,
+          text: `Job ${j.jobId} cost $${j.costUsd.toFixed(2)}, over ${WASTE.jobCostMultiple}x the project's median job ($${medianJobCostUsd.toFixed(2)})`,
           value: j.costUsd,
           threshold: medianJobCostUsd * WASTE.jobCostMultiple,
         })
@@ -285,7 +285,7 @@ const GRAPH_WINDOW_MS: Record<Exclude<GraphWindow, 'all'>, number> = { '1h': HOU
 // Nodes, aggregated edges and saved positions for the graph view.
 export function graphData(store: Store, now: () => number, crewId: number, window: GraphWindow): GraphData {
   const topology = store.topology(crewId)
-  if (!topology) throw new Error(`Crew ${crewId} not found`)
+  if (!topology) throw new Error(`Project ${crewId} not found`)
   const since = window === 'all' ? 0 : now() - GRAPH_WINDOW_MS[window]
   const nodes: GraphNode[] = [{ key: 'crew', type: 'crew', label: topology.name }, { key: 'user', type: 'user', label: 'user' }]
   const edges: GraphEdge[] = []

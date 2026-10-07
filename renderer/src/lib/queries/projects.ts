@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { call, keys, useMutate } from './core'
+import { call, keys, registerLive, useMutate } from './core'
 
 const GROUPS = ['groups'] as const
 
@@ -24,3 +24,20 @@ export const useGitChanges = (crewId: number | null, enabled = true) =>
     enabled: enabled && crewId != null,
     gcTime: 0,
   })
+
+// Branch and changed-file count of a project (null when the folder is not a git repository). Rows ask once; the open
+// project also refreshes on a 15 s timer. Window focus and a finished run refresh every project (see below).
+export const useGitInfo = (crewId: number | null, poll = false) =>
+  useQuery({
+    queryKey: ['gitInfo', crewId ?? -1],
+    queryFn: () => call('git:info', crewId!),
+    enabled: crewId != null,
+    staleTime: 10_000,
+    refetchInterval: poll ? 15_000 : false,
+  })
+
+registerLive((b, qc) => {
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['gitInfo'] })
+  window.addEventListener('focus', refresh)
+  return [b.on('run', refresh), () => window.removeEventListener('focus', refresh)]
+})

@@ -1,7 +1,7 @@
 {
   "name": "operant",
   "version": "2.0.0",
-  "description": "Guidance for agents running as operators in an Operant crew.",
+  "description": "Guidance for agents running as operators in an Operant project.",
   "author": {
     "name": "doolecg"
   },

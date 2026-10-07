@@ -4,7 +4,7 @@ import { decodeIpcError } from '@shared/ipc'
 import type { Message } from '@shared/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAnswerMessage, useDeleteMessage, useEditMessage, useMarkRead, useSendMessage } from '@/lib/queries'
@@ -282,7 +282,7 @@ function DeleteDialog({ entry, onClose }: { entry: Entry | null; onClose: () => 
   }
   return (
     <Dialog open={entry != null} onOpenChange={(o) => !o && close()}>
-      <DialogContent>
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>Delete {copies > 1 ? `${copies} messages` : 'message'}?</DialogTitle>
           <DialogDescription>
@@ -292,11 +292,13 @@ function DeleteDialog({ entry, onClose }: { entry: Entry | null; onClose: () => 
             {unread && ' It has not been read yet, so the recipient will never see it.'}
           </DialogDescription>
         </DialogHeader>
-        {error && (
+        <DialogBody>
+          {error && (
           <p role="alert" className="text-destructive text-xs">
             {error}
           </p>
         )}
+        </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={close}>
             Cancel

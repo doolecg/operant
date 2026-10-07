@@ -1,8 +1,9 @@
 // Popups and resize e2e: with many items (30 seats, 300 OpenCode models, 25 groups, 40 MCP servers) every dialog and
 // menu stays inside a small window (1000x640) and at UI scale 200%, with its header and footer in view and its body
-// scrolling; long model lists get a filter box; the side panels resize by drag and keyboard and persist across a restart.
+// scrolling; every dialog type fits at 1000x640, 1920x1080 and UI scale 200% (large ones fill the window at 1080p); long model lists get a filter box; the side panels resize by drag and keyboard and persist across a restart.
 // Usage: node e2e/popups.mjs   (screenshots go to docs/specs/screenshots)
 import assert from 'node:assert/strict'
+import { execSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
@@ -15,6 +16,8 @@ const project = mkdtempSync(join(tmpdir(), 'operant-popups-proj-'))
 const claudeDir = mkdtempSync(join(tmpdir(), 'operant-popups-claude-'))
 const ocFile = join(dataDir, 'opencode.json')
 writeFileSync(join(project, 'app.ts'), 'export const a = 1\n')
+execSync('git init -q', { cwd: project })
+for (let i = 0; i < 60; i++) writeFileSync(join(project, `changed-file-${i}.ts`), 'x')
 const servers = {}
 for (let i = 0; i < 40; i++) servers[`mcp-server-${String(i).padStart(2, '0')}`] = { type: 'stdio', command: 'npx', args: [`srv-${i}`] }
 writeFileSync(join(claudeDir, '.claude.json'), JSON.stringify({ mcpServers: servers }))
@@ -50,10 +53,11 @@ const inside = async (loc, label) => {
 const dialogOk = async (label, { footer, scrolls = true }) => {
   const dlg = page.getByRole('dialog')
   await inside(dlg, `${label} dialog`)
-  if (scrolls) assert.ok(await dlg.evaluate((el) => el.scrollHeight > el.clientHeight + 4), `${label}: the body scrolls inside the dialog`)
-  await dlg.evaluate((el) => (el.scrollTop = el.scrollHeight))
+  const body = dlg.locator('[data-slot=dialog-body]')
+  if (scrolls) assert.ok(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 4), `${label}: the body scrolls inside the dialog`)
+  await body.evaluate((el) => (el.scrollTop = el.scrollHeight))
   await inside(dlg.getByRole('button', { name: footer, exact: true }), `${label} footer button`)
-  await dlg.evaluate((el) => (el.scrollTop = 0))
+  await body.evaluate((el) => (el.scrollTop = 0))
   await sleep(100)
   await inside(dlg.getByRole('heading').first(), `${label} title`)
 }
@@ -137,7 +141,7 @@ try {
     const tag = `${Math.round(scale * 100)}%`
 
     // Project right-click and '...' menus with 25 groups.
-    await page.getByText('alpha', { exact: true }).first().click({ button: 'right' })
+    await page.getByRole('complementary', { name: 'Projects' }).getByText('alpha', { exact: true }).first().click({ button: 'right' })
     const ctx = page.getByRole('menu', { name: 'Actions for alpha' })
     await ctx.waitFor()
     await inside(ctx, `${tag} context menu`)
@@ -166,7 +170,7 @@ try {
       await page.keyboard.press('Escape')
     }
     // Model list: switch the Master to OpenCode, filter the 300 models.
-    await dlg.evaluate((el) => (el.scrollTop = 0))
+    await dlg.locator('[data-slot=dialog-body]').evaluate((el) => (el.scrollTop = 0))
     await dlg.getByRole('combobox', { name: 'Master CLI' }).click().catch(async () => dlg.locator('#run-cli').click())
     await page.getByRole('option', { name: 'OpenCode' }).click()
     await sleep(1500)
@@ -180,7 +184,7 @@ try {
     assert.equal(await pop.getByRole('option').count(), 1, `${tag}: the filter narrows the models to one`)
     if (scale === 1) await shot('popup-model-search')
     await filter.press('Enter')
-    await page.getByRole('button', { name: 'Master model' }).filter({ hasText: 'model-299' }).waitFor()
+    await page.getByRole('button', { name: 'Master model' }).filter({ hasText: 'Model 299 Instruct' }).waitFor()
     await page.keyboard.press('Escape')
     await dlg.waitFor({ state: 'detached' })
 
@@ -204,6 +208,103 @@ try {
     await page.getByRole('button', { name: 'Close settings' }).click()
     await page.getByRole('complementary', { name: 'Projects' }).getByText('alpha', { exact: true }).waitFor()
   }
+
+  // Every dialog type: inside the window, nothing sideways, header and footer in view, body scrolled to its end shows its last row.
+  const closeAll = async () => {
+    await page.keyboard.press('Escape')
+    await page.getByRole('dialog').waitFor({ state: 'detached' }).catch(() => {})
+    const close = page.getByRole('button', { name: 'Close settings' })
+    if (await close.isVisible().catch(() => false)) await close.click()
+    await sleep(200)
+  }
+  const settingsPage = async (nav) => {
+    await page.keyboard.press('Control+,')
+    await page.getByRole('heading', { name: 'Settings' }).waitFor()
+    await page.locator('main nav button', { hasText: nav }).first().click()
+  }
+  const sidebarRight = async (name) => {
+    await page.getByRole('complementary', { name: 'Projects' }).getByText(name, { exact: true }).first().click({ button: 'right' })
+  }
+  const dialogTypes = [
+    { name: 'new task', large: true, open: async () => {
+      await page.getByRole('button', { name: 'Start new task' }).evaluate((el) => el.click())
+      const d = page.getByRole('dialog')
+      await d.getByRole('button', { name: 'Team', exact: true }).click()
+      for (let i = 0; i < 6; i++) await d.getByRole('button', { name: 'Add seat' }).click()
+    } },
+    { name: 'mcp add', large: true, open: async () => {
+      await settingsPage('MCP servers')
+      await page.getByRole('button', { name: 'Add server' }).click()
+    } },
+    { name: 'discord bot', large: true, open: async () => {
+      await settingsPage('Discord')
+      await page.getByRole('button', { name: 'Add bot' }).click()
+    } },
+    { name: 'team', large: true, open: async () => {
+      await settingsPage('Teams')
+      await page.getByRole('button', { name: /New team/ }).first().click()
+      const d = page.getByRole('dialog')
+      for (let i = 0; i < 6; i++) await d.getByRole('button', { name: 'Add seat' }).click()
+    } },
+    { name: 'preset editor', large: true, open: async () => {
+      await settingsPage('Presets')
+      await page.getByRole('button', { name: /New preset/ }).first().click()
+    } },
+    { name: 'seat settings', large: true, open: async () => {
+      await settingsPage('Presets')
+      await page.getByRole('button', { name: /^Seat settings for project manager$/ }).click()
+      await page.getByRole('list', { name: 'MCP servers' }).getByRole('listitem').nth(30).waitFor({ timeout: 60_000 })
+    } },
+    { name: 'new project', large: false, open: async () => {
+      await page.getByRole('button', { name: /^(Add|New) project$/ }).first().evaluate((el) => el.click())
+    } },
+    { name: 'delete project', large: false, open: async () => {
+      await sidebarRight('beta')
+      await page.getByRole('menuitem', { name: /^Delete project/ }).click()
+    } },
+  ]
+  const dialogMatrix = async (label) => {
+    const v = await view()
+    for (const t of dialogTypes) {
+      await t.open()
+      const dlg = page.getByRole('dialog')
+      await dlg.waitFor()
+      await sleep(500)
+      const tag = `${label} ${t.name}`
+      await inside(dlg, `${tag} dialog`)
+      const m = await dlg.evaluate((el) => {
+        const body = el.querySelector('[data-slot=dialog-body]')
+        const rect = (e) => (e ? e.getBoundingClientRect().toJSON() : null)
+        if (body) body.scrollTop = body.scrollHeight
+        const last = body?.lastElementChild
+        return {
+          dlgSideways: el.scrollWidth > el.clientWidth + 1,
+          dlgScrolls: el.scrollHeight > el.clientHeight + 1,
+          bodySideways: body ? body.scrollWidth > body.clientWidth + 1 : false,
+          dlg: rect(el), head: rect(el.querySelector('[data-slot=dialog-header]')), foot: rect(el.querySelector('[data-slot=dialog-footer]')),
+          body: rect(body), last: rect(last),
+        }
+      })
+      assert.ok(!m.dlgSideways && !m.bodySideways, `${tag}: no horizontal overflow`)
+      assert.ok(!m.dlgScrolls, `${tag}: the dialog itself does not scroll, only its body`)
+      assert.ok(m.head && m.foot, `${tag}: header and footer exist`)
+      for (const [k, r] of [['header', m.head], ['footer', m.foot]]) {
+        assert.ok(r.top >= m.dlg.top - 1 && r.bottom <= m.dlg.bottom + 1 && r.bottom <= v.h + 1, `${tag}: ${k} is in view`)
+      }
+      if (m.body && m.last) assert.ok(m.last.bottom <= m.body.bottom + 1, `${tag}: the last row is not clipped (${m.last.bottom} vs ${m.body.bottom})`)
+      if (t.large && v.w >= 1900) assert.ok(m.dlg.width >= v.w * 0.6, `${tag}: a large dialog uses at least 60% of the window width (${Math.round(m.dlg.width)} of ${v.w})`)
+      if (label.startsWith('1920')) await shot(`dialog-matrix-${t.name.replace(/ /g, '-')}`)
+      await closeAll()
+    }
+  }
+  for (const [w, h, scale] of [[1000, 640, 1], [1920, 1080, 1], [1000, 640, 2]]) {
+    await win((x) => x.isMaximized() && x.unmaximize())
+    await win((x, a) => x.setContentSize(a[0], a[1]), [w, h])
+    await inv('settings:set', { uiScale: scale })
+    await sleep(1000)
+    await dialogMatrix(`${w}x${h} at ${Math.round(scale * 100)}%`)
+  }
+  await win((x, a) => x.setContentSize(a[0], a[1]), [1500, 900])
   await inv('settings:set', { uiScale: 1.25 })
   await win((w) => w.setContentSize(1500, 900))
   await sleep(800)

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { TeamInput, TeamPatch } from '@shared/types'
-import { call, keys } from './core'
+import { call, keys, useMutate } from './core'
 
 const teamsKey = keys.teams
 const limitKey = ['runs', 'limit'] as const
@@ -29,6 +29,15 @@ export function useDeleteTeam() {
     onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: teamsKey }), qc.invalidateQueries({ queryKey: ['mcp', 'health'] })]),
   })
 }
+
+const teamKeys = [keys.teams, ['mcp', 'health']] as const
+
+export const useDuplicateTeam = () => useMutate('teams:duplicate', teamKeys)
+export const useResetTeam = () => useMutate('teams:reset', teamKeys)
+export const useHideTeam = () => useMutate('teams:setHidden', teamKeys)
+export const useExportTeams = () => useMutate('teams:export', [])
+export const useTeamImportPreview = () => useMutate('teams:importPreview', [])
+export const useImportTeams = () => useMutate('teams:import', teamKeys)
 
 // Queue concurrency limit for runs.
 export const useRunLimit = () => useQuery({ queryKey: limitKey, queryFn: () => call('runs:getLimit') })

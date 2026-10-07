@@ -171,6 +171,19 @@ function TestResult({ result }: { result: DiscordTestResult }) {
           )}
         </div>
       )}
+      {result.tokenValid && (
+        <div>
+          Message Content intent:{' '}
+          {result.intents === 'missing' ? <span className="text-destructive">off (turn it on in the Discord Developer Portal)</span> : <span>on</span>}
+        </div>
+      )}
+      {result.channels.map((c) => (
+        <div key={c.id} className={!c.found || c.missing.length > 0 ? 'text-destructive' : undefined}>
+          Channel {c.name ? `#${c.name}` : c.id}
+          {c.guild && ` in ${c.guild}`}:{' '}
+          {!c.found ? 'the bot cannot see this channel' : c.missing.length === 0 ? 'all permissions are in place' : `missing ${c.missing.join(', ')}`}
+        </div>
+      ))}
       {result.error && <div className="text-destructive">{result.error}</div>}
     </div>
   )
@@ -204,6 +217,7 @@ function BotCard({ bot, run, onEdit, onDelete }: { bot: DiscordBotView; run: Run
           )}
         </CardTitle>
         {state === 'error' && error && <CardDescription className="text-destructive">{error}</CardDescription>}
+        {state !== 'error' && bot.health.lastError && <CardDescription>Last error: {bot.health.lastError}</CardDescription>}
         <CardAction className="flex items-center gap-2">
           <Switch
             aria-label={`Connect ${bot.name}`}

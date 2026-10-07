@@ -38,6 +38,7 @@ Masters need their command on your `PATH`: `claude` for Claude Code, or `opencod
 - **Crew mode is gone.** The crew, squad and operator screens, operator terminals and the Cards, List, Graph and Tiles views are removed. Seats and teams replace them. The old data stays in the database, hidden.
 - The Cost tab is replaced by the Usage page.
 - Operant is now called Operant 3 and uses the original Operant logo and the orange diamond.
+- The project list follows the Operant 2.8.2 layout: a Projects header with small buttons, compact rows with the git branch, running count and a needs-attention dot, groups you can collapse, and keyboard navigation (arrows, Enter, Alt+arrows to reorder, F2 to rename a group). What used to be called a crew is now called a project everywhere you read it.
 
 ---
 

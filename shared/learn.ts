@@ -80,6 +80,9 @@ export interface LearnRunInfo {
   skipped: LearnSkip[]
   // Why the whole step did nothing (model failed, learning off).
   error: string
+  // The CLI and model the step asked ('' for a run recorded before this was kept).
+  cli: string
+  model: string
 }
 
 export interface LearnStoreStatus {
@@ -110,6 +113,34 @@ export interface LearnSettings {
   // 'queue' (the default) keeps new lessons pending (not written, not in briefs) until the user approves them.
   // Even 'auto' queues a lesson that mentions a command, a URL, or 'always' / 'never' (see lessonNeedsReview).
   review: LearnReview
+  // The AI that reads the session. Empty model = a cheap default for the CLI (resolved when it runs); empty effort = the model's own.
+  cli: LearnCli
+  model: string
+  effort: string
+  // The local server (base URL; its API key lives in the secret store) and whether a plain-http host outside the LAN is confirmed.
+  localUrl: string
+  localInsecureOk: boolean
+}
+
+// 'local' is a model server on this PC or the LAN that speaks the OpenAI chat API (LM Studio, Ollama, llama.cpp).
+export type LearnCli = 'claude' | 'opencode' | 'local'
+
+// What the learn step will ask now: the settings, with an empty model replaced by the cheap default (null when OpenCode lists none).
+export interface LearnAi {
+  cli: LearnCli
+  model: string | null
+  effort: string
+  // True when `model` is the cheap default rather than the owner's choice.
+  isDefault: boolean
+  error?: string
+}
+
+export interface LearnTestResult {
+  ok: boolean
+  cli: string
+  model: string
+  ms: number
+  error: string
 }
 
 // Text a prompt-injected transcript could plant to steer later sessions: a command, a link, or a standing order.
@@ -117,7 +148,7 @@ const RISKY_LESSON = /https?:\/\/|www\.|`|^\s*\$ |\b(always|never)\b|\b(npm|npx|
 
 export const lessonNeedsReview = (text: string): boolean => RISKY_LESSON.test(text)
 
-export const DEFAULT_LEARN_SETTINGS: LearnSettings = { enabled: true, hindsight: true, codegraph: true, memory: true, review: 'queue' }
+export const DEFAULT_LEARN_SETTINGS: LearnSettings = { enabled: true, hindsight: true, codegraph: true, memory: true, review: 'queue', cli: 'claude', model: '', effort: '', localUrl: 'http://127.0.0.1:1234', localInsecureOk: false }
 
 export interface MemoryFile {
   file: string

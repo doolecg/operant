@@ -5,6 +5,7 @@ import type { Crew } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -55,16 +56,18 @@ export function FormDialog({
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={wide ? 'max-h-[90vh] overflow-y-auto sm:max-w-xl' : 'sm:max-w-md'}>
-        <form onSubmit={submit} className="space-y-5">
+      <DialogContent size={wide ? 'lg' : 'md'}>
+        <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription asChild={typeof description !== 'string'}>
               {typeof description === 'string' ? description : <div>{description}</div>}
             </DialogDescription>
           </DialogHeader>
-          {children != null && <div className="space-y-4">{children}</div>}
+          <DialogBody>
+            {children != null && <div className="space-y-4">{children}</div>}
           {error != null && <p className="text-destructive text-xs">{errorText(error)}</p>}
+          </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
@@ -115,9 +118,9 @@ export function NewCrewDialog({ open, onOpenChange, onCreated }: { open: boolean
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="New crew"
-      description="A crew is one project folder you give jobs to."
-      submitLabel="Create crew"
+      title="New project"
+      description="A project is one folder you give jobs to."
+      submitLabel="Create project"
       canSubmit={!!name.trim() && !!folder}
       pending={create.isPending}
       error={create.error}
@@ -176,8 +179,8 @@ export function EditCrewDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Edit crew"
-      description="The folder cannot change while the crew has a running session."
+      title="Edit project"
+      description="The folder cannot change while the project has a running session."
       submitLabel="Save"
       canSubmit={!!name.trim() && !!folder.trim() && changed}
       pending={update.isPending}
@@ -257,9 +260,9 @@ export function DeleteCrewDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Delete crew ${crewName}`}
+      title={`Delete project ${crewName}`}
       description="This cannot be undone."
-      submitLabel="Delete crew"
+      submitLabel="Delete project"
       destructive
       canSubmit={!!c && runCount != null}
       pending={remove.isPending}
@@ -276,7 +279,7 @@ export function DeleteCrewDialog({
       {c ? (
         <div className="space-y-2 text-sm">
           <p>
-            Deleting the crew removes {plural(runCount ?? 0, 'run')}, {plural(c.jobs, 'job')} ({c.openJobs} open),{' '}
+            Deleting the project removes {plural(runCount ?? 0, 'run')}, {plural(c.jobs, 'job')} ({c.openJobs} open),{' '}
             {plural(c.messages, 'message')} and {plural(c.scratch, 'terminal tile')}.
           </p>
           {c.running > 0 && <p>{plural(c.running, 'running session')} will be stopped.</p>}

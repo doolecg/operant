@@ -41,7 +41,7 @@ export function PurgeLine() {
         Purge now
       </Button>
       <Dialog open={confirm} onOpenChange={setConfirm}>
-        <DialogContent>
+        <DialogContent size="sm">
           <DialogHeader>
             <DialogTitle>Purge deleted operators</DialogTitle>
             <DialogDescription>

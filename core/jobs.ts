@@ -239,7 +239,7 @@ export class JobEngine {
       const deps = [...new Set(input.deps ?? [])]
       for (const d of deps) {
         const dep = this.row(d)
-        if (!dep || dep.crewId !== crew.id) throw new JobError('BAD_ARGS', `Job ${d} is not a job of this crew`)
+        if (!dep || dep.crewId !== crew.id) throw new JobError('BAD_ARGS', `Job ${d} is not a job of this project`)
       }
       const t = this.now()
       const row = this.db
@@ -710,7 +710,7 @@ export class JobEngine {
 
   private crewFor(c: Caller, crewId: number): Crew {
     const crew = this.store.getCrew(crewId)
-    if (!crew || (c.kind !== 'user' && c.crewId !== crewId)) throw new JobError('NOT_FOUND', `Crew ${crewId} not found`)
+    if (!crew || (c.kind !== 'user' && c.crewId !== crewId)) throw new JobError('NOT_FOUND', `Project ${crewId} not found`)
     return crew
   }
 
@@ -754,7 +754,7 @@ export class JobEngine {
 
   private assertMember(crewId: number, operatorId: number, what: string): void {
     if (!Number.isInteger(operatorId) || this.store.crewIdOfOperator(operatorId) !== crewId) {
-      throw new JobError('BAD_ARGS', `${what} must be a live operator of this crew`)
+      throw new JobError('BAD_ARGS', `${what} must be a live operator of this project`)
     }
   }
 
@@ -767,7 +767,7 @@ export class JobEngine {
       this.assertMember(crew.id, reviewerId, 'Reviewer')
       return { review: mode, reviewerId }
     }
-    if (mode === 'pm' && crew.pmId == null) throw new JobError('BAD_ARGS', 'This crew has no PM')
+    if (mode === 'pm' && crew.pmId == null) throw new JobError('BAD_ARGS', 'This project has no PM')
     return { review: mode, reviewerId: null }
   }
 

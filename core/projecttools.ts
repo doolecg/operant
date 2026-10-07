@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { extname } from 'node:path'
-import type { GitChanges, IdeId, IdeInfo } from '../shared/projects'
+import type { GitChanges, GitInfo, IdeId, IdeInfo } from '../shared/projects'
 import { runHidden, spawnHidden } from './proc'
 
 // What the project menu runs: finding and launching IDEs, and the short git summary. Every process goes through
@@ -130,7 +130,7 @@ export interface LaunchDeps {
 
 export const systemLaunch: LaunchDeps = { probe: systemProbe, spawn: spawnHidden, settleMs: 1500 }
 
-// Starts the IDE detached on the folder. Rejects with a message fit for a toast when it cannot start.
+// Starts the IDE on the folder, detached from Operant (off Windows). Rejects with a message fit for a toast when it cannot start.
 export async function openInIde(folder: string, ide: IdeId, custom: string, deps: LaunchDeps = systemLaunch): Promise<void> {
   if (typeof folder !== 'string' || !folder.trim() || /[\0-\x1f\x7f]/.test(folder)) throw new Error('The project folder is not valid')
   let file: string
@@ -173,7 +173,8 @@ export async function openInIde(folder: string, ide: IdeId, custom: string, deps
     }
     const timer: ReturnType<typeof setTimeout> = setTimeout(() => finish(), deps.settleMs)
     try {
-      child = deps.spawn(file, args, { cwd: folder, detached: true, stdio: 'ignore', shell, quiet: true })
+      // Not detached on Windows: a detached start has no console, so a console program the launcher runs (code.cmd, a custom command) opens a visible window.
+      child = deps.spawn(file, args, { cwd: folder, detached: deps.probe.platform !== 'win32', stdio: 'ignore', shell, quiet: true })
     } catch (e) {
       finish(new Error(`${name} could not start: ${e instanceof Error ? e.message : String(e)}`))
       return
@@ -197,4 +198,29 @@ export async function gitChanges(folder: string): Promise<GitChanges> {
   const branch = head.startsWith('No commits yet on ') ? head.slice('No commits yet on '.length) : (head.split('...')[0] ?? '').replace(/ \[.*\]$/, '')
   const files = lines.map((l) => ({ status: l.slice(0, 2).trim(), path: l.slice(3).replace(/^"|"$/g, '') }))
   return { isRepo: true, branch, files: files.slice(0, MAX_FILES), more: Math.max(0, files.length - MAX_FILES) }
+}
+
+// `git status --porcelain=v2 --branch` read into the branch chip's numbers.
+export function parseGitInfo(out: string): GitInfo {
+  let head = ''
+  let oid = ''
+  let ahead = 0
+  let behind = 0
+  let changes = 0
+  for (const line of out.split(/\r?\n/)) {
+    if (line.startsWith('# branch.head ')) head = line.slice(14).trim()
+    else if (line.startsWith('# branch.oid ')) oid = line.slice(13).trim()
+    else if (line.startsWith('# branch.ab ')) {
+      const m = /\+(\d+) -(\d+)/.exec(line)
+      if (m) [ahead, behind] = [Number(m[1]), Number(m[2])]
+    } else if (line && !line.startsWith('#')) changes++
+  }
+  const detached = head === '(detached)'
+  return { branch: detached ? oid.slice(0, 7) : head, ahead, behind, changes, detached }
+}
+
+// Null for a folder that is not a git repository (or where git cannot be run): the chip then shows nothing.
+export async function gitInfo(folder: string): Promise<GitInfo | null> {
+  const r = await runHidden('git', ['status', '--porcelain=v2', '--branch'], { cwd: folder, timeoutMs: 10_000, source: 'git', quiet: true }).catch(() => null)
+  return r && r.code === 0 ? parseGitInfo(r.stdout) : null
 }

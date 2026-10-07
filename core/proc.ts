@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import type { ConsoleSource } from '../shared/console'
 import { consoleLog, LineBuffer } from './console'
+import { hiddenConsoleEnv } from './hideshim'
 
 // Every background process Operant starts goes through here: it never gets a console window (windowsHide), and its
 // output and lifecycle go to the in-app console. Interactive terminal tiles (node-pty) are separate and stay visible.
@@ -41,6 +42,8 @@ const children = new Map<number, ChildProcess>()
 export function spawnHidden(cmd: string, args: string[], opts: HiddenSpawnOptions = {}): ChildProcess {
   const { source: given, quiet, ...rest } = opts
   const source = given ?? sourceFor(cmd)
+  // A detached daemon or hook anywhere in the tree would open a visible console on Windows: see hideshim.ts.
+  if (!quiet && process.platform === 'win32') rest.env = hiddenConsoleEnv(rest.env ?? process.env)
   const child = spawn(cmd, args, { ...rest, windowsHide: true })
   if (quiet) return child
   const label = describeCommand(cmd, args, source)
@@ -77,7 +80,7 @@ export function spawnHidden(cmd: string, args: string[], opts: HiddenSpawnOption
 export function runHidden(
   cmd: string,
   args: string[],
-  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; shell?: boolean; source?: ConsoleSource } = {},
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; shell?: boolean; source?: ConsoleSource; quiet?: boolean } = {},
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     let out = ''
@@ -89,6 +92,7 @@ export function runHidden(
         shell: opts.shell ?? false,
         timeout: opts.timeoutMs,
         ...(opts.source ? { source: opts.source } : {}),
+        ...(opts.quiet ? { quiet: true } : {}),
       })
       child.stdout?.on('data', (b) => (out += String(b)))
       child.stderr?.on('data', (b) => (err += String(b)))

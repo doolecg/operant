@@ -5,6 +5,7 @@
 // Set OPERANT_E2E_EXE to a packaged executable to test a build instead of the dev app.
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
@@ -61,6 +62,7 @@ const pick = async (label, option) => {
   await page.getByRole('combobox', { name: label }).click()
   await page.getByRole('option', { name: option, exact: true }).click()
 }
+const pickLearn = (settings) => ({ cli: settings.learn.cli, model: settings.learn.model, effort: settings.learn.effort })
 const lessonRow = (id) => page.locator(`[data-lesson="${id}"]`)
 
 const R1 = [
@@ -126,6 +128,70 @@ try {
     assert.ok(await sw('Write to Hindsight').isDisabled(), 'store switches wait for the master switch')
     await sw('Learn from finished jobs').click()
     await until('master on', async () => (await inv('settings:get')).learn.enabled === true)
+  })
+
+  await step('settings: Learning AI, Test, OpenCode choice and the model default', async () => {
+    const card = page.locator('div[data-slot="card"]').filter({ hasText: 'Learning AI' }).last()
+    await card.waitFor()
+    assert.deepEqual(pickLearn(await inv('settings:get')), { cli: 'claude', model: '', effort: '' })
+    await card.getByTestId('learn-ai-resolved').getByText('claude-haiku-4-5').waitFor()
+    respond([])
+    await card.getByRole('button', { name: 'Test', exact: true }).click()
+    await card.getByTestId('learn-ai-result').getByText(/^OK, /).waitFor()
+    // OpenCode: nothing in the fake list is a cheap model, so the default says so; an own model resolves.
+    await pick('Learning CLI', 'OpenCode')
+    await until('opencode saved', async () => (await inv('settings:get')).learn.cli === 'opencode')
+    await card.getByTestId('learn-ai-resolved').getByText(/pick one/).waitFor()
+    await inv('settings:set', { learn: { model: 'provider-3/model-003-instruct' } })
+    await card.getByTestId('learn-ai-resolved').getByText('provider-3/model-003-instruct').waitFor()
+    assert.equal((await inv('learn:ai')).isDefault, false)
+    // On Windows the fixture is a .cmd that an unshelled spawn can't start; either way the result is shown, honestly.
+    await card.getByRole('button', { name: 'Test', exact: true }).click()
+    await card.getByTestId('learn-ai-result').getByText(/^(OK, |Failed after )/).waitFor()
+    const t = await inv('learn:test')
+    assert.equal(t.cli, 'opencode')
+    assert.ok(t.ok || t.error.length > 0, 'a failed test explains itself')
+    await shot('learning-ai')
+    await inv('settings:set', { learn: { cli: 'claude', model: '', effort: '' } })
+    await card.getByTestId('learn-ai-resolved').getByText('claude-haiku-4-5').waitFor()
+  })
+
+  await step('settings: Learning AI on a local model server', async () => {
+    // A fake OpenAI-compatible server: /v1/models and /v1/chat/completions.
+    const seen = []
+    const srv = createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => (body += c))
+      req.on('end', () => {
+        seen.push(`${req.method} ${req.url}`)
+        res.setHeader('Content-Type', 'application/json')
+        res.end(req.url === '/v1/models' ? JSON.stringify({ data: [{ id: 'qwen2.5-7b-instruct' }, { id: 'llama-3.2-3b' }] }) : JSON.stringify({ choices: [{ message: { content: '[]' } }] }))
+      })
+    })
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+    try {
+      const url = `http://127.0.0.1:${srv.address().port}`
+      const card = page.locator('div[data-slot="card"]').filter({ hasText: 'Learning AI' }).last()
+      await pick('Learning CLI', 'Local model server')
+      await until('local saved', async () => (await inv('settings:get')).learn.cli === 'local')
+      await card.getByLabel('Local server endpoint').fill(url)
+      await card.getByLabel('Local server endpoint').press('Enter')
+      await until('url saved', async () => (await inv('settings:get')).learn.localUrl === url)
+      await card.getByText(/small local models may extract poor lessons/i).waitFor()
+      await card.getByTestId('learn-ai-resolved').getByText('qwen2.5-7b-instruct').waitFor()
+      await pick('Learning model', 'llama-3.2-3b')
+      await until('model saved', async () => (await inv('settings:get')).learn.model === 'llama-3.2-3b')
+      await card.getByRole('button', { name: 'Test', exact: true }).click()
+      await card.getByTestId('learn-ai-result').getByText(/^OK, /).waitFor()
+      assert.ok(seen.includes('POST /v1/chat/completions'), 'the test called the chat endpoint')
+      // A plain-http host outside the LAN is refused until confirmed.
+      await inv('settings:set', { learn: { localUrl: 'http://example.com:1234' } })
+      assert.match((await inv('learn:ai')).error, /unencrypted/)
+      await shot('learning-ai-local')
+    } finally {
+      await new Promise((r) => srv.close(r))
+      await inv('settings:set', { learn: { cli: 'claude', model: '', effort: '', localUrl: 'http://127.0.0.1:1234' } })
+    }
   })
 
   await step('settings: Hindsight section, remote URL is validated and saved, the key is write-only', async () => {

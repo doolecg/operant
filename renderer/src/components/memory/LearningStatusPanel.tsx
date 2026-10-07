@@ -90,6 +90,11 @@ export function LearningStatusPanel({ crewId, onShowDrafts }: { crewId: number |
                       ? ''
                       : ` · ${last.extracted} found, ${last.written} written, ${last.merged} merged, ${last.staled} marked stale${last.queued ? `, ${last.queued} queued for review` : ''}`}
                   </p>
+                  {last.model && (
+                    <p className="text-muted-foreground text-xs">
+                      AI: {last.cli === 'opencode' ? 'OpenCode' : 'Claude Code'} · <span className="font-mono">{last.model}</span>
+                    </p>
+                  )}
                   {last.error && <p className="text-destructive text-xs">Did nothing: {last.error}</p>}
                   {last.skipped.length > 0 && (
                     <ul className="text-muted-foreground list-disc pl-5 text-xs">

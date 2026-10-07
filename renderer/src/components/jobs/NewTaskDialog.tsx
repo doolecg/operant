@@ -1,14 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Save, Trash2 } from 'lucide-react'
 import { decodeIpcError } from '@shared/ipc'
 import type { MasterCli, Run, TeamSeat } from '@shared/types'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useCreateRun, usePresets, useTeams } from '@/lib/queries'
+import { useCreateRun, useCreateTeam, usePresets, useTeams } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { ModelEffortSelect } from './ModelEffortSelect'
 
@@ -26,8 +26,10 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
   const teamsQuery = useTeams()
   const presetsQuery = usePresets()
   const teams = teamsQuery.data ?? []
+  const shown = teams.filter((t) => !t.hidden)
   const presets = presetsQuery.data ?? []
   const create = useCreateRun()
+  const saveTeam = useCreateTeam()
   const [mode, setMode] = useState<'solo' | 'team'>('solo')
   const [task, setTask] = useState('')
   const [cli, setCli] = useState<MasterCli>('claude')
@@ -36,6 +38,7 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
   const [teamId, setTeamId] = useState<string>(CUSTOM)
   const [seats, setSeats] = useState<TeamSeat[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [teamName, setTeamName] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -47,6 +50,7 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
     setTeamId(CUSTOM)
     setSeats([])
     setError(null)
+    setTeamName(null)
     // Teams and presets are edited elsewhere, so each opening reads them fresh.
     void teamsQuery.refetch()
     void presetsQuery.refetch()
@@ -62,6 +66,23 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
   const addSeat = () => {
     const first = presets[0]
     if (first) setSeats((all) => [...all, { presetId: first.id, count: 1, model: first.model, effort: first.effort }])
+  }
+
+  // The seats chosen here become a team of the user's own, picked straight away.
+  const saveAsTeam = () => {
+    const name = (teamName ?? '').trim()
+    if (!name) return setError('Give the team a name.')
+    setError(null)
+    saveTeam.mutate(
+      { name, seats: seats.map((s) => ({ ...s, model: s.model.trim() })) },
+      {
+        onSuccess: (team) => {
+          setTeamId(String(team.id))
+          setTeamName(null)
+        },
+        onError: (err) => setError(decodeIpcError(err).message),
+      },
+    )
   }
 
   const submit = (e: FormEvent) => {
@@ -94,14 +115,15 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <form onSubmit={submit} className="space-y-4">
+      <DialogContent size="lg">
+        <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Start new task</DialogTitle>
             <DialogDescription>The project's Master runs it alone, or with a team of seats as its own subagents.</DialogDescription>
           </DialogHeader>
 
-          <div role="group" aria-label="Run type" className="bg-muted flex w-fit rounded-md p-0.5">
+          <DialogBody>
+            <div role="group" aria-label="Run type" className="bg-muted flex w-fit rounded-md p-0.5">
             {(['solo', 'team'] as const).map((m) => (
               <button
                 key={m}
@@ -155,11 +177,22 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={CUSTOM}>Custom seats</SelectItem>
-                    {teams.map((t) => (
-                      <SelectItem key={t.id} value={String(t.id)}>
-                        {t.name}
-                      </SelectItem>
-                    ))}
+                    {[
+                      { label: 'Built-in', list: shown.filter((t) => t.builtin) },
+                      { label: 'Yours', list: shown.filter((t) => !t.builtin) },
+                    ].map(
+                      (g) =>
+                        g.list.length > 0 && (
+                          <SelectGroup key={g.label}>
+                            <SelectLabel>{g.label}</SelectLabel>
+                            {g.list.map((t) => (
+                              <SelectItem key={t.id} value={String(t.id)}>
+                                {t.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ),
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -167,11 +200,43 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Seats</span>
-                  <Button type="button" variant="outline" size="sm" onClick={addSeat} disabled={presets.length === 0}>
-                    <Plus /> Add seat
-                  </Button>
+                  <div className="flex gap-2">
+                    {seats.length > 0 && teamName === null && (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setTeamName('')}>
+                        <Save /> Save as team
+                      </Button>
+                    )}
+                    <Button type="button" variant="outline" size="sm" onClick={addSeat} disabled={presets.length === 0}>
+                      <Plus /> Add seat
+                    </Button>
+                  </div>
                 </div>
+                {teamName !== null && (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      aria-label="Team name"
+                      placeholder="Team name"
+                      maxLength={80}
+                      value={teamName}
+                      autoFocus
+                      onChange={(e) => setTeamName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          saveAsTeam()
+                        }
+                      }}
+                    />
+                    <Button type="button" size="sm" onClick={saveAsTeam} disabled={saveTeam.isPending}>
+                      Save team
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setTeamName(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                )}
                 {seats.length === 0 && <p className="text-muted-foreground text-xs">No seats yet.</p>}
+                <div className="grid gap-2 xl:grid-cols-2">
                 {seats.map((s, i) => (
                   <div key={i} className="space-y-1.5 rounded-md border p-2">
                     <div className="flex items-center gap-2">
@@ -215,6 +280,7 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
                     />
                   </div>
                 ))}
+                </div>
               </div>
             </div>
           )}
@@ -224,6 +290,8 @@ export function NewTaskDialog({ crewId, open, onOpenChange, onCreated }: Props) 
               {error}
             </p>
           )}
+
+          </DialogBody>
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>

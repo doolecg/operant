@@ -78,7 +78,7 @@ export class ProjectGroups {
   // Puts a project in a group (null = ungrouped). With `beforeCrewId` it also takes that project's place in the
   // saved order, so a drop between two rows lands there; without it, it goes to the end of the group it joins.
   move(crewId: number, groupId: number | null, beforeCrewId?: number): void {
-    if (!this.db.prepare('SELECT 1 FROM crews WHERE id = ?').get(crewId)) throw new Error(`Crew ${String(crewId)} not found`)
+    if (!this.db.prepare('SELECT 1 FROM crews WHERE id = ?').get(crewId)) throw new Error(`Project ${String(crewId)} not found`)
     if (groupId !== null) this.get(groupId)
     const before = (this.db.prepare('SELECT group_id FROM crews WHERE id = ?').get(crewId) as Row).group_id
     this.db.prepare('UPDATE crews SET group_id = ? WHERE id = ?').run(groupId, crewId)

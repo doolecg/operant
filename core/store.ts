@@ -34,17 +34,21 @@ import type {
   RunStatus,
   SeatFields,
   DiscordBot,
+  DiscordBotAi,
   DiscordBotInput,
   DiscordBotPatch,
   DiscordPairing,
+  DiscordThread,
+  DiscordThreadArchive,
   Team,
   TeamInput,
   TeamLimits,
   TeamPatch,
   TeamSeat,
 } from '../shared/types'
-import { RUN_TRANSITIONS } from '../shared/types'
-import { LESSONS_MIGRATION } from './lessons-store'
+import { DEFAULT_DISCORD_AI, RUN_TRANSITIONS } from '../shared/types'
+import { LEARN_AI_MIGRATION, LESSONS_MIGRATION } from './lessons-store'
+import { BUILTIN_TEAMS, shippedSeats } from './team-presets'
 
 // Append-only: each entry runs once, in order, tracked by PRAGMA user_version.
 export const MIGRATIONS: string[] = [
@@ -365,6 +369,30 @@ export const MIGRATIONS: string[] = [
   // opens an "Update tracker" board job for the project manager.
   `ALTER TABLE crews ADD COLUMN tracker_file TEXT NOT NULL DEFAULT '';
    ALTER TABLE crews ADD COLUMN tracker_jobs INTEGER NOT NULL DEFAULT 1;`,
+  // Which AI each learn run asked.
+  LEARN_AI_MIGRATION,
+  // Discord threads: a thread per request, named and routed. crew_id and run_id are plain numbers.
+  `ALTER TABLE discord_bots ADD COLUMN thread_per_request INTEGER NOT NULL DEFAULT 1;
+   ALTER TABLE discord_bots ADD COLUMN thread_names TEXT NOT NULL DEFAULT 'auto';
+   ALTER TABLE discord_bots ADD COLUMN thread_archive INTEGER NOT NULL DEFAULT 1440;
+   ALTER TABLE discord_bots ADD COLUMN ai TEXT NOT NULL DEFAULT '{}';
+   CREATE TABLE discord_threads (
+     bot_id INTEGER NOT NULL REFERENCES discord_bots(id) ON DELETE CASCADE,
+     thread_id TEXT NOT NULL,
+     parent_id TEXT NOT NULL,
+     user_id TEXT NOT NULL,
+     crew_id INTEGER,
+     run_id INTEGER,
+     title TEXT NOT NULL,
+     name TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (bot_id, thread_id)
+   );`,
+  // Teams that ship with Operant: a stable key, a description, and whether the user edited it.
+  `ALTER TABLE teams ADD COLUMN builtin TEXT;
+   ALTER TABLE teams ADD COLUMN description TEXT;
+   ALTER TABLE teams ADD COLUMN modified INTEGER NOT NULL DEFAULT 0;
+   CREATE UNIQUE INDEX teams_builtin ON teams (builtin) WHERE builtin IS NOT NULL;`,
 ]
 
 type Row = Record<string, unknown>
@@ -484,6 +512,15 @@ const parseJson = <T>(v: unknown, fallback: T): T => {
     return fallback
   }
 }
+const toBotAi = (v: unknown): DiscordBotAi => {
+  const o = parseJson<Partial<DiscordBotAi>>(v, {})
+  return {
+    cli: o.cli === 'opencode' || o.cli === 'local' ? o.cli : 'claude',
+    model: typeof o.model === 'string' ? o.model : '',
+    effort: typeof o.effort === 'string' ? o.effort : '',
+    localUrl: typeof o.localUrl === 'string' && o.localUrl ? o.localUrl : DEFAULT_DISCORD_AI.localUrl,
+  }
+}
 const toDiscordBot = (r: Row): DiscordBot => ({
   id: Number(r.id),
   name: String(r.name),
@@ -496,6 +533,21 @@ const toDiscordBot = (r: Row): DiscordBot => ({
   confirmStart: Number(r.confirm_start) === 1,
   enabled: Number(r.enabled) === 1,
   masterCli: r.master_cli === 'opencode' ? 'opencode' : 'claude',
+  threadPerRequest: Number(r.thread_per_request) !== 0,
+  threadNames: r.thread_names === 'ai' ? 'ai' : 'auto',
+  ai: toBotAi(r.ai),
+  threadArchive: [60, 4320, 10080].includes(Number(r.thread_archive)) ? (Number(r.thread_archive) as DiscordThreadArchive) : 1440,
+})
+const toDiscordThread = (r: Row): DiscordThread => ({
+  botId: Number(r.bot_id),
+  threadId: String(r.thread_id),
+  parentId: String(r.parent_id),
+  userId: String(r.user_id),
+  crewId: r.crew_id == null ? null : Number(r.crew_id),
+  runId: r.run_id == null ? null : Number(r.run_id),
+  title: String(r.title),
+  name: String(r.name),
+  createdAt: Number(r.created_at),
 })
 const DEFAULT_LIMITS: TeamLimits = { maxWorkers: 0, topTier: '', tokenBudget: 0 }
 const toLimits = (v: unknown): TeamLimits => ({ ...DEFAULT_LIMITS, ...parseJson<Partial<TeamLimits>>(v, {}) })
@@ -503,12 +555,16 @@ const toSeats = (v: unknown): TeamSeat[] => {
   const a = parseJson<unknown>(v, [])
   return Array.isArray(a) ? (a as TeamSeat[]) : []
 }
-const toTeam = (r: Row): Team => ({
+const toTeam = (r: Row, hidden: string[] = []): Team => ({
   id: Number(r.id),
   name: String(r.name),
   seats: toSeats(r.seats),
   limits: toLimits(r.limits),
   rules: String(r.rules),
+  builtin: r.builtin == null ? null : String(r.builtin),
+  description: r.description == null ? '' : String(r.description),
+  modified: Number(r.modified) === 1,
+  hidden: r.builtin != null && hidden.includes(String(r.builtin)),
   updatedAt: Number(r.updated_at),
 })
 const toRun = (r: Row): Run => ({
@@ -930,6 +986,7 @@ export class Store {
     }
     this.migrate()
     this.seedBuiltinPresets()
+    this.seedBuiltinTeams()
   }
 
   get schemaVersion(): number {
@@ -979,9 +1036,9 @@ export class Store {
 
   updateCrew(id: number, patch: { name?: string; folder?: string; view?: CrewView; pmId?: number | null; discordChannels?: string[]; trackerFile?: string; trackerJobs?: boolean }): Crew {
     const cur = this.getCrew(id)
-    if (!cur) throw new Error(`Crew ${id} not found`)
+    if (!cur) throw new Error(`Project ${id} not found`)
     const pmId = patch.pmId === undefined ? cur.pmId : patch.pmId
-    if (pmId != null && this.crewIdOfOperator(pmId) !== id) throw new Error('The PM must be a live operator of this crew')
+    if (pmId != null && this.crewIdOfOperator(pmId) !== id) throw new Error('The PM must be a live operator of this project')
     const row = this.db
       .prepare('UPDATE crews SET name = ?, folder = ?, view = ?, pm_id = ?, discord_channels = ?, tracker_file = ?, tracker_jobs = ? WHERE id = ? RETURNING *')
       .get(
@@ -1011,7 +1068,7 @@ export class Store {
 
   getCrewView(id: number): CrewView {
     const crew = this.getCrew(id)
-    if (!crew) throw new Error(`Crew ${id} not found`)
+    if (!crew) throw new Error(`Project ${id} not found`)
     return crew.view
   }
 
@@ -1022,7 +1079,7 @@ export class Store {
   // The tiles view's split tree, stored as JSON; its shape belongs to the renderer.
   getTileLayout(crewId: number): unknown {
     const row = this.db.prepare('SELECT tile_layout FROM crews WHERE id = ?').get(crewId) as Row | undefined
-    if (!row) throw new Error(`Crew ${crewId} not found`)
+    if (!row) throw new Error(`Project ${crewId} not found`)
     try {
       return JSON.parse(String(row.tile_layout))
     } catch {
@@ -1031,7 +1088,7 @@ export class Store {
   }
 
   setTileLayout(crewId: number, layout: unknown): void {
-    if (!this.getCrew(crewId)) throw new Error(`Crew ${crewId} not found`)
+    if (!this.getCrew(crewId)) throw new Error(`Project ${crewId} not found`)
     this.db.prepare('UPDATE crews SET tile_layout = ? WHERE id = ?').run(JSON.stringify(layout ?? {}), crewId)
   }
 
@@ -1142,7 +1199,7 @@ export class Store {
          WHERE p.crew_id = ? AND s.role = ? AND s.deleted_at IS NULL AND s.id <> ?`,
       )
       .get(crewId, role, exceptOperatorId ?? -1)
-    if (taken) throw new Error(`Role "${role}" is already used by another operator in this crew`)
+    if (taken) throw new Error(`Role "${role}" is already used by another operator in this project`)
   }
 
   createOperator(squadId: number, role: string, agent: AgentKind, model: string): Operator {
@@ -1176,7 +1233,7 @@ export class Store {
     const squadId = patch.squadId ?? cur.squadId
     if (squadId !== cur.squadId) {
       const target = this.getSquad(squadId)
-      if (target?.crewId !== crewId) throw new Error('An operator can only move to a squad in its own crew')
+      if (target?.crewId !== crewId) throw new Error('An operator can only move to a squad in its own project')
       if (target.system || cur.kind === 'master') throw new Error('The Master Terminal stays in the system squad')
     }
     const role = patch.role ?? cur.role
@@ -1263,7 +1320,7 @@ export class Store {
   ensureMaster(crewId: number): Operator {
     const existing = this.getMaster(crewId)
     if (existing) return existing
-    if (!this.getCrew(crewId)) throw new Error(`Crew ${crewId} not found`)
+    if (!this.getCrew(crewId)) throw new Error(`Project ${crewId} not found`)
     return this.tx(() => {
       let squad = this.db.prepare('SELECT id FROM squads WHERE crew_id = ? AND system = 1').get(crewId) as Row | undefined
       squad ??= this.db.prepare('INSERT INTO squads (crew_id, name, system) VALUES (?, ?, 1) RETURNING id').get(crewId, SYSTEM_SQUAD) as Row
@@ -1344,11 +1401,13 @@ export class Store {
 
   // Re-adds any built-in preset that is missing; returns the ones added.
   restoreBuiltins(): Preset[] {
-    return this.tx(() =>
-      BUILTIN_PRESETS.filter((b) => !this.getPresetByBuiltin(b.builtin!)).map((b) =>
+    return this.tx(() => {
+      const added = BUILTIN_PRESETS.filter((b) => !this.getPresetByBuiltin(b.builtin!)).map((b) =>
         this.insertPreset({ ...SEAT_DEFAULTS, ...b, name: this.presetNameFree(b.name, null) }),
-      ),
-    )
+      )
+      this.seedBuiltinTeams()
+      return added
+    })
   }
 
   listPresets(): Preset[] {
@@ -1536,7 +1595,7 @@ export class Store {
     const dep = this.getJob(dependsOnId)
     if (!job || !dep) throw new Error('Job not found')
     if (jobId === dependsOnId) throw new Error('A job cannot depend on itself')
-    if (job.crewId !== dep.crewId) throw new Error('Jobs can only depend on jobs in the same crew')
+    if (job.crewId !== dep.crewId) throw new Error('Jobs can only depend on jobs in the same project')
     const cycle = this.db
       .prepare(
         `WITH RECURSIVE up(id) AS (
@@ -1558,8 +1617,8 @@ export class Store {
   createDiscordBot(input: DiscordBotInput): DiscordBot {
     const row = this.db
       .prepare(
-        `INSERT INTO discord_bots (name, rules, allowlist, home_channel, general_channel, mention_only, confirm_start, enabled, master_cli, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+        `INSERT INTO discord_bots (name, rules, allowlist, home_channel, general_channel, mention_only, confirm_start, enabled, master_cli, thread_per_request, thread_names, thread_archive, ai, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       )
       .get(
         input.name,
@@ -1571,6 +1630,10 @@ export class Store {
         input.confirmStart === false ? 0 : 1,
         input.enabled ? 1 : 0,
         input.masterCli ?? 'claude',
+        input.threadPerRequest === false ? 0 : 1,
+        input.threadNames ?? 'auto',
+        input.threadArchive ?? 1440,
+        JSON.stringify({ ...DEFAULT_DISCORD_AI, ...input.ai }),
         this.now(),
       ) as Row
     return toDiscordBot(row)
@@ -1591,7 +1654,8 @@ export class Store {
     const row = this.db
       .prepare(
         `UPDATE discord_bots SET name = ?, rules = ?, allowlist = ?, home_channel = ?, general_channel = ?, token_ref = ?,
-           mention_only = ?, confirm_start = ?, enabled = ?, master_cli = ?, updated_at = ? WHERE id = ? RETURNING *`,
+           mention_only = ?, confirm_start = ?, enabled = ?, master_cli = ?,
+           thread_per_request = ?, thread_names = ?, thread_archive = ?, ai = ?, updated_at = ? WHERE id = ? RETURNING *`,
       )
       .get(
         patch.name ?? cur.name,
@@ -1604,6 +1668,10 @@ export class Store {
         (patch.confirmStart ?? cur.confirmStart) ? 1 : 0,
         (patch.enabled ?? cur.enabled) ? 1 : 0,
         patch.masterCli ?? cur.masterCli ?? 'claude',
+        (patch.threadPerRequest ?? cur.threadPerRequest) ? 1 : 0,
+        patch.threadNames ?? cur.threadNames,
+        patch.threadArchive ?? cur.threadArchive,
+        JSON.stringify({ ...cur.ai, ...patch.ai }),
         this.now(),
         id,
       ) as Row
@@ -1635,53 +1703,138 @@ export class Store {
     this.db.prepare('DELETE FROM discord_pairings WHERE bot_id = ? AND created_at < ?').run(botId, olderThan)
   }
 
+  getDiscordThread(botId: number, threadId: string): DiscordThread | null {
+    const r = this.db.prepare('SELECT * FROM discord_threads WHERE bot_id = ? AND thread_id = ?').get(botId, threadId) as Row | undefined
+    return r ? toDiscordThread(r) : null
+  }
+
+  listDiscordThreads(botId: number): DiscordThread[] {
+    return (this.db.prepare('SELECT * FROM discord_threads WHERE bot_id = ? ORDER BY created_at, thread_id').all(botId) as Row[]).map(toDiscordThread)
+  }
+
+  addDiscordThread(t: DiscordThread): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO discord_threads (bot_id, thread_id, parent_id, user_id, crew_id, run_id, title, name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(t.botId, t.threadId, t.parentId, t.userId, t.crewId, t.runId, t.title, t.name, t.createdAt)
+  }
+
+  updateDiscordThread(botId: number, threadId: string, patch: Partial<Pick<DiscordThread, 'crewId' | 'runId' | 'name'>>): void {
+    const cur = this.getDiscordThread(botId, threadId)
+    if (!cur) return
+    this.db
+      .prepare('UPDATE discord_threads SET crew_id = ?, run_id = ?, name = ? WHERE bot_id = ? AND thread_id = ?')
+      .run(patch.crewId === undefined ? cur.crewId : patch.crewId, patch.runId === undefined ? cur.runId : patch.runId, patch.name ?? cur.name, botId, threadId)
+  }
+
   deleteDiscordBot(id: number): void {
     this.db.prepare('DELETE FROM discord_bots WHERE id = ?').run(id)
   }
 
   // Teams
 
-  createTeam(input: TeamInput): Team {
+  createTeam(input: TeamInput, builtin: string | null = null): Team {
     const row = this.db
-      .prepare('INSERT INTO teams (name, seats, limits, rules, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING *')
+      .prepare('INSERT INTO teams (name, seats, limits, rules, description, builtin, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *')
       .get(
         input.name,
         JSON.stringify(input.seats ?? []),
         JSON.stringify({ ...DEFAULT_LIMITS, ...input.limits }),
         input.rules ?? '',
+        input.description ?? '',
+        builtin,
         this.now(),
       ) as Row
-    return toTeam(row)
+    return toTeam(row, this.hiddenTeams())
   }
 
+  private hiddenTeams(): string[] {
+    const v = this.getJson('teams.hidden')
+    return Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : []
+  }
+
+  // Built-in teams first, in the order they ship, then the user's by name.
   listTeams(): Team[] {
-    return (this.db.prepare('SELECT * FROM teams ORDER BY name').all() as Row[]).map(toTeam)
+    const hidden = this.hiddenTeams()
+    return (this.db.prepare('SELECT * FROM teams ORDER BY builtin IS NULL, CASE WHEN builtin IS NULL THEN 0 ELSE id END, name').all() as Row[]).map((r) =>
+      toTeam(r, hidden),
+    )
   }
 
   getTeam(id: number): Team | null {
     const row = this.db.prepare('SELECT * FROM teams WHERE id = ?').get(id) as Row | undefined
-    return row ? toTeam(row) : null
+    return row ? toTeam(row, this.hiddenTeams()) : null
   }
 
   updateTeam(id: number, patch: TeamPatch): Team {
     const cur = this.getTeam(id)
     if (!cur) throw new Error(`Team ${id} not found`)
     const row = this.db
-      .prepare('UPDATE teams SET name = ?, seats = ?, limits = ?, rules = ?, updated_at = ? WHERE id = ? RETURNING *')
+      .prepare('UPDATE teams SET name = ?, seats = ?, limits = ?, rules = ?, description = ?, modified = ?, updated_at = ? WHERE id = ? RETURNING *')
       .get(
         patch.name ?? cur.name,
         JSON.stringify(patch.seats ?? cur.seats),
         JSON.stringify({ ...cur.limits, ...patch.limits }),
         patch.rules ?? cur.rules,
+        patch.description ?? cur.description,
+        cur.builtin != null || cur.modified ? 1 : 0,
         this.now(),
         id,
       ) as Row
-    return toTeam(row)
+    return toTeam(row, this.hiddenTeams())
   }
 
-  // Runs sent with it keep their own copy of its seats and limits.
+  // Runs sent with it keep their own copy of its seats and limits. Built-ins stay (hide them instead).
   deleteTeam(id: number): void {
+    if (this.getTeam(id)?.builtin != null) throw new Error('Built-in teams cannot be deleted: hide it instead')
     this.db.prepare('DELETE FROM teams WHERE id = ?').run(id)
+  }
+
+  teamNameFree(name: string, exceptId: number | null): string {
+    let candidate = name
+    for (let n = 2; this.db.prepare('SELECT 1 FROM teams WHERE name = ? AND id <> ?').get(candidate, exceptId ?? -1); n++) {
+      candidate = `${name} (${n})`
+    }
+    return candidate
+  }
+
+  // A user team with the same seats, limits and rules.
+  duplicateTeam(id: number, name?: string): Team {
+    const src = this.getTeam(id)
+    if (!src) throw new Error(`Team ${id} not found`)
+    return this.createTeam({ ...src, name: this.teamNameFree(name ?? `${src.name} copy`, null) })
+  }
+
+  // Inserts any shipped team that is missing. One the user edited or hid is left as it is, and a team whose
+  // seat presets were deleted waits until they are restored.
+  seedBuiltinTeams(): void {
+    this.tx(() => {
+      for (const def of BUILTIN_TEAMS) {
+        if (this.db.prepare('SELECT 1 FROM teams WHERE builtin = ?').get(def.builtin)) continue
+        const seats = shippedSeats(def, (k) => this.getPresetByBuiltin(k))
+        if (seats) this.createTeam({ name: this.teamNameFree(def.name, null), description: def.description, seats, limits: def.limits, rules: def.rules }, def.builtin)
+      }
+    })
+  }
+
+  resetTeam(id: number): Team {
+    const cur = this.getTeam(id)
+    const def = BUILTIN_TEAMS.find((b) => b.builtin === cur?.builtin)
+    if (!cur || !def) throw new Error('Only built-in teams can be reset')
+    const seats = shippedSeats(def, (k) => this.getPresetByBuiltin(k))
+    if (!seats) throw new Error('A seat preset this team uses was deleted: restore the built-in presets first')
+    const row = this.db
+      .prepare('UPDATE teams SET name = ?, seats = ?, limits = ?, rules = ?, description = ?, modified = 0, updated_at = ? WHERE id = ? RETURNING *')
+      .get(this.teamNameFree(def.name, id), JSON.stringify(seats), JSON.stringify(def.limits), def.rules, def.description, this.now(), id) as Row
+    return toTeam(row, this.hiddenTeams())
+  }
+
+  setTeamHidden(id: number, hidden: boolean): Team {
+    const cur = this.getTeam(id)
+    if (!cur) throw new Error(`Team ${id} not found`)
+    if (cur.builtin == null) throw new Error('Only built-in teams can be hidden')
+    const rest = this.hiddenTeams().filter((k) => k !== cur.builtin)
+    this.setJson('teams.hidden', hidden ? [...rest, cur.builtin] : rest)
+    return { ...cur, hidden }
   }
 
   // Runs (dashboard jobs, JOB#)
@@ -1837,7 +1990,7 @@ export class Store {
 
   private assertLinkEnds(crewId: number, fromId: number, toId: number): void {
     for (const id of [fromId, toId]) {
-      if (this.crewIdOfOperator(id) !== crewId) throw new Error('A link needs two live operators of the same crew')
+      if (this.crewIdOfOperator(id) !== crewId) throw new Error('A link needs two live operators of the same project')
     }
     if (fromId === toId) throw new Error('A link needs two different operators')
   }
@@ -2030,7 +2183,7 @@ export class Store {
 
   // Spend is `usage` plus `spend_archive`. Archived days count when the day starts at or after `since`,
   // and `retentionDays` keeps purges older than any window the budget or Cost tab asks about.
-  // Per crew it covers the crew's operators (Master slot included) and its scratch terminals.
+  // Per crew it covers the project's operators (Master slot included) and its scratch terminals.
   spendSince(since: number, crewId?: number): number {
     const sum = (sql: string, ...args: number[]): number => Number((this.db.prepare(sql).get(...args) as Row).total)
     if (crewId == null) {

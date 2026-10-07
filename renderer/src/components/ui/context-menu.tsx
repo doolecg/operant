@@ -13,7 +13,7 @@ const ContextMenuTrigger = ContextMenuPrimitive.Trigger
 function ContextMenuContent({ className, ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   return (
     <ContextMenuPrimitive.Portal>
-      <ContextMenuPrimitive.Content data-slot="context-menu-content" className={cn(surface, "max-h-(--radix-context-menu-content-available-height) overflow-y-auto", className)} {...props} />
+      <ContextMenuPrimitive.Content data-slot="context-menu-content" collisionPadding={8} className={cn(surface, "max-h-(--radix-context-menu-content-available-height) overflow-y-auto", className)} {...props} />
     </ContextMenuPrimitive.Portal>
   )
 }

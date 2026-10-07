@@ -8,7 +8,7 @@ import { useSaveSettings, useSettings } from '@/lib/queries'
 import { KeyRecorder, Row } from '../parts'
 
 const GROUPS: Array<{ title: string; ids: KeyAction[] }> = [
-  { title: 'Crews', ids: ['newCrew', 'indexCrew', 'openSettings', 'toggleConsole'] },
+  { title: 'Projects', ids: ['newCrew', 'indexCrew', 'openSettings', 'toggleConsole'] },
   { title: 'Project actions', ids: ['newShell', 'openInIde', 'toggleSidebar'] },
   { title: 'View', ids: ['zoomIn', 'zoomOut', 'zoomReset'] },
   { title: 'Media (Windows)', ids: ['mediaPlayPause', 'mediaNext', 'mediaPrev', 'mediaShuffle'] },

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ModelList } from '@shared/models'
 import { decodeIpcError } from '@shared/ipc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { SearchSelect } from '@/components/ui/search-select'
+import { SearchSelect, type SearchOption } from '@/components/ui/search-select'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useModels } from '@/lib/queries'
+import { useModels, useRefreshModels } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
 export type ModelCli = 'claude' | 'opencode'
@@ -27,15 +28,44 @@ interface Props {
   className?: string
 }
 
+const AUTH_HINT = 'Not connected: run `opencode auth login` in a terminal, then Refresh'
+
+// The grouped options of an OpenCode list: friendly name with the raw id muted, "free" badge, provider headings. A model
+// that is selected but no longer listed stays selectable at the top.
+export function modelOptions(list: ModelList | undefined, model: string): SearchOption[] {
+  const out: SearchOption[] = [{ value: DEFAULT, label: 'Default model' }]
+  const ids = new Set(list?.models ?? [])
+  if (model !== '' && !ids.has(model)) out.push({ value: model, label: model, group: 'Current selection', groupNote: 'Not in the current list' })
+  if (list?.providers) {
+    for (const p of list.providers) {
+      for (const m of p.models) {
+        out.push({
+          value: m.id,
+          label: m.name,
+          detail: m.id,
+          ...(m.free ? { badge: 'free' } : {}),
+          group: p.providerName,
+          ...(p.connected ? {} : { groupNote: AUTH_HINT }),
+        })
+      }
+    }
+  } else for (const id of list?.models ?? []) out.push({ value: id, label: id })
+  out.push({ value: CUSTOM, label: 'Custom id…' })
+  return out
+}
+
 // CLI, then that CLI's models, then the chosen model's efforts (hidden when it has none). The lists come from the CLI itself.
 export function ModelEffortSelect({ cli, onCliChange, model, onModelChange, effort, onEffortChange, label = '', className }: Props) {
   const models = useModels(cli)
+  const { refresh, refreshing } = useRefreshModels(cli)
   const list = models.data?.models ?? []
   const efforts = models.data?.efforts[model] ?? []
   const [custom, setCustom] = useState(false)
   const prefix = label ? `${label} ` : ''
   const loaded = models.data !== undefined && !models.isFetching
-  const isCustom = custom || (loaded && model !== '' && !list.includes(model))
+  const searchable = cli === 'opencode' || list.length > SEARCH_FROM
+  // A Claude model outside the list is edited as text; an OpenCode one stays in the grouped list.
+  const isCustom = custom || (!searchable && loaded && model !== '' && !list.includes(model))
   const message = models.data?.error ?? (models.error ? decodeIpcError(models.error).message : null)
 
   // A new CLI reloads the list; once it arrives, a model or effort it does not offer is cleared.
@@ -82,14 +112,16 @@ export function ModelEffortSelect({ cli, onCliChange, model, onModelChange, effo
           </SelectContent>
         </Select>
       )}
-      {list.length > SEARCH_FROM ? (
+      {searchable ? (
         <SearchSelect
           aria-label={`${prefix}model`}
-          className="w-52 min-w-0 font-mono text-xs"
+          className="w-64 min-w-0 text-xs"
           placeholder={models.isFetching ? 'Loading models…' : 'Model'}
           value={isCustom ? CUSTOM : model === '' ? DEFAULT : model}
           onValueChange={pickModel}
-          options={[{ value: DEFAULT, label: 'Default model' }, ...list.map((m) => ({ value: m, label: m })), { value: CUSTOM, label: 'Custom id…' }]}
+          options={modelOptions(models.data, custom ? '' : model)}
+          onRefresh={cli === 'opencode' ? () => void refresh() : undefined}
+          refreshing={refreshing}
         />
       ) : (
         <Select value={isCustom ? CUSTOM : model === '' ? DEFAULT : model} onValueChange={pickModel}>

@@ -13,7 +13,7 @@ function Link({ href, children }: { href: string; children: ReactNode }) {
       href={href}
       rel="noreferrer noopener"
       title={href}
-      className="text-primary underline underline-offset-2 break-all"
+      className="text-link underline underline-offset-2 break-all"
       onClick={(e) => {
         e.preventDefault()
         void bridge().invoke('app:openExternal', href)

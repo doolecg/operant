@@ -78,9 +78,18 @@ try {
   await dialog.getByText('Token saved').waitFor()
   assert.equal(await dialog.getByLabel('Bot token').count(), 0)
   await dialog.getByLabel('Answer only when mentioned').click()
+  // Thread and AI options live in the same dialog.
+  await dialog.getByLabel('Thread per request').waitFor()
+  await dialog.getByLabel('Thread names').waitFor()
+  await dialog.getByLabel('Auto-archive after').waitFor()
+  await dialog.getByLabel('AI that answers in Discord').click()
+  await page.getByRole('option', { name: 'Local model (free)' }).click()
+  await dialog.getByLabel('Local server address').waitFor()
+  await dialog.getByRole('button', { name: 'Test AI' }).waitFor()
   await dialog.getByRole('button', { name: 'Save bot' }).click()
   await dialog.waitFor({ state: 'detached' })
   await until('mention-only saved', async () => (await inv('discord:list'))[0].mentionOnly === false)
+  assert.equal((await inv('discord:list'))[0].ai.cli, 'local')
 
   // Allowlist add and remove, applied live.
   const allow = page.getByLabel('Add to Allowlist (user IDs)', { exact: true })

@@ -180,7 +180,7 @@ describe('Operant', () => {
     const { crew } = await seedOperator()
     expect(crew.name).toBe('shop')
     const messages = store.recentEvents(10).map((e) => e.message)
-    expect(messages).toEqual(['Operator lead@shop added', 'Squad dev added', 'Crew shop created'])
+    expect(messages).toEqual(['Operator lead@shop added', 'Squad dev added', 'Project shop created'])
     expect(store.recentEvents(10).every((e) => e.crewId === crew.id)).toBe(true)
   })
 

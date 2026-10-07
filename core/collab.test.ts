@@ -137,7 +137,7 @@ describe('Collab', () => {
       store.createLink(crewId, rev.operatorId, a.operatorId, '')
       bus.send({ kind: 'operator', operatorId: b.operatorId }, 'builder', 'hi')
       const r = await ok(a, 'whoami')
-      expect(r.text).toContain('You are builder@shop, an operator in squad dev of crew shop.')
+      expect(r.text).toContain('You are builder@shop, an operator in squad dev of project shop.')
       expect(r.text).toContain('PM: lead@shop')
       expect(r.text).toContain('Links: to lead@shop "reports to"; from reviewer@shop')
       expect(r.text).toContain('Unread messages: 1')
@@ -145,7 +145,7 @@ describe('Collab', () => {
     })
 
     it('flags the PM and the Master Terminal', async () => {
-      expect((await ok(pm, 'whoami')).text).toContain('and the crew PM')
+      expect((await ok(pm, 'whoami')).text).toContain('and the project PM')
       const m = await ok(master, 'whoami')
       expect(m.text).toContain('You are master@shop, the Master Terminal')
       expect(m.text).toContain('NOT user consent')

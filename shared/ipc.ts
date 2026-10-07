@@ -1,5 +1,6 @@
+import type { ModelList } from './models'
 import type { ConsoleLine, ConsoleProcess, ConsoleSource } from './console'
-import type { DraftStatus, LearnRunInfo, LearnStatus, LearnStore, Lesson, LessonFilter, LessonPatch, LessonStatus, MemoryFile, SkillDraft } from './learn'
+import type { DraftStatus, LearnAi, LearnRunInfo, LearnStatus, LearnTestResult, LearnStore, Lesson, LessonFilter, LessonPatch, LessonStatus, MemoryFile, SkillDraft } from './learn'
 import type {
   AgentKind,
   AppInfo,
@@ -23,6 +24,8 @@ import type {
   ChangePlan,
   Crew,
   CrewCounts,
+  DiscordAiTestResult,
+  DiscordBotAi,
   DiscordBotInput,
   DiscordBotPatch,
   DiscordBotView,
@@ -78,6 +81,7 @@ import type {
   Squad,
   SquadDelete,
   Team,
+  TeamImportPreview,
   TeamInput,
   TeamPatch,
   UnreadCounts,
@@ -85,7 +89,8 @@ import type {
   UsageBreakdownResult,
   UsagePeriod,
 } from './types'
-import type { GitChanges, IdeId, IdeInfo, ProjectGroup } from './projects'
+import type { GitChanges, GitInfo, IdeId, IdeInfo, ProjectGroup } from './projects'
+import type { GitBranches, GitCommit, GitCommitDetails, GitCommitResult, GitDiff, GitDiffRequest, GitHunkRef, GitResult, GitStatus } from './git'
 import type { Settings, SettingsPatch } from './settings'
 import type { MediaState, MediaTimeline } from './media'
 
@@ -131,6 +136,27 @@ export interface IpcApi {
   // Launches the IDE (default: the one in settings) on the project folder; a failure rejects with the reason.
   'ide:open': (crewId: number, ide?: IdeId) => void
   'git:changes': (crewId: number) => GitChanges
+  // Branch, ahead/behind and changed-file count for the top bar and project rows; null when the folder is not a git repository.
+  'git:info': (crewId: number) => GitInfo | null
+  // The Git page. Nothing here commits or pushes by itself: each runs when the person clicks it. Paths are relative to the repository folder.
+  'git:status': (crewId: number) => GitStatus | null
+  'git:diff': (crewId: number, req: GitDiffRequest) => GitDiff
+  'git:stage': (crewId: number, paths: string[]) => GitResult
+  'git:unstage': (crewId: number, paths: string[]) => GitResult
+  // Throws the files' changes away (a new file is deleted); the page asks first.
+  'git:discard': (crewId: number, paths: string[]) => GitResult
+  // Stages one hunk of a tracked file (stage = true), or unstages one.
+  'git:stageHunk': (crewId: number, ref: GitHunkRef, stage: boolean) => GitResult
+  'git:commit': (crewId: number, message: string, amend?: boolean) => GitCommitResult
+  'git:lastMessage': (crewId: number) => string
+  'git:log': (crewId: number, limit?: number, skip?: number) => GitCommit[]
+  'git:commitDetails': (crewId: number, hash: string) => GitCommitDetails
+  'git:branches': (crewId: number) => GitBranches
+  'git:checkout': (crewId: number, branch: string) => GitResult
+  'git:createBranch': (crewId: number, name: string) => GitResult
+  'git:fetch': (crewId: number) => GitResult
+  'git:pull': (crewId: number) => GitResult
+  'git:push': (crewId: number) => GitResult
 
   // Squads
   'squads:create': (input: { crewId: number; name: string }) => Squad
@@ -198,13 +224,22 @@ export interface IpcApi {
   // Aliases of the jobs calls until the renderer moves over (removed in step 13).
 
   // Model ids the given CLI offers (OpenCode asks the CLI; an error explains an empty list).
-  'models:list': (agent: 'claude' | 'opencode') => { models: string[]; efforts: Record<string, string[]>; error?: string }
+  // Also groups them by provider; `refresh` skips the 5-minute cache (the Refresh button).
+  'models:list': (agent: 'claude' | 'opencode', refresh?: boolean) => ModelList
 
   // Teams
   'teams:list': () => Team[]
   'teams:create': (input: TeamInput) => Team
   'teams:update': (teamId: number, patch: TeamPatch) => Team
   'teams:delete': (teamId: number) => void
+  'teams:duplicate': (teamId: number, name?: string) => Team
+  'teams:reset': (teamId: number) => Team
+  'teams:setHidden': (teamId: number, hidden: boolean) => Team
+  // Writes one team (or all when no id) to a file the user picks; null path when they cancel.
+  'teams:export': (teamId?: number) => { saved: string | null }
+  // Picks a team file and says what importing it would do; null when they cancel.
+  'teams:importPreview': () => TeamImportPreview | null
+  'teams:import': (path: string) => Team[]
 
   // Dashboard jobs (JOB#). A run over its team's limits is refused.
   'runs:list': (crewId: number) => Run[]
@@ -234,6 +269,8 @@ export interface IpcApi {
   'discord:disconnect': (botId: number) => DiscordBotView
   'discord:health': () => DiscordHealth[]
   'discord:test': (botId: number) => DiscordTestResult
+  'discord:testAi': (botId: number, ai?: Partial<DiscordBotAi>) => DiscordAiTestResult
+  'discord:localModels': (url: string) => string[]
   'discord:pairings': (botId: number) => DiscordPairing[]
   'discord:approvePairing': (botId: number, code: string) => DiscordBotView
   'discord:denyPairing': (botId: number, code: string) => void
@@ -341,6 +378,13 @@ export interface IpcApi {
   'learn:status': (crewId?: number) => LearnStatus
   // "Learn now": runs the learn step on a finished job; null when learning is off.
   'learn:run': (runId: number) => LearnRunInfo | null
+  // The AI the learn step asks now (an empty model resolved to the cheap default) and a one-call test of it.
+  'learn:ai': () => LearnAi
+  'learn:test': () => LearnTestResult
+  // The models the local server offers (from /v1/models, else Ollama's /api/tags) and its API key (write-only: only whether one is saved comes back; an empty key clears it).
+  'learn:localModels': () => { models: string[]; error?: string }
+  'learn:localKey': () => boolean
+  'learn:setLocalKey': (key: string) => boolean
   'learn:lessons': (filter?: LessonFilter) => Lesson[]
   'learn:editLesson': (id: number, patch: LessonPatch) => Lesson
   // Folds the lessons in `mergeIds` into `keepId`.
@@ -470,6 +514,23 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'ide:list',
   'ide:open',
   'git:changes',
+  'git:info',
+  'git:status',
+  'git:diff',
+  'git:stage',
+  'git:unstage',
+  'git:discard',
+  'git:stageHunk',
+  'git:commit',
+  'git:lastMessage',
+  'git:log',
+  'git:commitDetails',
+  'git:branches',
+  'git:checkout',
+  'git:createBranch',
+  'git:fetch',
+  'git:pull',
+  'git:push',
   'squads:create',
   'squads:update',
   'squads:delete',
@@ -515,6 +576,12 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'teams:create',
   'teams:update',
   'teams:delete',
+  'teams:duplicate',
+  'teams:reset',
+  'teams:setHidden',
+  'teams:export',
+  'teams:importPreview',
+  'teams:import',
   'runs:list',
   'runs:get',
   'runs:create',
@@ -535,6 +602,8 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'discord:disconnect',
   'discord:health',
   'discord:test',
+  'discord:testAi',
+  'discord:localModels',
   'discord:pairings',
   'discord:approvePairing',
   'discord:denyPairing',
@@ -555,6 +624,11 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'hindsight:generateKey',
   'learn:status',
   'learn:run',
+  'learn:ai',
+  'learn:test',
+  'learn:localModels',
+  'learn:localKey',
+  'learn:setLocalKey',
   'learn:lessons',
   'learn:editLesson',
   'learn:mergeLessons',

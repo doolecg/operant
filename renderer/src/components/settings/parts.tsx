@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { eventToAccel, formatAccel } from '@/lib/keys'
 import { cn } from '@/lib/utils'
 
@@ -113,18 +113,20 @@ export function ConfirmDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-2">{children}</div>
           </DialogDescription>
         </DialogHeader>
-        {error && (
+        <DialogBody>
+          {error && (
           <p role="alert" className="text-destructive text-sm">
             {error}
           </p>
         )}
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel

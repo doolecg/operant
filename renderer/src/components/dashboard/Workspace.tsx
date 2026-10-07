@@ -6,6 +6,8 @@ import { RunPanel } from '@/components/jobs/RunPanel'
 import { ActivityPanel } from '@/components/panels/ActivityPanel'
 import { UsagePage } from '@/components/cost/UsagePage'
 import { onUsageRequest, takeUsageRequest } from '@/components/cost/openUsage'
+import { GitPage } from '@/components/git/GitPage'
+import { onGitRequest, takeGitRequest } from '@/components/git/openGit'
 import { JobsPanel, useJobsBadge } from '@/components/panels/JobsPanel'
 import { MessagesPanel, useMessagesBadge } from '@/components/panels/MessagesPanel'
 import { Button } from '@/components/ui/button'
@@ -15,7 +17,7 @@ import { cn } from '@/lib/utils'
 import { useMaster, useRuns, useStartMaster, useStopMaster } from '@/lib/queries'
 import { OperatorTerminal } from './OperatorTerminal'
 
-type Tab = 'runs' | 'board' | 'messages' | 'activity' | 'usage'
+type Tab = 'runs' | 'board' | 'messages' | 'activity' | 'usage' | 'git'
 
 function TabButton({ id, label, active, badge, onSelect }: { id: Tab; label: string; active: boolean; badge?: number; onSelect: (t: Tab) => void }) {
   return (
@@ -45,9 +47,10 @@ export function Workspace({ crewId }: { crewId: number }) {
   const stop = useStopMaster()
   const [error, setError] = useState<string | null>(null)
   const [openRun, setOpenRun] = useState<number | null>(null)
-  const [tab, setTab] = useState<Tab>(() => (takeUsageRequest() ? 'usage' : 'runs'))
+  const [tab, setTab] = useState<Tab>(() => (takeUsageRequest() ? 'usage' : takeGitRequest() ? 'git' : 'runs'))
   const [usageJob, setUsageJob] = useState<number | null>(null)
   const [wide, setWide] = useState(false)
+  const [gitWide, setGitWide] = useState(false)
   const boardBadge = useJobsBadge(crewId)
   const unread = useMessagesBadge(crewId)
   const panel = usePanelWidth('rightWidth')
@@ -62,6 +65,11 @@ export function Workspace({ crewId }: { crewId: number }) {
 
   // The header's limit badge opens the Usage tab.
   useEffect(() => onUsageRequest(() => takeUsageRequest() && setTab('usage')), [])
+
+  // The branch chip opens the Git tab.
+  useEffect(() => onGitRequest(() => takeGitRequest() && setTab('git')), [])
+
+  const gitFull = tab === 'git' && gitWide
 
   const toggle = () => {
     setError(null)
@@ -101,10 +109,10 @@ export function Workspace({ crewId }: { crewId: number }) {
       <section
         ref={column}
         aria-label="Workspace panels"
-        style={{ minWidth: 'min(22rem, 45%)', maxWidth: '70%', ...(panel.width ? { width: panel.width } : {}) }}
-        className={cn('relative flex shrink-0 flex-col border-l', !panel.width && (tab === 'usage' && wide ? 'w-[min(56rem,70%)]' : 'w-[clamp(min(22rem,45%),30%,56rem)]'))}
+        style={gitFull ? undefined : { minWidth: 'min(22rem, 45%)', maxWidth: '70%', ...(panel.width ? { width: panel.width } : {}) }}
+        className={cn('relative flex shrink-0 flex-col border-l', gitFull && 'bg-background absolute inset-0 z-20 border-l-0', !gitFull && !panel.width && (tab === 'usage' && wide ? 'w-[min(56rem,70%)]' : 'w-[clamp(min(22rem,45%),30%,56rem)]'))}
       >
-        <ResizeHandle
+        {!gitFull && <ResizeHandle
           target={column}
           axis="x"
           grow={-1}
@@ -113,19 +121,21 @@ export function Workspace({ crewId }: { crewId: number }) {
           label="Resize workspace panels"
           className="-left-1"
           {...panel.handle}
-        />
+        />}
         <div role="tablist" aria-label="Workspace panels" className="flex h-11 shrink-0 items-stretch gap-0.5 border-b px-2">
           <TabButton id="runs" label="Runs" active={tab === 'runs'} badge={runs.length} onSelect={setTab} />
           <TabButton id="board" label="Board" active={tab === 'board'} badge={boardBadge} onSelect={setTab} />
           <TabButton id="messages" label="Messages" active={tab === 'messages'} badge={unread} onSelect={setTab} />
           <TabButton id="activity" label="Activity" active={tab === 'activity'} onSelect={setTab} />
           <TabButton id="usage" label="Usage" active={tab === 'usage'} onSelect={setTab} />
+          <TabButton id="git" label="Git" active={tab === 'git'} onSelect={setTab} />
         </div>
         <div role="tabpanel" id="workspace-tabpanel" aria-labelledby={`workspace-tab-${tab}`} className="flex min-h-0 flex-1 flex-col">
           {tab === 'runs' && <RunGrid runs={runs} selectedId={openRun} onOpen={(r) => setOpenRun(r.id)} onDeleted={(id) => setOpenRun((cur) => (cur === id ? null : cur))} />}
           {tab === 'board' && <JobsPanel crewId={crewId} />}
           {tab === 'messages' && <MessagesPanel crewId={crewId} />}
           {tab === 'activity' && <ActivityPanel crewId={crewId} />}
+          {tab === 'git' && <GitPage crewId={crewId} wide={gitWide} onToggleWide={() => setGitWide((w) => !w)} />}
           {tab === 'usage' && <UsagePage crewId={crewId} jobId={usageJob} onJobChange={setUsageJob} wide={wide} onToggleWide={() => setWide((w) => !w)} />}
         </div>
       </section>

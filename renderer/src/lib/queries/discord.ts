@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DiscordBotInput, DiscordBotPatch, DiscordBotView, DiscordHealth } from '@shared/types'
+import type { DiscordBotAi, DiscordBotInput, DiscordBotPatch, DiscordBotView, DiscordHealth } from '@shared/types'
 import { call, registerLive } from './core'
 
 const botsKey = ['discord', 'bots'] as const
@@ -32,6 +32,9 @@ export const useDenyDiscordPairing = () => useBotMutation((botId: number, code: 
 
 // A test connects and disconnects, so it is a mutation the page reads the result of.
 export const useTestDiscordBot = () => useMutation({ mutationFn: (botId: number) => call('discord:test', botId) })
+
+export const useTestDiscordAi = () => useMutation({ mutationFn: ([botId, ai]: [number, Partial<DiscordBotAi>]) => call('discord:testAi', botId, ai) })
+export const useDiscordLocalModels = () => useMutation({ mutationFn: (url: string) => call('discord:localModels', url) })
 
 registerLive((b, qc) => [
   b.on('discord:status', (h: DiscordHealth) => {

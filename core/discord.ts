@@ -1,8 +1,10 @@
 import { randomInt } from 'node:crypto'
-import type { Crew, DiscordBot, DiscordBotInput, DiscordBotPatch, DiscordBotView, DiscordHealth, DiscordPairing, DiscordTestResult, Run, RunInput } from '../shared/types'
-import type { DiscordGateway, GatewayFactory, GatewayMessage, GatewayReaction } from './discord-gateway'
+import { DISCORD_THREAD_ARCHIVES } from '../shared/types'
+import type { Crew, DiscordAiTestResult, DiscordBot, DiscordBotAi, DiscordBotInput, DiscordBotPatch, DiscordBotView, DiscordChannelCheck, DiscordHealth, DiscordPairing, DiscordTestResult, Run, RunInput } from '../shared/types'
+import { isIntentsError, type DiscordGateway, type GatewayFactory, type GatewayMessage, type GatewayReaction } from './discord-gateway'
 import { discordOutcome } from './discord-format'
 import { askFrontDesk, findProject, type FrontDeskModel } from './discord-frontdesk'
+import { aiThreadTitle, jobThreadName, threadTitle, uniqueThreadName } from './discord-threads'
 import type { SecretStore } from './discord-secrets'
 import type { Store } from './store'
 
@@ -63,6 +65,9 @@ export interface DiscordManagerOptions {
   secrets: SecretStore
   gateway: GatewayFactory
   frontDesk: FrontDeskModel
+  // The model for a bot that chose its own AI (OpenCode, a local server or a named Claude model).
+  frontDeskFor?: (ai: DiscordBotAi) => FrontDeskModel
+  localModels?: (url: string) => Promise<string[]>
   now?: () => number
   log?: (message: string, crewId?: number | null) => void
   onHealth?: (h: DiscordHealth) => void
@@ -82,6 +87,8 @@ interface Pending {
   task: string
   channelId: string
   originMessageId: string
+  // The reply goes where it was asked (a thread or a direct message), so no further thread is made.
+  inPlace: boolean
   at: number
 }
 
@@ -100,6 +107,7 @@ export class DiscordManager {
   private readonly healthOf = new Map<number, DiscordHealth>()
   private readonly pending = new Map<string, Pending>()
   private readonly pairingAsks = new Map<string, number[]>()
+  private readonly threadWarned = new Set<string>()
   private readonly origins = new Map<number, Origin>()
   private readonly now: () => number
 
@@ -217,18 +225,60 @@ export class DiscordManager {
   async test(id: number): Promise<DiscordTestResult> {
     const bot = this.require(id)
     const live = this.live.get(id)
-    if (live) return { tokenValid: true, username: this.healthFor(id).username, guilds: live.gateway.guilds(), error: '' }
+    if (live) return { tokenValid: true, username: this.healthFor(id).username, guilds: live.gateway.guilds(), intents: 'ok', channels: await this.checkChannels(bot, live.gateway), error: '' }
     const token = bot.tokenRef ? this.o.secrets.get(bot.tokenRef) : null
-    if (!token) return { tokenValid: false, username: '', guilds: [], error: 'No token is saved for this bot' }
+    const none: DiscordTestResult = { tokenValid: false, username: '', guilds: [], intents: 'unknown', channels: [], error: '' }
+    if (!token) return { ...none, error: this.o.secrets.problem?.(bot.tokenRef || tokenRef(id)) ?? 'No token is saved for this bot' }
     const gateway = this.o.gateway()
+    gateway.onLog?.((line) => this.o.log?.(`Discord test ${bot.name}: ${scrubSecrets(line, token)}`))
     try {
       const me = await gateway.connect(token)
-      return { tokenValid: true, username: me.username, guilds: gateway.guilds(), error: '' }
+      return { tokenValid: true, username: me.username, guilds: gateway.guilds(), intents: 'ok', channels: await this.checkChannels(bot, gateway), error: '' }
     } catch (err) {
-      return { tokenValid: false, username: '', guilds: [], error: scrubSecrets(errText(err), token) }
+      const message = scrubSecrets(errText(err), token)
+      if (!isIntentsError(message)) return { ...none, error: message }
+      // The token works but the Message Content intent is off: log in without it to read the servers.
+      const bare = this.o.gateway()
+      try {
+        const me = await bare.connect(token, { messageContent: false })
+        return { tokenValid: true, username: me.username, guilds: bare.guilds(), intents: 'missing', channels: await this.checkChannels(bot, bare), error: message }
+      } catch (err2) {
+        return { ...none, error: scrubSecrets(errText(err2), token) }
+      } finally {
+        await bare.disconnect().catch(() => undefined)
+      }
     } finally {
       await gateway.disconnect().catch(() => undefined)
     }
+  }
+
+  // Permission gaps in the channels this bot uses (its home and general channels and every project channel).
+  private async checkChannels(bot: DiscordBot, gateway: DiscordGateway): Promise<DiscordChannelCheck[]> {
+    const ids = [...new Set([bot.homeChannel, bot.generalChannel, ...this.o.store.listCrews().flatMap((c) => c.discordChannels)].filter(Boolean))]
+    if (ids.length === 0 || !gateway.inspect) return []
+    try {
+      return await gateway.inspect(ids)
+    } catch {
+      return []
+    }
+  }
+
+  // Sends one tiny message to the bot's AI and reports the answer or the honest error, with the time it took.
+  async testAi(id: number, ai?: Partial<DiscordBotAi>): Promise<DiscordAiTestResult> {
+    const bot = this.require(id)
+    const at = Date.now()
+    try {
+      const answer = await this.modelFor(ai ? { ...bot, ai: { ...bot.ai, ...this.cleanFields({ ai }).ai } } : bot)('Reply with the single word: ready')
+      return { ok: true, answer: answer.trim().slice(0, 300), error: '', ms: Date.now() - at }
+    } catch (err) {
+      return { ok: false, answer: '', error: scrubSecrets(errText(err)), ms: Date.now() - at }
+    }
+  }
+
+  // The models a local OpenAI-compatible server offers.
+  async localModels(url: string): Promise<string[]> {
+    if (!this.o.localModels) return []
+    return this.o.localModels(String(url).trim().replace(/\/+$/, ''))
   }
 
   // Pairing
@@ -270,18 +320,51 @@ export class DiscordManager {
       if (!allowed) return this.pair(bot, m)
       return this.deskReply(bot, m, text, true)
     }
-    if (bot.mentionOnly && !m.mentionsBot) return
+    // A thread this bot made keeps the conversation going without a mention.
+    const owned = m.parentId ? this.o.store.getDiscordThread(botId, m.channelId) : null
+    if (bot.mentionOnly && !m.mentionsBot && !owned) return
     if (!text) return
     const channels = [m.channelId, m.parentId].filter((c): c is string => !!c)
-    const crew = this.o.store.listCrews().find((c) => c.discordChannels.some((ch) => channels.includes(ch)))
-    if (crew) {
-      void this.react(botId, m, ACK)
-      if (!allowed) return this.deskReply(bot, m, text, false)
-      return this.startOrConfirm(bot, m, crew, text, false)
+    const crews = this.o.store.listCrews()
+    const crew = (owned?.crewId != null ? crews.find((c) => c.id === owned.crewId) : undefined) ?? crews.find((c) => c.discordChannels.some((ch) => channels.includes(ch)))
+    if (!crew && !owned && !channels.some((c) => c === bot.homeChannel || c === bot.generalChannel)) return
+    void this.react(botId, m, ACK)
+    let at = m
+    // Inside any thread the reply stays there; otherwise an allowlisted request gets its own thread.
+    let inPlace = m.parentId != null
+    if (!inPlace && allowed && bot.threadPerRequest) {
+      const thread = await this.openThread(bot, m, text, crew ?? null)
+      if (thread) {
+        at = { ...m, channelId: thread, parentId: m.channelId }
+        inPlace = true
+      }
     }
-    if (channels.some((c) => c === bot.homeChannel || c === bot.generalChannel)) {
-      void this.react(botId, m, ACK)
-      return this.deskReply(bot, m, text, false)
+    const asked = owned?.runId != null ? `${text}
+
+(This thread is about JOB#${owned.runId}.)` : text
+    if (crew && allowed) return this.startOrConfirm(bot, at, crew, text, inPlace)
+    return this.deskReply(bot, at, asked, inPlace)
+  }
+
+  // Makes the request's thread and remembers it; null means reply in the channel (off, or Discord refused).
+  private async openThread(bot: DiscordBot, m: GatewayMessage, text: string, crew: Crew | null): Promise<string | null> {
+    const gateway = this.live.get(bot.id)?.gateway
+    if (!gateway) return null
+    const store = this.o.store
+    const title = bot.threadNames === 'ai' ? await aiThreadTitle(this.modelFor(bot), text) : threadTitle(text)
+    const name = uniqueThreadName(title, store.listDiscordThreads(bot.id).filter((t) => t.parentId === m.channelId).map((t) => t.name))
+    try {
+      const id = await gateway.createThread(m.channelId, m.id, name, bot.threadArchive)
+      store.addDiscordThread({ botId: bot.id, threadId: id, parentId: m.channelId, userId: m.authorId, crewId: crew?.id ?? null, runId: null, title, name, createdAt: this.now() })
+      return id
+    } catch (err) {
+      this.o.log?.(`Discord bot ${bot.name}: could not start a thread: ${scrubSecrets(errText(err))}`)
+      const key = `${bot.id}:${m.channelId}`
+      if ((err as { permission?: boolean }).permission && !this.threadWarned.has(key)) {
+        this.threadWarned.add(key)
+        await this.say(bot.id, m.channelId, 'I could not start a thread here. Give me the Create Public Threads and Send Messages in Threads permissions in this channel. I will reply in the channel instead.').catch(() => undefined)
+      }
+      return null
     }
   }
 
@@ -318,7 +401,7 @@ export class DiscordManager {
     const crews = store.listCrews()
     let out
     try {
-      out = await askFrontDesk(this.o.frontDesk, { bot, crews, runs: allowed ? store.listRuns() : [], text, chatOnly: !allowed })
+      out = await askFrontDesk(this.modelFor(bot), { bot, crews, runs: allowed ? store.listRuns() : [], text, chatOnly: !allowed })
     } catch (err) {
       this.o.log?.(`Discord bot ${bot.name}: front desk failed: ${scrubSecrets(errText(err))}`)
       return this.say(bot.id, m.channelId, 'The front desk could not answer just now.')
@@ -336,7 +419,7 @@ export class DiscordManager {
     const sentId = await this.live.get(bot.id)?.gateway.send(m.channelId, `Start this on PRJ${crew.prjNumber} ${crew.name}? React ${CONFIRM} to confirm.\n${task.slice(0, 1500)}`)
     if (!sentId) return
     for (const [k, p] of this.pending) if (this.now() - p.at > CONFIRM_TTL) this.pending.delete(k)
-    this.pending.set(sentId, { botId: bot.id, userId: m.authorId, crewId: crew.id, task, channelId: m.channelId, originMessageId: m.id, at: this.now() })
+    this.pending.set(sentId, { botId: bot.id, userId: m.authorId, crewId: crew.id, task, channelId: m.channelId, originMessageId: m.id, inPlace: direct, at: this.now() })
     void this.react(bot.id, { channelId: m.channelId, id: sentId }, CONFIRM)
   }
 
@@ -347,7 +430,7 @@ export class DiscordManager {
     this.pending.delete(r.messageId)
     if (this.now() - p.at > CONFIRM_TTL) return this.say(botId, p.channelId, 'That confirmation expired. Ask again.')
     if (!bot.allowlist.includes(p.userId)) return
-    await this.startJob(bot, { channelId: p.channelId, id: p.originMessageId }, p.crewId, p.task)
+    await this.startJob(bot, { channelId: p.channelId, id: p.originMessageId }, p.crewId, p.task, p.inPlace)
   }
 
   // The runs:create path, then a thread for progress and the outcome.
@@ -359,9 +442,27 @@ export class DiscordManager {
       return this.say(bot.id, at.channelId, `Could not start the job: ${errText(err)}`)
     }
     this.o.log?.(`Discord bot ${bot.name} started JOB#${run.id}`, crewId)
+    void this.attachJob(bot, at.channelId, run.id, crewId)
     const origin: Origin = { botId: bot.id, channelId: at.channelId, messageId: at.id, last: '', chain: Promise.resolve(), target: null }
     this.origins.set(run.id, origin)
     origin.chain = this.progress(origin, run, direct)
+  }
+
+  // Puts the JOB# in the request's thread name, once.
+  private async attachJob(bot: DiscordBot, threadId: string, runId: number, crewId: number): Promise<void> {
+    const store = this.o.store
+    const t = store.getDiscordThread(bot.id, threadId)
+    if (!t) return
+    const hadJob = t.runId != null
+    store.updateDiscordThread(bot.id, threadId, { runId, crewId })
+    if (hadJob) return
+    const name = jobThreadName(runId, t.title)
+    try {
+      await this.live.get(bot.id)?.gateway.renameThread(threadId, name)
+      store.updateDiscordThread(bot.id, threadId, { name })
+    } catch {
+      // Renaming needs Manage Threads; the thread keeps its first name.
+    }
   }
 
   // Outbound
@@ -401,6 +502,11 @@ export class DiscordManager {
     }
   }
 
+  // The model that answers for this bot: the app's front desk unless the bot picked its own AI.
+  private modelFor(bot: DiscordBot): FrontDeskModel {
+    return (bot.ai.cli === 'claude' && !bot.ai.model ? undefined : this.o.frontDeskFor?.(bot.ai)) ?? this.o.frontDesk
+  }
+
   private async say(botId: number, channelId: string, text: string): Promise<void> {
     const live = this.live.get(botId)
     if (!live) return
@@ -422,11 +528,15 @@ export class DiscordManager {
     const bot = this.require(id)
     const token = bot.tokenRef ? this.o.secrets.get(bot.tokenRef) : null
     if (!token) {
-      this.setHealth(id, { state: 'error', error: 'No token is saved for this bot' })
-      throw new DiscordError('BAD_ARGS', 'No token is saved for this bot')
+      const why = (bot.tokenRef && this.o.secrets.problem?.(bot.tokenRef)) || 'No token is saved for this bot'
+      this.setHealth(id, { state: 'error', error: why })
+      this.o.log?.(`Discord bot ${bot.name} could not connect: ${why}`)
+      throw new DiscordError('BAD_ARGS', why)
     }
     this.setHealth(id, { state: 'connecting', error: '' })
+    this.o.log?.(`Discord bot ${bot.name} connecting`)
     const gateway = this.o.gateway()
+    gateway.onLog?.((line) => this.o.log?.(`Discord bot ${bot.name}: ${scrubSecrets(line, token)}`))
     const fail = (err: unknown) => this.o.log?.(`Discord bot ${bot.name}: ${scrubSecrets(errText(err), token)}`)
     gateway.onMessage((m) => void this.onMessage(id, m).catch(fail))
     gateway.onReaction((r) => void this.onReaction(id, r).catch(fail))
@@ -455,12 +565,13 @@ export class DiscordManager {
 
   private setHealth(id: number, patch: Partial<DiscordHealth>): void {
     const next = { ...this.healthFor(id), ...patch, since: this.now() }
+    if (patch.error) next.lastError = patch.error
     this.healthOf.set(id, next)
     this.o.onHealth?.(next)
   }
 
   private healthFor(id: number): DiscordHealth {
-    return this.healthOf.get(id) ?? { botId: id, state: 'disconnected', username: '', guilds: 0, error: '', since: 0 }
+    return this.healthOf.get(id) ?? { botId: id, state: 'disconnected', username: '', guilds: 0, error: '', lastError: '', since: 0 }
   }
 
   // Validation and helpers
@@ -510,11 +621,27 @@ export class DiscordManager {
       if (typeof v !== 'string' || (v.trim() !== '' && !ID_RE.test(v.trim()))) throw new DiscordError('BAD_ARGS', 'Discord channel ids are numbers of 5 to 25 digits')
       out[key] = v.trim()
     }
-    for (const key of ['mentionOnly', 'confirmStart', 'enabled'] as const) {
+    for (const key of ['mentionOnly', 'confirmStart', 'enabled', 'threadPerRequest'] as const) {
       const v = p[key]
       if (v === undefined) continue
       if (typeof v !== 'boolean') throw new DiscordError('BAD_ARGS', `${key} must be true or false`)
       out[key] = v
+    }
+    if (p.threadNames !== undefined) {
+      if (p.threadNames !== 'auto' && p.threadNames !== 'ai') throw new DiscordError('BAD_ARGS', 'threadNames must be auto or ai')
+      out.threadNames = p.threadNames
+    }
+    if (p.threadArchive !== undefined) {
+      if (!DISCORD_THREAD_ARCHIVES.includes(p.threadArchive)) throw new DiscordError('BAD_ARGS', 'threadArchive must be 60, 1440, 4320 or 10080 minutes')
+      out.threadArchive = p.threadArchive
+    }
+    if (p.ai !== undefined) {
+      const a = p.ai
+      if (a === null || typeof a !== 'object') throw new DiscordError('BAD_ARGS', 'ai must be an object')
+      if (a.cli !== undefined && a.cli !== 'claude' && a.cli !== 'opencode' && a.cli !== 'local') throw new DiscordError('BAD_ARGS', 'ai.cli must be claude, opencode or local')
+      for (const k of ['model', 'effort'] as const) if (a[k] !== undefined && (typeof a[k] !== 'string' || a[k]!.length > 200)) throw new DiscordError('BAD_ARGS', `ai.${k} must be text`)
+      if (a.localUrl !== undefined && !/^https?:\/\/[^\s]+$/.test(a.localUrl.trim())) throw new DiscordError('BAD_ARGS', 'ai.localUrl must be an http or https address')
+      out.ai = { ...a, ...(a.localUrl !== undefined ? { localUrl: a.localUrl.trim().replace(/\/+$/, '') } : {}) }
     }
     if (p.masterCli !== undefined) {
       if (p.masterCli !== 'claude' && p.masterCli !== 'opencode') throw new DiscordError('BAD_ARGS', 'masterCli must be claude or opencode')

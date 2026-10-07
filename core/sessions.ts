@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { Operator } from '../shared/types'
+import { hiddenConsoleEnv } from './hideshim'
 import { isFixedLine } from './nudge'
 import { defaultShell, type PathEnv, type ShellSpec } from './paths'
 
@@ -95,11 +96,11 @@ export class SessionManager extends EventEmitter<SessionEvents> {
     if (this.sessions.has(key)) return
     if (firstInput && !isRolePointer(firstInput)) throw new Error('not a fixed Operant line')
     const sh = this.shellOverride ?? defaultShell(this.pathEnv)
-    const env = {
+    const env = hiddenConsoleEnv({
       ...inheritedEnv(),
       ...(operator ? { OPERANT_OPERATOR: address ?? '', OPERANT_OPERATOR_ID: String(operator.id) } : {}),
       ...extraEnv,
-    }
+    }) as Record<string, string>
     const pty = this.spawn(sh.file, sh.args, { cwd, cols, rows, env })
     const session: Session = { pty, buffer: '', lastOutputAt: this.now() }
     this.sessions.set(key, session)

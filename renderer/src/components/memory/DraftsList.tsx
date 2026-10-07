@@ -4,7 +4,7 @@ import type { SkillDraft } from '@shared/learn'
 import type { Crew } from '@shared/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -18,12 +18,13 @@ function EditDraftDialog({ draft, onClose }: { draft: SkillDraft; onClose: () =>
   const [body, setBody] = useState(draft.body)
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>Edit skill draft {draft.id}</DialogTitle>
           <DialogDescription>Nothing is installed until you approve the draft.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <DialogBody>
+          <div className="space-y-3">
           <div className="space-y-1">
             <Label htmlFor="draft-name">Skill name</Label>
             <Input id="draft-name" value={name} onChange={(e) => setName(e.target.value)} className="font-mono" />
@@ -35,6 +36,7 @@ function EditDraftDialog({ draft, onClose }: { draft: SkillDraft; onClose: () =>
           </div>
         </div>
         <ErrorLine error={edit.error} />
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -52,7 +54,7 @@ function DeleteDraftDialog({ draft, onClose }: { draft: SkillDraft; onClose: () 
   const del = useDeleteDraft()
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>Delete skill draft {draft.id}</DialogTitle>
           <DialogDescription>
@@ -60,7 +62,9 @@ function DeleteDraftDialog({ draft, onClose }: { draft: SkillDraft; onClose: () 
             {draft.installedPath ? ' The installed skill file is not touched.' : ''}
           </DialogDescription>
         </DialogHeader>
-        <ErrorLine error={del.error} />
+        <DialogBody>
+          <ErrorLine error={del.error} />
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel

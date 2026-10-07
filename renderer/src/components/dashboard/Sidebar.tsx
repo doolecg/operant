@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   ChevronDown,
   ChevronRight,
@@ -9,8 +10,9 @@ import {
   GripVertical,
   MoreHorizontal,
   Network,
+  PanelLeftClose,
   Plus,
-  Settings,
+  RefreshCw,
   SquareTerminal,
 } from 'lucide-react'
 import { decodeIpcError } from '@shared/ipc'
@@ -26,12 +28,14 @@ import {
   useCollapseGroup,
   useCreateGroup,
   useDeleteGroup,
+  useGitInfo,
   useGroups,
   useIdes,
   useMoveToGroup,
   useRenameGroup,
   useReorderCrews,
   useReorderGroups,
+  useRuns,
   useSettings,
   useUnread,
   useUpdateStatus,
@@ -39,6 +43,7 @@ import {
 import { usePanelWidth } from '@/lib/layout'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { gitSummary } from '@/components/topbar/GitChip'
 import { ProjectMenuContent, type ProjectMenuHandlers } from './ProjectMenu'
 
 interface Props {
@@ -47,11 +52,50 @@ interface Props {
   onSelect: (id: number) => void
   // A group id adds the new project to that group.
   onNewCrew: (groupId?: number) => void
-  settingsOpen: boolean
-  onOpenSettings: () => void
   actions: Omit<ProjectMenuHandlers, 'moveTo'> & { openMaster: (c: Crew) => void }
-  // Icon buttons shown on the bottom row next to Settings (the Console and terminal toggles).
+  // Hides the panel (the same toggle as the keyboard shortcut).
+  onHide?: () => void
+  // Icon buttons on the bottom row: the usage, learning and MCP badges and the Console and terminal toggles.
   footer?: ReactNode
+}
+
+const PANEL_DEFAULT = 250
+const PANEL_MIN = 160
+const PANEL_MAX = 600
+
+// The project's branch (10.5 px, at most 90 px wide) and changed-file count after its name; nothing for a folder that is not a git repository.
+function RowGit({ crewId }: { crewId: number }) {
+  const git = useGitInfo(crewId).data
+  if (!git) return null
+  return (
+    <span className="flex min-w-0 shrink items-center gap-1 text-[10.5px]" title={gitSummary(git)}>
+      <span className="text-muted-foreground max-w-[90px] min-w-0 truncate font-mono">{git.branch}</span>
+      {git.changes > 0 && (
+        <span aria-label={`${git.changes} changed files`} className="shrink-0 rounded-full bg-amber-400/15 px-1.5 font-mono text-[10px] leading-4 text-amber-400">
+          {git.changes}
+        </span>
+      )}
+    </span>
+  )
+}
+
+// Jobs working now (a pulsing dot and the number) and a red dot when a job needs the user.
+function RowRuns({ crewId }: { crewId: number }) {
+  const runs = useRuns(crewId).data ?? []
+  const working = runs.filter((r) => r.status === 'working').length
+  const needs = runs.some((r) => r.status === 'needs-you')
+  if (!working && !needs) return null
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {working > 0 && (
+        <span aria-label={`${working} running`} title={`${working} running`} className="flex items-center gap-1 text-[10px] text-orange-400 tabular-nums">
+          <span aria-hidden className="size-[7px] animate-pulse rounded-full bg-orange-400" />
+          {working}
+        </span>
+      )}
+      {needs && <span role="img" aria-label="Needs attention" title="A job needs you" className="bg-destructive size-[7px] rounded-full" />}
+    </span>
+  )
 }
 
 function CrewUnread({ crewId }: { crewId: number }) {
@@ -60,7 +104,7 @@ function CrewUnread({ crewId }: { crewId: number }) {
   return (
     <span
       aria-label={`${count} unread messages`}
-      className="bg-primary text-primary-foreground inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold tabular-nums"
+      className="bg-primary text-primary-foreground inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold tabular-nums"
     >
       {count > 99 ? '99+' : count}
     </span>
@@ -78,6 +122,9 @@ function moved(ids: number[], id: number, target: number): number[] {
 }
 
 type Drag = { kind: 'crew' | 'group'; id: number }
+
+// One stop of the keyboard walk: a project or a group header, in the order they are drawn.
+type NavItem = { key: string; kind: 'crew' | 'group'; id: number; label: string; group: number | null }
 
 // A name that becomes a text field: Enter keeps it, Esc leaves it as it was, leaving the field keeps it too.
 function NameEditor({ initial, label, onCommit, onCancel }: { initial: string; label: string; onCommit: (name: string) => void; onCancel: () => void }) {
@@ -107,16 +154,19 @@ function NameEditor({ initial, label, onCommit, onCancel }: { initial: string; l
         if (e.key === 'Escape') finish(false)
       }}
       onDragStart={(e) => e.preventDefault()}
-      className="bg-background min-w-0 flex-1 rounded border px-1.5 py-0.5 text-xs outline-none focus:ring-1"
+      className="bg-background text-foreground min-w-0 flex-1 rounded border px-1.5 text-xs normal-case outline-none focus:ring-1"
     />
   )
 }
 
 const hoverOnly = 'hidden group-hover:flex group-focus-within:flex'
 const tiny = 'text-muted-foreground hover:text-foreground size-5 shrink-0'
+const headerBtn = 'text-muted-foreground hover:text-foreground hover:bg-foreground/[.08] size-[22px] rounded-md [&_svg]:size-3'
+const ring = 'shadow-[inset_0_0_0_1.5px_var(--primary)]'
 
-export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, onOpenSettings, actions, footer }: Props) {
+export function Sidebar({ crews, selected, onSelect, onNewCrew, actions, onHide, footer }: Props) {
   const update = useUpdateStatus()
+  const qc = useQueryClient()
   const reorder = useReorderCrews()
   const groupsQ = useGroups()
   const groups = groupsQ.data ?? []
@@ -132,17 +182,36 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
   const platform = bridge().platform
   const panel = usePanelWidth('sidebarWidth')
   const aside = useRef<HTMLElement>(null)
+  const tree = useRef<HTMLDivElement>(null)
 
   const [dragId, setDragId] = useState<Drag | null>(null)
   // The drag in flight, readable at once by the events that follow the drag start (state lags a render).
   const dragging = useRef<Drag | null>(null)
   const [over, setOver] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<number | null>(null)
+  // The keyboard's current row (shown with a ring while the list has focus).
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [focused, setFocused] = useState(false)
+  const headerClick = useRef<number | undefined>(undefined)
 
   const ids = crews.map((c) => c.id)
   const knownGroup = (c: Crew) => (c.groupId != null && groups.some((g) => g.id === c.groupId) ? c.groupId : null)
   const inGroup = (gid: number | null) => crews.filter((c) => knownGroup(c) === gid)
   const failed = (e: unknown) => toast(decodeIpcError(e).message, true)
+
+  const ungrouped = inGroup(null)
+  const items: NavItem[] = [
+    ...ungrouped.map((c): NavItem => ({ key: `p:${c.id}`, kind: 'crew', id: c.id, label: `project:${c.name}`, group: null })),
+    ...groups.flatMap((g): NavItem[] => [
+      { key: `g:${g.id}`, kind: 'group', id: g.id, label: `group:${g.name}`, group: g.id },
+      ...(g.collapsed ? [] : inGroup(g.id).map((c): NavItem => ({ key: `p:${c.id}`, kind: 'crew', id: c.id, label: `project:${c.name}`, group: g.id }))),
+    ]),
+  ]
+  const current = items.find((i) => i.key === cursor)
+
+  useEffect(() => {
+    if (focused) tree.current?.querySelector('[data-nav-current="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [cursor, focused])
 
   const saveCrews = (next: number[]) => next !== ids && reorder.mutate(next)
   const endDrag = () => {
@@ -153,6 +222,7 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
   const accepts = (e: DragEvent, key: string, ok: boolean) => {
     if (!ok) return
     e.preventDefault()
+    e.stopPropagation()
     setOver(key)
   }
 
@@ -181,17 +251,91 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
     if (d?.kind === 'crew') moveTo.mutate([d.id, null], { onError: failed })
   }
 
-  const onHandleKey = (e: KeyboardEvent, crew: Crew) => {
+  const moveCrew = (crew: Crew, by: -1 | 1) => {
     const section = inGroup(knownGroup(crew)).map((c) => c.id)
-    const i = section.indexOf(crew.id)
-    const target = e.key === 'ArrowUp' ? section[i - 1] : e.key === 'ArrowDown' ? section[i + 1] : undefined
-    if (target == null) return
+    const target = section[section.indexOf(crew.id) + by]
+    if (target != null) saveCrews(moved(ids, crew.id, target))
+  }
+  const moveGroup = (g: ProjectGroup, by: -1 | 1) => {
+    const gids = groups.map((x) => x.id)
+    const target = gids[gids.indexOf(g.id) + by]
+    if (target != null) reorderGroups.mutate([moved(gids, g.id, target)])
+  }
+  const onHandleKey = (e: KeyboardEvent, crew: Crew) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
     e.preventDefault()
-    saveCrews(moved(ids, crew.id, target))
+    e.stopPropagation()
+    moveCrew(crew, e.key === 'ArrowUp' ? -1 : 1)
   }
 
-  const addGroup = () =>
-    createGroup.mutate([], { onSuccess: (g) => setRenaming(g.id), onError: failed })
+  const toggle = (g: ProjectGroup, collapsed = !g.collapsed) => collapseGroup.mutate([g.id, collapsed], { onError: failed })
+
+  // The list is one tab stop: arrows walk the rows, Alt+arrows reorder, Enter opens, Right and Left expand and collapse, F2 renames a group, Esc leaves.
+  const onTreeKey = (e: KeyboardEvent) => {
+    if ((e.target as HTMLElement).closest('input, textarea, [data-no-nav]') || e.ctrlKey || e.metaKey) return
+    const at = items.findIndex((i) => i.key === cursor)
+    const go = (i: number) => {
+      const item = items[Math.min(items.length - 1, Math.max(0, i))]
+      if (item) setCursor(item.key)
+    }
+    const cur = at >= 0 ? items[at] : undefined
+    const crew = cur?.kind === 'crew' ? crews.find((c) => c.id === cur.id) : undefined
+    const group = cur?.kind === 'group' ? groups.find((g) => g.id === cur.id) : undefined
+    const handled = () => (e.preventDefault(), e.stopPropagation())
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      handled()
+      const by = e.key === 'ArrowUp' ? -1 : 1
+      if (crew) moveCrew(crew, by)
+      else if (group) moveGroup(group, by)
+      return
+    }
+    if (e.altKey || e.shiftKey) return
+    switch (e.key) {
+      case 'ArrowDown':
+        handled()
+        go(at < 0 ? 0 : at + 1)
+        break
+      case 'ArrowUp':
+        handled()
+        go(at < 0 ? 0 : at - 1)
+        break
+      case 'Home':
+        handled()
+        go(0)
+        break
+      case 'End':
+        handled()
+        go(items.length - 1)
+        break
+      case 'Enter':
+        handled()
+        if (crew) onSelect(crew.id)
+        else if (group) toggle(group)
+        break
+      case 'ArrowRight':
+        handled()
+        if (group?.collapsed) toggle(group, false)
+        else if (group) go(at + 1)
+        break
+      case 'ArrowLeft':
+        handled()
+        if (group && !group.collapsed) toggle(group, true)
+        else if (cur?.kind === 'crew' && cur.group != null) setCursor(`g:${cur.group}`)
+        break
+      case 'F2':
+        if (group) (handled(), setRenaming(group.id))
+        break
+      case 'Escape':
+        handled()
+        ;(document.activeElement as HTMLElement | null)?.blur()
+        break
+    }
+  }
+
+  const addGroup = () => createGroup.mutate([], { onSuccess: (g) => setRenaming(g.id), onError: failed })
+  const indexAll = async () => {
+    for (const c of crews) await bridge().invoke('index:run', c.id).catch(failed)
+  }
 
   const handlers: ProjectMenuHandlers = {
     ...actions,
@@ -210,6 +354,9 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
   }
 
   const crewRow = (crew: Crew) => {
+    const key = `p:${crew.id}`
+    const isCurrent = cursor === key
+    const isSelected = crew.id === selected
     const menu = (kind: 'context' | 'dropdown') => (
       <ProjectMenuContent kind={kind} crew={crew} groups={groups} ideName={ideName} platform={platform} align="end" {...handlers} />
     )
@@ -217,8 +364,12 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
       <ContextMenu key={crew.id}>
         <ContextMenuTrigger asChild>
           <div
+            role="treeitem"
+            aria-selected={isSelected}
             draggable
             data-crew-row={crew.id}
+            data-nav-current={isCurrent && focused ? 'true' : undefined}
+            data-nav-label={`project:${crew.name}`}
             onDragStart={(e) => {
               dragging.current = { kind: 'crew', id: crew.id }
               setDragId(dragging.current)
@@ -229,36 +380,39 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
             onDrop={(e) => dropOnCrew(e, crew)}
             onDragEnd={endDrag}
             className={cn(
-              'group relative flex items-center rounded-md transition-colors',
-              crew.id === selected ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              'group relative flex h-6 items-center gap-[5px] rounded-md pr-1 pl-4 text-[13px] transition-colors',
+              isSelected ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
               over === `crew:${crew.id}` && dragId?.id !== crew.id && 'ring-primary ring-1',
               dragId?.kind === 'crew' && dragId.id === crew.id && 'opacity-50',
+              isCurrent && focused && ring,
             )}
           >
             <button
               type="button"
+              data-no-nav
               aria-label={`Reorder ${crew.name}`}
               title="Drag to reorder or into a group, or use the up and down arrow keys"
               onKeyDown={(e) => onHandleKey(e, crew)}
-              className="text-muted-foreground hover:text-foreground flex shrink-0 cursor-grab items-center py-2 pl-1 active:cursor-grabbing"
+              className="text-muted-foreground hover:text-foreground focus-visible:ring-primary absolute inset-y-0 left-0 flex w-3.5 cursor-grab items-center justify-center rounded-l-md opacity-0 outline-none group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 active:cursor-grabbing"
             >
-              <GripVertical className="size-4" />
+              <GripVertical className="size-3" />
             </button>
             <button
               type="button"
-              onClick={() => onSelect(crew.id)}
-              className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-2.5 pl-1 text-left text-sm"
+              tabIndex={-1}
+              onClick={() => (setCursor(key), onSelect(crew.id))}
+              className="flex h-full min-w-0 flex-1 items-center gap-[5px] text-left outline-none"
             >
-              <span className="text-muted-foreground shrink-0 font-mono text-[10px] group-hover:hidden group-focus-within:hidden">PRJ#{crew.prjNumber}</span>
-              <span className="min-w-0 flex-1 truncate">{crew.name}</span>
+              <span className={cn('max-w-[60%] shrink-0 truncate font-semibold', isSelected && 'text-primary')}>{crew.name}</span>
+              <RowGit crewId={crew.id} />
+              <span className="flex-1" />
+              <RowRuns crewId={crew.id} />
               <span className="group-hover:hidden group-focus-within:hidden">
                 <CrewUnread crewId={crew.id} />
               </span>
+              <span className="text-muted-foreground/70 shrink-0 font-mono text-[9px] group-hover:hidden group-focus-within:hidden">PRJ#{crew.prjNumber}</span>
             </button>
-            <div className={cn('shrink-0 items-center pr-1', hoverOnly)}>
-              <Button variant="ghost" size="icon" className={tiny} aria-label={`Open Master of ${crew.name}`} title="Open Master" onClick={() => actions.openMaster(crew)}>
-                <Crown className="size-3.5" />
-              </Button>
+            <div data-no-nav className={cn('shrink-0 items-center', hoverOnly)}>
               <Button variant="ghost" size="icon" className={tiny} aria-label={`Index ${crew.name} with CodeGraph`} title="Index with CodeGraph" onClick={() => actions.index(crew)}>
                 <Network className="size-3.5" />
               </Button>
@@ -267,6 +421,9 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
               </Button>
               <Button variant="ghost" size="icon" className={tiny} aria-label={`New shell in ${crew.name}`} title="New shell here" onClick={() => actions.newShell(crew)}>
                 <SquareTerminal className="size-3.5" />
+              </Button>
+              <Button variant="ghost" size="icon" className={tiny} aria-label={`Open Master of ${crew.name}`} title="Open Master" onClick={() => actions.openMaster(crew)}>
+                <Crown className="size-3.5" />
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -286,15 +443,26 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
 
   const groupBlock = (g: ProjectGroup, index: number) => {
     const members = inGroup(g.id)
-    const move = (by: -1 | 1) => {
-      const gids = groups.map((x) => x.id)
-      const target = gids[index + by]
-      if (target != null) reorderGroups.mutate([moved(gids, g.id, target)])
-    }
+    const key = `g:${g.id}`
+    const isCurrent = cursor === key
     return (
-      <section key={g.id} aria-label={`Group ${g.name}`} data-group={g.id} className="pt-1">
+      <section key={g.id} aria-label={`Group ${g.name}`} data-group={g.id}>
         <div
           draggable={renaming !== g.id}
+          data-nav-current={isCurrent && focused ? 'true' : undefined}
+          data-nav-label={`group:${g.name}`}
+          role="treeitem"
+          aria-expanded={!g.collapsed}
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('input')) return
+            setCursor(key)
+            window.clearTimeout(headerClick.current)
+            headerClick.current = window.setTimeout(() => toggle(g), 220)
+          }}
+          onDoubleClick={() => {
+            window.clearTimeout(headerClick.current)
+            setRenaming(g.id)
+          }}
           onDragStart={(e) => {
             dragging.current = { kind: 'group', id: g.id }
             setDragId(dragging.current)
@@ -305,19 +473,37 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
           onDrop={(e) => dropOnGroup(e, g)}
           onDragEnd={endDrag}
           className={cn(
-            'group text-muted-foreground flex items-center gap-1 rounded-md py-0.5 pr-1 text-xs',
+            'group text-muted-foreground relative mt-2 flex h-6 cursor-pointer items-center gap-1 rounded-md pr-1 pl-4 text-[10.5px] font-semibold tracking-[.06em] uppercase',
             over === `group:${g.id}` && 'ring-primary ring-1',
             dragId?.kind === 'group' && dragId.id === g.id && 'opacity-50',
+            isCurrent && focused && ring,
           )}
         >
           <button
             type="button"
+            data-no-nav
+            aria-label={`Reorder group ${g.name}`}
+            title="Drag to reorder the group, or use the up and down arrow keys"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+              e.preventDefault()
+              moveGroup(g, e.key === 'ArrowUp' ? -1 : 1)
+            }}
+            className="hover:text-foreground focus-visible:ring-primary absolute inset-y-0 left-0 flex w-3.5 cursor-grab items-center justify-center rounded-l-md opacity-0 outline-none group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 active:cursor-grabbing"
+          >
+            <GripVertical className="size-3" />
+          </button>
+          <button
+            type="button"
+            tabIndex={-1}
+            data-no-nav
             aria-label={`${g.collapsed ? 'Expand' : 'Collapse'} ${g.name}`}
             aria-expanded={!g.collapsed}
-            onClick={() => collapseGroup.mutate([g.id, !g.collapsed], { onError: failed })}
-            className="hover:text-foreground flex shrink-0 items-center p-1"
+            onClick={(e) => (e.stopPropagation(), setCursor(key), toggle(g))}
+            className="hover:text-foreground flex shrink-0 items-center"
           >
-            {g.collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+            {g.collapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
           </button>
           {renaming === g.id ? (
             <NameEditor
@@ -327,14 +513,14 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
               onCommit={(name) => renameGroup.mutate([g.id, name], { onSuccess: () => setRenaming(null), onError: (e) => (failed(e), setRenaming(null)) })}
             />
           ) : (
-            <span className="min-w-0 flex-1 truncate font-medium" onDoubleClick={() => setRenaming(g.id)} title="Double-click to rename">
+            <span className="min-w-0 flex-1 truncate" title="Double-click to rename">
               {g.name}
             </span>
           )}
           <span className="shrink-0 tabular-nums" aria-label={`${members.length} projects`}>
             {members.length}
           </span>
-          <div className={cn('items-center', hoverOnly)}>
+          <div data-no-nav className={cn('items-center', hoverOnly)} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
             <Button variant="ghost" size="icon" className={tiny} aria-label={`Index group ${g.name}`} title="Index every project in the group" onClick={() => void indexGroup(g)} disabled={members.length === 0}>
               <Network className="size-3.5" />
             </Button>
@@ -349,10 +535,10 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => setRenaming(g.id)}>Rename group</DropdownMenuItem>
-                <DropdownMenuItem disabled={index === 0} onSelect={() => move(-1)}>
+                <DropdownMenuItem disabled={index === 0} onSelect={() => moveGroup(g, -1)}>
                   Move group up
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={index === groups.length - 1} onSelect={() => move(1)}>
+                <DropdownMenuItem disabled={index === groups.length - 1} onSelect={() => moveGroup(g, 1)}>
                   Move group down
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -364,61 +550,80 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
           </div>
         </div>
         {!g.collapsed && (
-          <div className="border-border/60 ml-2 space-y-0.5 border-l pl-1">
+          <div className="space-y-px pt-px">
             {members.map(crewRow)}
-            {members.length === 0 && <p className="text-muted-foreground px-2.5 py-1.5 text-xs">Empty. Drag a project here.</p>}
+            {members.length === 0 && <p className="text-muted-foreground px-4 py-1 text-xs">Empty. Drag a project here.</p>}
           </div>
         )}
       </section>
     )
   }
 
-  const ungrouped = inGroup(null)
-
   return (
     <aside
       ref={aside}
       aria-label="Projects"
-      style={{ width: panel.width || 'min(15rem, 35vw)', minWidth: 'min(180px, 35vw)', maxWidth: '50vw' }}
+      style={{ width: panel.width || `min(${PANEL_DEFAULT}px, 35vw)`, minWidth: `min(${PANEL_MIN}px, 35vw)`, maxWidth: `min(${PANEL_MAX}px, 50vw)` }}
       className="bg-muted/30 relative flex shrink-0 flex-col border-r"
     >
       <ResizeHandle
         target={aside}
         axis="x"
         grow={1}
-        min={() => Math.min(180, window.innerWidth * 0.35)}
-        max={() => window.innerWidth / 2}
+        min={() => Math.min(PANEL_MIN, window.innerWidth * 0.35)}
+        max={() => Math.min(PANEL_MAX, window.innerWidth / 2)}
         label="Resize project list"
-        className="-right-1"
+        className="-right-[3px] w-1.5 cursor-ew-resize"
         {...panel.handle}
       />
-      <div className="text-muted-foreground flex items-center justify-between px-4 pt-3 pb-1.5 text-[11px] font-medium tracking-wider uppercase">
-        Crews
-        <span className="flex">
-          <Button variant="ghost" size="icon" className="size-6" onClick={addGroup} aria-label="New group" title="New group">
-            <FolderPlus className="size-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="size-6" onClick={() => onNewCrew()} aria-label="New crew" title="New crew">
-            <Plus className="size-3.5" />
-          </Button>
-        </span>
+      <div data-testid="project-panel-header" className="flex h-8 shrink-0 items-center gap-0.5 pr-1.5 pl-3.5">
+        <span className="text-primary mr-auto text-[10.5px] font-semibold tracking-[.09em] uppercase">Projects</span>
+        <Button variant="ghost" size="icon" className={headerBtn} onClick={() => onNewCrew()} aria-label="Add project" title="Add project">
+          <Plus />
+        </Button>
+        <Button variant="ghost" size="icon" className={headerBtn} onClick={addGroup} aria-label="New group" title="New group">
+          <FolderPlus />
+        </Button>
+        <Button variant="ghost" size="icon" className={headerBtn} onClick={() => void indexAll()} disabled={crews.length === 0} aria-label="Index all projects with CodeGraph" title="Index all projects with CodeGraph">
+          <Network />
+        </Button>
+        <Button variant="ghost" size="icon" className={headerBtn} onClick={() => void qc.invalidateQueries()} aria-label="Refresh projects" title="Refresh projects">
+          <RefreshCw />
+        </Button>
+        <Button variant="ghost" size="icon" className={headerBtn} onClick={onHide} disabled={!onHide} aria-label="Hide project list" title="Hide project list">
+          <PanelLeftClose />
+        </Button>
       </div>
 
-      <ScrollArea className="flex-1 px-2">
-        <nav className="space-y-0.5 pb-2">
+      <ScrollArea className="min-h-0 flex-1 px-1.5">
+        <div
+          ref={tree}
+          role="tree"
+          aria-label="Project list"
+          tabIndex={0}
+          onKeyDown={onTreeKey}
+          onFocus={(e) => {
+            setFocused(true)
+            if (e.target === e.currentTarget && !current) setCursor(items.find((i) => i.key === `p:${selected}`)?.key ?? items[0]?.key ?? null)
+          }}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false)
+          }}
+          className="space-y-px pb-2 outline-none"
+        >
+          <div
+            onDragOver={(e) => accepts(e, 'ungrouped', dragging.current?.kind === 'crew')}
+            onDrop={dropOnUngrouped}
+            className={cn('space-y-px rounded-md', over === 'ungrouped' && 'ring-primary ring-1')}
+          >
+            {ungrouped.map(crewRow)}
+            {groups.length > 0 && ungrouped.length === 0 && crews.length > 0 && dragId?.kind === 'crew' && (
+              <p className="text-muted-foreground px-4 py-1 text-xs">Drop here to take it out of its group.</p>
+            )}
+          </div>
+          {crews.length === 0 && <p className="text-muted-foreground px-3.5 py-2 text-xs">No projects yet. Use + to add one.</p>}
           {groups.map(groupBlock)}
-          {groups.length > 0 && (
-            <div
-              onDragOver={(e) => accepts(e, 'ungrouped', dragging.current?.kind === 'crew')}
-              onDrop={dropOnUngrouped}
-              className={cn('text-muted-foreground rounded-md px-2 pt-2 pb-0.5 text-[11px]', over === 'ungrouped' && 'ring-primary ring-1')}
-            >
-              Ungrouped
-            </div>
-          )}
-          {ungrouped.map(crewRow)}
-          {crews.length === 0 && <p className="text-muted-foreground px-2.5 py-2 text-xs">No crews yet.</p>}
-        </nav>
+        </div>
       </ScrollArea>
 
       <div className="space-y-2 border-t p-2">
@@ -430,14 +635,7 @@ export function Sidebar({ crews, selected, onSelect, onNewCrew, settingsOpen, on
             </Button>
           </div>
         )}
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            className={cn('min-w-0 flex-1 justify-start gap-2.5', settingsOpen ? 'bg-accent text-accent-foreground' : 'text-muted-foreground')}
-            onClick={onOpenSettings}
-          >
-            <Settings className="size-4" /> Settings
-          </Button>
+        <div className="flex items-center gap-1" data-testid="sidebar-footer">
           {footer}
         </div>
       </div>

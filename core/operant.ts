@@ -61,11 +61,14 @@ import { ClaudeAdapter, MasterRegistry } from './master'
 import { createOpenCodeAdapter } from './opencode'
 import { MessageBus, MessageError, type MessageNotice } from './messages'
 import { NudgeScheduler, type NudgeAction, type NudgeOperatorState } from './nudge'
+import { consoleLog } from './console'
 import { DiscordError, DiscordManager, scrubSecrets, tokenRef } from './discord'
+import { discordAiModel, discordLocalModels } from './discord-ai'
 import { claudeFrontDeskModel, type FrontDeskModel } from './discord-frontdesk'
 import { createDiscordJsGateway, type GatewayFactory } from './discord-gateway'
 import { MemorySecretStore, type SecretStore } from './discord-secrets'
 import { RunError, RunManager, cleanLimits, cleanSeats } from './runs'
+import { exportTeams, parseTeamFile } from './team-presets'
 import { SubagentReader } from './agents'
 import { cliExplorer } from './brief'
 import { HindsightService, setSharedBanks } from './hindsight'
@@ -80,6 +83,8 @@ import { Purger, type PurgeEvent } from './purge'
 import type { SessionKey, SessionManager } from './sessions'
 import type { Store } from './store'
 import { JsonlTail, parseLine, transcriptPath } from './transcripts'
+import { learnModelList, resolveLearnAi } from './learn-ai'
+import type { LocalLlmDeps } from './localllm'
 import { listModels } from './models'
 import { RunTransitionError } from './store'
 import { UsageTracker, isColdTurn, type CapDecision } from './usage'
@@ -90,7 +95,8 @@ import { cleanFilter, jobUsage, queryUsage, querySeries } from './usage-query'
 import { applyRead, exportBundle, previewRead, readSource, type ImportDeps } from './import'
 import { ProviderMonitor } from './providers'
 import { ProjectGroups } from './groups'
-import { gitChanges, listIdes, openInIde } from './projecttools'
+import { gitChanges, gitInfo, listIdes, openInIde } from './projecttools'
+import * as repoGit from './git'
 import { killAllOwn } from './proc'
 
 type Handlers = { [C in CoreChannel]: (...args: Parameters<IpcApi[C]>) => ReturnType<IpcApi[C]> | Promise<Awaited<ReturnType<IpcApi[C]>>> }
@@ -244,6 +250,7 @@ export class OperantError extends Error {
 }
 
 // Where the Hindsight API keys live in the secret store; the settings never hold them.
+const LOCAL_LLM_KEY = 'learn-local-key'
 const HINDSIGHT_KEY = { shared: 'hindsight-shared-key', remote: 'hindsight-remote-key' } as const
 const slotOf = (slot: unknown): keyof typeof HINDSIGHT_KEY => {
   if (slot === 'shared' || slot === 'remote') return slot
@@ -370,6 +377,7 @@ export class Operant extends EventEmitter<PushEvents> {
   private settings: Settings
   private budgetConfig: BudgetConfig
   private readonly fileDialogs: FileDialogs | undefined
+  private pendingTeamImport: string | null = null
   private readonly importDeps: ImportDeps
 
   constructor(opts: OperantOptions) {
@@ -464,7 +472,7 @@ export class Operant extends EventEmitter<PushEvents> {
         db: new LessonsDb(store.db, this.now),
         hindsight,
         git: realGit,
-        model: opts.learnModel ?? claudeLearnModel(opts.launch?.supported),
+        model: opts.learnModel ?? claudeLearnModel(opts.launch?.supported, { settings: () => this.settings.learn, local: this.localLlm() }),
         settings: () => this.settings.learn,
         log: (message, crewId) => this.log('learn', message, null, crewId || null),
       })
@@ -516,8 +524,14 @@ export class Operant extends EventEmitter<PushEvents> {
       secrets,
       gateway: opts.discord?.gateway ?? createDiscordJsGateway,
       frontDesk: opts.discord?.frontDesk ?? claudeFrontDeskModel(opts.launch?.supported),
+      frontDeskFor: (ai) => discordAiModel(ai, { supported: opts.launch?.supported, opencode: () => this.masters.has('opencode') ? this.masters.get('opencode') : undefined }),
+      localModels: (url) => discordLocalModels(url),
       now: this.now,
-      log: (message, crewId) => this.log('discord', scrubSecrets(message), null, crewId ?? null),
+      log: (message, crewId) => {
+        const text = scrubSecrets(message)
+        this.log('discord', text, null, crewId ?? null)
+        consoleLog.add('discord', 'info', text, { error: /could not|failed|error|disconnected|refused|not valid|is off|timed out/i.test(text) })
+      },
       onHealth: (h) => this.emit('discord:status', h),
       onPairing: (botId) => this.emit('discord:pairing', { botId }),
     })
@@ -588,7 +602,7 @@ export class Operant extends EventEmitter<PushEvents> {
 
   private requireCrew(crewId: number): Crew {
     const crew = typeof crewId === 'number' ? this.store.getCrew(crewId) : null
-    if (!crew) throw notFound(`Crew ${String(crewId)} not found`)
+    if (!crew) throw notFound(`Project ${String(crewId)} not found`)
     return crew
   }
 
@@ -621,18 +635,18 @@ export class Operant extends EventEmitter<PushEvents> {
       'crews:topology': (crewId) => store.topology(crewId),
       'crews:create': ({ name, folder }) => {
         if (typeof folder !== 'string' || !folder.trim()) throw bad('The folder cannot be empty')
-        const crew = store.createCrew(cleanName(name, 'The crew name'), folder.trim())
-        this.log('crew', `Crew ${crew.name} created`, null, crew.id)
+        const crew = store.createCrew(cleanName(name, 'The project name'), folder.trim())
+        this.log('crew', `Project ${crew.name} created`, null, crew.id)
         return crew
       },
       'crews:update': (crewId, patch) => {
         const crew = this.requireCrew(crewId)
         const next: CrewPatch = {}
-        if (patch.name !== undefined) next.name = cleanName(patch.name, 'The crew name')
+        if (patch.name !== undefined) next.name = cleanName(patch.name, 'The project name')
         if (patch.folder !== undefined) {
           if (typeof patch.folder !== 'string' || !patch.folder.trim()) throw bad('The folder cannot be empty')
           if (patch.folder.trim() !== crew.folder && this.crewRunning(crewId) > 0) {
-            throw conflict('Stop the crew’s operators and tiles before changing its folder')
+            throw conflict('Stop the project’s operators and tiles before changing its folder')
           }
           next.folder = patch.folder.trim()
         }
@@ -652,7 +666,7 @@ export class Operant extends EventEmitter<PushEvents> {
         }
         if (patch.trackerJobs !== undefined) next.trackerJobs = patch.trackerJobs === true
         const updated = store.updateCrew(crewId, next)
-        this.log('crew', `Crew ${updated.name} updated`, null, crewId)
+        this.log('crew', `Project ${updated.name} updated`, null, crewId)
         return updated
       },
       'crews:trackerNow': (crewId) => {
@@ -661,7 +675,7 @@ export class Operant extends EventEmitter<PushEvents> {
         return refreshTrackerJob(this.jobs, crew, null, [])
       },
       'crews:reorder': (crewIds) => {
-        if (!Array.isArray(crewIds) || crewIds.some((id) => typeof id !== 'number')) throw bad('The order must be a list of crew ids')
+        if (!Array.isArray(crewIds) || crewIds.some((id) => typeof id !== 'number')) throw bad('The order must be a list of project ids')
         return store.reorderCrews(crewIds)
       },
       'crews:counts': (crewId) => this.crewCounts(this.requireCrew(crewId).id),
@@ -671,7 +685,7 @@ export class Operant extends EventEmitter<PushEvents> {
         const ids = (store.topology(crewId)?.squads ?? []).flatMap((squad) => squad.operators.map((s) => s.id))
         const master = store.getMaster(crewId)
         if (master) ids.push(master.id)
-        // SQLite reuses ids once the crew's rows are gone, so every session must be gone first.
+        // SQLite reuses ids once the project's rows are gone, so every session must be gone first.
         for (const id of ids) await this.stopAndWait(id)
         for (const id of ids) this.dropOperatorState(id)
         for (const scratch of store.listScratch(crewId)) {
@@ -679,7 +693,7 @@ export class Operant extends EventEmitter<PushEvents> {
           this.detachScratch(scratch.id)
         }
         store.deleteCrew(crewId)
-        this.log('crew', `Crew ${crew.name} deleted`)
+        this.log('crew', `Project ${crew.name} deleted`)
         return counts
       },
     }
@@ -716,6 +730,23 @@ export class Operant extends EventEmitter<PushEvents> {
       'ide:list': () => listIdes(this.settings.ide.custom),
       'ide:open': (crewId, ide) => openInIde(this.requireCrew(crewId).folder, ide ?? this.settings.ide.default, this.settings.ide.custom),
       'git:changes': (crewId) => gitChanges(this.requireCrew(crewId).folder),
+      'git:info': (crewId) => gitInfo(this.requireCrew(crewId).folder),
+      'git:status': (id) => repoGit.gitStatus(this.requireCrew(id).folder),
+      'git:diff': (id, req) => repoGit.gitDiff(this.requireCrew(id).folder, req),
+      'git:stage': (id, paths) => repoGit.gitStage(this.requireCrew(id).folder, paths),
+      'git:unstage': (id, paths) => repoGit.gitUnstage(this.requireCrew(id).folder, paths),
+      'git:discard': (id, paths) => repoGit.gitDiscard(this.requireCrew(id).folder, paths),
+      'git:stageHunk': (id, ref, stage) => repoGit.gitStageHunk(this.requireCrew(id).folder, ref, stage === true),
+      'git:commit': (id, message, amend) => repoGit.gitCommit(this.requireCrew(id).folder, message, amend === true),
+      'git:lastMessage': (id) => repoGit.gitLastMessage(this.requireCrew(id).folder),
+      'git:log': (id, limit, skip) => repoGit.gitLog(this.requireCrew(id).folder, limit, skip),
+      'git:commitDetails': (id, hash) => repoGit.gitCommitDetails(this.requireCrew(id).folder, hash),
+      'git:branches': (id) => repoGit.gitBranches(this.requireCrew(id).folder),
+      'git:checkout': (id, branch) => repoGit.gitCheckout(this.requireCrew(id).folder, branch),
+      'git:createBranch': (id, name) => repoGit.gitCreateBranch(this.requireCrew(id).folder, name),
+      'git:fetch': (id) => repoGit.gitFetch(this.requireCrew(id).folder),
+      'git:pull': (id) => repoGit.gitPull(this.requireCrew(id).folder),
+      'git:push': (id) => repoGit.gitPush(this.requireCrew(id).folder),
     }
   }
 
@@ -922,6 +953,11 @@ export class Operant extends EventEmitter<PushEvents> {
       if (v.length > ROLE_TEXT_MAX) throw bad(`Rules are longer than ${ROLE_TEXT_MAX} characters`)
       return v
     }
+    const description = (v: unknown): string => {
+      if (typeof v !== 'string') throw bad('The description must be text')
+      if (v.length > 500) throw bad('The description is longer than 500 characters')
+      return v
+    }
     return {
       'teams:list': () => store.listTeams(),
       'teams:create': (input) => {
@@ -930,6 +966,7 @@ export class Operant extends EventEmitter<PushEvents> {
           seats: input.seats === undefined ? [] : cleanSeats(store, input.seats),
           limits: cleanLimits(input.limits) as TeamLimits,
           rules: input.rules === undefined ? '' : rules(input.rules),
+          description: input.description === undefined ? '' : description(input.description),
         })
         this.log('team', `Team ${team.name} created`)
         return team
@@ -941,23 +978,64 @@ export class Operant extends EventEmitter<PushEvents> {
         if (patch.seats !== undefined) next.seats = cleanSeats(store, patch.seats)
         if (patch.limits !== undefined) next.limits = cleanLimits(patch.limits) as TeamLimits
         if (patch.rules !== undefined) next.rules = rules(patch.rules)
+        if (patch.description !== undefined) next.description = description(patch.description)
         const team = store.updateTeam(teamId, next)
         this.log('team', `Team ${team.name} updated`)
         return team
       },
       'teams:delete': (teamId) => {
         const team = requireTeam(teamId)
+        if (team.builtin != null) throw bad(`${team.name} is a built-in team and cannot be deleted. Hide it instead.`)
         store.deleteTeam(teamId)
         this.log('team', `Team ${team.name} deleted`)
+      },
+      'teams:duplicate': (teamId, name) => {
+        const src = requireTeam(teamId)
+        const copy = store.duplicateTeam(teamId, name === undefined ? undefined : cleanName(name, 'The team name'))
+        this.log('team', `Team ${src.name} duplicated as ${copy.name}`)
+        return copy
+      },
+      'teams:reset': (teamId) => {
+        if (requireTeam(teamId).builtin == null) throw bad('Only built-in teams can be reset')
+        try {
+          const team = store.resetTeam(teamId)
+          this.log('team', `Team ${team.name} reset to its shipped values`)
+          return team
+        } catch (e) {
+          throw bad(e instanceof Error ? e.message : String(e))
+        }
+      },
+      'teams:setHidden': (teamId, hidden) => {
+        const team = requireTeam(teamId)
+        if (team.builtin == null) throw bad('Only built-in teams can be hidden. Delete a team of your own instead.')
+        return store.setTeamHidden(teamId, hidden === true)
+      },
+      'teams:export': async (teamId) => {
+        const teams = teamId === undefined ? store.listTeams() : [requireTeam(teamId)]
+        return { saved: await this.saveExport(exportTeams(store, teams)) }
+      },
+      'teams:importPreview': async () => {
+        const path = await this.fileDialogs?.open({ name: 'Operant teams', extensions: ['json'] })
+        if (!path) return null
+        const items = parseTeamFile(store, readFileSync(path, 'utf8'))
+        this.pendingTeamImport = path
+        return { path, entries: items.map((i) => i.entry) }
+      },
+      'teams:import': (path) => {
+        if (path !== this.pendingTeamImport) throw bad('Choose the file again before importing')
+        const added = parseTeamFile(store, readFileSync(path, 'utf8')).flatMap((i) => (i.input ? [store.createTeam({ ...i.input, name: store.teamNameFree(i.input.name, null) })] : []))
+        this.pendingTeamImport = null
+        this.log('team', `Imported ${added.length} team${added.length === 1 ? '' : 's'}`)
+        return added
       },
     }
   }
 
   private modelHandlers(): Group<'models'> {
     return {
-      'models:list': (agent) => {
+      'models:list': (agent, refresh) => {
         if (agent !== 'claude' && agent !== 'opencode') throw bad('agent must be claude or opencode')
-        return listModels(agent)
+        return listModels(agent, { refresh: refresh === true })
       },
     }
   }
@@ -975,6 +1053,8 @@ export class Operant extends EventEmitter<PushEvents> {
       'discord:disconnect': (botId) => d.disconnect(botId),
       'discord:health': () => d.health(),
       'discord:test': (botId) => d.test(botId),
+      'discord:testAi': (botId, ai) => d.testAi(botId, ai),
+      'discord:localModels': (url) => d.localModels(url),
       'discord:pairings': (botId) => d.pairingsOf(botId),
       'discord:approvePairing': (botId, code) => d.approvePairing(botId, code),
       'discord:denyPairing': (botId, code) => d.denyPairing(botId, code),
@@ -1123,7 +1203,7 @@ export class Operant extends EventEmitter<PushEvents> {
         this.requireCrew(crewId)
         if (!VIEWS.has(view)) throw bad('The view must be cards, list, graph or tiles')
         const crew = store.setCrewView(crewId, view)
-        this.log('view', `Crew ${crew.name} shows the ${view} view`, null, crewId)
+        this.log('view', `Project ${crew.name} shows the ${view} view`, null, crewId)
         return crew
       },
       'tiles:getLayout': (crewId) => store.getTileLayout(this.requireCrew(crewId).id),
@@ -1298,6 +1378,11 @@ export class Operant extends EventEmitter<PushEvents> {
     }
   }
 
+  // The local model server client's key, read per call from the encrypted store.
+  private localLlm(): LocalLlmDeps {
+    return { apiKey: () => this.secrets.get(LOCAL_LLM_KEY) }
+  }
+
   private miscHandlers(): Group<'health'> & Group<'hindsight'> & Group<'learn'> & Group<'index'> & Group<'events'> & Group<'dashboard'> & Group<'settings'> {
     const store = this.store
     const indexes = this.indexes
@@ -1314,6 +1399,19 @@ export class Operant extends EventEmitter<PushEvents> {
       'hindsight:status': () => this.runServices.hindsightStatus(),
       'learn:status': (crewId) => this.learn.status(crewId),
       'learn:run': (runId) => this.learn.learnRun(runId),
+      'learn:ai': () => resolveLearnAi(this.settings.learn, learnModelList(() => this.settings.learn, this.localLlm())),
+      'learn:localModels': async () => {
+        const r = await learnModelList(() => this.settings.learn, this.localLlm())('local')
+        return { models: r.models, ...(r.error ? { error: r.error } : {}) }
+      },
+      'learn:localKey': () => this.secrets.get(LOCAL_LLM_KEY) !== null,
+      'learn:setLocalKey': (key) => {
+        const k = String(key ?? '').trim()
+        if (k) this.secrets.set(LOCAL_LLM_KEY, k)
+        else this.secrets.delete(LOCAL_LLM_KEY)
+        return this.secrets.get(LOCAL_LLM_KEY) !== null
+      },
+      'learn:test': () => this.learn.testAi(),
       'learn:lessons': (filter) => this.learn.lessons(filter),
       'learn:editLesson': (id, patch) => this.learn.editLesson(id, patch),
       'learn:mergeLessons': (keepId, mergeIds) => this.learn.mergeLessons(keepId, mergeIds),
@@ -1616,13 +1714,14 @@ export class Operant extends EventEmitter<PushEvents> {
     const token = (env.DISCORD_BOT_TOKEN ?? '').trim()
     const bare = token ? this.store.listDiscordBots().filter((b) => !b.tokenRef || this.secrets.get(b.tokenRef) === null) : []
     const bot = bare.length === 1 ? bare[0] : undefined
+    if (token && !bot) this.logDiscord(bare.length === 0 ? 'DISCORD_BOT_TOKEN is set but there is no bot without a token to give it to, so it was not used (add a bot in Settings > Discord without a token, then restart Operant)' : 'DISCORD_BOT_TOKEN is set but more than one bot has no token, so it was not used (add a token to the right bot in Settings > Discord)')
     if (bot) {
       try {
         this.secrets.set(tokenRef(bot.id), token)
         this.store.updateDiscordBot(bot.id, { tokenRef: tokenRef(bot.id) })
-        this.log('discord', 'Discord token from .env imported into the encrypted store; you can delete it from .env')
+        this.logDiscord(`Discord token from .env imported into the encrypted store for bot ${bot.name}; you can delete it from .env`)
       } catch {
-        this.log('discord', 'Discord token from .env could not be imported: the encrypted store is unavailable')
+        this.logDiscord('Discord token from .env could not be imported: the encrypted store is unavailable')
       }
     }
     const url = (env.HINDSIGHT_URL ?? '').trim()
@@ -1835,6 +1934,11 @@ export class Operant extends EventEmitter<PushEvents> {
   }
 
   // Operators
+
+  private logDiscord(message: string): void {
+    this.log('discord', message)
+    consoleLog.add('discord', 'info', message, { error: /could not|unavailable/i.test(message) })
+  }
 
   private log(kind: string, message: string, operatorId: number | null = null, crewId: number | null = null): void {
     const rid = crewId ?? (operatorId == null ? null : this.store.crewIdOfOperator(operatorId, true))
@@ -2063,7 +2167,7 @@ export class Operant extends EventEmitter<PushEvents> {
     if (patch.model !== undefined) next.model = patch.model.trim()
     validateLaunchSettings({ ...launchFields(next as Record<string, unknown>), agent: patch.agent ?? operator.agent })
     if (patch.squadId !== undefined && this.store.getSquad(patch.squadId)?.crewId !== this.store.crewIdOfOperator(operator.id)) {
-      throw bad('An operator can only move to a squad in its own crew')
+      throw bad('An operator can only move to a squad in its own project')
     }
     return next
   }
@@ -2108,7 +2212,7 @@ export class Operant extends EventEmitter<PushEvents> {
     this.jobs.releaseOperatorJobs(operatorId, { onExit: false })
     this.messages.closeAsksFrom(operatorId)
     this.store.db.prepare('DELETE FROM messages WHERE to_id = ? AND read_at IS NULL').run(operatorId)
-    // Also clears the crew's PM when it was this operator, and its links.
+    // Also clears the project's PM when it was this operator, and its links.
     this.store.deleteOperator(operatorId)
     this.dropOperatorState(operatorId)
     this.log('operator', `Operator ${address} deleted`, null, crewId)

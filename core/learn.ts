@@ -6,11 +6,13 @@ import {
   LEARN_STORES,
   LESSON_KINDS,
   lessonNeedsReview,
+  type LearnCli,
   type LearnRunInfo,
   type LearnSettings,
   type LearnSkip,
   type LearnStatus,
   type LearnStore,
+  type LearnTestResult,
   type Lesson,
   type LessonFilter,
   type LessonKind,
@@ -25,23 +27,61 @@ import { bankFor, type HindsightService } from './hindsight'
 import { PersonalMemory } from './learn-memory'
 import { LessonsDb } from './lessons-store'
 import { isDuplicate, jaccard, matchLessons, slug, words } from './lessons'
-import { ClaudeAdapter, MODEL_TIMEOUT_MS, resultWithin, type MasterAdapter } from './master'
+import { LEARN_MODEL, learnModelList, resolveLearnAi } from './learn-ai'
+import { localChat, normalizeLocalUrl, type LocalLlmDeps } from './localllm'
+import { ClaudeAdapter, MODEL_TIMEOUT_MS, assertFakeClaude, resultWithin, type MasterAdapter } from './master'
+import type { ModelList } from './models'
+import { createOpenCodeAdapter, type ChildLike } from './opencode'
+import { spawnHidden } from './proc'
 import type { Store } from './store'
 import { transcriptPath } from './transcripts'
 import { diffInfo, type DiffInfo, type Git } from './writeback'
 
-// One prompt to a cheap model; its text comes back.
-export type LearnModel = (prompt: string) => Promise<string>
+// One prompt to the learn AI; its text comes back. `onUsed` is told the CLI and model that were actually asked.
+export type LearnModel = (prompt: string, onUsed?: (used: { cli: string; model: string }) => void) => Promise<string>
 
-export const LEARN_MODEL = 'claude-haiku-4-5'
+export { LEARN_MODEL }
 
-// The real learn model: one non-interactive Claude Haiku run in an empty folder, with no permission to change anything.
-export function claudeLearnModel(supported?: ReadonlySet<string>, o: { adapter?: MasterAdapter; timeoutMs?: number } = {}): LearnModel {
-  const adapter = o.adapter ?? new ClaudeAdapter({ supported, permissionMode: 'default' })
-  return async (prompt) => {
+// OpenCode for one learn call: no shared service (no event stream, no interrupt call), a hidden window, and never the real binary under test.
+function opencodeLearnAdapter(): MasterAdapter {
+  return createOpenCodeAdapter({
+    spawn: (cmd, args, opts) => {
+      assertFakeClaude(process.env, process.platform, 'opencode')
+      return spawnHidden(cmd, args, { cwd: opts.cwd, stdio: ['ignore', 'pipe', 'pipe'], source: 'opencode' }) as unknown as ChildLike
+    },
+    fetch: () => Promise.reject(new Error('the learn step does not use the OpenCode service')),
+    readJson: () => null,
+  })
+}
+
+export interface LearnModelOptions {
+  adapter?: MasterAdapter
+  timeoutMs?: number
+  // The owner's choice, read per call so a change applies live; without it the step always uses Claude Haiku.
+  settings?: () => Pick<LearnSettings, 'cli' | 'model' | 'effort'> & Partial<Pick<LearnSettings, 'localUrl' | 'localInsecureOk'>>
+  local?: LocalLlmDeps
+  opencode?: MasterAdapter
+  models?: (cli: LearnCli) => Promise<ModelList>
+}
+
+// The real learn model: one non-interactive run of the chosen CLI in an empty folder, with no permission to change anything.
+export function claudeLearnModel(supported?: ReadonlySet<string>, o: LearnModelOptions = {}): LearnModel {
+  const claude = o.adapter ?? new ClaudeAdapter({ supported, permissionMode: 'default' })
+  let opencode: MasterAdapter | undefined = o.opencode
+  return async (prompt, onUsed) => {
+    const ai = await resolveLearnAi(o.settings?.() ?? { cli: 'claude', model: '', effort: '' }, o.models ?? learnModelList(() => ({ localUrl: o.settings?.().localUrl ?? '', localInsecureOk: !!o.settings?.().localInsecureOk }), o.local))
+    if (ai.error || !ai.model) throw new Error(ai.error ?? 'No learn model is chosen')
+    onUsed?.({ cli: ai.cli, model: ai.model })
+    if (ai.cli === 'local') {
+      const set = o.settings!()
+      const url = normalizeLocalUrl(set.localUrl ?? '', set.localInsecureOk)
+      if ('error' in url) throw new Error(url.error)
+      return localChat(url.url, ai.model, [{ role: 'user', content: prompt }], {}, o.local)
+    }
+    const adapter = ai.cli === 'opencode' ? (opencode ??= opencodeLearnAdapter()) : claude
     const cwd = join(tmpdir(), 'operant-learn')
     mkdirSync(cwd, { recursive: true })
-    const run = await adapter.start({ cwd, prompt, model: LEARN_MODEL, onEvent: () => undefined })
+    const run = await adapter.start({ cwd, prompt, model: ai.model, effort: ai.effort || undefined, onEvent: () => undefined })
     const result = await resultWithin(run, o.timeoutMs ?? MODEL_TIMEOUT_MS, 'The learn model')
     if (!result.ok) throw new Error(result.text || 'The learn model failed')
     return result.text
@@ -66,6 +106,7 @@ export interface LearnDeps {
   onChange?: () => void
 }
 
+const TEST_PROMPT = ['This is a connection test, not a real session. Answer with exactly [] and nothing else.', 'Transcript tail:', 'User: please use pnpm here.', 'Assistant: Done.'].join(String.fromCharCode(10))
 const TRANSCRIPT_CAP = 12_000
 const LESSON_MAX = 8
 const TEXT_MAX = 400
@@ -194,7 +235,7 @@ export class LearnService {
     const crew = store.getCrew(crewId)
     if (!crew || !settings.enabled) return null
     const base = { crewId, runId: run?.id ?? null, source: run ? ('job' as const) : ('conversation' as const) }
-    const info = { ...base, extracted: 0, written: 0, merged: 0, staled: 0, queued: 0, skipped: [] as LearnSkip[], error: '' }
+    const info = { ...base, extracted: 0, written: 0, merged: 0, staled: 0, queued: 0, skipped: [] as LearnSkip[], error: '', cli: settings.cli as string, model: settings.model }
     const finish = (): LearnRunInfo => {
       const rec = db.addLearnRun(info)
       const skipped = rec.skipped.map((s) => `${s.store} skipped: ${s.reason}`)
@@ -212,7 +253,12 @@ export class LearnService {
       const session = run ? ((store.getJson(`run.session.${run.id}`) as { sessionId?: string } | undefined)?.sessionId ?? null) : sessionId
       const tail = this.d.transcript ? this.d.transcript(crew.folder, session) : readTranscript(crew.folder, session, this.read)
       const known = db.listLessons({ crewId, status: 'active' }).slice(0, 40)
-      lessons = parseLessons(await this.d.model(this.prompt(run, tail, diff, known)))
+      lessons = parseLessons(
+        await this.d.model(this.prompt(run, tail, diff, known), (u) => {
+          info.cli = u.cli
+          info.model = u.model
+        }),
+      )
     } catch (err) {
       info.error = `Could not extract lessons: ${clean(errText(err))}`
       return finish()
@@ -251,6 +297,18 @@ export class LearnService {
     info.staled += this.staleCheck(crewId, crew.folder)
     this.draftSkills(crewId)
     return finish()
+  }
+
+  // "Test": one tiny call to the chosen AI on a made-up transcript; nothing is stored. Never throws.
+  async testAi(): Promise<LearnTestResult> {
+    const used = { cli: this.d.settings().cli as string, model: this.d.settings().model }
+    const t = Date.now()
+    try {
+      await this.d.model(TEST_PROMPT, (u) => Object.assign(used, u))
+      return { ok: true, ...used, ms: Date.now() - t, error: '' }
+    } catch (err) {
+      return { ok: false, ...used, ms: Date.now() - t, error: clean(errText(err)) }
+    }
   }
 
   private prompt(run: Run | null, tail: string, diff: DiffInfo, known: Lesson[]): string {

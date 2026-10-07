@@ -54,7 +54,7 @@ describe('teams, jobs and presets over IPC', () => {
     const edited = await op.handlers['teams:update'](team.id, { rules: 'check twice', limits: { maxWorkers: 1, topTier: 'sonnet', tokenBudget: 0 } })
     expect(edited).toMatchObject({ rules: 'check twice', limits: { maxWorkers: 1, topTier: 'sonnet' } })
     await op.handlers['teams:delete'](team.id)
-    expect(await op.handlers['teams:list']()).toEqual([])
+    expect((await op.handlers['teams:list']()).filter((t) => !t.builtin)).toEqual([])
   })
 
   it('refuses bad team input', async () => {

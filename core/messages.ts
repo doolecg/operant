@@ -494,7 +494,7 @@ export class MessageBus {
     if (!actor || typeof actor !== 'object') throw new MessageError('BAD_ARGS', 'Missing sender')
     if (actor.kind === 'user' || actor.kind === 'system') {
       const crew = this.store.getCrew(actor.crewId)
-      if (!crew) throw new MessageError('NOT_FOUND', `Crew ${actor.crewId} not found`)
+      if (!crew) throw new MessageError('NOT_FOUND', `Project ${actor.crewId} not found`)
       const user = actor.kind === 'user'
       return {
         kind: user ? 'user' : 'operator',
@@ -524,7 +524,7 @@ export class MessageBus {
 
   private requireUser(actor: Actor): { kind: 'user'; crewId: number } {
     if (!actor || actor.kind !== 'user') throw new MessageError('FORBIDDEN', 'Only the user can do this')
-    if (!this.store.getCrew(actor.crewId)) throw new MessageError('NOT_FOUND', `Crew ${actor.crewId} not found`)
+    if (!this.store.getCrew(actor.crewId)) throw new MessageError('NOT_FOUND', `Project ${actor.crewId} not found`)
     return actor
   }
 
@@ -543,7 +543,7 @@ export class MessageBus {
   private checkJob(jobId: number | null | undefined, crewId: number): number | null {
     if (jobId == null) return null
     const job = Number.isInteger(jobId) ? this.store.getJob(jobId) : null
-    if (!job || job.crewId !== crewId) throw new MessageError('BAD_ARGS', `Job ${String(jobId)} not found in this crew`)
+    if (!job || job.crewId !== crewId) throw new MessageError('BAD_ARGS', `Job ${String(jobId)} not found in this project`)
     return job.id
   }
 
@@ -556,7 +556,7 @@ export class MessageBus {
     }
     if (to === 'pm') {
       const pmId = this.store.getCrew(crewId)?.pmId ?? null
-      if (pmId == null) throw new MessageError('NOT_FOUND', 'This crew has no PM')
+      if (pmId == null) throw new MessageError('NOT_FOUND', 'This project has no PM')
       return [this.operatorRecipient(pmId, crewId, sender)]
     }
     if (to.startsWith('squad:')) {
@@ -565,7 +565,7 @@ export class MessageBus {
       const squad = this.store.db
         .prepare('SELECT id FROM squads WHERE crew_id = ? AND name = ? AND system = 0 AND deleted_at IS NULL')
         .get(crewId, name) as Row | undefined
-      if (!squad) throw new MessageError('NOT_FOUND', `No squad "${name}" in this crew`)
+      if (!squad) throw new MessageError('NOT_FOUND', `No squad "${name}" in this project`)
       const members = this.store.db
         .prepare('SELECT id FROM operators WHERE squad_id = ? AND deleted_at IS NULL ORDER BY id')
         .all(Number(squad.id)) as Row[]
@@ -578,12 +578,12 @@ export class MessageBus {
     if (at >= 0) {
       role = to.slice(0, at)
       const crewName = to.slice(at + 1)
-      if (crewName !== sender.crewName) throw new MessageError('FORBIDDEN', 'Messages stay inside one crew')
+      if (crewName !== sender.crewName) throw new MessageError('FORBIDDEN', 'Messages stay inside one project')
     }
     if (!role) throw new MessageError('BAD_ARGS', 'Missing role')
     if (role === 'master') {
       const master = this.store.getMaster(crewId)
-      if (!master) throw new MessageError('NOT_FOUND', 'This crew has no Master Terminal')
+      if (!master) throw new MessageError('NOT_FOUND', 'This project has no Master Terminal')
       return [this.operatorRecipient(master.id, crewId, sender)]
     }
     const op = this.store.db
@@ -592,7 +592,7 @@ export class MessageBus {
          WHERE q.crew_id = ? AND o.role = ? AND o.deleted_at IS NULL AND q.deleted_at IS NULL`,
       )
       .get(crewId, role) as Row | undefined
-    if (!op) throw new MessageError('NOT_FOUND', `No operator "${role}" in this crew`)
+    if (!op) throw new MessageError('NOT_FOUND', `No operator "${role}" in this project`)
     return [this.operatorRecipient(Number(op.id), crewId, sender)]
   }
 

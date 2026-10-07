@@ -23,6 +23,17 @@ export interface GitChange {
   path: string
 }
 
+// The branch chip: where the project's git stands, in one cheap call.
+export interface GitInfo {
+  branch: string
+  ahead: number
+  behind: number
+  // Changed and untracked files.
+  changes: number
+  // HEAD is not on a branch (branch then holds the short commit id).
+  detached: boolean
+}
+
 export interface GitChanges {
   isRepo: boolean
   branch: string
