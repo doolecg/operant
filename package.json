@@ -22,7 +22,7 @@
     "build": "vite build -c vite.main.config.ts && vite build -c vite.main.config.ts --mode preload && vite build -c vite.main.config.ts --mode cli && vite build -c vite.config.ts",
     "start": "electron .",
     "test": "vitest run",
-    "test:e2e": "node e2e/dashboard.mjs && node e2e/scale.mjs && node e2e/collab.mjs && node e2e/runs.mjs && node e2e/discord.mjs && node e2e/mcp.mjs && node e2e/usage.mjs && node e2e/memory.mjs && node e2e/console.mjs && node e2e/projects.mjs && node e2e/sidebar.mjs && node e2e/topbar.mjs && node e2e/git.mjs && node e2e/popups.mjs && node e2e/themes.mjs && node e2e/models.mjs",
+    "test:e2e": "node e2e/dashboard.mjs && node e2e/scale.mjs && node e2e/collab.mjs && node e2e/runs.mjs && node e2e/discord.mjs && node e2e/mcp.mjs && node e2e/usage.mjs && node e2e/memory.mjs && node e2e/console.mjs && node e2e/projects.mjs && node e2e/sidebar.mjs && node e2e/topbar.mjs && node e2e/git.mjs && node e2e/popups.mjs && node e2e/themes.mjs && node e2e/models.mjs && node e2e/sidebar.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir"

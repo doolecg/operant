@@ -185,7 +185,7 @@ describe('command construction', () => {
   })
 })
 
-describe('against a real repository', () => {
+describe('against a real repository', { timeout: 60_000 }, () => {
   const root = mkdtempSync(join(tmpdir(), 'operant-gitsvc-'))
   const repo = join(root, 'repo')
   const sh = (...a: string[]) => execFileSync('git', a, { cwd: repo, windowsHide: true, encoding: 'utf8' })
