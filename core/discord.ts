@@ -391,8 +391,10 @@ export class DiscordManager {
         }
       }
       const final = run.status === 'done' || run.status === 'failed'
-      const body = !final && run.status !== 'needs-you' ? '' : run.outcome ? `\n${run.outcome}` : ''
-      await this.say(origin.botId, origin.target, `JOB#${run.id} ${run.status}${body}`)
+      const outcome = !final && run.status !== 'needs-you' ? '' : run.outcome
+      const live = this.live.get(origin.botId)
+      if (!live) return
+      for (const piece of discordOutcome(`JOB#${run.id} ${run.status}`, outcome, { scrub: (t) => scrubSecrets(t) })) await live.gateway.send(origin.target, piece)
       if (final) this.origins.delete(run.id)
     } catch (err) {
       this.o.log?.(`Discord: could not post JOB#${run.id}: ${scrubSecrets(errText(err))}`)

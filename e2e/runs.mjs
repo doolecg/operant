@@ -181,6 +181,70 @@ try {
   await secondCard.waitFor({ state: 'detached' })
   await shot('job-cards')
 
+  // A finished job's outcome is Markdown: structure is rendered, nothing in it executes or navigates the window.
+  const outcome = [
+    '# Health check added',
+    '',
+    'It **works**, ~~mostly~~ fully, see [the docs](https://example.com/docs) or [bad](javascript:window.__pwned=1).',
+    '<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>',
+    '',
+    '- first item',
+    '  - nested item',
+    '- [x] ticked task',
+    '',
+    '| File | Lines |',
+    '|:--|--:|',
+    '| app.ts | 12 |',
+    '| core.ts | 340 |',
+    '',
+    '```ts',
+    'export const ok = () => true',
+    '```',
+  ].join('\n')
+  const third = await inv('runs:create', { crewId: ids.alpha, task: 'Third task', masterCli: 'claude' })
+  await inv('runs:stop', third.id)
+  const mdDb = new DatabaseSync(join(dataDir, 'operant.db'))
+  mdDb.exec('PRAGMA busy_timeout = 5000')
+  mdDb.prepare("UPDATE runs SET status = 'done', outcome = ?, finished_at = ? WHERE id = ?").run(outcome, Date.now(), third.id)
+  mdDb.close()
+  await page.reload()
+  await page.waitForFunction(() => !!window.operant)
+  await page.locator(`[data-crew-row="${ids.alpha}"]`).getByText('alpha', { exact: true }).click({ position: { x: 4, y: 4 } })
+  await page.evaluate(() => {
+    window.__pwned = false
+  })
+  const mdCard = page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${third.id}` }) })
+  await mdCard.getByText('Health check added').waitFor()
+  assert.ok(!(await mdCard.textContent()).includes('#'), 'the card preview is plain text')
+  await mdCard.getByRole('button', { name: `Open JOB#${third.id}` }).click()
+  const mdPanel = page.getByRole('region', { name: `Job panel JOB#${third.id}` })
+  const md = mdPanel.locator('[data-outcome] [data-markdown]')
+  await md.waitFor()
+  await md.getByRole('heading', { name: 'Health check added' }).waitFor()
+  assert.equal(await md.locator('li').count(), 3)
+  assert.equal(await md.locator('ul ul li').count(), 1)
+  assert.equal(await md.locator('input[type=checkbox][disabled]').count(), 1)
+  assert.equal(await md.locator('table th').count(), 2)
+  assert.equal(await md.locator('table tbody tr').count(), 2)
+  assert.equal(await md.locator('strong').innerText(), 'works')
+  assert.equal(await md.locator('del').count(), 1)
+  assert.ok((await md.locator('pre').innerText()).includes('export const ok'))
+  await md.getByRole('button', { name: 'Copy code' }).waitFor()
+  assert.equal(await md.locator('script, img, iframe').count(), 0)
+  const hrefs = await md.locator('a').evaluateAll((els) => els.map((a) => a.getAttribute('href')))
+  assert.deepEqual(hrefs, ['https://example.com/docs'])
+  assert.ok((await md.textContent()).includes('<script>window.__pwned=1</script>'), 'html is shown as text')
+  const url = page.url()
+  await md.getByText('the docs').click()
+  await md.getByText('bad').click().catch(() => {})
+  await page.waitForTimeout(300)
+  assert.equal(page.url(), url, 'a link must not navigate the app window')
+  assert.equal(await page.evaluate(() => window.__pwned), false, 'nothing in an outcome executes')
+  await shot('run-outcome-markdown')
+  await mdPanel.getByRole('button', { name: 'Close job panel' }).click()
+  await mdPanel.waitFor({ state: 'detached' })
+  await inv('runs:delete', third.id)
+
   await card.click()
   await panel.waitFor()
   // Actions: stopping ends the job as failed, live, and the card follows.

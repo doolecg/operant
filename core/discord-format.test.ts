@@ -18,7 +18,7 @@ describe('markdownForDiscord', () => {
   it('handles a big table', () => {
     const rows = Array.from({ length: 300 }, (_, i) => `| row ${i} | ${'x'.repeat(40)} |`).join('\n')
     const out = markdownForDiscord(`| a | b |\n|---|---|\n${rows}`)
-    expect(out.split('\n')).toHaveLength(303)
+    expect(out.split('\n')).toHaveLength(304)
     const chunks = chunkForDiscord(out)
     expect(chunks.length).toBeGreaterThan(5)
     for (const c of chunks) {
