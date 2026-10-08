@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { markdownToPlain, parseMarkdown, safeHref, type Block, type Inline } from './markdown'
+import { markdownToPlain, parseMarkdown, safeHref, sectionize, type Block, type Inline } from './markdown'
 
 const links = (v: unknown, out: string[] = []): string[] => {
   if (Array.isArray(v)) v.forEach((x) => links(x, out))
@@ -104,5 +104,60 @@ describe('markdownToPlain', () => {
   it('strips markup to one short line', () => {
     expect(markdownToPlain('# Done\n\n- **fast** [link](https://a.com)\n- `code`\n\n```\nblock\n```')).toBe('Done fast link code block')
     expect(markdownToPlain('x'.repeat(500), 50)).toHaveLength(50)
+  })
+})
+
+describe('sectionize', () => {
+  const doc = (s: string) => sectionize(parseMarkdown(s), 2)
+
+  it('splits at h2 and keeps the leading blocks apart', () => {
+    const s = doc('intro\n\n## One\n\nbody 1\n\n## Two\n\nbody 2')
+    expect(s.map((x) => (x.heading ? (x.heading as { level: number }).level : null))).toEqual([null, 2, 2])
+    expect(s[0]!.blocks).toHaveLength(1)
+    expect(s[1]!.blocks).toHaveLength(1)
+  })
+
+  it('no leading section when the document starts with a heading', () => {
+    expect(doc('## A\n\nx').map((x) => x.heading !== null)).toEqual([true])
+  })
+
+  it('empty input has no sections', () => {
+    expect(doc('')).toEqual([])
+  })
+
+  it('h3 stays inside an h2 section at level 2, and splits at level 3', () => {
+    const md = '## A\n\n### a1\n\nx\n\n### a2\n\ny'
+    expect(doc(md)).toHaveLength(1)
+    expect(sectionize(parseMarkdown(md), 3)).toHaveLength(3)
+  })
+
+  it('h1 also starts a section', () => {
+    expect(doc('# Title\n\n## A\n\nx')).toHaveLength(2)
+  })
+
+  it('a heading with no body counts as one line', () => {
+    expect(doc('## A\n\n## B\n\nx').map((x) => x.lines)).toEqual([1, 2])
+  })
+
+  it('counts lines: paragraphs wrap, code lines, list items, table rows', () => {
+    const code = '```\na\nb\nc\n```'
+    const list = '- one\n- two\n- three'
+    const table = '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |'
+    const long = 'word '.repeat(60).trim()
+    const s = doc(`## S\n\nshort\n\n${code}\n\n${list}\n\n${table}\n\n${long}`)
+    expect(s[0]!.lines).toBe(1 + 1 + 3 + 3 + 3 + Math.ceil(long.length / 90))
+  })
+
+  it('a long section is detectable (over 40 lines)', () => {
+    const body = Array.from({ length: 50 }, (_, i) => `- item ${i}`).join('\n')
+    const s = doc(`## Short\n\nx\n\n## Long\n\n${body}`)
+    expect(s[0]!.lines).toBeLessThanOrEqual(40)
+    expect(s[1]!.lines).toBeGreaterThan(40)
+  })
+
+  it('keeps every block in order', () => {
+    const blocks = parseMarkdown('a\n\n## B\n\nc\n\n---\n\nd')
+    const s = sectionize(blocks, 2)
+    expect(s.flatMap((x) => [...(x.heading ? [x.heading] : []), ...x.blocks])).toEqual(blocks)
   })
 })

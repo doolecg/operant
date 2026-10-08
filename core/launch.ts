@@ -195,7 +195,8 @@ function checkId(field: string, n: number): number {
   return n
 }
 
-// Shipped role file (plugin/roles/) for each built-in preset key as seeded in store.ts.
+// Shipped role file (plugin/roles/) for each built-in preset key as seeded in store.ts. The OpenCode twins
+// share their Claude twin's role file.
 export const ROLE_FILE_BY_PRESET: Record<string, string> = {
   pm: 'project-manager.md',
   researcher: 'researcher.md',
@@ -204,6 +205,13 @@ export const ROLE_FILE_BY_PRESET: Record<string, string> = {
   senior: 'senior-implementor.md',
   tester: 'tester.md',
   reviewer: 'reviewer.md',
+  'pm-opencode': 'project-manager.md',
+  'researcher-opencode': 'researcher.md',
+  'designer-opencode': 'designer.md',
+  'implementor-opencode': 'implementor.md',
+  'senior-opencode': 'senior-implementor.md',
+  'tester-opencode': 'tester.md',
+  'reviewer-opencode': 'reviewer.md',
 }
 
 export const capFlag = (cap: number): string => (cap === 1_000_000 ? '1M' : `${Math.round(cap / 1000)}k`)
@@ -460,12 +468,14 @@ export function buildMasterLaunch(ctx: LaunchContext, master?: Pick<Operator, 'm
   return { file: 'claude', args, env: operantEnv(ctx), files: prep ? [prep.role] : [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: null }
 }
 
-// The Master Terminal on OpenCode: its TUI in the project folder, with --model provider/model when one is set.
+// The Master Terminal on OpenCode: its TUI in the project folder. No --model: OpenCode v2 (2.x) rejects it as
+// an unrecognized flag, so the model rides the project config instead — prepareMaster writes it into
+// <folder>/.opencode/opencode.json, which OpenCode v2 reads as project config at startup (verified on 2.0.24).
 // With `prep`, its first line points the TUI at the PM role file (the one fixed pointer line Operant types).
 // With `prep.resume`, --continue reopens the last session of the folder, which already read its role (no pointer line).
-export function buildOpenCodeMasterLaunch(ctx: LaunchContext, model = '', prep?: Pick<MasterLaunchPrep, 'role' | 'resume'>): LaunchResult {
+export function buildOpenCodeMasterLaunch(ctx: LaunchContext, prep?: Pick<MasterLaunchPrep, 'role' | 'resume'>): LaunchResult {
   assertShell(ctx)
-  const args = model ? ['--model', checkModel(model, 'opencode')] : []
+  const args: string[] = []
   if (prep?.resume) args.push('--continue')
   const role = prep && !prep.resume ? checkPath('role', prep.role.path) : null
   return { file: 'opencode', args, env: operantEnv(ctx), files: prep ? [prep.role] : [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: role ? `Read ${role} and follow it as your role.` : null }

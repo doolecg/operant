@@ -66,12 +66,15 @@ const COMMANDS: Record<string, CommandSpec> = {
   'run.next': { pos: [], flags: {}, usage: 'operant run next' },
   'run.inbox': { pos: [], flags: {}, usage: 'operant run inbox' },
   'run.closeout': { pos: ['id'], flags: { wait: 'bool' }, usage: 'operant run closeout N [--wait]' },
+  // The project's Hindsight memory (the caller's own bank). Works for the Master and every seat.
+  'memory.recall': { pos: ['query...'], flags: {}, usage: 'operant memory recall <query|->' },
+  'memory.retain': { pos: ['text...'], flags: { tag: 'strs' }, usage: 'operant memory retain <text|-> [--tag T ...]' },
   // Internal: the Master plugin's hooks call it; the hook JSON arrives on stdin. Always silent and exits 0.
   hook: { pos: ['event'], flags: {}, usage: 'operant hook <event>' },
 }
 
 // Text values that may be `-` (read from stdin).
-const TEXT = new Set(['text', 'title', 'body', 'note', 'reason', 'summary'])
+const TEXT = new Set(['query', 'text', 'title', 'body', 'note', 'reason', 'summary'])
 
 export const HELP = [
   'Usage (exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 forbidden, 6 limited/cap, 7 Operant not reachable):',
@@ -136,7 +139,7 @@ export function parseArgs(argv: string[]): Parsed {
   const first = words[0]
   if (first === undefined) return tail.length ? { kind: 'error', message: 'Missing command. Run: operant --help' } : { kind: 'help', text: HELP }
   if (first.startsWith('-')) return { kind: 'error', message: 'Put the command first. Run: operant --help' }
-  const group = first === 'job' || first === 'run'
+  const group = first === 'job' || first === 'run' || first === 'memory'
   const name = group ? `${first}.${words[1] ?? ''}` : first
   const spec = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined
   if (!spec) return { kind: 'error', message: `Unknown command "${group ? `${first} ${words[1] ?? ''}`.trim() : first}". Run: operant --help` }

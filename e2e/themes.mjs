@@ -47,8 +47,10 @@ try {
     await o.invoke('settings:set', { uiScale: 1 })
     await o.invoke('crews:create', { name: 'shop', folder })
   }, project)
+  await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
+  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
   const master = page.getByRole('region', { name: 'Master Terminal' })
-  await master.getByRole('button', { name: 'Start' }).click()
+  await master.getByRole('button', { name: 'Start' }).first().click()
   await page.locator('.xterm').first().waitFor()
 
   // Default: the Dark theme, terminal following it.
@@ -166,7 +168,7 @@ try {
   await poll('theme after restart', async () => (await attr('theme')) === 'gruvbox')
   assert.equal(await css('--background'), def('gruvbox').bg)
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.getByRole('region', { name: 'Master Terminal' }).getByRole('button', { name: 'Start' }).click()
+  await page.getByRole('region', { name: 'Master Terminal' }).getByRole('button', { name: 'Start' }).first().click()
   await page.locator('.xterm').first().waitFor()
 
   // Screenshots of the app in three themes.

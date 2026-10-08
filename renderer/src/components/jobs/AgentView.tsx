@@ -5,16 +5,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useRunAgentLog } from '@/lib/queries'
 
-// A live, read-only view of one agent of a job: its details and the tail of its transcript, re-read every 2 seconds
-// while the job works. It follows the newest line until you scroll up (or switch Follow off), shows whether the agent is
-// still working, and copies the log. Nothing is editable.
-export function AgentView({ runId, live, agent, onBack }: { runId: number; live: boolean; agent: JobAgent; onBack: () => void }) {
-  const log = useRunAgentLog(runId, agent.id, live)
+// The log of one agent: the tail of its transcript, re-read every 2 seconds while live. It follows the newest line until
+// you scroll up (or switch Follow off) and copies the log. Also the body of a subagent tile in the Terminal view.
+export function AgentLog({ runId, agentId, seat, live, className = '' }: { runId: number; agentId: number; seat: string; live: boolean; className?: string }) {
+  const log = useRunAgentLog(runId, agentId, live)
   const lines = log.data ?? []
   const box = useRef<HTMLDivElement>(null)
   const [follow, setFollow] = useState(true)
   const [copied, setCopied] = useState(false)
-  const working = live && agent.status !== 'done'
   useEffect(() => {
     const el = box.current
     if (follow && el) el.scrollTop = el.scrollHeight
@@ -35,6 +33,49 @@ export function AgentView({ runId, live, agent, onBack }: { runId: number; live:
       .then(() => setCopied(true))
       .catch(() => undefined)
   }
+  return (
+    <div className={`flex min-h-0 flex-1 flex-col gap-1.5 ${className}`}>
+      <div className="flex items-center gap-2">
+        <h3 className="text-muted-foreground flex-1 text-[11px] font-medium tracking-wider uppercase">Log{live ? ' (live)' : ''}</h3>
+        <Button
+          variant={follow ? 'secondary' : 'outline'}
+          size="sm"
+          className="h-6 px-2 text-[11px]"
+          aria-pressed={follow}
+          aria-label="Follow the newest line"
+          onClick={() => setFollow((f) => !f)}
+        >
+          <ArrowDownToLine className="size-3" /> Follow
+        </Button>
+        <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" aria-label="Copy the log" disabled={lines.length === 0} onClick={copy}>
+          {copied ? <Check className="size-3" /> : <Copy className="size-3" />} {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+      <div
+        ref={box}
+        onScroll={onScroll}
+        role="log"
+        aria-label={`Log of ${seat}`}
+        className="bg-card min-h-0 flex-1 overflow-y-auto rounded-md border p-2 font-mono text-[11px]"
+      >
+        {lines.length === 0 ? (
+          <p className="text-muted-foreground">{log.isPending ? 'Loading...' : 'No log available for this agent yet.'}</p>
+        ) : (
+          lines.map((l, i) => (
+            <div key={i} className="break-words whitespace-pre-wrap">
+              {l}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+// A live, read-only view of one agent of a job: its details and the log, with whether the agent is still working.
+// Nothing is editable.
+export function AgentView({ runId, live, agent, onBack }: { runId: number; live: boolean; agent: JobAgent; onBack: () => void }) {
+  const working = live && agent.status !== 'done'
   const rows: Array<[string, string]> = [
     ['Seat', agent.seat],
     ['Model', agent.model || 'unknown'],
@@ -64,41 +105,7 @@ export function AgentView({ runId, live, agent, onBack }: { runId: number; live:
           </div>
         ))}
       </dl>
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 px-4 pb-4">
-        <div className="flex items-center gap-2">
-          <h3 className="text-muted-foreground flex-1 text-[11px] font-medium tracking-wider uppercase">Log{live ? ' (live)' : ''}</h3>
-          <Button
-            variant={follow ? 'secondary' : 'outline'}
-            size="sm"
-            className="h-6 px-2 text-[11px]"
-            aria-pressed={follow}
-            aria-label="Follow the newest line"
-            onClick={() => setFollow((f) => !f)}
-          >
-            <ArrowDownToLine className="size-3" /> Follow
-          </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" aria-label="Copy the log" disabled={lines.length === 0} onClick={copy}>
-            {copied ? <Check className="size-3" /> : <Copy className="size-3" />} {copied ? 'Copied' : 'Copy'}
-          </Button>
-        </div>
-        <div
-          ref={box}
-          onScroll={onScroll}
-          role="log"
-          aria-label={`Log of ${agent.seat}`}
-          className="bg-card min-h-0 flex-1 overflow-y-auto rounded-md border p-2 font-mono text-[11px]"
-        >
-          {lines.length === 0 ? (
-            <p className="text-muted-foreground">{log.isPending ? 'Loading...' : 'No log available for this agent yet.'}</p>
-          ) : (
-            lines.map((l, i) => (
-              <div key={i} className="break-words whitespace-pre-wrap">
-                {l}
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+      <AgentLog runId={runId} agentId={agent.id} seat={agent.seat} live={live} className="px-4 pb-4" />
     </section>
   )
 }

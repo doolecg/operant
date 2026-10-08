@@ -467,3 +467,54 @@ export function markdownToPlain(src: string, max = 200): string {
     .trim()
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
 }
+
+export interface MdSection {
+  // The heading that opens the section; null for the blocks before the first heading.
+  heading: Block | null
+  blocks: Block[]
+  // Estimated rendered lines, heading included.
+  lines: number
+}
+
+const WRAP_COLS = 90
+
+// A rough rendered height in lines; enough to tell a long section from a short one.
+export function blockLines(b: Block): number {
+  switch (b.t) {
+    case 'heading':
+    case 'hr':
+      return 1
+    case 'p':
+      return Math.max(1, Math.ceil(inlineText(b.c).length / WRAP_COLS))
+    case 'code':
+      return b.v === '' ? 1 : b.v.replace(/\n$/, '').split('\n').length
+    case 'quote':
+      return b.c.reduce((n, x) => n + blockLines(x), 0)
+    case 'list':
+      return b.items.reduce((n, it) => n + Math.max(1, it.blocks.reduce((m, x) => m + blockLines(x), 0)), 0)
+    case 'table':
+      return 1 + b.rows.length
+  }
+}
+
+// Splits blocks into sections at headings of rank `level` or higher (h1 also starts a section for level 2). Deeper
+// headings stay inside their section. Blocks before the first heading form a section with a null heading; an empty
+// one is left out.
+export function sectionize(blocks: Block[], level: 2 | 3): MdSection[] {
+  const out: MdSection[] = []
+  let cur: MdSection = { heading: null, blocks: [], lines: 0 }
+  const push = (): void => {
+    if (cur.heading || cur.blocks.length) out.push(cur)
+  }
+  for (const b of blocks) {
+    if (b.t === 'heading' && b.level <= level) {
+      push()
+      cur = { heading: b, blocks: [], lines: 1 }
+    } else {
+      cur.blocks.push(b)
+      cur.lines += blockLines(b)
+    }
+  }
+  push()
+  return out
+}

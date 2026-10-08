@@ -110,6 +110,12 @@ export class RunServices {
     tick()
   }
 
+  // One reader pass for a run now, when it is being watched (the Master has reported a session).
+  syncNow = async (run: Run): Promise<void> => {
+    const w = this.watching.get(run.id)
+    if (w) this.notify(run, await this.d.reader.sync(run.id, w.src))
+  }
+
   private notify(run: Run, agents: JobAgent[]): void {
     const sig = agents.map((a) => `${a.id}:${a.status}:${a.model}`).join(',')
     if (this.agentSig.get(run.id) === sig || (!sig && !this.agentSig.has(run.id))) return

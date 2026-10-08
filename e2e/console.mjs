@@ -33,6 +33,7 @@ try {
   const inv = (channel, ...args) => page.evaluate(([c, a]) => window.operant.invoke(c, ...a), [channel, args])
 
   const crew = await inv('crews:create', { name: 'console-demo', folder: project })
+  await page.locator('[data-crew-row]').getByText('console-demo', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('heading', { name: 'console-demo' }).waitFor()
   assert.equal(await page.getByTestId('console-drawer').count(), 0, 'the drawer starts closed')
 

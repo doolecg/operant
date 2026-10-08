@@ -105,6 +105,43 @@ describe('CliServer', () => {
     expect(r.text).toContain('builder@shop')
   })
 
+  it('routes memory recall and retain to the callers own project', async () => {
+    const calls: unknown[][] = []
+    const collab = new Collab({
+      store,
+      jobs,
+      messages: bus,
+      memory: {
+        recall: async (c, q) => (calls.push(['recall', c, q]), { ok: true, items: ['one', 'two'] }),
+        retain: async (c, t, tags) => (calls.push(['retain', c, t, tags]), { ok: false, error: 'unreachable at http://h:1' }),
+      },
+    })
+    expect((await collab.run({ kind: 'operator', operatorId: a }, { cmd: 'memory.recall', args: { query: 'auth' } })).text).toBe('- one\n- two')
+    const bad = await collab.run({ kind: 'operator', operatorId: b }, { cmd: 'memory.retain', args: { text: 'note', tag: ['x'] } })
+    expect(bad).toMatchObject({ exit: EXIT.ERROR, error: 'Hindsight: unreachable at http://h:1' })
+    expect(calls).toEqual([['recall', crewId, 'auth'], ['retain', crewId, 'note', ['x']]])
+    expect((await collab.run({ kind: 'operator', operatorId: a }, { cmd: 'memory.recall', args: { query: ' ' } })).exit).toBe(EXIT.USAGE)
+    expect((await new Collab({ store, jobs, messages: bus }).run({ kind: 'operator', operatorId: a }, { cmd: 'memory.recall', args: { query: 'q' } })).exit).toBe(EXIT.ERROR)
+  })
+
+  it('scrubs memory recall results, retained text and errors', async () => {
+    const secret = 'sk-' + 'a1b2c3d4e5f6g7h8i9j0'
+    const kept: string[] = []
+    const collab = new Collab({
+      store,
+      jobs,
+      messages: bus,
+      memory: {
+        recall: async () => ({ ok: true, items: [`key ${secret}`] }),
+        retain: async (_c, t) => (kept.push(t), { ok: false, error: `bad ${secret}` }),
+      },
+    })
+    const who = { kind: 'operator' as const, operatorId: a }
+    expect(JSON.stringify(await collab.run(who, { cmd: 'memory.recall', args: { query: 'q' } }))).not.toContain(secret)
+    expect(JSON.stringify(await collab.run(who, { cmd: 'memory.retain', args: { text: `note ${secret}` } }))).not.toContain(secret)
+    expect(kept[0]).not.toContain(secret)
+  })
+
   it('refuses bad, missing and malformed tokens with no other information', async () => {
     server.issueToken(a)
     const forbidden = { exit: EXIT.FORBIDDEN, error: 'forbidden' }

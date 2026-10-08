@@ -42,6 +42,7 @@ try {
   await page.waitForFunction(() => !!window.operant)
   await page.getByText('Welcome to Operant 3').waitFor()
   await page.evaluate((folder) => window.operant.invoke('crews:create', { name: 'shop', folder }), repo)
+  await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
 
   // The chip shows the branch; clicking it opens the Git tab.
   const chip = page.getByRole('button', { name: /^Git: Branch main, 3 changed files/ })

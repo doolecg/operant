@@ -47,11 +47,15 @@ try {
   }, project)
 
   // Pushed events should refresh the view without a reload.
+  await page.locator(`[data-crew-row="${ids.crew}"]`).getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('heading', { name: 'shop' }).waitFor()
   // The workspace is the default; the crew topology screens are gone, so the operators run without a card.
   const group = page.getByRole('group', { name: 'Dashboard mode' })
   await group.getByRole('button', { name: 'Workspace', exact: true }).waitFor()
+  assert.deepEqual(await group.getByRole('button').allInnerTexts(), ['Workspace', 'Terminal', 'Seats', 'Memory'], 'four view pills')
   assert.equal(await group.getByRole('button', { name: 'Crew', exact: true }).count(), 0, 'crew mode is gone')
+  await page.locator('[data-workspace-board]').waitFor()
+  await group.getByRole('button', { name: 'Terminal', exact: true }).click()
   await page.getByRole('region', { name: 'Master Terminal' }).waitFor()
   await page.getByRole('region', { name: 'Workspace panels' }).waitFor()
 
@@ -73,9 +77,9 @@ try {
   await poll('index', async () => (await page.evaluate((id) => window.operant.invoke('events:recent', 50), ids.crew)).some((e) => /shop indexed: 1 files/.test(e.message)), 60_000)
   await page.screenshot({ path: join(outDir, '1-dashboard.png') })
 
-  // The right column's tabs: Runs by default, then every other panel is reachable.
+  // The side panel's tabs: Board by default, then every other panel is reachable.
   const tabs = page.getByRole('tablist', { name: 'Workspace panels' })
-  await tabs.getByRole('tab', { name: /^Runs/, selected: true }).waitFor()
+  await tabs.getByRole('tab', { name: /^Board/, selected: true }).waitFor()
   await tabs.getByRole('tab', { name: /^Board/ }).click()
   await page.getByText('Build the crew dashboard').waitFor()
   await tabs.getByRole('tab', { name: /^Messages/ }).click()
@@ -86,7 +90,7 @@ try {
   await page.getByRole('heading', { name: 'Usage', exact: true }).waitFor()
   await page.screenshot({ path: join(outDir, '1b-workspace-tabs.png') })
   await page.screenshot({ path: resolve('docs/specs/screenshots/workspace-tabs.png') })
-  await tabs.getByRole('tab', { name: /^Runs/ }).click()
+  await tabs.getByRole('tab', { name: /^Board/ }).click()
 
   // Seat editor: the Seats toggle shows seats and teams in the node view and the list view.
   await group.getByRole('button', { name: 'Seats', exact: true }).click()
@@ -140,7 +144,7 @@ try {
   await poll('seat deleted', async () => !(await inv('presets:list')).some((p) => p.name === 'e2e seat'))
   await view.getByRole('button', { name: 'Nodes', exact: true }).click()
   await page.locator('.react-flow__node').first().waitFor()
-  await group.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await group.getByRole('button', { name: 'Terminal', exact: true }).click()
   await page.getByRole('region', { name: 'Master Terminal' }).waitFor()
 
   // The operator's PTY still runs a command over IPC.

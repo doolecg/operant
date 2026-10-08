@@ -26,7 +26,7 @@ interface Props {
 
 // Stop, edit task and delete on a card, with the same rules as the job panel: stop while it is queued or working,
 // edit while queued, delete once it ended.
-function RunCardActions({ run, onDeleted }: { run: Run; onDeleted?: (runId: number) => void }) {
+export function RunCardActions({ run, onDeleted }: { run: Run; onDeleted?: (runId: number) => void }) {
   const stop = useStopRun()
   const update = useUpdateRun()
   const del = useDeleteRun()
@@ -116,7 +116,7 @@ function RunCardActions({ run, onDeleted }: { run: Run; onDeleted?: (runId: numb
 }
 
 // The one-line last progress of a job that is still going; reads the job's events only while it is active.
-function LastProgress({ run }: { run: Run }) {
+export function LastProgress({ run }: { run: Run }) {
   const events = useRunEvents(run.id, run.mode === 'master' && runActive(run.status)).data
   const line = lastProgress(events ?? [])
   return line ? <p className="text-muted-foreground truncate text-xs">{line}</p> : null

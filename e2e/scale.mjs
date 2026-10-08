@@ -144,7 +144,10 @@ try {
   }
 
   // Master Terminal running (fake claude stays alive), at the default window size first.
-  await page.getByRole('button', { name: 'Start', exact: true }).click()
+  await page.locator('[data-crew-row]').getByText('alpha', { exact: true }).click({ position: { x: 4, y: 4 } })
+  await mode('Terminal').click()
+  const startBtn = page.getByRole("button", { name: "Start", exact: true }).first()
+  if (await startBtn.count()) await startBtn.click()
   await page.locator('.xterm').first().waitFor()
   await sleep(1500)
   await win((w) => w.isMaximized() && w.unmaximize())
@@ -185,31 +188,37 @@ try {
   assert.ok(panels.width >= v.w * 0.25 && panels.width <= v.w * 0.45, `right column is a proportionate share (${panels.width} of ${v.w})`)
   await shot('workspace')
 
-  // Cards stay in the column; the job panel fills it; the agent view fills the panel.
-  const cards = page.getByRole('button', { name: /Open JOB#/ })
-  const first = await box(cards)
-  assert.ok(first.x >= panels.x && first.x + first.width <= panels.x + panels.width + 1, 'cards stay inside the column')
+  // Cards stay in their board column; the job panel fills the window; the agent view fills the panel.
+  await mode('Workspace').click()
+  await page.locator('[data-workspace-board]').waitFor()
+  const cards = page.locator('[data-run-card]').getByRole('button', { name: /^Open JOB#\d+$/ })
+  const first = await box(cards.first())
+  const colBox = await box(page.locator('[data-board-column]', { has: cards.first() }))
+  assert.ok(first.x >= colBox.x && first.x + first.width <= colBox.x + colBox.width + 1, 'cards stay inside the column')
+  await noHScroll('workspace board')
+  await shot('workspace-board')
   await cards.first().click()
-  const panel = page.getByRole('region', { name: `Job panel JOB#${runs[0].id}` })
+  const panel = page.getByRole('dialog', { name: `JOB#${runs[0].id}` })
   await panel.waitFor()
   const pb = await box(panel)
-  assert.ok(pb.y + pb.height >= v.h - 2 && pb.x + pb.width >= v.w - 2, 'job panel reaches the window edge')
+  assert.ok(pb.height >= v.h * 0.9 && pb.width >= Math.min(v.w * 0.9, 1400) && pb.x >= 0 && pb.x + pb.width <= v.w + 1 && pb.y + pb.height <= v.h + 1, `task modal fills the window: ${JSON.stringify(pb)} of ${v.w}x${v.h}`)
   await shot('job-panel')
   await panel.getByRole('button', { name: 'Open agent pm' }).click()
   await panel.getByText('Read-only').waitFor()
   await shot('agent-view')
   const log = await box(panel.getByRole('log'))
-  assert.ok(log.y + log.height >= v.h - 40, `the agent log runs to the bottom (${log.y + log.height} of ${v.h})`)
+  assert.ok(log.y + log.height >= v.h * 0.9 - 40, `the agent log runs to the bottom (${log.y + log.height} of ${v.h})`)
   await panel.getByRole('button', { name: 'Close job panel' }).click()
 
-  // The other tabs of the right column.
+  // The other tabs of the Terminal side panel.
+  await mode('Terminal').click()
   for (const t of ['Board', 'Messages', 'Activity', 'Usage']) {
     await page.getByRole('tab', { name: new RegExp(`^${t}`) }).click()
     await sleep(500)
     await noHScroll(`tab ${t}`)
     await shot(`tab-${t.toLowerCase()}`)
   }
-  await page.getByRole('tab', { name: /^Runs/ }).click()
+  await page.getByRole('tab', { name: /^Board/ }).click()
 
   // The new-task dialog stays inside the window.
   await page.getByRole('button', { name: 'Start new task' }).click()
@@ -219,6 +228,8 @@ try {
   await page.keyboard.press('Escape')
 
   // Terminal and Console drawers: a share of the window height, and their xterm fills them.
+  // In the Terminal view the project's terminals are tiles, so the drawer is checked from the Workspace view.
+  await mode('Workspace').click()
   await page.keyboard.press('Alt+Shift+T')
   const drawer = page.getByRole('region', { name: 'Terminals' })
   await drawer.waitFor()
@@ -245,7 +256,7 @@ try {
     await noHScroll(m)
     await shot(m.toLowerCase())
   }
-  await mode('Workspace').click()
+  await mode('Terminal').click()
 
   // Settings: every section stays inside the window; shots of General and Shortcuts.
   await page.keyboard.press('Control+,')

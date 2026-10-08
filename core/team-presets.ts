@@ -93,6 +93,17 @@ export const BUILTIN_TEAMS: ShippedTeam[] = [
     limits: { maxWorkers: 2, topTier: 'sonnet', tokenBudget: 500_000 },
     rules: 'Change no code unless a fix is tiny and obvious. The tester runs the tests and tries to break it; the reviewer reads the diff. Report findings, ranked by severity.',
   },
+  {
+    builtin: 'build-review-opencode',
+    name: 'Build and review (OpenCode)',
+    description: 'Build and review on OpenCode seats, for a project whose master runs OpenCode.',
+    seats: [
+      { preset: 'implementor-opencode', count: 1 },
+      { preset: 'reviewer-opencode', count: 1 },
+    ],
+    limits: { maxWorkers: 2, topTier: 'sonnet', tokenBudget: 600_000 },
+    rules: 'The implementor makes the change and hands it over; the reviewer reads the diff and reports problems before the job is called done. Keep the change small and in scope.',
+  },
 ]
 
 // The seats a shipped team starts with, or null when a preset it needs has been deleted.

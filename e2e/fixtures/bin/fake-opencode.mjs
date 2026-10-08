@@ -1,6 +1,8 @@
 // Stands in for OpenCode in e2e runs: `opencode models` (OPENCODE_FAKE_MODELS ids, default 300, like a big provider list) and `opencode mcp list|add`, against the config file named by OPENCODE_CONFIG,
 // in the real `<mark> <name>  <status>` format. A name with "bad" fails.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import { dirname } from 'node:path'
 
 const args = process.argv.slice(2)
 // OPENCODE_FAKE_MODELS=multi: a few real providers (OpenAI is listed but not signed in), and `auth list` shows only Z.AI.
@@ -14,6 +16,28 @@ const MULTI = [
   'zai-coding-plan/glm-5.2',
   'zai-coding-plan/glm-5.3-flash',
 ]
+// `opencode fake-service --state <file>`: the background service the subagent reader asks for child sessions
+// (GET /api/session?parentID=...). It answers with one subagent session named OPENCODE_FAKE_SUBAGENT (the seat
+// name), or none when that is unset (the delegation guard case), and writes <file> = { url, password } so
+// findService can find it. Stays alive until killed. The reader looks at ~/.local/state/opencode/service.json, so
+// an e2e that uses this must run with HOME / USERPROFILE pointing at a temp folder.
+if (args[0] === 'fake-service') {
+  const state = args[args.indexOf('--state') + 1]
+  const password = 'fake-pass'
+  const auth = 'Basic ' + Buffer.from(`opencode:${password}`).toString('base64')
+  const seat = process.env.OPENCODE_FAKE_SUBAGENT
+  const server = createServer((req, res) => {
+    if (req.headers.authorization !== auth) return void res.writeHead(401).end()
+    const list = seat ? [{ id: 'ses_fake_child', title: seat, agent: seat, directory: process.cwd(), model: { providerID: 'fake', id: 'model' }, outcome: 'done' }] : []
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(req.url.startsWith('/api/session?') ? list : []))
+  })
+  server.listen(0, '127.0.0.1', () => {
+    mkdirSync(dirname(state), { recursive: true })
+    writeFileSync(state, JSON.stringify({ url: `http://127.0.0.1:${server.address().port}`, password }))
+    process.stdout.write('fake opencode service ready\n')
+  })
+  await new Promise(() => {})
+}
 if (args[0] === 'auth' && args[1] === 'list') {
   if (process.env.OPENCODE_FAKE_MODELS !== 'multi') process.exit(1)
   process.stdout.write('Z.AI Coding Plan  Z.AI Coding Plan            stored\r\n')

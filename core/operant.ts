@@ -29,6 +29,7 @@ import type {
   ImportSource,
   MasterState,
   Run,
+  RunInput,
   SeatFields,
   UsageQuery,
   UsageView,
@@ -54,6 +55,7 @@ import {
   planChange,
   shellOf,
   validateLaunchSettings,
+  validateModel,
   writeLaunchFiles,
   type LaunchContext,
   type LaunchResult,
@@ -66,6 +68,7 @@ import { Closeout, windowTranscript } from './closeout'
 import { MasterGate } from './master-gate'
 import { MasterRuns } from './master-runs'
 import { MasterStates } from './master-state'
+import { AttachmentError, removeAllAttachments, removeAttachmentsOf, saveImages, withImages } from './attachments'
 import { prepareMaster, seatSubagentType, writerPrepFs, type MasterPrep } from './master-plugin'
 import { MessageBus, MessageError, type MessageNotice } from './messages'
 import { NudgeScheduler, type NudgeAction, type NudgeOperatorState } from './nudge'
@@ -79,7 +82,7 @@ import { ApprovalMarker, RunError, RunManager, cleanLimits, cleanSeats } from '.
 import { exportTeams, parseTeamFile } from './team-presets'
 import { SubagentReader } from './agents'
 import { cliExplorer } from './brief'
-import { HindsightService, setSharedBanks } from './hindsight'
+import { HindsightService, bankFor, setSharedBanks } from './hindsight'
 import { generateApiKey, listAdapters } from './hindsight-net'
 import { McpError, McpService } from './mcp'
 import { RunServices } from './runservices'
@@ -469,6 +472,7 @@ export class Operant extends EventEmitter<PushEvents> {
         brief: (run) => this.runServices.brief(run),
         closeout: (run, wait) => this.closeouts.request(run.id, { wait }),
         seatName: (run, seat) => this.seatName(run.masterCli, seat.presetId),
+        syncAgents: (run) => this.runServices.syncNow(run),
       },
       this.now,
     )
@@ -499,6 +503,16 @@ export class Operant extends EventEmitter<PushEvents> {
       now: this.now,
       runs: this.masterRuns,
       onHook: (crewId, report) => this.masterHook(crewId, report),
+      memory: {
+        recall: async (crewId, query) => {
+          const crew = this.store.getCrew(crewId)
+          return crew ? this.hindsight.recall(bankFor(crew.folder), query) : { ok: false, error: 'project not found' }
+        },
+        retain: async (crewId, content, tags) => {
+          const crew = this.store.getCrew(crewId)
+          return crew ? this.hindsight.retain(bankFor(crew.folder), content, tags, 'Operant agent note') : { ok: false, error: 'project not found' }
+        },
+      },
       capPaused: (id) => this.usage.caps.isPaused(id),
       onError: (err) => this.log('error', `CLI request failed: ${err instanceof Error ? err.message : 'unexpected error'}`),
     })
@@ -805,6 +819,7 @@ export class Operant extends EventEmitter<PushEvents> {
           this.detachScratch(scratch.id)
         }
         store.deleteCrew(crewId)
+        removeAllAttachments(crew.folder)
         this.log('crew', `Project ${crew.name} deleted`)
         return counts
       },
@@ -1194,7 +1209,15 @@ export class Operant extends EventEmitter<PushEvents> {
       'runs:list': (crewId) => store.listRuns(this.requireCrew(crewId).id),
       'runs:get': (runId) => requireRun(runId),
       'runs:create': (input) => {
-        const run = this.runs.submit(input)
+        const images = Array.isArray(input?.images) ? input.images : []
+        const saved = images.length ? this.saveRunImages(input, images) : null
+        let run
+        try {
+          run = this.runs.submit(saved ? { ...input, task: withImages(typeof input.task === 'string' ? input.task.trim() : '', saved.paths) } : input)
+        } catch (err) {
+          saved?.remove()
+          throw err
+        }
         this.log('job', `JOB#${run.id} ${run.status}: ${run.task.slice(0, 80)}`, null, run.crewId)
         return run
       },
@@ -1212,6 +1235,14 @@ export class Operant extends EventEmitter<PushEvents> {
       'runs:delete': (runId) => {
         const run = requireRun(runId)
         this.runs.remove(runId)
+        const crew = store.getCrew(run.crewId)
+        if (crew) {
+          try {
+            removeAttachmentsOf(crew.folder, run.task)
+          } catch (err) {
+            this.log('error', `JOB#${run.id} attachments not removed: ${err instanceof Error ? err.message : String(err)}`, null, run.crewId)
+          }
+        }
         this.log('job', `JOB#${run.id} deleted`, null, run.crewId)
       },
       'runs:agentLog': (runId, agentId) => this.runServices.agentLog(requireRun(runId).id, agentId),
@@ -1871,6 +1902,10 @@ export class Operant extends EventEmitter<PushEvents> {
     return file ? (this.launch.readRole ?? ((f: string) => this.readShippedRole(f)))(file) : ''
   }
 
+  runById(runId: number): Run | null {
+    return this.store.getRun(runId)
+  }
+
   get currentSettings(): Settings {
     return this.settings
   }
@@ -2274,13 +2309,13 @@ export class Operant extends EventEmitter<PushEvents> {
       const preset = operator.presetId != null ? this.store.getPreset(operator.presetId) : null
       const ctx = this.launchContext(crew.id, crew.folder, sessionId, preset)
       const main = this.settings
-      const prepared = operator.kind === 'master' ? this.prepareMasterFor(crew, main.mainCli, ctx) : null
+      const prepared = operator.kind === 'master' ? this.prepareMasterFor(crew, main.mainCli, ctx, operator.model || main.mainModel) : null
       const prep = prepared && resume ? { ...prepared, resume: true } : prepared
       const launch =
         operator.kind !== 'master'
           ? buildAgentLaunch(operator, preset, ctx)
           : main.mainCli === 'opencode'
-            ? buildOpenCodeMasterLaunch(ctx, main.mainModel, prep ?? undefined)
+            ? buildOpenCodeMasterLaunch(ctx, prep ?? undefined)
             : buildMasterLaunch(ctx, { ...operator, model: operator.model || main.mainModel, effort: operator.effort || main.mainEffort }, prep ?? undefined)
       if (launch) this.writeFiles(launch)
       const firstInput = launch ? this.checkedFirstInput(launch) : null
@@ -2311,9 +2346,20 @@ export class Operant extends EventEmitter<PushEvents> {
     }
   }
 
+  private saveRunImages(input: RunInput, images: NonNullable<RunInput['images']>): ReturnType<typeof saveImages> {
+    const crew = this.requireCrew(input.crewId)
+    try {
+      return saveImages(crew.folder, images)
+    } catch (err) {
+      if (err instanceof AttachmentError) throw new RunError('BAD_ARGS', err.message)
+      throw err
+    }
+  }
+
   // (Re)generates the Master's role file, plugin dir (hooks, seat agents), MCP union and OpenCode seat files. A failure is
-  // logged and the Master starts as before, without them.
-  private prepareMasterFor(crew: { id: number; name: string; folder: string }, cli: 'claude' | 'opencode', ctx: LaunchContext): MasterPrep | null {
+  // logged and the Master starts as before, without them. `model` is the OpenCode master's model (an id that is not a
+  // valid OpenCode model falls back to OpenCode's own default) and is ignored for Claude.
+  private prepareMasterFor(crew: { id: number; name: string; folder: string }, cli: 'claude' | 'opencode', ctx: LaunchContext, model = ''): MasterPrep | null {
     try {
       const seats = this.store
         .listPresets()
@@ -2323,6 +2369,14 @@ export class Operant extends EventEmitter<PushEvents> {
           return { preset, roleText: preset.roleText ?? (file ? this.readShippedRole(file) : '') }
         })
       const servers = [...new Set(seats.flatMap((s) => s.preset.mcpServers))]
+      let openCodeModel = ''
+      if (cli === 'opencode' && model) {
+        try {
+          openCodeModel = validateModel(model, 'opencode')
+        } catch {
+          openCodeModel = ''
+        }
+      }
       const prep = prepareMaster({
         cli,
         crew,
@@ -2332,6 +2386,7 @@ export class Operant extends EventEmitter<PushEvents> {
         roleText: this.readShippedRole('master-pm.md'),
         seats,
         mcpConfig: cli === 'claude' ? this.mcp.claudeConfigFor(servers, crew.folder) : null,
+        ...(openCodeModel ? { model: openCodeModel } : {}),
         ...(this.launch.writer ? { fs: writerPrepFs(this.launch.writer) } : {}),
       })
       if (prep.skipped.length) this.log('error', `Master seat files left alone (not ours): ${prep.skipped.join(', ')}`, null, crew.id)

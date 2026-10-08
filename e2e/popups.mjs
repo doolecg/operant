@@ -80,6 +80,7 @@ try {
   // Resize handles: drag, keyboard, double click reset (done first at a roomy size).
   await win((w) => w.setContentSize(1500, 900))
   await sleep(800)
+  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
   const side = page.getByRole('complementary', { name: 'Projects' })
   const col = page.getByRole('region', { name: 'Workspace panels' })
   const sw0 = (await box(side)).width

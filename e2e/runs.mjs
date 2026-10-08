@@ -34,7 +34,7 @@ const shot = async (name) => {
   await page.waitForTimeout(500)
   await page.screenshot({ path: join(outDir, `${name}.png`) })
 }
-const order = async () => (await inv('crews:list')).map((c) => c.name)
+const order = async () => (await inv('crews:list')).filter((c) => c.kind !== 'playground').map((c) => c.name)
 async function orderIs(expected) {
   const end = Date.now() + 10_000
   while (Date.now() < end) {
@@ -73,9 +73,10 @@ try {
   await page.locator(`[data-crew-row="${ids.alpha}"]`).getByText('alpha', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('heading', { name: 'alpha', level: 1 }).waitFor()
 
-  // The workspace: Master Terminal in the centre, jobs on the right.
+  // The Workspace view: the job board in five columns, empty at first.
   await page.getByRole('button', { name: 'Start new task' }).waitFor()
-  await page.getByText('No jobs yet.').waitFor()
+  await page.locator('[data-workspace-board]').waitFor()
+  assert.equal(await page.locator('[data-run-card]').count(), 0)
 
   // Plus menu: team run with edited seats.
   await page.getByRole('button', { name: 'Start new task' }).click()
@@ -114,7 +115,7 @@ try {
 
   await dialog.getByRole('button', { name: 'Send' }).click()
   await dialog.waitFor({ state: 'detached' })
-  const card = page.getByRole('button', { name: /Open JOB#\d+/ })
+  const card = page.locator('[data-run-card]').getByRole('button', { name: /^Open JOB#\d+$/ })
   await card.waitFor()
   const runs = await inv('runs:list', ids.alpha)
   assert.equal(runs.length, 1)
@@ -129,7 +130,7 @@ try {
   )
   const runId = runs[0].id
   assert.ok(runId >= 20001)
-  await card.getByText(/Queued|Working/).waitFor()
+  await page.locator('[data-board-column="queued"], [data-board-column="working"]').locator('[data-run-card]').first().waitFor()
   await shot('dashboard-after')
 
   // Agents are read from the CLI by the backend; seed two rows the way it would.
@@ -141,20 +142,15 @@ try {
   db.close()
 
   await card.click()
-  const panel = page.getByRole('region', { name: `Job panel JOB#${runId}` })
+  const panel = page.getByRole('dialog', { name: `JOB#${runId}` })
   await panel.waitFor()
   await panel.getByText('Add a health check to app.ts').waitFor()
   await panel.getByRole('button', { name: 'Open agent pm' }).waitFor()
   await panel.getByRole('button', { name: 'Open agent reviewer' }).waitFor()
   await shot('job-panel')
-  // The panel leaves the Master header alone: its buttons stay on top and clickable.
-  const reachable = await page.evaluate(() => {
-    const b = document.querySelector('button[aria-label="Start new task"]')
-    const r = b.getBoundingClientRect()
-    return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b || b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
-  })
-  assert.ok(reachable, 'the job panel must not cover the Master header buttons')
-
+  // The task modal covers the page, so the status pill is checked with it closed.
+  await panel.getByRole('button', { name: 'Close job panel' }).click()
+  await panel.waitFor({ state: 'detached' })
   // The status pill shows the job counts and Memory (Hindsight and CodeGraph health in one dot); its tooltip lists both.
   const status = page.getByRole('group', { name: 'Status' })
   await status.getByRole('status', { name: /^Jobs:/ }).waitFor()
@@ -165,6 +161,8 @@ try {
   await tip.waitFor()
   assert.match((await tip.first().textContent()) ?? '', /Hindsight .*CodeGraph /)
   await shot('project-header')
+  await card.click()
+  await panel.waitFor()
 
   // The agent view is a live view: working indicator, follow toggle, copy; read-only.
   await panel.getByRole('button', { name: 'Open agent pm' }).click()
@@ -183,7 +181,7 @@ try {
   await panel.getByRole('button', { name: 'Close job panel' }).click()
   await panel.waitFor({ state: 'detached' })
   const second = await inv('runs:create', { crewId: ids.alpha, task: 'Second task', masterCli: 'claude', mode: 'background' })
-  const secondCard = page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${second.id}` }) })
+  const secondCard = page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${second.id}`, exact: true }) })
   await secondCard.getByText('Second task').waitFor()
   await secondCard.getByRole('button', { name: `Edit task of JOB#${second.id}` }).click()
   await secondCard.getByLabel(`Task of JOB#${second.id}`).fill('Second task, edited')
@@ -216,6 +214,16 @@ try {
     '```ts',
     'export const ok = () => true',
     '```',
+    '',
+    '## Short notes',
+    '',
+    'Nothing else changed.',
+    '',
+    '## Long log',
+    '',
+    '```text',
+    ...Array.from({ length: 60 }, (_, n) => `log line ${n + 1}`),
+    '```',
   ].join('\n')
   const third = await inv('runs:create', { crewId: ids.alpha, task: 'Third task', masterCli: 'claude', mode: 'background' })
   await inv('runs:stop', third.id)
@@ -229,11 +237,11 @@ try {
   await page.evaluate(() => {
     window.__pwned = false
   })
-  const mdCard = page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${third.id}` }) })
+  const mdCard = page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${third.id}`, exact: true }) })
   await mdCard.getByText('Health check added').waitFor()
   assert.ok(!(await mdCard.textContent()).replace(/JOB#\d+/g, '').includes('#'), 'the card preview is plain text')
-  await mdCard.getByRole('button', { name: `Open JOB#${third.id}` }).click()
-  const mdPanel = page.getByRole('region', { name: `Job panel JOB#${third.id}` })
+  await mdCard.getByRole('button', { name: `Open JOB#${third.id}`, exact: true }).click()
+  const mdPanel = page.getByRole('dialog', { name: `JOB#${third.id}` })
   const md = mdPanel.locator('[data-outcome] [data-markdown]')
   await md.waitFor()
   await md.getByRole('heading', { name: 'Health check added' }).waitFor()
@@ -244,8 +252,19 @@ try {
   assert.equal(await md.locator('table tbody tr').count(), 2)
   assert.equal(await md.locator('strong').innerText(), 'works')
   assert.equal(await md.locator('del').count(), 1)
-  assert.ok((await md.locator('pre').innerText()).includes('export const ok'))
-  await md.getByRole('button', { name: 'Copy code' }).waitFor()
+  assert.ok((await md.locator('pre').first().innerText()).includes('export const ok'))
+  await md.getByRole('button', { name: 'Copy code' }).first().waitFor()
+  // Readable document style: roomy type, and the long section is folded until opened.
+  assert.equal(await md.evaluate((el) => getComputedStyle(el).fontSize), '15px')
+  const folds = md.locator('details[data-md="section"]')
+  assert.equal(await folds.count(), 1, 'only the long section folds')
+  assert.equal(await folds.first().evaluate((el) => el.open), false, 'the long section starts collapsed')
+  assert.equal(await md.getByText('log line 30').isVisible(), false)
+  await md.getByRole('button', { name: 'Expand all' }).click()
+  await md.getByText('log line 30').waitFor()
+  await md.getByRole('button', { name: 'Collapse all' }).click()
+  assert.equal(await md.getByText('log line 30').isVisible(), false)
+  await mdPanel.getByRole('button', { name: 'Copy outcome' }).waitFor()
   assert.equal(await md.locator('script, img, iframe').count(), 0)
   const hrefs = await md.locator('a').evaluateAll((els) => els.map((a) => a.getAttribute('href')))
   assert.deepEqual(hrefs, ['https://example.com/docs'])
@@ -256,7 +275,7 @@ try {
   await page.waitForTimeout(300)
   assert.equal(page.url(), url, 'a link must not navigate the app window')
   assert.equal(await page.evaluate(() => window.__pwned), false, 'nothing in an outcome executes')
-  await shot('run-outcome-markdown')
+  await shot('task-modal-outcome-after')
   await mdPanel.getByRole('button', { name: 'Close job panel' }).click()
   await mdPanel.waitFor({ state: 'detached' })
   await inv('runs:delete', third.id)
@@ -266,12 +285,11 @@ try {
   // Actions: stopping ends the job as failed, live, and the card follows.
   await panel.getByRole('button', { name: 'Stop job' }).click()
   await panel.getByText('Failed', { exact: true }).waitFor()
-  await card.getByText('Failed').waitFor()
   assert.equal((await inv('runs:get', runId)).status, 'failed')
   await panel.getByRole('button', { name: 'Delete job' }).click()
   await panel.getByRole('button', { name: 'Confirm delete' }).click()
   await panel.waitFor({ state: 'detached' })
-  await page.getByText('No jobs yet.').waitFor()
+  await page.locator('[data-run-card]').waitFor({ state: 'detached' })
   assert.equal((await inv('runs:list', ids.alpha)).length, 0)
 
   // Master-mode jobs: the question, the review and the stopped Master are answered from the job panel. The rows are
@@ -285,69 +303,95 @@ try {
       'UPDATE runs SET mode = ?, status = ?, waiting = ?, question = ?, question_options = ?, review_summary = ?, finished_at = NULL WHERE id = ?',
     ).run('master', patch.status, patch.waiting ?? '', patch.question ?? '', JSON.stringify(patch.options ?? []), patch.review ?? '', r.id)
     d.prepare("INSERT INTO run_events (run_id, at, kind, source, body, options) VALUES (?, ?, 'progress', 'master', ?, '[]')").run(r.id, Date.now(), 'Reading the health check code')
+    if (patch.guard) d.prepare("INSERT INTO run_events (run_id, at, kind, source, body, options) VALUES (?, ?, 'progress', 'system', ?, '[]')").run(r.id, Date.now(), 'No seat subagent was used. The job has a team but the Master did the work itself.')
     d.close()
     return r.id
   }
   const qId = await seedRun('Pick a port', { status: 'needs-you', waiting: 'question', question: 'Which **port** should the health check use?', options: ['3000', '8080'] })
   const rvId = await seedRun('Add a health check', { status: 'review', review: '## Done\n\n- added `/health`\n- tests pass' })
-  const sbId = await seedRun('Tidy the logs', { status: 'review', review: 'Logs tidied.' })
+  const sbId = await seedRun('Tidy the logs', { status: 'review', review: 'Logs tidied.', guard: true })
   const mId = await seedRun('Long migration', { status: 'needs-you', waiting: 'master' })
   await page.reload()
   await page.waitForFunction(() => !!window.operant)
   await page.locator(`[data-crew-row="${ids.alpha}"]`).getByText('alpha', { exact: true }).click({ position: { x: 4, y: 4 } })
-  const cardOf = (id) => page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${id}` }) })
+  const cardOf = (id) => page.locator('li', { has: page.getByRole('button', { name: `Open JOB#${id}`, exact: true }) })
   await cardOf(qId).getByText('Needs you: question').waitFor()
-  await cardOf(qId).getByText('Reading the health check code').waitFor()
-  await cardOf(rvId).getByText('Review', { exact: true }).waitFor()
+  assert.equal(await cardOf(rvId).getAttribute('data-status'), 'review')
   await cardOf(mId).getByText('Needs you: Master stopped').waitFor()
-  await page.getByRole('tab', { name: /^Runs/ }).getByText('4', { exact: true }).waitFor()
-  // The status pill chip opens the Runs tab filtered to the jobs that need the owner.
+  // The Workspace pill carries the inbox count: the question, the two reviews and the stopped Master.
+  await page.locator('[data-mode-badge="workspace"]').getByText('4', { exact: true }).waitFor()
+  // The status pill chip opens the Workspace view.
   await page.getByRole('button', { name: /jobs need you/ }).click()
-  assert.equal(await page.getByRole('checkbox', { name: 'Only jobs that need you' }).isChecked(), true)
+  await page.locator('[data-workspace-board]').waitFor()
 
   // Question: option buttons and a free text answer.
-  await page.getByRole('button', { name: `Open JOB#${qId}` }).click()
-  const qPanel = page.getByRole('region', { name: `Job panel JOB#${qId}` })
+  await page.getByRole('button', { name: `Open JOB#${qId}`, exact: true }).click()
+  const qPanel = page.getByRole('dialog', { name: `JOB#${qId}` })
   await qPanel.getByRole('heading', { name: 'Question' }).waitFor()
   await qPanel.getByText('Reading the health check code').waitFor()
-  await shot('run-question')
+  await shot('task-modal-question')
+  // A typed answer is a draft: it survives closing the modal and a reload, and submitting clears it.
+  await qPanel.getByLabel('Your answer').fill('Draft answer text')
+  await qPanel.getByRole('button', { name: 'Close job panel' }).click()
+  await qPanel.waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: `Open JOB#${qId}`, exact: true }).click()
+  assert.equal(await qPanel.getByLabel('Your answer').inputValue(), 'Draft answer text')
+  await page.reload()
+  await page.waitForFunction(() => !!window.operant)
+  await page.locator(`[data-crew-row="${ids.alpha}"]`).getByText('alpha', { exact: true }).click({ position: { x: 4, y: 4 } })
+  await page.getByRole('button', { name: `Open JOB#${qId}`, exact: true }).click()
+  assert.equal(await qPanel.getByLabel('Your answer').inputValue(), 'Draft answer text', 'the draft survives a restart of the page')
   await qPanel.getByRole('button', { name: '8080' }).click()
   await qPanel.getByText('Answered by you, in Operant').waitFor()
   assert.ok((await inv('runs:events', qId)).some((e) => e.kind === 'reply' && e.body === '8080'))
   await qPanel.getByLabel('Your answer').fill('Use 9000')
   await qPanel.getByRole('button', { name: 'Send answer' }).click()
   await qPanel.getByText('Use 9000').waitFor()
+  assert.equal(await page.evaluate((k) => localStorage.getItem(k), `operant.draft.answer.${qId}`), null, 'submitting clears the answer draft')
   await qPanel.getByRole('button', { name: 'Close job panel' }).click()
 
   // Review: the summary is Markdown; Approve moves to done and shows the close-out.
-  await page.getByRole('button', { name: `Open JOB#${rvId}` }).click()
-  const rPanel = page.getByRole('region', { name: `Job panel JOB#${rvId}` })
+  await page.getByRole('button', { name: `Open JOB#${rvId}`, exact: true }).click()
+  const rPanel = page.getByRole('dialog', { name: `JOB#${rvId}` })
   await rPanel.locator('[data-review] [data-markdown]').getByRole('heading', { name: 'Done' }).waitFor()
-  await shot('run-review')
+  await shot('task-modal-review')
+  assert.equal(await rPanel.locator('[data-guard]').count(), 0, 'no guard banner when nothing is wrong')
+  await rPanel.getByLabel('Approval note (optional)').fill('Looks good, ship it')
+  await rPanel.getByRole('button', { name: 'Close job panel' }).click()
+  await rPanel.waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: `Open JOB#${rvId}`, exact: true }).click()
+  assert.equal(await rPanel.getByLabel('Approval note (optional)').inputValue(), 'Looks good, ship it', 'the approval note is a draft')
   await rPanel.getByRole('button', { name: 'Approve' }).click()
   await rPanel.getByRole('heading', { name: 'Close-out' }).waitFor()
   assert.equal((await inv('runs:get', rvId)).status, 'done')
+  assert.equal(await page.evaluate((k) => localStorage.getItem(k), `operant.draft.approve.${rvId}`), null, 'approving clears the note draft')
   await rPanel.getByText('Approved by you, in Operant').waitFor()
   await rPanel.getByRole('button', { name: 'Close job panel' }).click()
 
   // Send back needs a note and queues the job again.
-  await page.getByRole('button', { name: `Open JOB#${sbId}` }).click()
-  const sPanel = page.getByRole('region', { name: `Job panel JOB#${sbId}` })
+  await page.getByRole('button', { name: `Open JOB#${sbId}`, exact: true }).click()
+  const sPanel = page.getByRole('dialog', { name: `JOB#${sbId}` })
+  await sPanel.locator('[data-guard]').waitFor()
   await sPanel.getByRole('button', { name: 'Send back' }).click()
-  const sbDialog = page.getByRole('dialog')
+  const sbDialog = page.getByRole('dialog', { name: 'Send back to the Master' })
   assert.ok(await sbDialog.getByRole('button', { name: 'Send back' }).isDisabled(), 'Send back needs a note')
   await sbDialog.locator('textarea').fill('Also remove the debug lines')
+  await sbDialog.getByRole('button', { name: 'Cancel' }).click()
+  await sbDialog.waitFor({ state: 'detached' })
+  await sPanel.getByRole('button', { name: 'Send back' }).click()
+  assert.equal(await sbDialog.locator('textarea').inputValue(), 'Also remove the debug lines', 'the send-back reason is a draft')
   await sbDialog.getByRole('button', { name: 'Send back' }).click()
   await sbDialog.waitFor({ state: 'detached' })
   const sent = await inv('runs:get', sbId)
   assert.equal(sent.sentBackNote, 'Also remove the debug lines')
   assert.notEqual(sent.status, 'review')
+  assert.equal(await page.evaluate((k) => localStorage.getItem(k), `operant.draft.sendback.${sbId}`), null, 'sending back clears the reason draft')
   await sPanel.getByRole('button', { name: 'Close job panel' }).click()
 
   // A stopped Master: Resume Master asks the backend to start it again (the fake claude sends no ready signal, so the
   // job itself stays put here); the click must not fail.
-  await page.getByRole('button', { name: `Open JOB#${mId}` }).click()
-  const mPanel = page.getByRole('region', { name: `Job panel JOB#${mId}` })
+  await page.getByRole('button', { name: `Open JOB#${mId}`, exact: true }).click()
+  const mPanel = page.getByRole('dialog', { name: `JOB#${mId}` })
   await mPanel.getByRole('button', { name: 'Resume Master' }).click()
   await page.waitForTimeout(1500)
   assert.equal(await mPanel.getByRole('alert').count(), 0, 'Resume Master must not fail')
@@ -389,7 +433,7 @@ try {
   assert.equal(await teamRow('Build and review').getByRole('button', { name: /^Delete / }).count(), 0)
   const teamNames = await page.locator('[data-team]').evaluateAll((els) => els.map((e) => e.getAttribute('data-team')))
   assert.deepEqual(teamNames.slice(0, 6), ['Build and review', 'Full team', 'Research', 'Bug fix', 'Design to build', 'Quality pass'])
-  assert.deepEqual(teamNames.slice(6).sort(), ['duo', 'duo plus'])
+  assert.deepEqual(teamNames.slice(6).filter((n) => n !== 'Build and review (OpenCode)').sort(), ['duo', 'duo plus'])
   await page.getByText('Full team').first().scrollIntoViewIfNeeded()
   await shot('team-presets')
   await page.getByRole('button', { name: 'Duplicate Research' }).click()

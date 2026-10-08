@@ -490,10 +490,17 @@ describe('Store', () => {
   })
 
   describe('presets', () => {
-    it('seeds the 7 built-ins with the spec values', () => {
+    it('seeds the built-ins with the spec values', () => {
       const presets = store.listPresets()
-      expect(presets.map((p) => p.builtin)).toEqual(['pm', 'researcher', 'designer', 'implementor', 'senior', 'tester', 'reviewer'])
+      expect(presets.map((p) => p.builtin)).toEqual([
+        'pm', 'researcher', 'designer', 'implementor', 'senior', 'tester', 'reviewer',
+        'pm-opencode', 'researcher-opencode', 'designer-opencode', 'implementor-opencode', 'senior-opencode', 'tester-opencode', 'reviewer-opencode',
+      ])
       const by = (b: string) => presets.find((p) => p.builtin === b)!
+      // The OpenCode twins share their Claude twin's spec, but carry no model or effort of their own.
+      for (const b of ['pm', 'researcher', 'designer', 'implementor', 'senior', 'tester', 'reviewer']) {
+        expect(by(`${b}-opencode`)).toMatchObject({ name: `${by(b).name} (OpenCode)`, agent: 'opencode', model: '', effort: '', tools: by(b).tools, roleText: null })
+      }
       expect(by('pm')).toMatchObject({
         name: 'project manager',
         model: 'claude-sonnet-5-5',
@@ -528,10 +535,10 @@ describe('Store', () => {
         a.deletePreset(a.getPresetByBuiltin('tester')!.id)
         a.close()
         const b = new Store(file)
-        expect(b.listPresets()).toHaveLength(6)
+        expect(b.listPresets()).toHaveLength(13)
         expect(b.restoreBuiltins().map((p) => p.builtin)).toEqual(['tester'])
         expect(b.restoreBuiltins()).toEqual([])
-        expect(b.listPresets()).toHaveLength(7)
+        expect(b.listPresets()).toHaveLength(14)
         b.close()
       } finally {
         rmSync(dir, { recursive: true, force: true })

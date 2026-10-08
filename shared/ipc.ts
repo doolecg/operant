@@ -439,6 +439,10 @@ export interface IpcApi {
   'app:pickFolder': () => string | null
   // Shows the project folder in the file manager.
   'shell:openFolder': (crewId: number) => void
+  // Opens a file with the OS; refuses paths outside the project folder and the OS temp folder.
+  'shell:openPath': (crewId: number, path: string) => void
+  // True when the clipboard holds an image.
+  'clipboard:hasImage': () => boolean
   'app:info': () => AppInfo
   'app:openExternal': (url: string) => void
   'update:status': () => UpdateStatus
@@ -459,6 +463,8 @@ export type IpcChannel = keyof IpcApi
 export type MainChannel =
   | 'app:pickFolder'
   | 'shell:openFolder'
+  | 'shell:openPath'
+  | 'clipboard:hasImage'
   | 'app:info'
   | 'app:openExternal'
   | 'update:status'
@@ -493,6 +499,8 @@ export interface IpcEvents {
   run: { crewId: number; runId: number; status: RunStatus }
   // A job's agent list changed (an agent appeared, finished or got a model).
   'run:agents': { crewId: number; runId: number }
+  // The owner clicked an OS notification: open that run's task modal.
+  'run:open': { runId: number }
   // A Discord bot connected, dropped or failed.
   'discord:status': DiscordHealth
   // A bot got a new pairing request.
@@ -514,6 +522,8 @@ export interface OperantBridge {
   platform: NodeJS.Platform
   // The page zoom of this window (1 = 100%).
   setZoom(factor: number): void
+  // The disk path of a File dropped on the window ('' when it has none).
+  filePath(file: File): string
 }
 
 export const CORE_CHANNELS: CoreChannel[] = [
@@ -732,6 +742,8 @@ export const CORE_CHANNELS: CoreChannel[] = [
 export const MAIN_CHANNELS: MainChannel[] = [
   'app:pickFolder',
   'shell:openFolder',
+  'shell:openPath',
+  'clipboard:hasImage',
   'app:info',
   'app:openExternal',
   'update:status',

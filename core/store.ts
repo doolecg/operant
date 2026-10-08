@@ -775,7 +775,7 @@ const IMPLEMENTOR_DENY = ['Bash(git push*)', 'Bash(git commit*)']
 const TESTER_PATHS = ['**/test/**', '**/*.test.*', 'e2e/**']
 
 // The shipped presets. Role text is null: the text lives in plugin/roles/<builtin>.md.
-export const BUILTIN_PRESETS: BuiltinPreset[] = [
+const CLAUDE_PRESETS: BuiltinPreset[] = [
   {
     builtin: 'pm',
     name: 'project manager',
@@ -897,6 +897,22 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     roleText: null,
   },
 ]
+
+// The same seats for an OpenCode master: the shipped role files and tools carry over, but the model is empty —
+// OpenCode model ids are provider/model, so a seat takes the master's model or OpenCode's own default.
+const OPENCODE_PRESETS: BuiltinPreset[] = CLAUDE_PRESETS.map((p) => ({
+  ...p,
+  builtin: `${p.builtin}-opencode`,
+  name: `${p.name} (OpenCode)`,
+  agent: 'opencode' as const,
+  model: '',
+  effort: '',
+}))
+
+export const BUILTIN_PRESETS: BuiltinPreset[] = [...CLAUDE_PRESETS, ...OPENCODE_PRESETS]
+
+// Which shipped set the database has. Bump when BUILTIN_PRESETS or the shipped teams gain entries.
+const SEED_VERSION = 2
 
 export type NewPreset = Pick<PresetFields, 'name' | 'agent' | 'model' | 'permissionMode'> &
   Partial<Omit<PresetFields, 'builtin'>>
@@ -1495,13 +1511,15 @@ export class Store {
     return toPreset(row)
   }
 
-  // Built-ins are inserted by core, once, so a preset the user deleted stays deleted until
-  // `restoreBuiltins`.
+  // Built-ins are inserted by core, once per shipped set, so a preset the user deleted stays deleted until
+  // `restoreBuiltins`. A bumped SEED_VERSION re-runs restoreBuiltins once on existing databases: new built-ins
+  // appear, and built-ins deleted before the upgrade come back.
   seedBuiltinPresets(): void {
-    if (this.getJson('presets.seeded') === true) return
+    if (this.getJson('presets.seededVersion') === SEED_VERSION) return
     this.tx(() => {
       this.restoreBuiltins()
       this.setJson('presets.seeded', true)
+      this.setJson('presets.seededVersion', SEED_VERSION)
     })
   }
 

@@ -12,6 +12,7 @@ import { PresetsSection } from "./PresetsSection";
 import { ProjectsSection } from "./ProjectsSection";
 import { ShortcutsSection } from "./ShortcutsSection";
 import { TeamsSection } from "./TeamsSection";
+import { TerminalSection, TilesSection } from "./TerminalSection";
 import { TokensSection } from "./TokensSection";
 import { TopBarSection } from "./TopBarSection";
 
@@ -30,6 +31,8 @@ export const SETTINGS_SECTIONS: Array<{
   },
   { id: "projects", label: "Projects", component: ProjectsSection },
   { id: "topbar", label: "Top bar", component: TopBarSection },
+  { id: "terminal", label: "Terminal", component: TerminalSection },
+  { id: "tiles", label: "Tiles", component: TilesSection },
   { id: "tokens", label: "Tokens", component: TokensSection },
   { id: "budgets", label: "Budgets", component: BudgetsSection },
   { id: "presets", label: "Presets", component: PresetsSection },

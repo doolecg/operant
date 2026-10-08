@@ -115,8 +115,17 @@ export class HindsightService {
     return { port: Number(j.apiPort) || DEFAULT_PORT, embedVersion: typeof j.embedVersion === 'string' ? j.embedVersion : '' }
   }
 
+  // The server the agent plugins already use (self-hosted, apiUrl in coding-agent.json), taken only when Operant's own
+  // URL is unset and it is not sharing a daemon of its own.
+  get adoptedUrl(): string {
+    if ((this.opts.url?.() ?? '').trim() || this.opts.lan?.()) return ''
+    const j = obj(this.d.readJson(this.opts.settingsFile ?? join(homedir(), '.hindsight', 'coding-agent.json')))
+    const url = typeof j.apiUrl === 'string' ? j.apiUrl.trim().replace(/\/+$/, '') : ''
+    return j.serverMode === 'self-hosted' && /^https?:\/\/[^\s/]+/i.test(url) ? url : ''
+  }
+
   get managed(): boolean {
-    return !(this.opts.url?.() ?? '').trim()
+    return !(this.opts.url?.() ?? '').trim() && !this.adoptedUrl
   }
 
   get mode(): 'local' | 'lan' | 'remote' {
@@ -126,7 +135,7 @@ export class HindsightService {
   // Where Operant itself reaches the server. The daemon's own checks only probe 127.0.0.1, so a shared server is
   // probed there too, then on the bound address when that is a specific adapter and loopback is not served.
   private candidates(): string[] {
-    const remote = (this.opts.url?.() ?? '').trim().replace(/\/+$/, '')
+    const remote = (this.opts.url?.() ?? '').trim().replace(/\/+$/, '') || this.adoptedUrl
     if (remote) return [remote]
     const lan = this.opts.lan?.()
     const port = lan?.port ?? this.settings().port
@@ -206,7 +215,7 @@ export class HindsightService {
     try {
       if (await this.up()) {
         const pendingRestart = mode === 'lan' && this.applied !== this.lanSignature() ? true : undefined
-        return { ...mk(), state: 'running', pendingRestart, detail: mode === 'remote' ? `${this.url} · hosted elsewhere` : mode === 'lan' ? `${this.url} · shared` : this.url }
+        return { ...mk(), state: 'running', pendingRestart, detail: mode === 'remote' ? `${this.url} · ${this.adoptedUrl ? 'adopted from the agent plugins (coding-agent.json)' : 'hosted elsewhere'}` : mode === 'lan' ? `${this.url} · shared` : this.url }
       }
       if (mode === 'remote') return { ...mk(), state: 'error', detail: `${this.url} isn't answering` }
       if (!(await this.hasUv())) return { ...mk(), state: 'no-uv', detail: NO_UV }
@@ -314,8 +323,8 @@ export class HindsightService {
       })
       if (!r.ok) return { ok: false, error: `Hindsight answered ${r.status}` }
       return { ok: true, data: await r.json().catch(() => null) }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } catch {
+      return { ok: false, error: `unreachable at ${this.url}` }
     }
   }
 

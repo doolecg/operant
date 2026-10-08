@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Check, Coins, Eye, Pencil, RotateCcw, Square, SquareTerminal, Trash2, Undo2, X } from 'lucide-react'
+import { Check, Coins, Eye, Pencil, RotateCcw, Square, SquareTerminal, Trash2, TriangleAlert, Undo2, X } from 'lucide-react'
 import { decodeIpcError } from '@shared/ipc'
+import { draftKey } from '@shared/drafts'
 import type { JobAgent, Run } from '@shared/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Markdown } from '@/components/ui/markdown'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { CopyTextButton, Markdown } from '@/components/ui/markdown'
 import { timeAgo } from '@/lib/format'
+import { clearDraftByKey, useDraft } from '@/lib/drafts'
 import { Textarea } from '@/components/ui/textarea'
 import {
   useAnswerRun,
@@ -25,14 +27,14 @@ import { cn } from '@/lib/utils'
 import { AgentView } from './AgentView'
 import { ReasonDialog } from './ReasonDialog'
 import { RunStatusBadge } from './RunStatusBadge'
-import { runActive, runIsQuestion, timelineItem } from './runUi'
+import { guardForLatestReview, runActive, runIsQuestion, timelineItem } from './runUi'
 
 interface Props {
   runId: number
   onClose: () => void
   // Opens this job's page on the Usage tab.
   onOpenUsage?: (runId: number) => void
-  // Closes the panel and moves to the Master Terminal.
+  // Closes the modal and moves to the Master Terminal.
   onOpenMaster?: () => void
 }
 
@@ -49,19 +51,19 @@ function Block({ title, tone, children }: { title: string; tone: 'amber' | 'viol
   )
 }
 
-// The Master's open question: its options as buttons, and a free text answer box.
+// The Master's open question: its options as buttons, and a free text answer box. The typed answer is a draft.
 function QuestionBlock({ run, onError }: { run: Run; onError: (m: string | null) => void }) {
   const answer = useAnswerRun()
-  const [text, setText] = useState('')
-  useEffect(() => setText(''), [run.id, run.question])
+  const [text, setText, clearText] = useDraft('answer', run.id)
   const send = (value: string) => {
     onError(null)
-    answer.mutate([run.id, value], { onSuccess: () => setText(''), onError: (e) => onError(decodeIpcError(e).message) })
+    // The promise outlives this block: the live update that follows moves the job on and unmounts it before a mutate callback would run.
+    answer.mutateAsync([run.id, value]).then(clearText, (e) => onError(decodeIpcError(e).message))
   }
   return (
     <Block title="Question" tone="amber">
-      <div className="rounded-md border p-3" data-question>
-        <Markdown source={run.question} />
+      <div className="rounded-md border p-4" data-question>
+        <Markdown source={run.question} variant="document" />
       </div>
       {run.questionOptions.length > 0 && (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Answer options">
@@ -80,18 +82,27 @@ function QuestionBlock({ run, onError }: { run: Run; onError: (m: string | null)
   )
 }
 
-// The Master's review: its summary as Markdown, then Approve (optional note) or Send back (note required).
+// The Master's review: its summary as Markdown, then Approve (optional note) or Send back (note required). Both notes are drafts.
 function ReviewBlock({ run, onError }: { run: Run; onError: (m: string | null) => void }) {
   const approve = useApproveRun()
   const sendBack = useSendBackRun()
-  const [note, setNote] = useState('')
+  const events = useRunEvents(run.id).data ?? []
+  const guard = guardForLatestReview(events)
+  const [note, setNote, clearNote] = useDraft('approve', run.id)
   const [back, setBack] = useState(false)
-  useEffect(() => setNote(''), [run.id])
   const fail = { onError: (e: unknown) => onError(decodeIpcError(e).message) }
   return (
     <Block title="Review" tone="violet">
-      <div className="max-h-[45vh] overflow-y-auto rounded-md border p-3" data-review tabIndex={0}>
-        {run.reviewSummary ? <Markdown source={run.reviewSummary} /> : <p className="text-muted-foreground text-sm">The Master gave no summary.</p>}
+      {guard && (
+        <p role="alert" data-guard className="flex items-start gap-2 rounded-md border-2 border-red-500/70 p-3 text-sm">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-red-500" aria-hidden />
+          <span>
+            <strong className="font-semibold">No seat subagent was used.</strong> This job has a team, but the Master did the work itself. Check the result before you approve.
+          </span>
+        </p>
+      )}
+      <div className="rounded-md border p-4" data-review>
+        {run.reviewSummary ? <Markdown source={run.reviewSummary} variant="document" /> : <p className="text-muted-foreground text-sm">The Master gave no summary.</p>}
       </div>
       <Textarea aria-label="Approval note (optional)" rows={2} placeholder="Note for the Master (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
       <div className="flex flex-wrap gap-3">
@@ -100,7 +111,7 @@ function ReviewBlock({ run, onError }: { run: Run; onError: (m: string | null) =
           disabled={approve.isPending}
           onClick={() => {
             onError(null)
-            approve.mutate([run.id, note.trim() || undefined], fail)
+            approve.mutateAsync([run.id, note.trim() || undefined]).then(clearNote, fail.onError)
           }}
         >
           <Check /> Approve
@@ -116,10 +127,14 @@ function ReviewBlock({ run, onError }: { run: Run; onError: (m: string | null) =
         submitLabel="Send back"
         pending={sendBack.isPending}
         error={sendBack.error}
+        draftKey={draftKey('sendback', run.id)}
         onClose={() => setBack(false)}
         onSubmit={(reason) => {
           onError(null)
-          sendBack.mutate([run.id, reason], { onSuccess: () => setBack(false), ...fail })
+          sendBack.mutateAsync([run.id, reason]).then(
+            () => (clearDraftByKey(draftKey('sendback', run.id)), setBack(false)),
+            fail.onError,
+          )
         }}
       />
     </Block>
@@ -136,9 +151,7 @@ function CloseoutBlock({ run, onError }: { run: Run; onError: (m: string | null)
   return (
     <section className="space-y-2">
       <h3 className={heading}>Close-out</h3>
-      <p className="text-sm">
-        {CLOSEOUT_LABEL[run.closeoutState]}
-      </p>
+      <p className="text-sm">{CLOSEOUT_LABEL[run.closeoutState]}</p>
       <p className="text-muted-foreground text-xs">Saves what was learned to Hindsight, refreshes the CodeGraph index and records lessons. The steps and their results are in the timeline.</p>
       {retryable && (
         <Button
@@ -187,8 +200,9 @@ function Timeline({ runId }: { runId: number }) {
   )
 }
 
-// The full job panel over the right side: actions, the agent list and a live view of one agent.
-export function RunPanel({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
+// The body of the task modal: the task, what needs the owner and the outcome in a readable column on the left; run
+// details, agents and the timeline in a rail on the right (under the column when the window is narrow).
+export function RunDetail({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
   const run = useRun(runId).data
   const agents = useRunAgents(runId).data ?? []
   const stop = useStopRun()
@@ -208,20 +222,18 @@ export function RunPanel({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
     setConfirmDelete(false)
   }, [runId])
 
+  // A finished job has nothing left to approve, send back or answer.
+  const finished = run?.status === 'done' || run?.status === 'failed'
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !e.defaultPrevented && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+    if (!finished) return
+    for (const kind of ['approve', 'sendback', 'answer'] as const) clearDraftByKey(draftKey(kind, runId))
+  }, [finished, runId])
 
   return (
-    <aside
-      role="region"
-      aria-label={`Job panel JOB#${runId}`}
-      className="bg-background absolute top-11 right-0 bottom-0 z-10 flex w-[min(760px,100%)] flex-col border-l shadow-xl"
-    >
-      <header className="flex items-center gap-3 border-b px-4 py-3">
-        <h2 className="font-mono text-sm font-semibold">JOB#{runId}</h2>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="flex flex-wrap items-center gap-3 border-b px-6 py-3">
+        <DialogTitle className="font-mono text-sm leading-none font-semibold">JOB#{runId}</DialogTitle>
+        <DialogDescription className="sr-only">Details of this job: task, outcome, agents and timeline.</DialogDescription>
         {run && <RunStatusBadge status={run.status} waiting={run.waiting} />}
         <div className="flex-1" />
         {onOpenUsage && (
@@ -253,7 +265,8 @@ export function RunPanel({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
             <Pencil className="size-3" /> Edit task
           </Button>
         )}
-        {run && (run.status === 'done' || run.status === 'failed') &&
+        {run &&
+          finished &&
           (confirmDelete ? (
             <>
               <Button
@@ -282,18 +295,16 @@ export function RunPanel({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
       </header>
 
       {error && (
-        <p role="alert" className="text-destructive border-b px-4 py-2 text-xs">
+        <p role="alert" className="text-destructive border-b px-6 py-2 text-xs">
           {error}
         </p>
       )}
 
-      {viewing ? (
-        <AgentView runId={runId} live={run != null && runActive(run.status)} agent={viewing} onBack={() => setViewId(null)} />
-      ) : (
-        <ScrollArea className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto min-[1100px]:flex-row min-[1100px]:overflow-hidden">
+        <div className="min-w-0 flex-1 min-[1100px]:overflow-y-auto" data-slot="task-main">
           {run && (
-            <div className="space-y-5 p-4">
-              <section className="space-y-1.5">
+            <div className="mx-auto max-w-[72ch] space-y-6 p-8">
+              <section className="space-y-2">
                 <h3 className={heading}>Task</h3>
                 {editing !== null ? (
                   <div className="space-y-2">
@@ -318,15 +329,8 @@ export function RunPanel({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm break-words whitespace-pre-wrap">{run.task}</p>
+                  <p className="text-[15px] leading-[1.65] break-words whitespace-pre-wrap">{run.task}</p>
                 )}
-                <p className="text-muted-foreground font-mono text-[11px]">
-                  {run.masterCli}
-                  {run.masterModel && ` · ${run.masterModel}`}
-                  {run.masterEffort && ` (${run.masterEffort})`} · created {timeAgo(run.createdAt)}
-                  {run.startedAt != null && ` · started ${timeAgo(run.startedAt)}`}
-                  {run.finishedAt != null && ` · finished ${timeAgo(run.finishedAt)}`}
-                </p>
               </section>
 
               {run.status === 'needs-you' && run.waiting === 'permission' && (
@@ -351,30 +355,76 @@ export function RunPanel({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
               {runIsQuestion(run) && <QuestionBlock run={run} onError={setError} />}
               {run.status === 'review' && <ReviewBlock run={run} onError={setError} />}
               {run.sentBackNote && run.status !== 'review' && run.status !== 'done' && (
-                <section className="space-y-1.5">
+                <section className="space-y-2">
                   <h3 className={heading}>Sent back with</h3>
-                  <p className="text-sm break-words whitespace-pre-wrap">{run.sentBackNote}</p>
+                  <p className="text-[15px] leading-[1.65] break-words whitespace-pre-wrap">{run.sentBackNote}</p>
                 </section>
               )}
-              <CloseoutBlock run={run} onError={setError} />
 
               {run.outcome && (
-                <section className="space-y-1.5">
-                  <h3 className={heading}>Outcome</h3>
-                  <div className="max-h-[55vh] overflow-y-auto rounded-md border p-3" data-outcome tabIndex={0}>
-                    <Markdown source={run.outcome} />
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className={heading}>Outcome</h3>
+                    <CopyTextButton text={run.outcome} label="Copy outcome" className="text-muted-foreground text-xs" />
+                  </div>
+                  <div data-outcome>
+                    <Markdown source={run.outcome} variant="document" />
                   </div>
                 </section>
               )}
 
-              {run.mode === 'master' && <Timeline runId={runId} />}
+              <CloseoutBlock run={run} onError={setError} />
+            </div>
+          )}
+        </div>
+
+        <aside
+          aria-label="Run details"
+          className="flex w-full shrink-0 flex-col border-t min-[1100px]:min-h-0 min-[1100px]:w-96 min-[1100px]:border-t-0 min-[1100px]:border-l"
+        >
+          {viewing ? (
+            <div className="flex min-h-[24rem] flex-1 flex-col min-[1100px]:min-h-0">
+              <AgentView runId={runId} live={run != null && runActive(run.status)} agent={viewing} onBack={() => setViewId(null)} />
+            </div>
+          ) : (
+            <div className="space-y-6 p-5 min-[1100px]:overflow-y-auto">
+              {run && (
+                <section className="space-y-1.5">
+                  <h3 className={heading}>Run</h3>
+                  <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1 text-xs">
+                    <dt className="text-muted-foreground">CLI</dt>
+                    <dd className="font-mono">{run.masterCli}</dd>
+                    {run.masterModel && (
+                      <>
+                        <dt className="text-muted-foreground">Model</dt>
+                        <dd className="font-mono">
+                          {run.masterModel}
+                          {run.masterEffort && ` (${run.masterEffort})`}
+                        </dd>
+                      </>
+                    )}
+                    <dt className="text-muted-foreground">Created</dt>
+                    <dd>{timeAgo(run.createdAt)}</dd>
+                    {run.startedAt != null && (
+                      <>
+                        <dt className="text-muted-foreground">Started</dt>
+                        <dd>{timeAgo(run.startedAt)}</dd>
+                      </>
+                    )}
+                    {run.finishedAt != null && (
+                      <>
+                        <dt className="text-muted-foreground">Finished</dt>
+                        <dd>{timeAgo(run.finishedAt)}</dd>
+                      </>
+                    )}
+                  </dl>
+                </section>
+              )}
 
               <section className="space-y-2">
                 <h3 className={heading}>Agents</h3>
                 {agents.length === 0 ? (
-                  <p className="text-muted-foreground text-xs">
-                    {run?.seats.length === 0 ? 'A solo job has no subagents.' : 'No agents seen yet.'}
-                  </p>
+                  <p className="text-muted-foreground text-xs">{run?.seats.length === 0 ? 'A solo job has no subagents.' : 'No agents seen yet.'}</p>
                 ) : (
                   <ul className="space-y-1.5">
                     {agents.map((a) => (
@@ -394,10 +444,12 @@ export function RunPanel({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
                   </ul>
                 )}
               </section>
+
+              {run?.mode === 'master' && <Timeline runId={runId} />}
             </div>
           )}
-        </ScrollArea>
-      )}
-    </aside>
+        </aside>
+      </div>
+    </div>
   )
 }

@@ -13,6 +13,14 @@ export type KeyAction =
   | 'toggleConsole'
   | 'newShell'
   | 'toggleSidebar'
+  | 'toggleSidePanel'
+  | 'toggleAllPanels'
+  | 'tileLayout'
+  | 'tileSplit'
+  | 'tileFullscreen'
+  | 'tileFocusNext'
+  | 'tileFocusPrev'
+  | 'tileClose'
   | 'openInIde'
   | 'openPlayground'
   | 'mediaPlayPause'
@@ -22,6 +30,9 @@ export type KeyAction =
   | 'zoomIn'
   | 'zoomOut'
   | 'zoomReset'
+
+export type TileLayout = 'dwindle' | 'master'
+export type TileStrip = 'compact' | 'normal' | 'hide'
 
 export interface Settings {
   // The learning loop: lessons from finished jobs, written to Hindsight, CodeGraph notes and personal memory.
@@ -52,7 +63,15 @@ export interface Settings {
   // Colour theme, accent override, terminal colours and the user's own themes. All apply live.
   appearance: Appearance
   // Side panel widths in px that the user dragged; 0 keeps the built-in size. The window clamps them live.
-  layout: { sidebarWidth: number; rightWidth: number }
+  // The hide flags remember which panes the user hid: project sidebar, Terminal view side panel, Workspace inbox rail.
+  layout: { sidebarWidth: number; rightWidth: number; sidebarHidden: boolean; panelHidden: boolean; inboxHidden: boolean }
+  // Terminal text: copy once on mouseup, font size in px, scrollback lines, Ctrl+click file paths, dropped files type their paths.
+  terminal: { copyOnSelect: boolean; fontSize: number; scrollback: number; fileLinks: boolean; dropPaths: boolean }
+  // The Terminal view's tiling surface: layout kind, gap in px, subagent tiles (auto-open; seconds until a finished one closes, 0 keeps),
+  // the Master tile's context strip, and minutes of work after which a run is flagged as runaway (0 turns the flag off).
+  tiles: { layout: TileLayout; gaps: number; autoOpenSubagents: boolean; closeDoneAfterSec: number; strip: TileStrip; runawayMinutes: number }
+  // Owner notifications: the Workspace inbox badge, toast and OS notification when a run needs you.
+  notifications: { inbox: boolean }
   // The top bar: Windows media controls, the clock and date pill and the agent counts. All apply live.
   topBar: TopBarSettings
   tokens: {
@@ -96,6 +115,14 @@ export const KEY_ACTIONS: Array<{ id: KeyAction; label: string }> = [
   { id: 'toggleConsole', label: 'Show or hide the console' },
   { id: 'newShell', label: 'New shell in the project folder' },
   { id: 'toggleSidebar', label: 'Show or hide the project list' },
+  { id: 'toggleSidePanel', label: 'Show or hide the side panel or inbox' },
+  { id: 'toggleAllPanels', label: 'Hide all panels, or restore them' },
+  { id: 'tileLayout', label: 'Tiles: switch between dwindle and master layout' },
+  { id: 'tileSplit', label: 'Tiles: toggle split direction' },
+  { id: 'tileFullscreen', label: 'Tiles: fullscreen the focused tile' },
+  { id: 'tileFocusNext', label: 'Tiles: focus the next tile' },
+  { id: 'tileFocusPrev', label: 'Tiles: focus the previous tile' },
+  { id: 'tileClose', label: 'Tiles: close the focused tile' },
   { id: 'openInIde', label: 'Open the project in the IDE' },
   { id: 'openPlayground', label: 'Open the Playground terminal' },
   { id: 'mediaPlayPause', label: 'Media: play or pause' },
@@ -126,6 +153,14 @@ export const DEFAULT_SETTINGS: Settings = {
     toggleConsole: 'Mod+J',
     newShell: 'Alt+Shift+T',
     toggleSidebar: 'Alt+B',
+    toggleSidePanel: 'Alt+Shift+B',
+    toggleAllPanels: 'Alt+Z',
+    tileLayout: 'Alt+Shift+L',
+    tileSplit: 'Alt+Shift+S',
+    tileFullscreen: 'Alt+Shift+F',
+    tileFocusNext: 'Alt+J',
+    tileFocusPrev: 'Alt+K',
+    tileClose: 'Alt+Shift+W',
     openInIde: 'Alt+Shift+O',
     openPlayground: 'Mod+Shift+P',
     mediaPlayPause: '',
@@ -138,7 +173,10 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   uiScale: 0,
   appearance: DEFAULT_APPEARANCE,
-  layout: { sidebarWidth: 0, rightWidth: 0 },
+  layout: { sidebarWidth: 0, rightWidth: 0, sidebarHidden: false, panelHidden: false, inboxHidden: false },
+  terminal: { copyOnSelect: false, fontSize: 13, scrollback: 5000, fileLinks: true, dropPaths: true },
+  tiles: { layout: 'dwindle', gaps: 6, autoOpenSubagents: true, closeDoneAfterSec: 30, strip: 'normal', runawayMinutes: 0 },
+  notifications: { inbox: true },
   topBar: {
     mediaControls: typeof process !== 'undefined' && process.platform === 'win32',
     mediaSize: 'full',
@@ -221,6 +259,9 @@ export function sanitizeSettings(raw: unknown): Settings {
   const learn = r.learn ?? {}
   const runs = r.runs ?? {}
   const layout = r.layout ?? {}
+  const term = r.terminal ?? {}
+  const tiles = r.tiles ?? {}
+  const notif = r.notifications ?? {}
   const flag = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
   const mainCli = r.mainCli === 'opencode' ? 'opencode' : 'claude'
   return {
@@ -260,7 +301,26 @@ export function sanitizeSettings(raw: unknown): Settings {
     layout: {
       sidebarWidth: Math.round(num(layout.sidebarWidth, d.layout.sidebarWidth, 0, 4000)),
       rightWidth: Math.round(num(layout.rightWidth, d.layout.rightWidth, 0, 4000)),
+      sidebarHidden: flag(layout.sidebarHidden, d.layout.sidebarHidden),
+      panelHidden: flag(layout.panelHidden, d.layout.panelHidden),
+      inboxHidden: flag(layout.inboxHidden, d.layout.inboxHidden),
     },
+    terminal: {
+      copyOnSelect: flag(term.copyOnSelect, d.terminal.copyOnSelect),
+      fontSize: Math.round(num(term.fontSize, d.terminal.fontSize, 8, 32)),
+      scrollback: Math.round(num(term.scrollback, d.terminal.scrollback, 500, 100_000)),
+      fileLinks: flag(term.fileLinks, d.terminal.fileLinks),
+      dropPaths: flag(term.dropPaths, d.terminal.dropPaths),
+    },
+    tiles: {
+      layout: tiles.layout === 'master' || tiles.layout === 'dwindle' ? tiles.layout : d.tiles.layout,
+      gaps: Math.round(num(tiles.gaps, d.tiles.gaps, 0, 40)),
+      autoOpenSubagents: flag(tiles.autoOpenSubagents, d.tiles.autoOpenSubagents),
+      closeDoneAfterSec: Math.round(num(tiles.closeDoneAfterSec, d.tiles.closeDoneAfterSec, 0, 3600)),
+      strip: tiles.strip === 'compact' || tiles.strip === 'normal' || tiles.strip === 'hide' ? tiles.strip : d.tiles.strip,
+      runawayMinutes: Math.round(num(tiles.runawayMinutes, d.tiles.runawayMinutes, 0, 10_000)),
+    },
+    notifications: { inbox: flag(notif.inbox, d.notifications.inbox) },
     topBar: {
       mediaControls: flag(top.mediaControls, d.topBar.mediaControls),
       mediaSize: (['compact', 'full'] as const).includes(top.mediaSize) ? (top.mediaSize as MediaSize) : d.topBar.mediaSize,

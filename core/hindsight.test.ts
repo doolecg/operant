@@ -54,8 +54,29 @@ describe('hindsight service', () => {
 
   it('never throws from recall or retain', async () => {
     const s = svc({ fetch: async () => { throw new Error('down') } })
-    expect(await s.recall('b', 'q')).toEqual({ ok: false, error: 'down' })
-    expect(await s.retain('b', 'c', [])).toEqual({ ok: false, error: 'down' })
+    expect(await s.recall('b', 'q')).toEqual({ ok: false, error: 'unreachable at http://127.0.0.1:9077' })
+    expect(await s.retain('b', 'c', [])).toEqual({ ok: false, error: 'unreachable at http://127.0.0.1:9077' })
+  })
+
+  describe('adopting the agent plugins server', () => {
+    const file = { serverMode: 'self-hosted', apiUrl: 'http://192.168.0.41:8888/' }
+    it('uses apiUrl from coding-agent.json when Operant has no URL and is local', async () => {
+      const seen: string[] = []
+      const s = svc({ readJson: () => file, fetch: async (u) => (seen.push(u), resp(true)) })
+      expect(s.url).toBe('http://192.168.0.41:8888')
+      expect(s.managed).toBe(false)
+      expect(s.mode).toBe('remote')
+      expect((await s.status()).detail).toContain('adopted')
+      await s.recall('b', 'q')
+      expect(seen.at(-1)).toMatch(/^http:\/\/192\.168\.0\.41:8888\/v1\/default\/banks\/b\/memories\/recall$/)
+    })
+    it('does not adopt when Operant has its own URL, shares a daemon, or the file is not self-hosted with an apiUrl', () => {
+      expect(svc({ readJson: () => file }, { url: () => 'http://nas:1' }).url).toBe('http://nas:1')
+      expect(svc({ readJson: () => file }, { lan: () => ({ host: '0.0.0.0', port: 9077, openBind: true }) }).mode).toBe('lan')
+      expect(svc({ readJson: () => ({ ...file, serverMode: 'embedded' }) }).managed).toBe(true)
+      expect(svc({ readJson: () => ({ serverMode: 'self-hosted' }) }).url).toBe('http://127.0.0.1:9077')
+      expect(svc({ readJson: () => ({ ...file, apiUrl: 'file:///x' }) }).managed).toBe(true)
+    })
   })
 
   it('reads recall results of different shapes and posts retain with tags', async () => {

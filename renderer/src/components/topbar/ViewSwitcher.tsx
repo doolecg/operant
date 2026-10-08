@@ -3,13 +3,13 @@ import type { KeyboardEvent } from 'react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-export type Mode = 'workspace' | 'seats' | 'memory'
-export const MODES: Mode[] = ['workspace', 'seats', 'memory']
-export const MODE_LABEL: Record<Mode, string> = { workspace: 'Workspace', seats: 'Seats', memory: 'Memory' }
+export type Mode = 'workspace' | 'terminal' | 'seats' | 'memory'
+export const MODES: Mode[] = ['workspace', 'terminal', 'seats', 'memory']
+export const MODE_LABEL: Record<Mode, string> = { workspace: 'Workspace', terminal: 'Terminal', seats: 'Seats', memory: 'Memory' }
 
-// Workspace | Seats | Memory as a pill track; the active pill is filled with the accent and grows wider with a springy ease.
+// Workspace | Terminal | Seats | Memory as a pill track; the active pill is filled with the accent and grows wider with a springy ease.
 // Left and right arrow keys move between the pills. `menu` swaps the track for a dropdown when the bar is too narrow.
-export function ViewSwitcher({ mode, onMode, menu }: { mode: Mode; onMode: (m: Mode) => void; menu: boolean }) {
+export function ViewSwitcher({ mode, onMode, menu, badges }: { mode: Mode; onMode: (m: Mode) => void; menu: boolean; badges?: Partial<Record<Mode, number>> }) {
   if (menu) {
     return (
       <DropdownMenu>
@@ -23,6 +23,7 @@ export function ViewSwitcher({ mode, onMode, menu }: { mode: Mode; onMode: (m: M
           {MODES.map((m) => (
             <DropdownMenuItem key={m} onSelect={() => onMode(m)}>
               {MODE_LABEL[m]}
+              {!!badges?.[m] && <span className="bg-muted ml-2 rounded-full px-1.5 text-[10px] tabular-nums">{badges[m]}</span>}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
@@ -53,6 +54,11 @@ export function ViewSwitcher({ mode, onMode, menu }: { mode: Mode; onMode: (m: M
           )}
         >
           {MODE_LABEL[m]}
+          {!!badges?.[m] && (
+            <span data-mode-badge={m} className={cn('ml-1.5 rounded-full px-1.5 text-[10px] tabular-nums', m === mode ? 'bg-[#1f1208]/20' : 'bg-[#d97757] text-[#1f1208]')}>
+              {badges[m]}
+            </span>
+          )}
         </button>
       ))}
     </div>

@@ -71,8 +71,8 @@ describe('buildClaudeLaunch argv', () => {
     ['reviewer', 'claude-sonnet-5-5', ['--effort', 'high'], 'dontAsk', 'Read,Grep,Glob,Bash', '150k'],
   ]
 
-  it('covers all seven built-ins', () => {
-    expect(table.map((t) => t[0])).toEqual(BUILTIN_PRESETS.map((b) => b.builtin))
+  it('covers the Claude built-ins', () => {
+    expect(table.map((t) => t[0])).toEqual(BUILTIN_PRESETS.filter((b) => b.agent === 'claude').map((b) => b.builtin))
   })
 
   for (const [name, model, effort, mode, tools, cap] of table) {

@@ -122,7 +122,9 @@ try {
   row(0, 'claude-haiku-4-5', 9_000, 1_200, 50_000, 0, 0.06, crew.id, run.id, reviewer, 'claude', 'anthropic', 'agent', 'reviewer')
   db.close()
 
+  await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('heading', { name: 'shop', level: 1 }).waitFor()
+  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
   const tabs = page.getByRole('tablist', { name: 'Workspace panels' })
   assert.equal(await tabs.getByRole('tab', { name: 'Cost' }).count(), 0, 'the Cost tab was renamed')
   await tabs.getByRole('tab', { name: 'Usage' }).click()
@@ -183,9 +185,9 @@ try {
   assert.ok(Math.abs(ju.agents.reduce((a, x) => a + x.costUsd, 0) - ju.totals.costUsd) < 1e-9, 'job total is the sum of its agents')
   await shot('usage-job')
   await page.getByRole('button', { name: 'All usage' }).click()
-  await tabs.getByRole('tab', { name: /^Runs/ }).click()
-  await page.getByRole('button', { name: new RegExp(`Open JOB#${run.id}`) }).click()
-  await page.getByRole('region', { name: `Job panel JOB#${run.id}` }).getByRole('button', { name: 'Usage' }).click()
+  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Workspace', exact: true }).click()
+  await page.locator('[data-run-card]').getByRole('button', { name: `Open JOB#${run.id}`, exact: true }).click()
+  await page.getByRole('dialog', { name: `JOB#${run.id}` }).getByRole('button', { name: 'Usage' }).click()
   await jobTable.waitFor()
   await page.getByRole('button', { name: 'All usage' }).click()
 
@@ -213,7 +215,7 @@ try {
   // The header badge (at least 80% used) opens the Usage tab from anywhere.
   const badge = page.getByRole('button', { name: /^Provider limits: Claude/ })
   await badge.waitFor()
-  await tabs.getByRole('tab', { name: /^Runs/ }).click()
+  await tabs.getByRole('tab', { name: /^Board/ }).click()
   await badge.click()
   await tabs.getByRole('tab', { name: 'Usage', selected: true }).waitFor()
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click()

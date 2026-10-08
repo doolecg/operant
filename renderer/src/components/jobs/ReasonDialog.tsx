@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { useDraftByKey } from '@/lib/drafts'
 import { errorText } from './jobUi'
 
 // Reject and escalate both need a reason.
@@ -14,6 +15,7 @@ export function ReasonDialog({
   error,
   onSubmit,
   onClose,
+  draftKey,
 }: {
   open: boolean
   title: string
@@ -23,14 +25,31 @@ export function ReasonDialog({
   error: unknown
   onSubmit: (reason: string) => void
   onClose: () => void
+  // When set, the text is kept in the drafts store (survives closing and restarts) and cleared after a successful submit.
+  draftKey?: string
 }) {
-  const [reason, setReason] = useState('')
+  const [local, setLocal] = useState('')
+  const [stored, setStored, clearStored] = useDraftByKey(draftKey ?? '')
+  const reason = draftKey ? stored : local
+  const setReason = draftKey ? setStored : setLocal
   useEffect(() => {
-    if (open) setReason('')
-  }, [open])
+    if (open && !draftKey) setLocal('')
+  }, [open, draftKey])
+  const submitted = useRef(false)
+  const wasPending = useRef(false)
+  useEffect(() => {
+    if (draftKey && wasPending.current && !pending && submitted.current && error == null) {
+      clearStored()
+      submitted.current = false
+    }
+    wasPending.current = pending
+  }, [pending, error, draftKey, clearStored])
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    if (reason.trim() && !pending) onSubmit(reason.trim())
+    if (reason.trim() && !pending) {
+      submitted.current = true
+      onSubmit(reason.trim())
+    }
   }
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

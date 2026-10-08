@@ -63,8 +63,8 @@ describe('Master plugin generators', () => {
   })
 
   it('writes an OpenCode subagent with the tools on or off and our marker', () => {
-    const f = openCodeSeatAgent({ preset: preset({ agent: 'opencode', model: 'zai/glm-5.3-flash#high' }), roleText: 'Review.' }, '/p/.opencode/agent')
-    expect(f.content).toMatch(/^---\ndescription: .*\nmode: subagent\nmodel: "zai\/glm-5.3-flash"\ntools:\n  read: true\n  write: false/)
+    const f = openCodeSeatAgent({ preset: preset({ agent: 'opencode', model: 'zai/glm-5.3-flash#high' }), roleText: 'Review.' }, '/p/.opencode/agents')
+    expect(f.content).toMatch(/^---\ndescription: .*\nmode: subagent\ntools:\n  read: true\n  write: false/)
     expect(f.content).toContain(OPENCODE_MARKER)
   })
 })
@@ -116,23 +116,80 @@ describe('prepareMaster and the Master launch', () => {
     expect(buildMasterLaunch(ctx).args).toEqual(['--plugin-dir', '/app/plugin', '--session-id', ctx.sessionId])
   })
 
-  it('points the OpenCode TUI at the role file', () => {
+  it('points the OpenCode TUI at the role file with no model flag', () => {
     const prep = prepareMaster({ ...base(), cli: 'opencode', seats: [] })
     const ctx = { platform: 'linux', shell: 'sh', crewFolder: project } as LaunchContext
-    const l = buildOpenCodeMasterLaunch(ctx, 'zai/m', prep)
+    const l = buildOpenCodeMasterLaunch(ctx, prep)
+    expect(l.args).toEqual([])
     expect(l.firstInput).toBe(`Read ${prep.role.path} and follow it as your role.`)
     expect(l.files).toEqual([prep.role])
     expect(buildOpenCodeMasterLaunch(ctx).firstInput).toBeNull()
+    expect(buildOpenCodeMasterLaunch(ctx, { ...prep, resume: true }).args).toEqual(['--continue'])
   })
 
-  it('writes OpenCode seat files, excludes them from git, never overwrites the owner files and removes stale ones', () => {
-    const agentDir = join(project, '.opencode', 'agent')
+  it('writes the Master model into .opencode/opencode.json, merging the owner file', () => {
+    const cfgPath = join(project, '.opencode', 'opencode.json')
+    mkdirSync(join(project, '.opencode'), { recursive: true })
+    writeFileSync(cfgPath, JSON.stringify({ $schema: 'https://opencode.ai/config.json', mcp: { enabled: true } }))
+    prepareMaster({ ...base(), cli: 'opencode', seats: [], model: 'zai-coding-plan/glm-5.3-flash' })
+    expect(JSON.parse(readFileSync(cfgPath, 'utf8'))).toEqual({
+      $schema: 'https://opencode.ai/config.json',
+      mcp: { enabled: true },
+      model: 'zai-coding-plan/glm-5.3-flash',
+    })
+    // No model: our key goes, the owner's keys stay.
+    prepareMaster({ ...base(), cli: 'opencode', seats: [] })
+    expect(JSON.parse(readFileSync(cfgPath, 'utf8'))).toEqual({ $schema: 'https://opencode.ai/config.json', mcp: { enabled: true } })
+    // An unparseable owner file is left alone and reported.
+    writeFileSync(cfgPath, '{ not json')
+    const r = prepareMaster({ ...base(), cli: 'opencode', seats: [], model: 'zai/x' })
+    expect(r.skipped).toEqual([cfgPath])
+    expect(readFileSync(cfgPath, 'utf8')).toBe('{ not json')
+    // No file is created when there is no model to write.
+    rmSync(cfgPath)
+    prepareMaster({ ...base(), cli: 'opencode', seats: [] })
+    expect(existsSync(cfgPath)).toBe(false)
+  })
+
+  it('never overrides or removes a model the owner wrote in opencode.json', () => {
+    const cfgPath = join(project, '.opencode', 'opencode.json')
+    mkdirSync(join(project, '.opencode'), { recursive: true })
+    const owner = JSON.stringify({ model: 'anthropic/owner-pick', mcp: {} })
+    writeFileSync(cfgPath, owner)
+    prepareMaster({ ...base(), cli: 'opencode', seats: [], model: 'zai/x' })
+    expect(readFileSync(cfgPath, 'utf8')).toBe(owner)
+    prepareMaster({ ...base(), cli: 'opencode', seats: [] })
+    expect(readFileSync(cfgPath, 'utf8')).toBe(owner)
+    rmSync(cfgPath)
+    prepareMaster({ ...base(), cli: 'opencode', seats: [], model: 'zai/a' })
+    prepareMaster({ ...base(), cli: 'opencode', seats: [], model: 'zai/b' })
+    expect(JSON.parse(readFileSync(cfgPath, 'utf8')).model).toBe('zai/b')
+    writeFileSync(cfgPath, JSON.stringify({ model: 'owner/changed' }))
+    prepareMaster({ ...base(), cli: 'opencode', seats: [], model: 'zai/c' })
+    prepareMaster({ ...base(), cli: 'opencode', seats: [] })
+    expect(JSON.parse(readFileSync(cfgPath, 'utf8')).model).toBe('owner/changed')
+  })
+
+  it('writes OpenCode seat files into .opencode/agents, migrates our v1 files, excludes them from git, never overwrites the owner files and removes stale ones', () => {
+    const agentDir = join(project, '.opencode', 'agents')
+    const oldDir = join(project, '.opencode', 'agent')
     const seat = { preset: preset({ agent: 'opencode', model: 'zai/m' }), roleText: 'Review.' }
-    const mine = join(agentDir, 'operant-seat-code-reviewer-p4.md')
-    mkdirSync(agentDir, { recursive: true })
-    writeFileSync(mine, 'the owner wrote this')
+    // Our v1 file moves to the new folder; the owner's v1 file stays.
+    mkdirSync(oldDir, { recursive: true })
+    const v1 = join(oldDir, 'operant-seat-code-reviewer-p4.md')
+    writeFileSync(v1, `old\n${OPENCODE_MARKER}\n`)
+    const ownerV1 = join(oldDir, 'operant-seat-owner.md')
+    writeFileSync(ownerV1, 'the owner wrote this')
     const r1 = prepareMaster({ ...base(), cli: 'opencode', seats: [seat] })
-    expect(r1.skipped).toEqual([mine])
+    expect(r1.skipped).toEqual([])
+    expect(existsSync(v1)).toBe(false)
+    expect(readFileSync(ownerV1, 'utf8')).toBe('the owner wrote this')
+    expect(readFileSync(join(agentDir, 'operant-seat-code-reviewer-p4.md'), 'utf8')).toContain(OPENCODE_MARKER)
+    // An owner file at a seat's path in the new folder is left alone and reported.
+    const mine = join(agentDir, 'operant-seat-code-reviewer-p4.md')
+    writeFileSync(mine, 'the owner wrote this')
+    const rOwner = prepareMaster({ ...base(), cli: 'opencode', seats: [seat] })
+    expect(rOwner.skipped).toEqual([mine])
     expect(readFileSync(mine, 'utf8')).toBe('the owner wrote this')
     rmSync(mine)
     const r2 = prepareMaster({ ...base(), cli: 'opencode', seats: [seat, { preset: preset({ id: 9, name: 'Old', agent: 'opencode' }), roleText: 'x.' }] })
@@ -141,8 +198,10 @@ describe('prepareMaster and the Master launch', () => {
     writeFileSync(join(agentDir, 'operant-seat-notours.md'), 'owner file with our prefix')
     prepareMaster({ ...base(), cli: 'opencode', seats: [seat] })
     expect(readdirSync(agentDir).sort()).toEqual(['operant-seat-code-reviewer-p4.md', 'operant-seat-notours.md'])
-    const exclude = readFileSync(join(project, '.git', 'info', 'exclude'), 'utf8')
-    expect(exclude.split('\n').filter((l) => l === '/.opencode/agent/operant-seat-*.md')).toHaveLength(1)
+    const exclude = readFileSync(join(project, '.git', 'info', 'exclude'), 'utf8').split('\n')
+    expect(exclude.filter((l) => l === '/.opencode/agents/operant-seat-*.md')).toHaveLength(1)
+    expect(exclude.filter((l) => l === '/.opencode/opencode.json')).toHaveLength(1)
+    expect(exclude.some((l) => l === '/.opencode/agent/operant-seat-*.md')).toBe(false)
     removeOpenCodeSeats(project)
     expect(readdirSync(agentDir)).toEqual(['operant-seat-notours.md'])
   })

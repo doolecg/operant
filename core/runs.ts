@@ -38,8 +38,14 @@ export function cleanSeats(store: Store, seats: unknown): TeamSeat[] {
     if (!Number.isInteger(s.count) || (s.count as number) < 1 || (s.count as number) > SEAT_COUNT_MAX) {
       throw new RunError('BAD_ARGS', `Seat ${preset.name} needs a count from 1 to ${SEAT_COUNT_MAX}`)
     }
+    // OpenCode runs every seat on the Master's single model: nothing stored.
+    if (preset.agent === 'opencode') {
+      const eff = typeof s.effort === 'string' ? s.effort.trim() : ''
+      return { presetId: s.presetId, count: s.count as number, model: '', ...(eff ? { effort: eff } : {}) }
+    }
     const model = typeof s.model === 'string' && s.model.trim() ? s.model.trim() : preset.model
-    validateModel(model, preset.agent)
+    // An empty model is the seat preset's "CLI default" (the OpenCode presets ship that way): nothing to validate.
+    if (model) validateModel(model, preset.agent)
     const effort = typeof s.effort === 'string' ? s.effort.trim() : ''
     return { presetId: s.presetId, count: s.count as number, model, ...(effort ? { effort } : {}) }
   })
@@ -160,6 +166,8 @@ export class RunManager {
       if (!team) throw new RunError('NOT_FOUND', `Team ${input.teamId} not found`)
     }
     const seats = cleanSeats(store, input.seats ?? team?.seats ?? [])
+    const wrong = seats.map((s) => store.getPreset(s.presetId)).find((p) => p && p.agent !== masterCli)
+    if (wrong) throw new RunError('BAD_ARGS', `Seat ${wrong.name} runs on ${wrong.agent}, but this job's Master uses ${masterCli}. Pick seats for ${masterCli}, or change the Master CLI.`)
     const limits = { maxWorkers: 0, topTier: '' as const, tokenBudget: 0, ...team?.limits }
     checkLimits(seats, limits)
 
@@ -460,9 +468,9 @@ export class ApprovalMarker {
 }
 
 export function defaultBrief(run: Run): string {
-  const seats = run.seats.map((s) => `${s.count} x preset ${s.presetId} on ${s.model}${s.effort ? ` (effort ${s.effort})` : ''}`)
+  const seats = run.seats.map((s) => `${s.count} x preset ${s.presetId} on ${s.model || "the Master's model"}${s.effort ? ` (effort ${s.effort})` : ''}`)
   const parts = [run.task]
-  if (seats.length) parts.push(`Run these seats as your own subagents: ${seats.join('; ')}.`)
+  if (seats.length) parts.push(`Delegate the work to these seats as your own subagents (you coordinate, you do not do it yourself): ${seats.join('; ')}.`)
   if (run.rules) parts.push(`Team rules: ${run.rules}`)
   return parts.join('\n\n')
 }

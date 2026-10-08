@@ -1,5 +1,10 @@
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { HookReport, Run } from '../shared/types'
+import { SubagentReader } from './agents'
 import { Collab, EXIT, type Identity } from './collab'
 import { DEFAULT_JOB_SETTINGS, JobEngine } from './jobs'
 import { MasterRuns, dataBlock, formatRunShow } from './master-runs'
@@ -131,6 +136,87 @@ describe('master-mode runs', () => {
       await ok('run.review', { id, summary: 'Done. Tests pass.' })
       expect(store.getRun(id)).toMatchObject({ status: 'review', reviewSummary: 'Done. Tests pass.' })
       expect(changes.at(-1)?.status).toBe('review')
+    })
+
+    describe('delegation guard', () => {
+      const seated = (): number => store.createRun({ crewId, task: 'Add a health check', masterCli: 'claude', mode: 'master', seats: [{ presetId: 1, count: 1, model: 'sonnet' }] }).id
+
+      it('adds a guard event on review when the run has seats and no subagent ran', async () => {
+        const id = seated()
+        await toWorking(id)
+        await ok('run.review', { id, summary: 'Done.' })
+        expect(store.listRunEvents(id, { kind: 'guard' })).toMatchObject([{ source: 'system', body: 'No seat subagent was used' }])
+        expect(store.getRun(id)?.status).toBe('review')
+      })
+
+      it('stays quiet when a subagent ran', async () => {
+        const id = seated()
+        await toWorking(id)
+        store.addJobAgent(id, { seat: 'seat-reviewer', status: 'done', transcriptRef: 'claude:s:a1' })
+        await ok('run.review', { id, summary: 'Done.' })
+        expect(store.listRunEvents(id, { kind: 'guard' })).toHaveLength(0)
+      })
+
+      it('stays quiet when the fake Claude fixture delegated to the seat (Agent-tool transcript read by the reader)', async () => {
+        const cfg = mkdtempSync(join(tmpdir(), 'op-fake-claude-'))
+        try {
+          const id = seated()
+          const run = store.getRun(id)!
+          const cwd = join(cfg, 'work')
+          mkdirSync(cwd, { recursive: true })
+          const bin = join(process.cwd(), 'e2e', 'fixtures', 'bin', 'fake-claude.mjs')
+          const r = spawnSync(process.execPath, [bin, '--session-id', 'sess-1'], { cwd, input: '/exit\n', encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: cfg, OPERANT_OPERATOR: 'master@x', FAKE_CLAUDE_SUBAGENT: 'seat-reviewer' } })
+          expect(r.status).toBe(0)
+          await new SubagentReader({ store, projectsDir: () => join(cfg, 'projects') }).sync(id, { cli: 'claude', cwd, sessionId: 'sess-1' })
+          expect(store.listJobAgents(id).map((a) => a.seat)).toEqual(['seat-reviewer'])
+          await toWorking(run.id)
+          await ok('run.review', { id, summary: 'Done.' })
+          expect(store.listRunEvents(id, { kind: 'guard' })).toHaveLength(0)
+        } finally {
+          rmSync(cfg, { recursive: true, force: true })
+        }
+      })
+
+      it('reads the subagents first, so a late-ingested one prevents the guard; a second round is judged on its own', async () => {
+        const late = new MasterRuns({ store, approvals, syncAgents: async (r) => void store.addJobAgent(r.id, { seat: 'seat-reviewer', status: 'done', transcriptRef: `t:${r.id}` }) }, () => clock)
+        const id = seated()
+        await toWorking(id)
+        late.review(id, 'Done.')
+        await late.guardsSettled()
+        expect(store.listRunEvents(id, { kind: 'guard' })).toHaveLength(0)
+        const bare = new MasterRuns({ store, approvals, syncAgents: async () => undefined }, () => clock)
+        const id2 = seated()
+        await toWorking(id2)
+        bare.review(id2, 'Done.')
+        await bare.guardsSettled()
+        expect(store.listRunEvents(id2, { kind: 'guard' })).toHaveLength(1)
+        bare.sendBack(id2, 'use the seat')
+        store.transitionRun(id2, 'working', {})
+        bare.review(id2, 'Done again.')
+        await bare.guardsSettled()
+        const evs = store.listRunEvents(id2)
+        expect(evs.filter((e) => e.kind === 'guard')).toHaveLength(2)
+        expect(evs.at(-1)?.kind).toBe('guard')
+      })
+
+      it('drops the deferred guard when the run left review meanwhile', async () => {
+        let release!: () => void
+        const slow = new MasterRuns({ store, approvals, syncAgents: () => new Promise<void>((r) => (release = r)) }, () => clock)
+        const id = seated()
+        await toWorking(id)
+        slow.review(id, 'Done.')
+        slow.sendBack(id, 'no')
+        release()
+        await slow.guardsSettled()
+        expect(store.listRunEvents(id, { kind: 'guard' })).toHaveLength(0)
+      })
+
+      it('stays quiet when the run has no seats', async () => {
+        const id = newRun()
+        await toWorking(id)
+        await ok('run.review', { id, summary: 'Done.' })
+        expect(store.listRunEvents(id, { kind: 'guard' })).toHaveLength(0)
+      })
     })
 
     it('validates options and texts', async () => {
@@ -328,5 +414,7 @@ describe('master-mode runs', () => {
     expect(dataBlock('x', 'a ``` b')).toBe('````x\na ``` b\n````')
     const text = formatRunShow({ run: store.getRun(newRun())!, seats: [], brief: '', events: [] })
     expect(text).toContain('Seats: none chosen')
+    const seat = { presetId: 1, preset: 'Coder', count: 2, model: '', effort: '', subagentType: 'operant-seat-coder' }
+    expect(formatRunShow({ run: store.getRun(newRun())!, seats: [seat], brief: '', events: [] })).toContain("model the Master's model")
   })
 })

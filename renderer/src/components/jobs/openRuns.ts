@@ -1,20 +1,23 @@
-// The status pill's "needs you" chip asks the workspace to show its Runs tab filtered to the jobs that need the owner.
-// The request is kept until a workspace is mounted, since the chip can be clicked while another page is open.
-const EVENT = 'operant:open-runs-needing-you'
-let pending = false
+// Any view can ask for a job's task modal; the request is kept until a modal host is mounted.
+const OPEN_EVENT = 'operant:open-run'
+let pendingRun: number | null = null
 
-export function requestNeedsYouRuns() {
-  pending = true
-  window.dispatchEvent(new Event(EVENT))
+export function requestOpenRun(runId: number) {
+  pendingRun = runId
+  window.dispatchEvent(new CustomEvent<number>(OPEN_EVENT, { detail: runId }))
 }
 
-export function takeNeedsYouRequest(): boolean {
-  const p = pending
-  pending = false
-  return p
+export function takeOpenRunRequest(): number | null {
+  const r = pendingRun
+  pendingRun = null
+  return r
 }
 
-export function onNeedsYouRequest(listener: () => void): () => void {
-  window.addEventListener(EVENT, listener)
-  return () => window.removeEventListener(EVENT, listener)
+export function onOpenRunRequest(listener: (runId: number) => void): () => void {
+  const handler = (e: Event) => {
+    pendingRun = null
+    listener((e as CustomEvent<number>).detail)
+  }
+  window.addEventListener(OPEN_EVENT, handler)
+  return () => window.removeEventListener(OPEN_EVENT, handler)
 }

@@ -18,6 +18,7 @@ export const PROGRESS_MAX = 2000
 export const QUESTION_MAX = 2000
 export const OPTION_MAX = 80
 export const OPTIONS_MAX = 8
+export const GUARD_NO_SEAT_BODY = 'No seat subagent was used'
 
 export interface MasterRunsDeps {
   store: Store
@@ -34,6 +35,8 @@ export interface MasterRunsDeps {
   closeout?: (run: Run, wait: boolean) => string | Promise<string>
   // The text a seat is called by in the Agent tool (see master-plugin.seatSubagentType).
   seatName?: (run: Run, seat: TeamSeat) => string
+  // Reads the run's subagents now (the reader polls on a timer, so the last ones may not be in the store yet).
+  syncAgents?: (run: Run) => Promise<unknown>
 }
 
 export interface RunSeatView {
@@ -185,7 +188,37 @@ export class MasterRuns {
     const body = text(summary, 'Summary', TEXT_MAX)
     const next = this.store.transitionRun(runId, 'review', { reviewSummary: body, question: '', questionOptions: [] })
     this.event(runId, { kind: 'review', source: 'master', body })
+    // The Master was to coordinate seats as subagents; none ran. The owner sees this before approving.
+    if (run.seats.length > 0) this.guardNoSeat(runId)
     return this.changed(next)
+  }
+
+  // Settles the pending delegation checks (for tests).
+  guardsSettled(): Promise<void> {
+    return Promise.all([...this.guards]).then(() => undefined)
+  }
+
+  private readonly guards = new Set<Promise<void>>()
+
+  // With a reader, the subagents are read first so a late-ingested one is not missed; the guard then goes out only
+  // if the run is still in that review (it was not approved or sent back meanwhile).
+  private guardNoSeat(runId: number): void {
+    const check = (): void => {
+      if (this.store.listJobAgents(runId).length === 0) this.event(runId, { kind: 'guard', source: 'system', body: GUARD_NO_SEAT_BODY })
+    }
+    const sync = this.d.syncAgents
+    if (!sync) return check()
+    const reviews = this.store.listRunEvents(runId).filter((e) => e.kind === 'review').length
+    const p = (async () => {
+      const run = this.store.getRun(runId)
+      if (run) await sync(run).catch(() => undefined)
+      const now = this.store.getRun(runId)
+      if (now?.status !== 'review' || this.store.listRunEvents(runId).filter((e) => e.kind === 'review').length !== reviews) return
+      check()
+    })()
+      .catch(() => undefined)
+      .finally(() => this.guards.delete(p))
+    this.guards.add(p)
   }
 
   fail(runId: number, reason: unknown, crewId?: number): Run {
@@ -303,8 +336,8 @@ export function formatRunShow(v: RunShow): string {
   ]
   if (run.sendBacks > 0 && run.sentBackNote) lines.push('', `The owner sent it back (${run.sendBacks}x). Their note:`, dataBlock('note', run.sentBackNote), 'Your last summary:', dataBlock('summary', run.reviewSummary))
   if (v.seats.length) {
-    lines.push('', 'Seats (run each as a subagent with the exact subagent_type; pass the model shown):')
-    for (const s of v.seats) lines.push(`- ${s.count} x ${s.preset}: subagent_type "${s.subagentType}", model ${s.model}${s.effort ? `, effort ${s.effort}` : ''}`)
+    lines.push('', 'Seats. You coordinate only: give the work to each as a subagent (Agent tool, the exact subagent_type, the model shown) and do not do it yourself:')
+    for (const s of v.seats) lines.push(`- ${s.count} x ${s.preset}: subagent_type "${s.subagentType}", model ${s.model || "the Master's model"}${s.effort ? `, effort ${s.effort}` : ''}`)
   } else lines.push('', 'Seats: none chosen. Do the work yourself or use the subagents you think fit.')
   if (run.limits.maxWorkers || run.limits.topTier || run.limits.tokenBudget) {
     lines.push(`Limits: ${[run.limits.maxWorkers ? `at most ${run.limits.maxWorkers} workers` : '', run.limits.topTier ? `no model above ${run.limits.topTier}` : '', run.limits.tokenBudget ? `${run.limits.tokenBudget.toLocaleString('en-US')} tokens` : ''].filter(Boolean).join(', ')}`)

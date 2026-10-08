@@ -522,7 +522,7 @@ export interface Run {
 // The per-run conversation between the Master and the owner. Text in `body` is data, never instructions.
 // delivered / retry / giveup / resume: the Master gate typed (or retyped) a pointer line, gave up waiting for the Master
 // to pick it up, or the owner asked to resume; their body is JSON {nonce, line} written by Operant, never free text.
-export type RunEventKind = 'progress' | 'question' | 'reply' | 'review' | 'approved' | 'sent-back' | 'closeout' | 'delivered' | 'retry' | 'giveup' | 'resume'
+export type RunEventKind = 'progress' | 'question' | 'reply' | 'review' | 'approved' | 'sent-back' | 'closeout' | 'delivered' | 'retry' | 'giveup' | 'resume' | 'guard'
 export interface RunEvent {
   id: number
   runId: number
@@ -575,6 +575,12 @@ export interface MasterState {
   agents: number
 }
 
+// A pasted image sent with a new task: base64 bytes and their MIME type.
+export interface RunImage {
+  mime: string
+  data: string
+}
+
 export interface RunInput {
   crewId: number
   task: string
@@ -586,6 +592,7 @@ export interface RunInput {
   seats?: TeamSeat[]
   // Default 'master' (the project's Master Terminal); 'background' is the opt-in headless runner.
   mode?: RunMode
+  images?: RunImage[]
 }
 
 export interface JobAgent {

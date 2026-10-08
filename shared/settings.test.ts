@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS, mergeSettings, sanitizeSettings } from './settings'
+import { DEFAULT_SETTINGS, KEY_ACTIONS, mergeSettings, sanitizeSettings } from './settings'
 
 describe('settings', () => {
   it('fills defaults for missing or malformed values', () => {
@@ -15,7 +15,7 @@ describe('settings', () => {
     expect(s).toMatchObject({ mainCli: 'claude', mainModel: '', mainEffort: '' })
     expect(s.updates).toEqual({ channel: 'stable', checkHours: 24, installOnQuit: true })
     expect(s.keybinds.newCrew).toBe('Mod+Shift+N')
-    expect(Object.keys(s.keybinds).sort()).toEqual(['indexCrew', 'mediaNext', 'mediaPlayPause', 'mediaPrev', 'mediaShuffle', 'newCrew', 'newShell', 'openInIde', 'openPlayground', 'openSettings', 'toggleConsole', 'toggleSidebar', 'zoomIn', 'zoomOut', 'zoomReset'])
+    expect(Object.keys(s.keybinds).sort()).toEqual(['indexCrew', 'mediaNext', 'mediaPlayPause', 'mediaPrev', 'mediaShuffle', 'newCrew', 'newShell', 'openInIde', 'openPlayground', 'openSettings', 'tileClose', 'tileFocusNext', 'tileFocusPrev', 'tileFullscreen', 'tileLayout', 'tileSplit', 'toggleAllPanels', 'toggleConsole', 'toggleSidePanel', 'toggleSidebar', 'zoomIn', 'zoomOut', 'zoomReset'])
     expect('defaultReview' in s).toBe(false)
   })
 
@@ -32,9 +32,9 @@ describe('settings', () => {
   })
 
   it('sanitises the dragged panel widths', () => {
-    expect(sanitizeSettings({ layout: { sidebarWidth: 301.4, rightWidth: 'wide' } }).layout).toEqual({ sidebarWidth: 301, rightWidth: 0 })
-    expect(sanitizeSettings({ layout: { sidebarWidth: -9, rightWidth: 99999 } }).layout).toEqual({ sidebarWidth: 0, rightWidth: 4000 })
-    expect(mergeSettings(DEFAULT_SETTINGS, { layout: { rightWidth: 500 } }).layout).toEqual({ sidebarWidth: 0, rightWidth: 500 })
+    expect(sanitizeSettings({ layout: { sidebarWidth: 301.4, rightWidth: 'wide' } }).layout).toMatchObject({ sidebarWidth: 301, rightWidth: 0 })
+    expect(sanitizeSettings({ layout: { sidebarWidth: -9, rightWidth: 99999 } }).layout).toMatchObject({ sidebarWidth: 0, rightWidth: 4000 })
+    expect(mergeSettings(DEFAULT_SETTINGS, { layout: { rightWidth: 500 } }).layout).toMatchObject({ sidebarWidth: 0, rightWidth: 500 })
   })
 
   it('clamps and defaults the tokens and collaboration groups', () => {
@@ -109,6 +109,35 @@ describe('settings', () => {
     expect(h).toEqual({ mode: 'local', bindHost: '127.0.0.1', port: 65535, url: '', openBind: false })
     const ok = sanitizeSettings({ hindsight: { mode: 'lan', bindHost: '100.101.102.103', port: 9100, openBind: true } }).hindsight
     expect(ok).toMatchObject({ mode: 'lan', bindHost: '100.101.102.103', port: 9100, openBind: true })
+  })
+
+  it('sanitises the hide flags, terminal, tiles and notification settings', () => {
+    const d = sanitizeSettings({})
+    expect(d.layout).toMatchObject({ sidebarHidden: false, panelHidden: false, inboxHidden: false })
+    expect(d.terminal).toEqual({ copyOnSelect: false, fontSize: 13, scrollback: 5000, fileLinks: true, dropPaths: true })
+    expect(d.tiles).toEqual({ layout: 'dwindle', gaps: 6, autoOpenSubagents: true, closeDoneAfterSec: 30, strip: 'normal', runawayMinutes: 0 })
+    expect(d.notifications).toEqual({ inbox: true })
+    const bad = sanitizeSettings({
+      layout: { sidebarHidden: 'yes', panelHidden: true },
+      terminal: { copyOnSelect: 1, fontSize: 99, scrollback: 10, fileLinks: false, dropPaths: 'no' },
+      tiles: { layout: 'grid', gaps: -4, autoOpenSubagents: false, closeDoneAfterSec: 99999, strip: 'big', runawayMinutes: 2.6 },
+      notifications: { inbox: 'off' },
+    })
+    expect(bad.layout).toMatchObject({ sidebarHidden: false, panelHidden: true, inboxHidden: false })
+    expect(bad.terminal).toEqual({ copyOnSelect: false, fontSize: 32, scrollback: 500, fileLinks: false, dropPaths: true })
+    expect(bad.tiles).toEqual({ layout: 'dwindle', gaps: 0, autoOpenSubagents: false, closeDoneAfterSec: 3600, strip: 'normal', runawayMinutes: 3 })
+    expect(bad.notifications.inbox).toBe(true)
+  })
+
+  it('merges partial layout, terminal and tiles patches and labels every key action', () => {
+    const m = mergeSettings(DEFAULT_SETTINGS, { layout: { sidebarHidden: true }, terminal: { fontSize: 16 }, tiles: { layout: 'master' }, notifications: { inbox: false } })
+    expect(m.layout).toMatchObject({ sidebarHidden: true, panelHidden: false, sidebarWidth: 0 })
+    expect(m.terminal).toMatchObject({ fontSize: 16, scrollback: 5000 })
+    expect(m.tiles).toMatchObject({ layout: 'master', gaps: 6 })
+    expect(m.notifications.inbox).toBe(false)
+    expect(KEY_ACTIONS.map((a) => a.id).sort()).toEqual(Object.keys(DEFAULT_SETTINGS.keybinds).sort())
+    expect(KEY_ACTIONS.every((a) => a.label.length > 0)).toBe(true)
+    expect(DEFAULT_SETTINGS.keybinds).toMatchObject({ toggleSidePanel: 'Alt+Shift+B', toggleAllPanels: 'Alt+Z' })
   })
 
   it('sanitises the top bar settings and leaves media keys unbound', () => {

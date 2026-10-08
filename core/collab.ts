@@ -1,4 +1,5 @@
 import { MASTER_HOOK_EVENTS, type HookReport, type JobReview, type MasterHookEvent } from '../shared/types'
+import { scrubLogLine } from './agents'
 import { dataBlock, formatRunShow, type MasterRuns } from './master-runs'
 import { RunError } from './runs'
 import { JobError, type JobActor, type JobEdit, type JobEngine, type JobRecord } from './jobs'
@@ -49,6 +50,11 @@ export interface CollabOptions {
   runs?: MasterRuns
   // A plugin hook reported from the project's Master Terminal (`operant hook <event>`).
   onHook?: (crewId: number, report: HookReport) => void
+  // The project's Hindsight bank (`operant memory recall|retain`); without it they answer "not available".
+  memory?: {
+    recall(crewId: number, query: string): Promise<{ ok: true; items: string[] } | { ok: false; error: string }>
+    retain(crewId: number, content: string, tags: string[]): Promise<{ ok: true } | { ok: false; error: string }>
+  }
 }
 
 type Args = Record<string, unknown>
@@ -116,6 +122,7 @@ export class Collab {
   private readonly capPaused: (operatorId: number) => boolean
   private readonly runs: MasterRuns | undefined
   private readonly onHook: (crewId: number, report: HookReport) => void
+  private readonly memory: CollabOptions['memory']
   private readonly onError: (err: unknown) => void
   private readonly commands: Record<string, { keys: string[]; run: Handler }>
   private readonly waits = new Map<number, number>()
@@ -128,6 +135,7 @@ export class Collab {
     this.capPaused = opts.capPaused ?? (() => false)
     this.runs = opts.runs
     this.onHook = opts.onHook ?? (() => {})
+    this.memory = opts.memory
     this.onError = opts.onError ?? (() => {})
     this.commands = {
       whoami: { keys: [], run: (w) => this.whoami(w) },
@@ -160,6 +168,8 @@ export class Collab {
       'run.next': { keys: [], run: (w) => this.runNext(w) },
       'run.inbox': { keys: [], run: (w) => this.runInbox(w) },
       'run.closeout': { keys: ['id', 'wait'], run: (w, a) => this.runCloseout(w, a) },
+      'memory.recall': { keys: ['query'], run: (w, a) => this.memoryRecall(w, a) },
+      'memory.retain': { keys: ['text', 'tag'], run: (w, a) => this.memoryRetain(w, a) },
       hook: { keys: ['event', 'sessionId', 'transcriptPath', 'source', 'message', 'notificationType', 'agentId', 'agentType'], run: (w, a) => this.hook(w, a) },
     }
   }
@@ -520,6 +530,28 @@ export class Collab {
     const { runs, crewId } = this.masterRuns(who)
     const text = await runs.closeout(id(args.id), crewId, args.wait === true)
     return { exit: EXIT.OK, text, data: { text } }
+  }
+
+  // The caller's own project bank: the crew comes from the session token, never from the request.
+  async memoryRecall(who: Identity, args: Args): Promise<CollabResult> {
+    const memory = this.memory
+    if (!memory) return { exit: EXIT.ERROR, error: 'memory is not available' }
+    const query = str(args.query, 'Query').slice(0, 2000)
+    const r = await memory.recall(this.crewOf(who), query)
+    if (!r.ok) return { exit: EXIT.ERROR, error: `Hindsight: ${scrubLogLine(r.error)}` }
+    const items = r.items.map(scrubLogLine)
+    return { exit: EXIT.OK, text: items.length ? items.map((i) => `- ${oneLine(i)}`).join('\n') : 'Nothing stored for that.', data: { items } }
+  }
+
+  async memoryRetain(who: Identity, args: Args): Promise<CollabResult> {
+    const memory = this.memory
+    if (!memory) return { exit: EXIT.ERROR, error: 'memory is not available' }
+    const text = scrubLogLine(str(args.text, 'Text').slice(0, 8000))
+    const tags = args.tag === undefined ? [] : Array.isArray(args.tag) ? args.tag : [args.tag]
+    if (tags.length > 10 || tags.some((t) => typeof t !== 'string' || !t.trim() || t.length > 60)) throw new UsageError('--tag takes up to 10 short tags')
+    const r = await memory.retain(this.crewOf(who), text, tags as string[])
+    if (!r.ok) return { exit: EXIT.ERROR, error: `Hindsight: ${scrubLogLine(r.error)}` }
+    return { exit: EXIT.OK, text: 'Saved to project memory.', data: { saved: true } }
   }
 
   // `operant hook <event>`: always quiet for the caller; only a Master Terminal may report.

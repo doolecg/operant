@@ -99,7 +99,7 @@ try {
   await play.locator(`[data-crew-row="${crews.api.id}"]`).waitFor()
   const groups = await inv('groups:list')
   assert.deepEqual(
-    (await inv('crews:list')).map((c) => [c.name, c.groupId]),
+    (await inv('crews:list')).filter((c) => c.kind !== 'playground').map((c) => [c.name, c.groupId]),
     [
       ['shop', groups[0].id],
       ['blog', groups[0].id],
@@ -109,11 +109,11 @@ try {
   await row('api').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Remove from group' }).click()
   await play.locator(`[data-crew-row="${crews.api.id}"]`).waitFor({ state: 'detached' })
-  assert.equal((await inv('crews:list')).find((c) => c.name === 'api').groupId, null)
+  assert.equal((await inv('crews:list')).filter((c) => c.kind !== 'playground').find((c) => c.name === 'api').groupId, null)
   // Dropping a project on a row in another group puts it in that group, before that row.
   await row('api').dragTo(row('shop'))
-  assert.deepEqual((await inv('crews:list')).map((c) => c.name), ['api', 'shop', 'blog'])
-  assert.equal((await inv('crews:list'))[0].groupId, groups[0].id)
+  assert.deepEqual((await inv('crews:list')).filter((c) => c.kind !== 'playground').map((c) => c.name), ['api', 'shop', 'blog'])
+  assert.equal((await inv('crews:list')).filter((c) => c.kind !== 'playground')[0].groupId, groups[0].id)
 
   // Collapse is saved and survives a reload.
   await work.getByRole('button', { name: 'Collapse Work' }).click()
@@ -152,6 +152,8 @@ try {
   await page.getByTestId('git-page').getByRole('tab', { name: /^Changes\s*2$/ }).waitFor()
 
   // Terminal drawer: a shell in the project folder, a second tab, closing tabs.
+  // In the Terminal view the project's shells are tiles, so the drawer is checked from the Workspace view.
+  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Workspace', exact: true }).click()
   await row('shop').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'New shell here' }).click()
   const drawer = page.getByTestId('terminal-drawer')
@@ -206,7 +208,7 @@ try {
   await page.screenshot({ path: join(outDir, 'pm-tracker-setting.png') })
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await page.getByLabel('Tracker file').waitFor({ state: 'detached' })
-  assert.equal((await inv('crews:list')).find((c) => c.id === crews.shop.id).trackerFile, 'docs/specs/tracker.html')
+  assert.equal((await inv('crews:list')).filter((c) => c.kind !== 'playground').find((c) => c.id === crews.shop.id).trackerFile, 'docs/specs/tracker.html')
   await page.getByRole('button', { name: 'Close settings' }).click()
 
   // The tracker: "Update tracker now" puts one job on the Board for the project manager, a second press adds to it.
@@ -220,6 +222,7 @@ try {
   assert.match(tracker[0].body, /Tracker: docs\/specs\/tracker.html/)
   assert.match(tracker[0].body, /tick only what was verified/)
   await row('shop').click()
+  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
   await page.getByRole('tab', { name: /^Board/ }).click()
   await page.getByText('Update tracker', { exact: true }).first().waitFor()
   await page.screenshot({ path: join(outDir, 'pm-tracker-job.png') })
@@ -252,7 +255,7 @@ try {
   await work.getByRole('button', { name: 'Actions for group Work' }).click()
   await page.getByRole('menuitem', { name: 'Remove group' }).click()
   await page.getByRole('region', { name: 'Group Work' }).waitFor({ state: 'detached' })
-  assert.deepEqual((await inv('crews:list')).map((c) => c.groupId), [null, null])
+  assert.deepEqual((await inv('crews:list')).filter((c) => c.kind !== 'playground').map((c) => c.groupId), [null, null])
   console.log('projects e2e ok')
 } finally {
   await app?.close().catch(() => undefined)

@@ -142,6 +142,14 @@ describe('run and hook commands', () => {
     expect(err(['run', 'ask', '20003', '--text', 'q', '--text', 'r'])).toMatch(/given twice/)
   })
 
+  it('parses the memory commands', () => {
+    expect(req(['memory', 'recall', 'how', 'is', 'auth', 'done'])).toMatchObject({ cmd: 'memory.recall', args: { query: 'how is auth done' } })
+    expect(req(['memory', 'retain', 'x', '--tag', 'a', '--tag', 'b']).args).toEqual({ text: 'x', tag: ['a', 'b'] })
+    expect(req(['memory', 'retain', '-']).stdin).toBe('text')
+    expect(err(['memory', 'recall'])).toMatch(/Missing <query>/)
+    expect(err(['memory'])).toMatch(/Unknown command "memory"/)
+  })
+
   it('reads --summary @file and keeps @@ literal', async () => {
     const { readAtFile } = await import('./operant')
     expect(readAtFile('@report.md', () => 'from file')).toBe('from file')

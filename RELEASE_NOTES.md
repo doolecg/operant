@@ -1,3 +1,34 @@
+# Operant 3.0.1
+
+The Workspace is now a task board with a review inbox, the old workspace is the Terminal view, and a job opens in a big, readable window.
+
+**Install:** download the file for your system from the assets below (same files as 3.0.0, with the new version in the name). Operant 3 keeps itself up to date from these releases.
+
+## New
+- **Workspace board and inbox.** Your tasks sit in columns: queued, working, needs you, in review and done. An inbox beside it lists what needs you: questions, permission prompts, reviews and failures. The Workspace tab shows a count, you get a toast, and Windows shows a notification when Operant isn't the active window (switch it off in Settings > Top bar > Panels and notifications).
+- **Terminal view.** The old workspace is now called Terminal and works like Operant 2.8.2: the Master Terminal is the main tile, subagents open as read-only tiles, and the project's own shells tile beside them. Layout, split, full screen, focus and close all have keys you can rebind. Settings has new Terminal and Tiles sections.
+- **Big task window.** Click a task and it opens in a near-full-screen window with room to breathe. The outcome, review summary and question are shown as a readable document: larger type, tables, code blocks, long sections you can fold, and a Copy button.
+- **Replies are remembered.** What you typed in the approval note, the send-back reason, a question answer or the New task box stays when you click away and come back, and after a restart.
+- **Copy and paste like 2.8.2.** Ctrl+C copies when text is selected (otherwise it interrupts), Ctrl+V pastes, and an image on the clipboard is sent to Claude. Copy-on-select, Ctrl+click on file paths (files in the project open; programs are only shown in their folder, never run) and dropping files to type their paths are options in Settings.
+- **Hide the sidebars.** Alt+B hides the project list, Alt+Shift+B hides the Terminal side panel or the Workspace inbox, Alt+Z hides or restores all of them. There are buttons in the top bar and the choice is remembered.
+- **Memory for the Master.** `operant memory recall` and `operant memory retain` let the Master and its seats read and write the project's Hindsight memory.
+- **Delegation check.** If a task had seats and the Master did the work without using any of them, the review shows a warning.
+
+---
+
+## Changed
+- **OpenCode uses one model.** Seats on OpenCode run on the single model you set; there is no per-seat model, and a model you wrote in a project's `.opencode/opencode.json` is never overwritten.
+- **Hindsight uses your server.** If Operant's own Hindsight address is empty, it now uses the self-hosted address from your agent plugins' `~/.hindsight/coding-agent.json`. When Hindsight can't be reached, the brief says where it tried.
+- The top bar switches to its compact forms at slightly wider windows to fit the new buttons.
+
+---
+
+## Fixed
+- Pasted task images are kept out of `git status` and are deleted when you delete the task or the project.
+- Changing the main CLI in the New task box clears seats that belong to the other CLI.
+
+---
+
 # Operant 3.0.0
 
 Operant 3 now starts work as runs: pick a project, press Plus, and its Master Terminal acts as your project manager. It runs the task with your seats, asks you questions, and asks you to review the result.

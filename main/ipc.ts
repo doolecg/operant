@@ -1,10 +1,12 @@
-import { app, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, clipboard, dialog, ipcMain, Notification, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { consoleLog, isConsoleSource } from '../core/console'
 import { stopOwnProcess } from '../core/proc'
 import { ipcErrorOf, type Operant } from '../core/operant'
 import { CORE_CHANNELS, encodeIpcError, type IpcApi, type IpcEventName, type IpcEvents, type MainChannel } from '../shared/ipc'
 import { isTrustedSender, type AppOrigin } from './guard'
 import { createMedia } from './media'
+import { createRunNotifier } from './notify'
+import { isRunnable, resolveAllowedPath } from './openpath'
 import type { createUpdater } from './updater'
 
 type MainHandlers = { [C in MainChannel]: (...a: Parameters<IpcApi[C]>) => ReturnType<IpcApi[C]> | Promise<ReturnType<IpcApi[C]>> }
@@ -45,6 +47,26 @@ export function registerIpc(
       if (!crew) throw new Error(encodeIpcError('NOT_FOUND', `Project ${String(crewId)} not found`))
       const failure = await shell.openPath(crew.folder)
       if (failure) throw new Error(encodeIpcError('BAD_ARGS', failure))
+    },
+    'shell:openPath': async (crewId, path) => {
+      const crew = (await operant.handlers['crews:list']()).find((c) => c.id === crewId)
+      if (!crew) throw new Error(encodeIpcError('NOT_FOUND', `Project ${String(crewId)} not found`))
+      const target = typeof path === 'string' ? resolveAllowedPath(crew.folder, path) : null
+      if (!target) throw new Error(encodeIpcError('FORBIDDEN', 'That path is outside the project folder, or missing'))
+      if (isRunnable(target)) return shell.showItemInFolder(target)
+      const failure = await shell.openPath(target)
+      if (failure) throw new Error(encodeIpcError('BAD_ARGS', failure))
+    },
+    'clipboard:hasImage': async () => {
+      try {
+        for (const item of await clipboard.read()) {
+          if (!item.types.includes('image/png')) continue
+          if ((await item.getType('image/png')).size > 0) return true
+        }
+      } catch {
+        /* nothing readable */
+      }
+      return false
     },
     'app:info': () => ({ version: app.getVersion(), platform: process.platform }),
     'app:openExternal': (url) => {
@@ -90,6 +112,26 @@ export function registerIpc(
   forward('job')
   forward('purge')
   forward('settings')
+  const notifyRun = createRunNotifier({
+    enabled: () => operant.currentSettings.notifications.inbox,
+    focused: () => getWindow()?.isFocused() ?? false,
+    getRun: (id) => operant.runById(id),
+    show: ({ title, body }, onClick) => {
+      if (!Notification.isSupported()) return
+      const n = new Notification({ title, body })
+      n.on('click', onClick)
+      n.show()
+    },
+    onClick: (runId) => {
+      const win = getWindow()
+      if (!win || win.isDestroyed()) return
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+      push(win, 'run:open', { runId })
+    },
+  })
+  operant.on('run', ({ runId, status }) => notifyRun(runId, status))
   media.on('media:state', (s) => push(getWindow(), 'media:state', s))
   media.on('media:timeline', (t) => push(getWindow(), 'media:timeline', t))
   media.on('media:art', (a) => push(getWindow(), 'media:art', a))

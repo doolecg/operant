@@ -1104,7 +1104,7 @@ describe('Operant', () => {
       const user = await h()['presets:create']({ name: 'mine', agent: 'claude', model: 'opus', permissionMode: 'dontAsk' })
       expect((await failure(() => h()['presets:reset'](user.id))).code).toBe('BAD_ARGS')
       await h()['presets:delete'](user.id)
-      expect(await h()['presets:list']()).toHaveLength(7)
+      expect(await h()['presets:list']()).toHaveLength(14)
     })
   })
 

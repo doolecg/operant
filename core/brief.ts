@@ -73,7 +73,7 @@ function seatLines(store: Store, run: Run): string[] {
     const p = store.getPreset(s.presetId)
     const name = p?.name ?? `preset ${s.presetId}`
     const extra = [p?.roleText ? `role: ${p.roleText}` : '', p?.skills?.length ? `skills: ${p.skills.join(', ')}` : ''].filter(Boolean)
-    return `${s.count} x ${name} on ${s.model}${extra.length ? ` (${extra.join('; ')})` : ''}`
+    return `${s.count} x ${name} on ${s.model || "the Master's model"}${extra.length ? ` (${extra.join('; ')})` : ''}`
   })
 }
 

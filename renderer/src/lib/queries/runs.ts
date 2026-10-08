@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { requestOpenRun } from '@/components/jobs/openRuns'
 import { call, keys, registerLive, useMutate } from './core'
 
 export const useRuns = (crewId: number | null) =>
@@ -54,6 +55,7 @@ registerLive((b, qc) => [
     void qc.invalidateQueries({ queryKey: keys.runAgents(runId) })
     void qc.invalidateQueries({ queryKey: ['runEvents', runId] })
   }),
+  b.on('run:open', ({ runId }) => requestOpenRun(runId)),
   b.on('run:agents', ({ runId }) => {
     void qc.invalidateQueries({ queryKey: keys.runAgents(runId) })
   }),

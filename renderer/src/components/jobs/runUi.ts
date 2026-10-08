@@ -124,3 +124,13 @@ export const lastProgress = (events: RunEvent[]): string => {
   for (const e of [...events].reverse()) if (e.kind === 'progress') return e.body.trim().split('\n')[0] ?? ''
   return ''
 }
+
+// The delegation guard counts only for the latest review: a guard written after the newest 'review' event.
+export const GUARD_PREFIX = 'No seat subagent was used'
+export function guardForLatestReview(events: RunEvent[]): boolean {
+  let review = -1
+  events.forEach((e, i) => {
+    if (e.kind === 'review') review = i
+  })
+  return events.some((e, i) => i > review && e.kind === 'guard' && e.body.startsWith(GUARD_PREFIX))
+}

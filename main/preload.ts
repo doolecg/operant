@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webFrame, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, webUtils, type IpcRendererEvent } from 'electron'
 import { CORE_CHANNELS, MAIN_CHANNELS, decodeIpcError, encodeIpcError, type OperantBridge } from '../shared/ipc'
 
 const allowed = new Set<string>([...CORE_CHANNELS, ...MAIN_CHANNELS])
@@ -18,6 +18,7 @@ const bridge: OperantBridge = {
   },
   platform: process.platform,
   setZoom: (factor) => webFrame.setZoomFactor(factor),
+  filePath: (file) => webUtils.getPathForFile(file),
 }
 
 contextBridge.exposeInMainWorld('operant', bridge)

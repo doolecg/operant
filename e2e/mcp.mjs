@@ -134,7 +134,7 @@ try {
   assert.deepEqual([...pm.mcpServers].sort(), ['bad-srv', 'codegraph', 'files-srv'])
 
   // A job whose seat needs a down server still starts, and Claude gets only the picked servers.
-  const run = await inv('runs:create', { crewId: ids.crew, task: 'Say hello', masterCli: 'claude', teamId: ids.team })
+  const run = await inv('runs:create', { crewId: ids.crew, task: 'Say hello', masterCli: 'claude', teamId: ids.team, mode: 'background' })
   const end = Date.now() + 30_000
   let status = ''
   while (Date.now() < end && status !== 'working') {

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RUN_TRANSITIONS, type RunStatus } from '../shared/types'
 import { MasterRegistry, type MasterAdapter, type MasterEvent, type MasterStart } from './master'
-import { RunError, RunManager, checkLimits, tierOf, type RunNotice } from './runs'
+import { RunError, RunManager, checkLimits, cleanSeats, tierOf, type RunNotice } from './runs'
 import { MIGRATIONS, RunTransitionError, Store } from './store'
 
 // An adapter whose jobs the test finishes by hand.
@@ -221,6 +221,11 @@ describe('RunManager', () => {
     expect(store.getRun(b.id)!.startedAt).toBeNull()
   })
 
+  it('rejects seats whose preset runs on another CLI than the Master', () => {
+    const oc = store.createPreset({ name: 'oc', agent: 'opencode', model: '', permissionMode: 'dontAsk' })
+    expect(() => submit('x', { seats: [{ presetId: oc.id, count: 1, model: '' }] })).toThrow(/runs on opencode, but this job's Master uses claude/)
+  })
+
   it('hands the Master slot effort to the adapter and keeps a seat effort', async () => {
     const preset = store.createPreset({ name: 'p', agent: 'claude', model: 'claude-sonnet-5-5', permissionMode: 'dontAsk' })
     const master = store.ensureMaster(crewId)
@@ -340,6 +345,11 @@ describe('RunManager', () => {
     const codex = store.createPreset({ name: 'cx', agent: 'codex', model: 'gpt-5', permissionMode: 'dontAsk' })
     expect(() => submit('x', { seats: [{ presetId: codex.id, count: 1, model: 'gpt-5' }] })).toThrow(/claude or opencode/)
     expect(() => submit('x', { seats: [{ presetId: preset.id, count: 0, model: 'sonnet' }] })).toThrow(/count/)
+  })
+
+  it('stores no model for OpenCode seats', () => {
+    const oc = store.createPreset({ name: 'oc', agent: 'opencode', model: 'zai/glm-5.3-flash', permissionMode: 'dontAsk' })
+    expect(cleanSeats(store, [{ presetId: oc.id, count: 2, model: 'zai/other' }])).toEqual([{ presetId: oc.id, count: 2, model: '' }])
   })
 
   it('notifies on creation and every status change', async () => {

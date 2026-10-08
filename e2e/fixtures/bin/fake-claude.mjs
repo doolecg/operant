@@ -5,6 +5,9 @@
 //   `/clear` and `/exit` behave, and `/fake spend <in> <out> <cacheRead>` / `/fake run operant ...` are test hooks,
 // - with -p (a dashboard job) emits one stream-json message and stays alive until killed,
 // - answers the learn step (haiku, -p) with CLAUDE_CONFIG_DIR/learn-response.json when that file exists,
+// - delegation: FAKE_CLAUDE_SUBAGENT=<subagent_type> (at start) or `/fake subagent <subagent_type>` writes a subagent
+//   transcript + meta under <session>/subagents, in the real layout, as if the Master called the Agent tool (the
+//   delegation guard and the Agents list read it). Without either, no subagent exists (the guard case),
 // - runs FAKE_CLAUDE_SCRIPT (one `operant ...` command per line, at start) and FAKE_CLAUDE_ON_INBOX (after each
 //   inbox read). A line may start with `[role]` to apply to that role only; output is echoed and logged to
 //   CLAUDE_CONFIG_DIR/fake-claude-commands.jsonl.
@@ -107,6 +110,21 @@ let counter = 2
 appendFileSync(transcript, line('msg_1', 20_000, 4_000, 60_000) + line('msg_2', 5_000, 12_000, 150_000))
 console.log(`fake claude ready (${operator})`)
 
+// A subagent the Master "delegated" to: <session>/subagents/agent-<n>.jsonl (+ .meta.json) next to the main transcript.
+let agents = 0
+function subagent(type) {
+  const sub = join(dir, sessionId, 'subagents')
+  mkdirSync(sub, { recursive: true })
+  const id = `agent-fake${++agents}`
+  const at = new Date().toISOString()
+  const m = (role, extra) => JSON.stringify({ type: role, timestamp: at, isSidechain: true, agentId: id, agentType: type, message: { role, model, ...extra } }) + '\n'
+  writeFileSync(join(sub, `${id}.meta.json`), JSON.stringify({ agentType: type, model }))
+  writeFileSync(join(sub, `${id}.jsonl`), m('user', { content: 'Do your part of the task.' }) + m('assistant', { content: [{ type: 'text', text: `${type} is working.` }], stop_reason: 'end_turn', usage: { input_tokens: 100, output_tokens: 50 } }))
+  record('fake-claude-commands.jsonl', { operator, cmd: `subagent ${type}`, exit: 0, output: id })
+  console.log(`subagent ${type} started (${id})`)
+}
+if (process.env.FAKE_CLAUDE_SUBAGENT && sessionId) subagent(process.env.FAKE_CLAUDE_SUBAGENT)
+
 const quote = (a) => (/^[\w@.:/#=+-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)
 
 // `operant ...` runs through the shell so the PATH lookup (and the .cmd wrapper on Windows) is the real one.
@@ -168,6 +186,8 @@ rl.on('line', (typed) => {
     const [i, o, c] = t.slice(12).split(/\s+/).map(Number)
     appendFileSync(transcript, line(`msg_${++counter}`, i || 0, o || 0, c || 0))
     console.log(`spent ${i} in, ${o} out, ${c} cache read`)
+  } else if (t.startsWith('/fake subagent ')) {
+    subagent(t.slice(15).trim())
   } else if (t.startsWith('/fake run operant')) {
     operant(t.slice(17).trim())
   } else if (t) console.log(`> ${t}`)

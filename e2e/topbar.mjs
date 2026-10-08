@@ -48,6 +48,7 @@ try {
     const crew = await o.invoke('crews:create', { name: 'shop', folder })
     await o.invoke('runs:create', { crewId: crew.id, task: 'Count me' }).catch(() => undefined)
   }, project)
+  await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('heading', { name: 'shop' }).waitFor({ state: 'attached' })
 
   await page.evaluate(() => window.operant.invoke('settings:set', { uiScale: 1, topBar: { mediaSize: 'compact' } }))
