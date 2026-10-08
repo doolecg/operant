@@ -473,12 +473,15 @@ export function buildMasterLaunch(ctx: LaunchContext, master?: Pick<Operator, 'm
 // <folder>/.opencode/opencode.json, which OpenCode v2 reads as project config at startup (verified on 2.0.24).
 // With `prep`, its first line points the TUI at the PM role file (the one fixed pointer line Operant types).
 // With `prep.resume`, --continue reopens the last session of the folder, which already read its role (no pointer line).
+// Session tabs off inside Operant: OpenCode merges this env overlay over the owner's cli.json (tabs.mode off).
+const OPENCODE_CLI_OVERLAY = JSON.stringify({ tabs: { mode: 'off' } })
+
 export function buildOpenCodeMasterLaunch(ctx: LaunchContext, prep?: Pick<MasterLaunchPrep, 'role' | 'resume'>): LaunchResult {
   assertShell(ctx)
   const args: string[] = []
   if (prep?.resume) args.push('--continue')
   const role = prep && !prep.resume ? checkPath('role', prep.role.path) : null
-  return { file: 'opencode', args, env: operantEnv(ctx), files: prep ? [prep.role] : [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: role ? `Read ${role} and follow it as your role.` : null }
+  return { file: 'opencode', args, env: { ...operantEnv(ctx), OPENCODE_CLI_CONFIG_CONTENT: OPENCODE_CLI_OVERLAY }, files: prep ? [prep.role] : [], cwd: checkPath('crewFolder', ctx.crewFolder), firstInput: role ? `Read ${role} and follow it as your role.` : null }
 }
 
 export interface RunLaunch {

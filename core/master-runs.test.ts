@@ -229,6 +229,32 @@ describe('master-mode runs', () => {
       expect((await call(master, 'run.progress', { id, text: 'x', bogus: 1 })).exit).toBe(EXIT.USAGE)
     })
 
+    it('add queues a master-mode job in its own project, for the Master only', async () => {
+      const submitted: number[] = []
+      const adder = new MasterRuns(
+        {
+          store,
+          approvals,
+          submit: (i) => {
+            submitted.push(i.crewId)
+            return store.createRun({ crewId: i.crewId, task: i.task, masterCli: i.masterCli, mode: 'master' })
+          },
+        },
+        () => clock,
+      )
+      const c = new Collab({ store, jobs: new JobEngine(store, () => clock, () => DEFAULT_JOB_SETTINGS), messages: bus, now: () => clock, runs: adder })
+      const r = await c.run(master, { cmd: 'run.add', args: { title: 'Fix login', body: 'Details here' } })
+      expect(r, r.error).toMatchObject({ exit: EXIT.OK })
+      const run = store.listRuns(crewId).at(-1)!
+      expect(r.text).toBe(`Added: JOB#${run.id} queued - Fix login`)
+      expect(run).toMatchObject({ crewId, status: 'queued', mode: 'master', task: 'Fix login\n\nDetails here' })
+      expect(submitted).toEqual([crewId])
+      expect((await c.run(worker, { cmd: 'run.add', args: { title: 'x' } })).exit).toBe(EXIT.FORBIDDEN)
+      expect((await c.run(master, { cmd: 'run.add', args: { title: '  ' } })).exit).toBe(EXIT.USAGE)
+      expect((await c.run(master, { cmd: 'run.add', args: { title: 'x', crewId: 9 } })).exit).toBe(EXIT.USAGE)
+      expect((await call(master, 'run.add', { title: 'x' })).exit).not.toBe(EXIT.OK)
+    })
+
     it('start refuses a second active job and a background job', async () => {
       const a = newRun()
       const b = newRun()

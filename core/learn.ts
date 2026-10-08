@@ -211,7 +211,9 @@ export class LearnService {
   // The close-out of an approved master-mode run: the transcript is the run's window of the Master session, built by the caller.
   onCloseout = (run: Run, transcript: string): Promise<LearnRunInfo | null> => this.queue(() => this.learn(run.crewId, run, null, transcript))
 
-  onConversationEnd = (crewId: number, sessionId: string | null): Promise<LearnRunInfo | null> => this.queue(() => this.learn(crewId, null, sessionId))
+  // transcript: the conversation's text when the caller read it (OpenCode keeps its own); '' learns from the git diff alone.
+  onConversationEnd = (crewId: number, sessionId: string | null, transcript?: string): Promise<LearnRunInfo | null> =>
+    this.queue(() => this.learn(crewId, null, sessionId, transcript))
 
   // "Learn now" for a chosen finished run.
   learnRun(runId: number): Promise<LearnRunInfo | null> {

@@ -31,9 +31,12 @@ export interface GateConfig {
   startMs: number
   // Busy with no output for this long while the screen shows a permission dialog counts as a permission wait.
   promptStuckMs: number
+  // An OpenCode Master has no session, so no event, until its first line: its TUI counts as ready once it has
+  // drawn a screen and been quiet this long.
+  openCodeReadyMs: number
 }
 
-export const DEFAULT_GATE_CONFIG: GateConfig = { ownerQuietMs: 4000, outputQuietMs: 1000, ackMs: 8000, startMs: 60_000, promptStuckMs: 180_000 }
+export const DEFAULT_GATE_CONFIG: GateConfig = { ownerQuietMs: 4000, outputQuietMs: 1000, ackMs: 8000, startMs: 60_000, promptStuckMs: 180_000, openCodeReadyMs: 5000 }
 
 export const MSG = {
   didNotStart: 'The Master did not start',
@@ -237,8 +240,12 @@ export class MasterGate {
     const waiting = run.status === 'needs-you' && run.waiting === 'master'
     if (!waiting && run.status !== 'queued') throw new RunError('CONFLICT', `Job ${runId} is ${run.status}${run.waiting ? ` (waiting: ${run.waiting})` : ''}: nothing to resume`)
     const g = this.crew(run.crewId)
-    if (waiting) g.armed.add(runId)
     this.event(runId, 'resume', { by: 'owner' })
+    // A job paused only for its token limit has a live Master that never stopped: it just carries on.
+    if (waiting && this.alive(run.crewId) && run.outcome?.startsWith('Token limit')) {
+      return this.changed(store.transitionRun(runId, 'working', {}, 'Continued past the token limit'))
+    }
+    if (waiting) g.armed.add(runId)
     if (!this.alive(run.crewId)) {
       const err = this.d.startMaster(run.crewId, { resume: run.ackedAt != null })
       if (err) {
@@ -324,9 +331,13 @@ export class MasterGate {
     const { store, sessions } = this.d
     const g = this.crew(crewId)
     const now = this.now()
-    const state = this.d.states.get(crewId)
+    let state = this.d.states.get(crewId)
     const key = this.d.masterKey(crewId)
     const alive = this.alive(crewId)
+    if (alive && key != null && state.cli === 'opencode' && state.phase === 'starting' && this.d.sessions.buffer(key).length > 0) {
+      const quiet = this.d.sessions.idleMs(key)
+      if (quiet !== null && quiet >= this.cfg.openCodeReadyMs) state = { ...state, phase: 'idle' }
+    }
     let active = this.d.runs.activeMaster(crewId)
     g.lines = g.lines.filter((l) => now - l.at < LINE_TTL_MS)
 

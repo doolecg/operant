@@ -68,7 +68,7 @@ import { Closeout, windowTranscript } from './closeout'
 import { MasterGate } from './master-gate'
 import { MasterRuns } from './master-runs'
 import { MasterStates } from './master-state'
-import { AttachmentError, removeAllAttachments, removeAttachmentsOf, saveImages, withImages } from './attachments'
+import { AttachmentError, readTaskImages, removeAllAttachments, removeAttachmentsOf, saveImages, withImages } from './attachments'
 import { prepareMaster, seatSubagentType, writerPrepFs, type MasterPrep } from './master-plugin'
 import { MessageBus, MessageError, type MessageNotice } from './messages'
 import { NudgeScheduler, type NudgeAction, type NudgeOperatorState } from './nudge'
@@ -80,7 +80,7 @@ import { createDiscordJsGateway, type GatewayFactory } from './discord-gateway'
 import { MemorySecretStore, type SecretStore } from './discord-secrets'
 import { ApprovalMarker, RunError, RunManager, cleanLimits, cleanSeats } from './runs'
 import { exportTeams, parseTeamFile } from './team-presets'
-import { SubagentReader } from './agents'
+import { SubagentReader, logLines } from './agents'
 import { cliExplorer } from './brief'
 import { HindsightService, bankFor, setSharedBanks } from './hindsight'
 import { generateApiKey, listAdapters } from './hindsight-net'
@@ -194,6 +194,8 @@ export interface OperantOptions {
   runServices?: RunServices
   // The learning loop (lessons from finished jobs); the real one when not given.
   learn?: LearnService
+  // An OpenCode session's messages (its service API); the real one when not given.
+  sessionMessages?: (sessionId: string) => Promise<unknown[]>
   // The cheap model the learn step asks; Claude Haiku when not given.
   learnModel?: LearnModel
   mcp?: McpService
@@ -371,6 +373,7 @@ export class Operant extends EventEmitter<PushEvents> {
   private readonly hindsight: HindsightService
   readonly runServices: RunServices
   readonly learn: LearnService
+  private readonly sessionMessages: (sessionId: string) => Promise<unknown[]>
   readonly mcp: McpService
   readonly masters: MasterRegistry
   readonly ingest: UsageIngest
@@ -473,6 +476,11 @@ export class Operant extends EventEmitter<PushEvents> {
         closeout: (run, wait) => this.closeouts.request(run.id, { wait }),
         seatName: (run, seat) => this.seatName(run.masterCli, seat.presetId),
         syncAgents: (run) => this.runServices.syncNow(run),
+        submit: (input) => {
+          const run = this.runs.submit(input)
+          this.log('job', `JOB#${run.id} ${run.status}: ${run.task.slice(0, 80)}`, null, run.crewId)
+          return run
+        },
       },
       this.now,
     )
@@ -545,6 +553,7 @@ export class Operant extends EventEmitter<PushEvents> {
       llmEnv: () => ({ HINDSIGHT_API_LLM_PROVIDER: 'claude-code' }),
     })
     this.hindsight = hindsight
+    this.sessionMessages = opts.sessionMessages ?? ((id) => listSessionMessages(id))
     this.learn =
       opts.learn ??
       new LearnService({
@@ -585,7 +594,7 @@ export class Operant extends EventEmitter<PushEvents> {
       learnOn: () => this.settings.learn.enabled,
       learn: (run, transcript) => this.learn.onCloseout(run, transcript),
       transcript: (run) =>
-        windowTranscript({ store, sessions: (crewId) => this.masterSessions(crewId), transcriptFile: this.transcriptFile, messages: (id) => listSessionMessages(id), now: this.now }, run),
+        windowTranscript({ store, sessions: (crewId) => this.masterSessions(crewId), transcriptFile: this.transcriptFile, messages: (id) => this.sessionMessages(id), now: this.now }, run),
       settleUsage: (run) => this.syncMasterUsage(run.crewId).then(() => undefined),
       masterLive: (crewId) => {
         const master = store.getMaster(crewId)
@@ -1246,6 +1255,11 @@ export class Operant extends EventEmitter<PushEvents> {
         this.log('job', `JOB#${run.id} deleted`, null, run.crewId)
       },
       'runs:agentLog': (runId, agentId) => this.runServices.agentLog(requireRun(runId).id, agentId),
+      'runs:images': (runId) => {
+        const run = requireRun(runId)
+        const crew = store.getCrew(run.crewId)
+        return crew ? readTaskImages(crew.folder, run.task) : []
+      },
       'runs:approve': (runId, note) => {
         const run = this.masterRuns.approve(requireRun(runId).id, 'owner-ui', note)
         this.log('job', `JOB#${run.id} approved`, null, run.crewId)
@@ -1810,10 +1824,11 @@ export class Operant extends EventEmitter<PushEvents> {
     }
   }
 
-  // Every token (input, output, cache) of the usage attributed to the run, as the job's usage view counts them.
+  // The tokens the job's budget counts: input, output and cache writes. Cache reads are left out: every turn re-reads the
+  // whole conversation from the cache, so counting them made a short job look hundreds of thousands of tokens long.
   private runTokens(runId: number): number {
     const row = this.store.db
-      .prepare('SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_w5m + cache_w1h), 0) AS t FROM usage WHERE run_id = ?')
+      .prepare('SELECT COALESCE(SUM(input_tokens + output_tokens + cache_w5m + cache_w1h), 0) AS t FROM usage WHERE run_id = ?')
       .get(runId) as { t: number }
     return Number(row.t)
   }
@@ -2206,12 +2221,40 @@ export class Operant extends EventEmitter<PushEvents> {
     this.log('operator', `${this.store.operatorAddress(operatorId)} stopped${exitCode ? ` (exit ${exitCode})` : ''}`, operatorId)
   }
 
-  // A project Master's conversation ended: the learn step reads its transcript. Never throws into the exit.
+  // A session ended (a Master's conversation, or an operator's Claude session): the learn step reads its transcript.
+  // Claude sessions are read from their jsonl; an OpenCode Master from its service's messages, or from the git diff
+  // alone when those cannot be read. Each session learns once. Never throws into the exit.
   private learnFromConversation(operatorId: number): void {
     try {
       const op = this.store.getOperator(operatorId)
       const crewId = this.store.crewIdOfOperator(operatorId)
-      if (op?.kind === 'master' && crewId != null && op.sessionId && !this.restarting.has(operatorId)) void this.learn.onConversationEnd(crewId, op.sessionId)
+      if (!op || crewId == null || this.restarting.has(operatorId)) return
+      if (op.kind === 'master' && this.masterStates.get(crewId).cli === 'opencode') {
+        const sid = this.masterSessions(crewId).filter((s) => s.cli === 'opencode').pop()?.sessionId
+        if (sid && this.firstLearn(crewId, sid)) void this.learnOpenCode(crewId, sid)
+        return
+      }
+      if (!op.sessionId) return
+      if (op.kind !== 'master' && !this.firstLearn(crewId, op.sessionId)) return
+      void this.learn.onConversationEnd(crewId, op.sessionId)?.catch(() => {})
+    } catch {
+      // learning is a bonus
+    }
+  }
+
+  private learned = new Set<string>()
+  private firstLearn(crewId: number, sessionId: string): boolean {
+    const key = `${crewId}:${sessionId}`
+    if (this.learned.has(key)) return false
+    this.learned.add(key)
+    return true
+  }
+
+  private async learnOpenCode(crewId: number, sessionId: string): Promise<void> {
+    try {
+      const lines: string[] = []
+      for (const m of await this.sessionMessages(sessionId).catch(() => [])) lines.push(...logLines(m))
+      await this.learn.onConversationEnd(crewId, sessionId, lines.join('\n'))
     } catch {
       // learning is a bonus
     }
@@ -2327,8 +2370,10 @@ export class Operant extends EventEmitter<PushEvents> {
         env,
         command: launch ? commandLine(launch, shellOf(ctx)) : null,
         firstInput,
+        firstInputWhenReady: launch?.file === 'opencode',
       })
       this.live.add(operatorId)
+      this.learned.delete(`${crew.id}:${sessionId}`) // a resumed session learns again from what is said after the resume
       if (launch && launch.file === 'claude') {
         this.store.setOperatorSession(operatorId, sessionId)
         this.usage.attach(operatorId, this.transcriptFile(crew.folder, sessionId), sessionId)

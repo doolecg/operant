@@ -60,3 +60,7 @@ registerLive((b, qc) => [
     void qc.invalidateQueries({ queryKey: keys.runAgents(runId) })
   }),
 ])
+
+// The pasted images of a job's task as data URLs (empty when there are none or the files are gone).
+export const useRunImages = (runId: number, hasImages: boolean) =>
+  useQuery({ queryKey: ['runImages', runId] as const, queryFn: () => call('runs:images', runId), enabled: hasImages, staleTime: 60_000 })

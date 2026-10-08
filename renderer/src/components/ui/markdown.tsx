@@ -94,6 +94,30 @@ export function CopyTextButton({ text, label = 'Copy', ariaLabel, className }: {
   )
 }
 
+function DiffLines({ v }: { v: string }) {
+  return (
+    <span className="block w-max min-w-full">
+      {v.split('\n').map((l, i) => {
+        const cls =
+          l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ')
+            ? 'text-muted-foreground'
+            : l.startsWith('@@')
+              ? 'text-sky-600 dark:text-sky-400 bg-sky-500/10'
+              : l.startsWith('+')
+                ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                : l.startsWith('-')
+                  ? 'bg-red-500/15 text-red-700 dark:text-red-400'
+                  : ''
+        return (
+          <span key={i} data-diff-line className={cn('-mx-3 block px-3', cls)}>
+            {l || ' '}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 function CodeBlock({ lang, v, doc }: { lang: string; v: string; doc: boolean }) {
   return (
     <div className="bg-muted/60 group relative rounded-md border" data-md="code">
@@ -102,7 +126,7 @@ function CodeBlock({ lang, v, doc }: { lang: string; v: string; doc: boolean }) 
         <CopyTextButton text={v} ariaLabel="Copy code" />
       </div>
       <pre tabIndex={0} className={cn('overflow-x-auto px-3 pt-1 pb-2 font-mono leading-relaxed whitespace-pre', doc ? 'text-[13px]' : 'text-xs')}>
-        {v}
+        {lang === 'diff' || lang === 'patch' ? <DiffLines v={v} /> : v}
       </pre>
     </div>
   )

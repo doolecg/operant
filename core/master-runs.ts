@@ -1,4 +1,4 @@
-import type { ApprovedBy, Message, Run, RunEvent, TeamSeat } from '../shared/types'
+import type { ApprovedBy, MasterCli, Message, Run, RunEvent, RunInput, TeamSeat } from '../shared/types'
 import { RunError, type ApprovalMarker } from './runs'
 import type { Store } from './store'
 
@@ -37,6 +37,8 @@ export interface MasterRunsDeps {
   seatName?: (run: Run, seat: TeamSeat) => string
   // Reads the run's subagents now (the reader polls on a timer, so the last ones may not be in the store yet).
   syncAgents?: (run: Run) => Promise<unknown>
+  // Queues a run the way the Workspace does (RunManager.submit): team limits and holds apply. Without it `run add` answers 'not available'.
+  submit?: (input: RunInput) => Run
 }
 
 export interface RunSeatView {
@@ -241,6 +243,16 @@ export class MasterRuns {
     return this.approve(runId, 'owner-terminal', typeof note === 'string' ? note : undefined)
   }
 
+  // `run add`: a queued master-mode job in the Master's own project, for the Workspace board.
+  add(crewId: number, masterCli: MasterCli, title: unknown, body: unknown): Run {
+    if (!this.d.submit) throw conflict('Adding jobs is not available')
+    const t = text(title, 'Title', 200)
+    const b = body === undefined ? '' : text(body, 'Body', 20_000)
+    return this.d.submit({ crewId, task: b ? `${t}
+
+${b}` : t, masterCli, mode: 'master' })
+  }
+
   // The next task the gate would deliver for the project (sent-back runs first, then oldest), or null.
   nextQueued(crewId: number): Run | null {
     const queued = this.store.listRuns(crewId).filter((r) => r.mode === 'master' && r.status === 'queued')
@@ -336,7 +348,7 @@ export function formatRunShow(v: RunShow): string {
   ]
   if (run.sendBacks > 0 && run.sentBackNote) lines.push('', `The owner sent it back (${run.sendBacks}x). Their note:`, dataBlock('note', run.sentBackNote), 'Your last summary:', dataBlock('summary', run.reviewSummary))
   if (v.seats.length) {
-    lines.push('', 'Seats. You coordinate only: give the work to each as a subagent (Agent tool, the exact subagent_type, the model shown) and do not do it yourself:')
+    lines.push('', `Seats. You coordinate only: give the work to each as a subagent (${run.masterCli === 'opencode' ? 'Task tool: the seat agent named below, which carries its preset prompt' : 'Agent tool'}, the exact subagent_type, the model shown) and do not do it yourself:`)
     for (const s of v.seats) lines.push(`- ${s.count} x ${s.preset}: subagent_type "${s.subagentType}", model ${s.model || "the Master's model"}${s.effort ? `, effort ${s.effort}` : ''}`)
   } else lines.push('', 'Seats: none chosen. Do the work yourself or use the subagents you think fit.')
   if (run.limits.maxWorkers || run.limits.topTier || run.limits.tokenBudget) {

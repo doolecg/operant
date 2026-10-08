@@ -55,6 +55,7 @@ const COMMANDS: Record<string, CommandSpec> = {
     usage: 'operant job edit N [--title T] [--body T] [--note T] [--priority P] [--estimate M|none] [--review MODE] [--for ADDR|none] [--after N,N] [--not-after N,N]',
   },
   // Master Terminal only: the dashboard job (JOB#) it works on. Text from the owner or agents comes back as data.
+  'run.add': { pos: ['title...'], flags: { body: 'str' }, usage: 'operant run add <title> [--body T]' },
   'run.show': { pos: ['id'], flags: {}, usage: 'operant run show N' },
   'run.start': { pos: ['id'], flags: {}, usage: 'operant run start N' },
   'run.progress': { pos: ['id'], flags: { text: 'str' }, required: ['text'], usage: 'operant run progress N --text <text|->' },

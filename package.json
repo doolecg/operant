@@ -1,7 +1,7 @@
 {
   "name": "operant2",
   "productName": "Operant 3",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Run coding agents across your projects from one dashboard.",
   "license": "MIT",
   "private": true,

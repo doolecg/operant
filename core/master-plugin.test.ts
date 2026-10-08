@@ -123,6 +123,8 @@ describe('prepareMaster and the Master launch', () => {
     expect(l.args).toEqual([])
     expect(l.firstInput).toBe(`Read ${prep.role.path} and follow it as your role.`)
     expect(l.files).toEqual([prep.role])
+    // Session tabs are off inside Operant (an env overlay, so the owner's cli.json is untouched).
+    expect(JSON.parse(l.env.OPENCODE_CLI_CONFIG_CONTENT!)).toEqual({ tabs: { mode: 'off' } })
     expect(buildOpenCodeMasterLaunch(ctx).firstInput).toBeNull()
     expect(buildOpenCodeMasterLaunch(ctx, { ...prep, resume: true }).args).toEqual(['--continue'])
   })

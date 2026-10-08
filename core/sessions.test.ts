@@ -83,6 +83,101 @@ describe('SessionManager', () => {
     expect(mgr.isRunning(1)).toBe(true)
   })
 
+  it('holds the first input of a launch that waits for its TUI until the screen has been drawn and gone quiet', () => {
+    const clock = { t: 1_000 }
+    const ptys: FakePty[] = []
+    const timers: Array<() => void> = []
+    const spawn: PtyFactory = (file, _args, opts) => {
+      const p = new FakePty(file, opts)
+      ptys.push(p)
+      return p
+    }
+    const mgr = new SessionManager(spawn, { platform: 'linux', home: '/h', env: {} }, () => clock.t, (fn) => void timers.push(fn))
+    const run = () => timers.splice(0).forEach((fn) => fn())
+    mgr.start({ operator: operator(), address: 'm@shop', cwd: '/code/shop', command: 'opencode', firstInput: 'Read /r.md and follow it as your role.', firstInputWhenReady: true })
+    const p = ptys[0]!
+    expect(p.written).toEqual(['opencode\r'])
+    // Only the shell echo so far: not ready.
+    p.emitData('opencode\r\n')
+    clock.t += 5_000
+    run()
+    expect(p.written).toEqual(['opencode\r'])
+    // The TUI paints, then settles.
+    p.emitData('x'.repeat(3000))
+    clock.t += 200
+    run()
+    expect(p.written).toEqual(['opencode\r'])
+    clock.t += 3_000
+    run()
+    run()
+    expect(p.written).toEqual(['opencode\r', 'Read /r.md and follow it as your role.', '\r'])
+  })
+
+  describe('first input held for a TUI', () => {
+    function waiting() {
+      const clock = { t: 1_000 }
+      const ptys: FakePty[] = []
+      const timers: Array<() => void> = []
+      const spawn: PtyFactory = (file, _args, opts) => {
+        const p = new FakePty(file, opts)
+        ptys.push(p)
+        return p
+      }
+      const mgr = new SessionManager(spawn, { platform: 'linux', home: '/h', env: {} }, () => clock.t, (fn) => void timers.push(fn))
+      const run = () => timers.splice(0).forEach((fn) => fn())
+      return { mgr, ptys, clock, timers, run }
+    }
+    const spec = { operator: operator(), address: 'm@shop', cwd: '/code/shop', command: 'opencode', firstInput: 'Read /r.md and follow it as your role.', firstInputWhenReady: true }
+
+    it('stops polling and types nothing when the session exits before the TUI is ready', () => {
+      const { mgr, ptys, clock, timers, run } = waiting()
+      mgr.start(spec)
+      const p = ptys[0]!
+      p.emitData('x'.repeat(3000))
+      p.emitExit()
+      clock.t += 10_000
+      run()
+      run()
+      expect(p.written).toEqual(['opencode\r'])
+      expect(timers).toHaveLength(0)
+    })
+
+    it('does not type into a new session that took over the key after the first one exited', () => {
+      const { mgr, ptys, clock, run } = waiting()
+      mgr.start(spec)
+      ptys[0]!.emitExit()
+      mgr.start({ ...spec, firstInput: undefined, firstInputWhenReady: false })
+      clock.t += 10_000
+      run()
+      expect(ptys[0]!.written).toEqual(['opencode\r'])
+    })
+
+    it('types the line anyway after 30 seconds if the screen never settles', () => {
+      const { mgr, ptys, clock, run } = waiting()
+      mgr.start(spec)
+      const p = ptys[0]!
+      for (let i = 0; i < 40; i++) {
+        p.emitData('.')
+        clock.t += 1_000
+        run()
+      }
+      run()
+      expect(p.written.slice(0, 2)).toEqual(['opencode\r', 'Read /r.md and follow it as your role.'])
+    })
+
+    it('still refuses a non-pointer line when waiting for ready', () => {
+      const { mgr, ptys } = waiting()
+      expect(() => mgr.start({ ...spec, firstInput: 'rm -rf /' })).toThrow('not a fixed')
+      expect(ptys).toHaveLength(0)
+    })
+
+    it('types the first line immediately when the launch does not wait (Claude, Codex)', () => {
+      const { mgr, ptys } = waiting()
+      mgr.start({ ...spec, command: 'claude', firstInputWhenReady: false })
+      expect(ptys[0]!.written).toEqual(['claude\r', 'Read /r.md and follow it as your role.\r'])
+    })
+  })
+
   it('refuses a first input that is not a role-file pointer', () => {
     const { mgr, ptys } = setup()
     expect(() => mgr.start({ operator: operator(), address: 'a@b', cwd: '/', command: 'codex -m gpt-5', firstInput: 'rm -rf /' })).toThrow('not a fixed')

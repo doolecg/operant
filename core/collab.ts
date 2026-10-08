@@ -157,6 +157,7 @@ export class Collab {
         keys: ['id', 'title', 'body', 'priority', 'estimate', 'review', 'note', 'for', 'after', 'notAfter'],
         run: (w, a) => this.jobEdit(w, a),
       },
+      'run.add': { keys: ['title', 'body'], run: (w, a) => this.runAdd(w, a) },
       'run.show': { keys: ['id'], run: (w, a) => this.runShow(w, a) },
       'run.start': { keys: ['id'], run: (w, a) => this.runStart(w, a) },
       'run.progress': { keys: ['id', 'text'], run: (w, a) => this.runProgress(w, a) },
@@ -455,6 +456,13 @@ export class Collab {
     if (who.kind !== 'master') throw new RunError('FORBIDDEN', 'Only the project Master Terminal can use run commands')
     if (!this.runs) throw new RunError('CONFLICT', 'Master runs are not available')
     return { runs: this.runs, crewId: this.crewOf(who) }
+  }
+
+  runAdd(who: Identity, args: Args): CollabResult {
+    const { runs, crewId } = this.masterRuns(who)
+    const cli = this.store.getOperator(who.operatorId)?.agent === 'opencode' ? 'opencode' : 'claude'
+    const run = runs.add(crewId, cli, args.title, args.body)
+    return { exit: EXIT.OK, text: `Added: JOB#${run.id} ${run.status} - ${oneLine(args.title as string).slice(0, 120)}`, data: run }
   }
 
   async runShow(who: Identity, args: Args): Promise<CollabResult> {

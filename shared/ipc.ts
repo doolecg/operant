@@ -260,6 +260,8 @@ export interface IpcApi {
   'runs:delete': (runId: number) => void
   // The tail of one job agent's transcript as plain text lines (secrets removed, size-capped).
   'runs:agentLog': (runId: number, agentId: number) => string[]
+  // The images pasted into a job's task as data URLs (only files inside the project's .operant-attachments folder; at most 8, 8 MB each). Missing files are skipped.
+  'runs:images': (runId: number) => string[]
   // Jobs that may run at once per project (default 1).
   // Approves a job in review: it is done and its close-out is pending.
   'runs:approve': (runId: number, note?: string) => Run
@@ -623,6 +625,7 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'runs:update',
   'runs:delete',
   'runs:agentLog',
+  'runs:images',
   'runs:approve',
   'runs:sendBack',
   'runs:answer',

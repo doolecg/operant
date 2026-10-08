@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ATTACH_DIR, removeAllAttachments, removeAttachmentsOf, saveImages, withImages } from './attachments'
+import { ATTACH_DIR, readTaskImages, removeAllAttachments, removeAttachmentsOf, saveImages, withImages } from './attachments'
 
 const dirs: string[] = []
 const tmp = () => dirs[dirs.push(mkdtempSync(join(tmpdir(), 'att-'))) - 1]!
@@ -60,5 +60,19 @@ describe('attachments with a .git file or a project delete', () => {
     removeAllAttachments(folder)
     expect(existsSync(join(folder, ATTACH_DIR))).toBe(false)
     expect(() => removeAllAttachments(join(folder, 'missing'))).not.toThrow()
+  })
+})
+
+describe('readTaskImages', () => {
+  it('returns the task images and refuses files outside the attachments folder', () => {
+    const folder = tmp()
+    const { paths } = saveImages(folder, [{ mime: 'image/png', data: Buffer.from('x').toString('base64') }])
+    const urls = readTaskImages(folder, withImages('fix', paths))
+    expect(urls).toEqual([`data:image/png;base64,${Buffer.from('x').toString('base64')}`])
+    const other = tmp()
+    mkdirSync(join(other, ATTACH_DIR, 'zz'), { recursive: true })
+    writeFileSync(join(other, ATTACH_DIR, 'zz', 'image-1.png'), 'y')
+    expect(readTaskImages(folder, withImages('fix', [join(other, ATTACH_DIR, 'zz', 'image-1.png')]))).toEqual([])
+    expect(readTaskImages(folder, withImages('fix', [join(folder, 'secret.png')]))).toEqual([])
   })
 })

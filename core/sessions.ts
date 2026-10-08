@@ -31,6 +31,8 @@ export interface LaunchSpec {
   // The launch line typed into the shell (from launch.ts), and an optional fixed line typed after it.
   command?: string | null
   firstInput?: string | null
+  // Hold `firstInput` until the launched TUI has painted and gone quiet (OpenCode drops text typed while it loads).
+  firstInputWhenReady?: boolean
 }
 
 export type SessionKey = number | string
@@ -68,6 +70,10 @@ interface Session {
 // Delay between a fixed line's text and its Enter: ConPTY and the TUIs' paste detection would otherwise read the CR
 // that arrives in the same chunk as part of a paste.
 export const ENTER_DELAY_MS = 30
+const READY_QUIET_MS = 1500
+const READY_MIN_CHARS = 1000
+const READY_POLL_MS = 250
+const READY_GIVE_UP_MS = 30_000
 // Ctrl+U: clears the input line in Claude Code and OpenCode (checked on ConPTY) before a retyped line.
 export const CLEAR_INPUT_KEY = '\x15'
 
@@ -106,7 +112,7 @@ export class SessionManager extends EventEmitter<SessionEvents> {
     return this.sessions.has(operatorId)
   }
 
-  start({ operator, address, cwd, key = operator?.id, env: extraEnv, command, firstInput }: LaunchSpec, cols = 120, rows = 32): void {
+  start({ operator, address, cwd, key = operator?.id, env: extraEnv, command, firstInput, firstInputWhenReady }: LaunchSpec, cols = 120, rows = 32): void {
     if (key === undefined) throw new Error('A session needs an operator or a key')
     if (this.sessions.has(key)) return
     if (firstInput && !isRolePointer(firstInput)) throw new Error('not a fixed Operant line')
@@ -136,8 +142,25 @@ export class SessionManager extends EventEmitter<SessionEvents> {
 
     if (command) {
       pty.write(`${command}\r`)
-      if (firstInput) pty.write(`${firstInput}\r`)
+      if (firstInput && firstInputWhenReady) this.typeWhenReady(key, session, firstInput)
+      else if (firstInput) pty.write(`${firstInput}\r`)
     }
+  }
+
+  // Types the line once the TUI has drawn a screen (more than the shell's echo) and been quiet READY_QUIET_MS;
+  // after READY_GIVE_UP_MS it is typed anyway.
+  private typeWhenReady(key: SessionKey, session: Session, line: string): void {
+    const began = this.now()
+    const check = (): void => {
+      if (this.sessions.get(key) !== session) return
+      const drawn = session.buffer.length >= READY_MIN_CHARS && this.now() - session.lastOutputAt >= READY_QUIET_MS
+      if (!drawn && this.now() - began < READY_GIVE_UP_MS) return void this.later(check, READY_POLL_MS)
+      session.pty.write(line)
+      this.later(() => {
+        if (this.sessions.get(key) === session) session.pty.write('\r')
+      }, ENTER_DELAY_MS)
+    }
+    this.later(check, READY_POLL_MS)
   }
 
   // Milliseconds since the session last produced output; null when it is not running.

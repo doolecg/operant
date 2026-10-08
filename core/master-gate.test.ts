@@ -195,6 +195,22 @@ describe('MasterGate', () => {
     expect(lines()).toEqual([fixedLine('new', id)])
   })
 
+  it('treats an OpenCode Master with a settled TUI as ready: it has no session (so no event) until the first line, and is not parked as "did not start"', () => {
+    sessions.running.add(masterId)
+    sessions.screen = 'x'.repeat(3000)
+    states.started(crewId, 'opencode', null)
+    sessions.quiet = 200
+    const id = newRun()
+    tick()
+    expect(lines()).toEqual([])
+    sessions.quiet = 10_000
+    tick(10_000)
+    expect(lines()).toEqual([fixedLine('new', id)])
+    expect(run(id).status).toBe('working')
+    tick(60_000)
+    expect(run(id).waiting).not.toBe('master')
+  })
+
   it('parks the job when the Master fails to start or never gets ready, without starting it again', () => {
     startError = 'claude is not on PATH'
     const a = newRun()

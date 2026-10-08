@@ -1,3 +1,31 @@
+# Operant 3.0.2
+
+OpenCode now starts properly as the Master Terminal, finished sessions teach the project's memory on their own, and jobs read much better.
+
+**Install:** download the file for your system from the assets below (same files as 3.0.1, with the new version in the name). Operant 3 keeps itself up to date from these releases.
+
+## New
+- **Learning when a session ends.** When an OpenCode Master or one of a seat's Claude terminals finishes, Operant reads what happened and saves the lessons to Hindsight and CodeGraph notes, as it already did for finished jobs and the Claude Master. It follows the learning switch in Settings.
+- **Pasted images show in the job.** Images you paste into a new task appear as thumbnails in the job window. Click one to enlarge it.
+- **Nicer job pages.** The task, the review summary, your send-back note and the timeline are shown as formatted text, with headings, lists, code blocks and coloured diffs for code changes. The review box has more room.
+- **Add to board.** The Master can put a card on the Workspace board with `operant run add <title>`. When you say "add to board", it uses this and no longer the old side-panel Board.
+
+---
+
+## Changed
+- **Token limit pause.** A job that passes its team's token limit now says "Token limit reached... Continue, or stop?" with a Continue button, instead of "Master stopped". Cache reads no longer count toward the limit, so short jobs stop running into it.
+- **Resume feedback.** The Resume button shows "Resuming..." while it works, and a job paused only for its limit goes straight back to working.
+- **OpenCode seats.** The Master's instructions now tell OpenCode to use its Task tool for seats, which carry their preset prompts and the one model you set.
+- OpenCode's tabs are switched off when it runs inside Operant. Your own OpenCode settings files are not changed.
+
+---
+
+## Fixed
+- **OpenCode Master did not start its job.** The first line was typed before OpenCode had finished loading and was lost. Operant now waits for it to be ready.
+- **"Needs you: resume" on a running OpenCode.** A Master that was running fine was marked as not started after a minute. It is now recognised as ready.
+
+---
+
 # Operant 3.0.1
 
 The Workspace is now a task board with a review inbox, the old workspace is the Terminal view, and a job opens in a big, readable window.

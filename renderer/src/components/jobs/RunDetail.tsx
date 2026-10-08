@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, Coins, Eye, Pencil, RotateCcw, Square, SquareTerminal, Trash2, TriangleAlert, Undo2, X } from 'lucide-react'
+import { splitAttachedImages } from '@shared/attached-images'
 import { decodeIpcError } from '@shared/ipc'
 import { draftKey } from '@shared/drafts'
 import type { JobAgent, Run } from '@shared/types'
@@ -18,6 +19,7 @@ import {
   useResumeMaster,
   useRun,
   useRunAgents,
+  useRunImages,
   useRunEvents,
   useSendBackRun,
   useStopRun,
@@ -26,6 +28,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AgentView } from './AgentView'
 import { ReasonDialog } from './ReasonDialog'
+import { TaskImages } from './TaskImages'
 import { RunStatusBadge } from './RunStatusBadge'
 import { guardForLatestReview, runActive, runIsQuestion, timelineItem } from './runUi'
 
@@ -101,7 +104,7 @@ function ReviewBlock({ run, onError }: { run: Run; onError: (m: string | null) =
           </span>
         </p>
       )}
-      <div className="rounded-md border p-4" data-review>
+      <div className="bg-card max-h-[70vh] overflow-y-auto rounded-lg border p-5 shadow-sm" data-review>
         {run.reviewSummary ? <Markdown source={run.reviewSummary} variant="document" /> : <p className="text-muted-foreground text-sm">The Master gave no summary.</p>}
       </div>
       <Textarea aria-label="Approval note (optional)" rows={2} placeholder="Note for the Master (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -189,7 +192,7 @@ function Timeline({ runId }: { runId: number }) {
                   <p className="text-sm">
                     {item.title} <span className="text-muted-foreground text-xs">· {timeAgo(item.at)}</span>
                   </p>
-                  {item.detail && <p className="text-muted-foreground text-xs break-words whitespace-pre-wrap">{item.detail}</p>}
+                  {item.detail && <Markdown source={item.detail} className="text-muted-foreground mt-0.5 text-xs leading-relaxed" />}
                 </div>
               </li>
             )
@@ -205,6 +208,8 @@ function Timeline({ runId }: { runId: number }) {
 export function RunDetail({ runId, onClose, onOpenUsage, onOpenMaster }: Props) {
   const run = useRun(runId).data
   const agents = useRunAgents(runId).data ?? []
+  const taskParts = splitAttachedImages(run?.task ?? '')
+  const shownImages = useRunImages(runId, taskParts.images.length > 0).data ?? []
   const stop = useStopRun()
   const update = useUpdateRun()
   const del = useDeleteRun()
@@ -329,7 +334,10 @@ export function RunDetail({ runId, onClose, onOpenUsage, onOpenMaster }: Props) 
                     </div>
                   </div>
                 ) : (
-                  <p className="text-[15px] leading-[1.65] break-words whitespace-pre-wrap">{run.task}</p>
+                  <div data-task>
+                    <Markdown source={shownImages.length ? taskParts.text : run.task} variant="document" />
+                    {shownImages.length > 0 && <TaskImages urls={shownImages} />}
+                  </div>
                 )}
               </section>
 
@@ -338,8 +346,12 @@ export function RunDetail({ runId, onClose, onOpenUsage, onOpenMaster }: Props) 
               )}
 
               {run.status === 'needs-you' && run.waiting === 'master' && (
-                <Block title="The Master stopped" tone="amber">
-                  <p className="text-sm">The Master Terminal stopped while this job was open. Resume it to continue where it left off.</p>
+                <Block title={run.outcome?.startsWith('Token limit') ? 'Token limit reached' : 'The Master stopped'} tone="amber">
+                  <p className="text-sm">
+                    {run.outcome?.startsWith('Token limit')
+                      ? "The Master is still running. This job passed its team's token limit: continue, or stop the job."
+                      : 'The Master Terminal stopped while this job was open. Resume it to continue where it left off.'}
+                  </p>
                   <Button
                     disabled={resume.isPending}
                     onClick={() => {
@@ -347,7 +359,8 @@ export function RunDetail({ runId, onClose, onOpenUsage, onOpenMaster }: Props) 
                       resume.mutate([runId], { onError: (e) => setError(decodeIpcError(e).message) })
                     }}
                   >
-                    <RotateCcw /> Resume Master
+                    <RotateCcw className={resume.isPending ? 'animate-spin' : ''} />{' '}
+                    {resume.isPending ? 'Resuming…' : run.outcome?.startsWith('Token limit') ? 'Continue' : 'Resume Master'}
                   </Button>
                 </Block>
               )}
@@ -357,7 +370,7 @@ export function RunDetail({ runId, onClose, onOpenUsage, onOpenMaster }: Props) 
               {run.sentBackNote && run.status !== 'review' && run.status !== 'done' && (
                 <section className="space-y-2">
                   <h3 className={heading}>Sent back with</h3>
-                  <p className="text-[15px] leading-[1.65] break-words whitespace-pre-wrap">{run.sentBackNote}</p>
+                  <Markdown source={run.sentBackNote} variant="document" />
                 </section>
               )}
 

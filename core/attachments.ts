@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
+import { splitAttachedImages } from '../shared/attached-images'
 import type { RunImage } from '../shared/types'
 
 export const ATTACH_DIR = '.operant-attachments'
@@ -81,4 +82,30 @@ export function removeAllAttachments(folder: string): void {
   } catch {
     // a locked file; the folder is left behind
   }
+}
+
+const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
+
+// The images a task lists, as data URLs. Only real files (no symlinks) whose real path is inside the project's attachments folder are read.
+export function readTaskImages(folder: string, task: string): string[] {
+  let root: string
+  try {
+    root = realpathSync(resolve(folder, ATTACH_DIR)) + sep
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  for (const p of splitAttachedImages(task).images.slice(0, IMAGE_MAX_COUNT)) {
+    try {
+      const mime = MIME[(/\.([a-z0-9]+)$/i.exec(p)?.[1] ?? '').toLowerCase()]
+      if (!mime) continue
+      const abs = resolve(p)
+      const st = lstatSync(abs)
+      if (!st.isFile() || st.size > IMAGE_MAX_BYTES || !realpathSync(abs).startsWith(root)) continue
+      out.push(`data:${mime};base64,${readFileSync(abs).toString('base64')}`)
+    } catch {
+      // deleted or unreadable: skipped
+    }
+  }
+  return out
 }

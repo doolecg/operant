@@ -284,7 +284,7 @@ export class RunManager {
       over.push(run.id)
       if (run.mode === 'master') {
         this.overBudget.add(run.id)
-        const msg = `Over budget: the job used ${used.toLocaleString('en-US')} tokens, over its team's budget of ${budget.toLocaleString('en-US')}. Stop it, or press Resume to let the Master go on`
+        const msg = `Token limit reached: this job has used ${used.toLocaleString('en-US')} tokens, over its team's limit of ${budget.toLocaleString('en-US')}. Continue, or stop?`
         this.changed(store.transitionRun(run.id, 'needs-you', { waiting: 'master' }, msg))
         continue
       }

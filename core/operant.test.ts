@@ -249,6 +249,95 @@ describe('Operant', () => {
     expect(mcp.mcpServers.codegraph).toEqual({ command: 'codegraph', args: ['serve', '--mcp'] })
   })
 
+  describe('learning when a session ends', () => {
+    const spy = () => {
+      const calls: Array<[number, string | null, string | undefined]> = []
+      const learn = { onConversationEnd: async (c: number, s: string | null, t?: string) => void calls.push([c, s, t]), forBrief: () => '' } as never
+      return { calls, learn }
+    }
+
+    it('learns from a Claude operator session when it exits, once', async () => {
+      const { calls, learn } = spy()
+      op = build({ learn })
+      const { crew, operator } = await seedOperator()
+      await op.handlers['operators:start'](operator.id)
+      const sid = sessionIdOf(ptys[0]!)
+      ptys[0]!.exit({ exitCode: 0 })
+      ptys[0]!.exit({ exitCode: 0 })
+      expect(calls).toEqual([[crew.id, sid, undefined]])
+    })
+
+    it('does not learn from an operator that is restarting', async () => {
+      const { calls, learn } = spy()
+      op = build({ learn })
+      const { operator } = await seedOperator()
+      await op.handlers['operators:start'](operator.id)
+      void op.applyChange(operator.id, { model: 'claude-sonnet-5-5' }).catch(() => {})
+      ptys[0]!.exit({ exitCode: 0 })
+      expect(calls).toEqual([])
+    })
+
+    it('learns from an OpenCode Master from its session messages, and from the diff alone when none can be read', async () => {
+      const { calls, learn } = spy()
+      let messages: unknown[] = [{ role: 'user', content: 'always use pnpm here' }]
+      op = build({ learn, sessionMessages: async () => messages })
+      const { crew } = await seedOperator()
+      await op.handlers['settings:set']({ mainCli: 'opencode' })
+      const master = op.startMaster(crew.id)
+      store.setJson(`master.sessions.${crew.id}`, [{ cli: 'opencode', sessionId: 'ses_1' }])
+      ptys[0]!.exit({ exitCode: 0 })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(calls).toHaveLength(1)
+      expect(calls[0]![0]).toBe(crew.id)
+      expect(calls[0]![2]).toContain('always use pnpm here')
+
+      messages = []
+      op.startMaster(crew.id)
+      store.setJson(`master.sessions.${crew.id}`, [{ cli: 'opencode', sessionId: 'ses_2' }])
+      ptys[1]!.exit({ exitCode: 0 })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(calls).toHaveLength(2)
+      expect(calls[1]![2]).toBe('')
+      expect(master.kind).toBe('master')
+    })
+
+    it('learns from a Claude Master on every exit, without deduping', async () => {
+      const { calls, learn } = spy()
+      op = build({ learn })
+      const { crew } = await seedOperator()
+      op.startMaster(crew.id)
+      ptys[0]!.exit({ exitCode: 0 })
+      op.startMaster(crew.id)
+      ptys[1]!.exit({ exitCode: 0 })
+      expect(calls.length).toBeGreaterThanOrEqual(1)
+      expect(calls.every((c) => c[0] === crew.id && c[2] === undefined)).toBe(true)
+    })
+
+    it('does nothing for an OpenCode Master with no recorded session', async () => {
+      const { calls, learn } = spy()
+      op = build({ learn, sessionMessages: async () => [] })
+      const { crew } = await seedOperator()
+      await op.handlers['settings:set']({ mainCli: 'opencode' })
+      op.startMaster(crew.id)
+      ptys[0]!.exit({ exitCode: 0 })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(calls).toEqual([])
+    })
+
+    it('never throws into the exit when the learn step or the message read fails', async () => {
+      const learn = { onConversationEnd: () => { throw new Error('boom') }, forBrief: () => '' } as never
+      op = build({ learn, sessionMessages: async () => { throw new Error('down') } })
+      const { crew, operator } = await seedOperator()
+      await op.handlers['operators:start'](operator.id)
+      expect(() => ptys[0]!.exit({ exitCode: 0 })).not.toThrow()
+      await op.handlers['settings:set']({ mainCli: 'opencode' })
+      op.startMaster(crew.id)
+      store.setJson(`master.sessions.${crew.id}`, [{ cli: 'opencode', sessionId: 'ses_1' }])
+      expect(() => ptys[1]!.exit({ exitCode: 0 })).not.toThrow()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+  })
+
   it('marks an operator as error when its shell exits non-zero', async () => {
     const { operator } = await seedOperator()
     await op.handlers['operators:start'](operator.id)
