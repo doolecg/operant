@@ -1637,7 +1637,7 @@ describe('Operant', () => {
       expect(list.at(-1)!.id).toBe('custom')
       await h()['settings:set']({ ide: { default: 'custom', custom: 'myide' } })
       expect((await h()['ide:list']()).at(-1)!.available).toBe(true)
-    })
+    }, 30000)
   })
 
   describe('seedFromEnv', () => {

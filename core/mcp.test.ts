@@ -1,9 +1,14 @@
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildBrief } from './brief'
 import { buildClaudeRunLaunch } from './launch'
 import { McpError, McpService, maskArg, maskUrl, parseClaudeList, parseOpencodeList, redact, stripJsonc, type McpDeps } from './mcp'
 import { Store } from './store'
 import type { McpServerInput } from '../shared/types'
+
+// A project folder built with the platform's separator, so the fake config files match on every OS.
+const folder = join('/code', 'shop')
+const folderKey = folder.replace(/\\/g, '/')
 
 // Output as `claude mcp list` and `opencode mcp list` printed it on the machine this was built on.
 const CLAUDE_LIST = `Checking MCP server health…
@@ -44,12 +49,12 @@ function setup(over: { claude?: object; project?: object; opencode?: string; lis
         secretive: { type: 'stdio', command: 'npx', args: ['srv', `--token=${SECRET}`], env: { API_KEY: SECRET } },
         remote: { type: 'http', url: `https://x.test/mcp?api_key=${SECRET}`, headers: { Authorization: `Bearer ${SECRET}` } },
       },
-      projects: { 'F:/code/shop': { mcpServers: { local1: { command: 'node', args: ['a.js'] } }, disabledMcpServers: ['remote'] } },
+      projects: { [folderKey]: { mcpServers: { local1: { command: 'node', args: ['a.js'] } }, disabledMcpServers: ['remote'] } },
       ...over.claude,
     }),
   )
   if (over.opencode !== undefined) files.set('/h/opencode.jsonc', over.opencode)
-  files.set('F:\\code\\shop\\.mcp.json', JSON.stringify({ mcpServers: { proj: { command: 'p' } }, ...over.project }))
+  files.set(join(folder, '.mcp.json'), JSON.stringify({ mcpServers: { proj: { command: 'p' } }, ...over.project }))
   const calls: Call[] = []
   const logs: string[] = []
   const deps: Partial<McpDeps> = {
@@ -67,8 +72,6 @@ function setup(over: { claude?: object; project?: object; opencode?: string; lis
   const svc = new McpService({ log: (m) => logs.push(m), builtin: async (n) => ({ ok: n === 'codegraph', error: 'down' }), now: () => 1000 }, deps)
   return { svc, files, calls, logs }
 }
-
-const folder = 'F:\\code\\shop'
 
 describe('parsing real CLI output', () => {
   it('reads every Claude status line, with the error and plugin and connector names', () => {
@@ -233,11 +236,11 @@ describe('changing servers', () => {
     await svc.setEnabled(folder, 'opencode:global:a', true)
     expect(JSON.parse(files.get('/h/opencode.jsonc')!).mcp.servers.a.disabled).toBeUndefined()
     await svc.setEnabled(folder, 'claude:user:codegraph', false)
-    expect(JSON.parse(files.get('/h/.claude.json')!).projects['F:/code/shop'].disabledMcpServers).toEqual(['remote', 'codegraph'])
+    expect(JSON.parse(files.get('/h/.claude.json')!).projects[folderKey].disabledMcpServers).toEqual(['remote', 'codegraph'])
     await svc.setEnabled(folder, 'claude:project:proj', false)
-    const approval = () => JSON.parse(files.get('F:\\code\\shop\\.claude\\settings.local.json')!)
+    const approval = () => JSON.parse(files.get(join(folder, '.claude', 'settings.local.json'))!)
     expect(approval()).toEqual({ disabledMcpjsonServers: ['proj'], enabledMcpjsonServers: [] })
-    expect(JSON.parse(files.get('/h/.claude.json')!).projects['F:/code/shop'].disabledMcpjsonServers).toBeUndefined()
+    expect(JSON.parse(files.get('/h/.claude.json')!).projects[folderKey].disabledMcpjsonServers).toBeUndefined()
     expect((await svc.list(folder)).servers.find((x) => x.id === 'claude:project:proj')!.state).toBe('disabled')
     await svc.setEnabled(folder, 'claude:project:proj', true)
     expect(approval()).toEqual({ disabledMcpjsonServers: [], enabledMcpjsonServers: ['proj'] })

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -158,7 +158,7 @@ describe('master-mode runs', () => {
       })
 
       it('stays quiet when the fake Claude fixture delegated to the seat (Agent-tool transcript read by the reader)', async () => {
-        const cfg = mkdtempSync(join(tmpdir(), 'op-fake-claude-'))
+        const cfg = mkdtempSync(join(realpathSync(tmpdir()), 'op-fake-claude-'))
         try {
           const id = seated()
           const run = store.getRun(id)!
