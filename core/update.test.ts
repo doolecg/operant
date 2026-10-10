@@ -145,6 +145,8 @@ describe('update', () => {
     })
     expect(msi).toContain('Wait-Process -Id 9')
     expect(msi).toContain(`/i "C:\\Temp\\O''2.msi" /passive`)
+    expect(msi).toContain(`Test-Path -LiteralPath 'C:\\Program Files\\Operant 2\\Operant 2.exe'`)
+    expect(msi).toContain('REINSTALL=ALL')
     expect(msi).toContain(`Start-Process -FilePath 'C:\\Program Files\\Operant 2\\Operant 2.exe'`)
   })
 })

@@ -212,6 +212,11 @@ export function msiWorkerScript(o: { pid: number; exe: string; installDir: strin
     `  if ($p.ExitCode -ne 1618) { break }`,
     `  Start-Sleep -Seconds 15`,
     `} }`,
+    // The new package can skip the main exe when the old one is still there at costing time, and the old package's
+    // removal then deletes it, so reinstall every file if it is gone.
+    `if (-not (Test-Path -LiteralPath '${q(o.exe)}')) {`,
+    `  Start-Process msiexec.exe -ArgumentList '/i "${q(o.msi)}" REINSTALL=ALL REINSTALLMODE=vomus /qn /norestart /l*v "${q(o.log)}.repair.log"' -Wait`,
+    `}`,
     o.relaunch ? `Start-Process -FilePath '${q(o.exe)}'` : '',
   ].join('\n')
 }
