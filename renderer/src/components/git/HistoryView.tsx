@@ -48,7 +48,7 @@ export function HistoryView({ crewId, wide }: { crewId: number; wide: boolean })
                 <span className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{k.subject}</span>
                   {k.refs.map((r) => (
-                    <span key={r} className="bg-muted text-muted-foreground max-w-32 shrink-0 truncate rounded px-1 text-[10px]">
+                    <span key={r} className="bg-muted text-muted-foreground max-w-32 shrink-0 truncate rounded-sm px-1 text-[10px]">
                       {r.replace('HEAD -> ', '')}
                     </span>
                   ))}
@@ -86,7 +86,7 @@ export function HistoryView({ crewId, wide }: { crewId: number; wide: boolean })
                     aria-pressed={chosen?.path === f.path}
                     onClick={() => setFile(f.path)}
                     title={f.orig ? `${f.orig} → ${f.path}` : f.path}
-                    className={cn('flex items-center gap-1.5 rounded border px-1.5 py-0.5', chosen?.path === f.path ? 'bg-accent' : 'hover:bg-accent/50')}
+                    className={cn('flex items-center gap-1.5 rounded-md border px-1.5 py-0.5', chosen?.path === f.path ? 'bg-accent' : 'hover:bg-accent/50')}
                   >
                     <span className={cn('font-mono font-semibold', LETTER[f.status])}>{f.status}</span>
                     <span className="font-medium">{baseName(f.path)}</span>

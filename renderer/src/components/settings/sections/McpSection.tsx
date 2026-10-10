@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { useCrews, useMcpServers, useRefreshMcp, useRemoveMcp, useSetMcpEnabled } from '@/lib/queries'
 import { ConfirmDialog } from '../parts'
 import { McpServerDialog } from './McpServerDialog'
+import { OptionalMcpCard } from './OptionalMcpCard'
 
 export const MCP_STATE_LABEL: Record<McpState, string> = {
   connected: 'Connected',
@@ -180,6 +181,8 @@ export function McpSection() {
           )}
         </CardContent>
       </Card>
+
+      <OptionalMcpCard crewId={crewId} />
 
       {editing && <McpServerDialog crewId={crewId} server={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
       <ConfirmDialog

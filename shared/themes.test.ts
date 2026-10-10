@@ -100,15 +100,50 @@ describe('themes: catalogue', () => {
     const a = { theme: 'system', customThemes: [] as CustomTheme[] }
     expect(resolveTheme(a, true).id).toBe('dark')
     expect(resolveTheme(a, false).id).toBe('light')
-    expect(windowBackground({ ...DEFAULT_SETTINGS.appearance, theme: 'system' }, false)).toBe('#f8f8fa')
+    expect(windowBackground({ ...DEFAULT_SETTINGS.appearance, theme: 'system' }, false)).toBe('#faf9f7')
     expect(windowBackground({ ...DEFAULT_SETTINGS.appearance, theme: 'dracula' }, true)).toBe('#282a36')
   })
 
   it('terminal colours follow the theme or stay dark', () => {
     const nord = BUILTIN_THEMES.find((t) => t.id === 'nord')!
-    expect(xtermColors(nord, '', true)).toMatchObject({ background: '#2e3440', foreground: '#eceff4', red: '#bf616a', black: '#3b4252', cursor: '#88c0d0' })
+    expect(xtermColors(nord, '', true)).toMatchObject({ background: nord.card, foreground: '#eceff4', black: '#3b4252', cursor: '#88c0d0' })
     expect(xtermColors(nord, '#ff0000', true).cursor).toBe('#ff0000')
     expect(xtermColors(nord, '', false)).toMatchObject({ background: '#09090b', foreground: '#e4e4e7' })
+  })
+
+  it('every ANSI colour reads on the card background, and Dark keeps its palette', () => {
+    for (const d of BUILTIN_THEMES) {
+      const c = xtermColors(d, '', true) as unknown as Record<string, string>
+      expect(c.background, d.id).toBe(d.card)
+      for (const k of Object.keys(d.ansi)) expect(contrast(c[k]!, c.background!), `${d.id}: ${k}`).toBeGreaterThanOrEqual(4.5)
+    }
+    const dark = BUILTIN_THEMES.find((t) => t.id === 'dark')!
+    const c = xtermColors(dark, '', true) as unknown as Record<string, string>
+    expect(c.blue).toBe('#7aa6e3')
+    expect(c.red).toBe('#e0704f')
+    expect(c.green).toBe('#8fbf7f')
+    expect(c.background).toBe('#1f1f1f')
+    expect(c.selectionBackground).toBe('#573930')
+  })
+})
+
+describe('themes: Claude neutrals', () => {
+  it('Dark and Light use the neutral page, card and popover values and keep their ids', () => {
+    const dark = BUILTIN_THEMES.find((t) => t.id === 'dark')!
+    const light = BUILTIN_THEMES.find((t) => t.id === 'light')!
+    expect(dark).toMatchObject({ name: 'Dark', bg: '#171717', card: '#1f1f1f', surface: '#262626', text: '#ececec', accent: '#d97757' })
+    expect(light).toMatchObject({ name: 'Light', bg: '#faf9f7', card: '#ffffff', text: '#1a1a1a', accent: '#c96442' })
+    expect(resolveTheme({ theme: 'light', customThemes: [] }, true).id).toBe('light')
+  })
+
+  it('derives the new surface and context tokens for every theme', () => {
+    for (const d of BUILTIN_THEMES) {
+      const t = tokensFor(d)
+      for (const k of ['--bubble', '--code', '--ctx-system', '--ctx-tools', '--ctx-mcp', '--ctx-agents', '--ctx-memory', '--ctx-skills', '--ctx-messages', '--ctx-free', '--ctx-tick']) {
+        expect(t[k], `${d.id}: ${k}`).toMatch(/^#[0-9a-f]{6}$/)
+      }
+    }
+    expect(tokensFor(BUILTIN_THEMES.find((t) => t.id === 'dark')!)).toMatchObject({ '--border': '#2f2f2f', '--sidebar': '#141414', '--accent': '#2a2a2a', '--bubble': '#2b2b2b' })
   })
 })
 

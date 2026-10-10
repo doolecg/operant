@@ -1,0 +1,6 @@
+{
+  "name": "idea-shelf",
+  "version": "0.1.0",
+  "description": "Idea Shelf: park ideas while Claude works, without pulling it off the task. Each project gets its own shelf, ideas stay saved after you close Claude Code, and you send them to Claude as prompts later.",
+  "types": "./types/index.d.ts"
+}

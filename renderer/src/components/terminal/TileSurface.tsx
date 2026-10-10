@@ -1,35 +1,48 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { MASTER_TILE, syncTiles } from '@shared/tileSync'
-import { tileIds, tileRects, toggleSplit, type Rect, type TileNode } from '@shared/tiling'
+import { insertTile, removeTile, tileIds, tileRects, toggleSplit, type Rect, type TileNode } from '@shared/tiling'
 import { matches } from '@/lib/keys'
 import { useSaveSettings, useSettings } from '@/lib/queries'
 import { TileFrame } from './TileFrame'
 import type { TileInfo } from './useProjectTiles'
 
 // The tree per project, kept while the app runs so switching projects and back keeps the arrangement.
-const trees = new Map<number, TileNode>()
+const trees = new Map<number, TileNode | null>()
 
 const MASTER_FACTOR = 0.55
+
+// Brings the tree in line with the tiles that should be open: gone ones are removed, new ones are split off the focused tile.
+function syncTree(tree: TileNode | null, wanted: string[], area: Rect, gap: number, focus: string | null): TileNode | null {
+  let t = tree
+  const want = new Set(wanted)
+  for (const id of tileIds(t)) if (!want.has(id)) t = removeTile(t, id)
+  for (const id of wanted) if (!tileIds(t).includes(id)) t = insertTile(t, id, focus, area, gap)
+  return t
+}
 
 interface Props {
   crewId: number
   tiles: TileInfo[]
-  pinned: Set<string>
   onClose: (tile: TileInfo) => void
-  onPin: (id: string) => void
-  badge: (tile: TileInfo) => ReactNode
   body: (tile: TileInfo) => ReactNode
+  info?: (tile: TileInfo) => ReactNode
+  // The header's icon, heading, subtitle and status for a tile.
+  chrome?: (tile: TileInfo) => { icon?: ReactNode; heading?: string; subtitle?: string; badge?: ReactNode; status?: ReactNode }
+  // The focused tile's id (null when none), for panels that follow the focus.
+  onFocusChange?: (id: string | null) => void
+  // A tile opened on purpose (a new agent or shell) that takes the focus.
+  focusId?: string | null
 }
 
-// 2.8.2-style tiling for the project's tiles: absolute frames placed from the pure tree (shared/tiling.ts), moved with a
+// Tiling for the project's tiles: absolute frames placed from the pure tree (shared/tiling.ts), moved with a
 // CSS transition. Tile keys (settings > Shortcuts) work while the focus is anywhere in the page.
-export function TileSurface({ crewId, tiles, pinned, onClose, onPin, badge, body }: Props) {
+export function TileSurface({ crewId, tiles, onClose, body, info, chrome, onFocusChange, focusId }: Props) {
   const settings = useSettings().data
   const save = useSaveSettings()
   const box = useRef<HTMLDivElement>(null)
   const [area, setArea] = useState<Rect>({ x: 0, y: 0, w: 0, h: 0 })
-  const [tree, setTree] = useState<TileNode>(() => trees.get(crewId) ?? { tile: MASTER_TILE })
-  const [focus, setFocus] = useState<string>(MASTER_TILE)
+  const [tree, setTree] = useState<TileNode | null>(() => trees.get(crewId) ?? null)
+  const [focus, setFocus] = useState<string | null>(null)
+  useEffect(() => onFocusChange?.(focus), [focus])
   const [full, setFull] = useState<string | null>(null)
   const layout = settings?.tiles.layout ?? 'dwindle'
   const gap = settings?.tiles.gaps ?? 6
@@ -47,16 +60,20 @@ export function TileSurface({ crewId, tiles, pinned, onClose, onPin, badge, body
 
   // A project switch loads that project's arrangement.
   useEffect(() => {
-    setTree(trees.get(crewId) ?? { tile: MASTER_TILE })
-    setFocus(MASTER_TILE)
+    setTree(trees.get(crewId) ?? null)
+    setFocus(null)
     setFull(null)
   }, [crewId])
+  useEffect(() => {
+    if (focusId && tiles.some((t) => t.id === focusId)) setFocus(focusId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId])
 
-  const wanted = tiles.filter((t) => t.id !== MASTER_TILE).map((t) => t.id)
+  const wanted = tiles.map((t) => t.id)
   const wantedKey = wanted.join('|')
   useEffect(() => {
     setTree((cur) => {
-      const next = syncTiles(cur, wanted, area, gap, focus)
+      const next = syncTree(cur, wanted, area, gap, focus)
       trees.set(crewId, next)
       return next
     })
@@ -64,7 +81,7 @@ export function TileSurface({ crewId, tiles, pinned, onClose, onPin, badge, body
   }, [wantedKey, crewId, area.w > 0])
   useEffect(() => {
     const ids = tileIds(tree)
-    if (!ids.includes(focus)) setFocus(MASTER_TILE)
+    if (focus && !ids.includes(focus)) setFocus(ids[0] ?? null)
     if (full && !ids.includes(full)) setFull(null)
   }, [tree, focus, full])
 
@@ -73,6 +90,7 @@ export function TileSurface({ crewId, tiles, pinned, onClose, onPin, badge, body
       const ids = tileIds(tree)
       if (what === 'layout') return save.mutate({ tiles: { layout: layout === 'dwindle' ? 'master' : 'dwindle' } })
       if (what === 'split') {
+        if (!tree || !focus) return
         const next = toggleSplit(tree, focus)
         trees.set(crewId, next)
         return setTree(next)
@@ -80,9 +98,10 @@ export function TileSurface({ crewId, tiles, pinned, onClose, onPin, badge, body
       if (what === 'full') return setFull((f) => (f === focus ? null : focus))
       if (what === 'close') {
         const t = tiles.find((x) => x.id === focus)
-        return t && t.id !== MASTER_TILE && onClose(t)
+        return t && onClose(t)
       }
-      const at = ids.indexOf(focus)
+      if (ids.length === 0) return
+      const at = focus ? ids.indexOf(focus) : -1
       setFocus(ids[(at + (what === 'next' ? 1 : -1) + ids.length) % ids.length]!)
     },
     [tree, focus, tiles, layout, crewId, save, onClose],
@@ -120,17 +139,16 @@ export function TileSurface({ crewId, tiles, pinned, onClose, onPin, badge, body
             key={t.id}
             id={t.id}
             title={t.title}
-            badge={badge(t)}
             focused={focus === t.id}
             fullscreen={full === t.id}
             hidden={full !== null && full !== t.id}
             style={{ left: r.x, top: r.y, width: r.w, height: r.h, zIndex: full === t.id ? 10 : 0 }}
-            strip={t.id === MASTER_TILE ? strip : 'normal'}
-            onClose={t.id === MASTER_TILE ? undefined : () => onClose(t)}
+            strip={strip}
+            info={info?.(t)}
+            {...chrome?.(t)}
+            onClose={() => onClose(t)}
             onFocus={() => setFocus(t.id)}
             onFullscreen={() => (setFocus(t.id), setFull((f) => (f === t.id ? null : t.id)))}
-            pinned={t.kind === 'subagent' ? pinned.has(t.id) : undefined}
-            onPin={t.kind === 'subagent' ? () => onPin(t.id) : undefined}
           >
             {body(t)}
           </TileFrame>

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { applyRead, exportBundle, legacyDataDir, parseRole, previewRead, readBundleText, readSource } from './import'
+import { applyRead, legacyDataDir, parseRole, previewRead, readBundleText, readSource } from './import'
 import { Store } from './store'
 import { queryUsage } from './usage-query'
 
@@ -136,31 +136,6 @@ describe('import from Operant 2.8.2', () => {
 })
 
 describe('export and import between machines', () => {
-  it('round-trips projects, user presets and usage to another store, once', () => {
-    const crew = store.createCrew('Gamma', join(dir, 'gamma'))
-    store.createPreset({ name: 'mine', agent: 'claude', model: 'sonnet', permissionMode: 'default', roleText: 'be brief' })
-    const run = store.createRun({ crewId: crew.id, task: 't', masterCli: 'claude' })
-    store.upsertKeyedUsage({ extKey: `run:${run.id}:m1`, at: NOW, model: 'claude-sonnet-5-5', runId: run.id, crewId: crew.id, source: 'master', seat: 'master', inputTokens: 10, outputTokens: 5, cacheRead: 2, cacheW5m: 3, costUsd: 0.4 }, false)
-    const text = JSON.stringify(exportBundle(store, NOW))
-    const other = new Store(':memory:', () => NOW)
-    try {
-      const read = readBundleText(text, 'file.json')
-      const preview = previewRead(other, read)
-      expect(preview).toMatchObject({ format: 'operant-export', projects: { add: 1 }, presets: { add: 1 }, usage: { add: 1 } })
-      applyRead(other, read)
-      applyRead(other, readBundleText(text, 'file.json'))
-      expect(other.listCrews().map((c) => c.name)).toEqual(['Gamma'])
-      const report = queryUsage({ store: other, now: () => NOW }, { groupBy: ['project'] })
-      expect(report.rows).toHaveLength(1)
-      expect(report.rows[0]).toMatchObject({ labels: ['Gamma'], turns: 1, cacheWrite: 3 })
-      expect(report.totals.legacyTurns).toBe(0)
-      expect(other.listPresets().find((p) => p.name === 'mine')!.roleText).toBe('be brief')
-    } finally {
-      other.close()
-    }
-    // Importing an export into the machine it came from adds nothing.
-    expect(previewRead(store, readBundleText(text, 'file.json')).usage).toMatchObject({ add: 0, existing: 1 })
-  })
 
   it('refuses files that are not exports and lists unusable rows', () => {
     expect(readBundleText('nope', 'x').found).toBe(false)

@@ -1,4 +1,4 @@
-// Top bar (one 38 px row): brand, project block, view switcher, media block, clock, status pill and git branch chip, at four window widths and two UI scales,
+// Top bar (one 38 px row): brand, project block, view switcher, media block, clock and git branch chip, at four window widths and two UI scales,
 // with live settings. The media bar (fake helper speaking the real JSON lines). Runs in the background with throwaway data.
 // Usage: node e2e/topbar.mjs [outDir]   (screenshots for the spec go to docs/specs/screenshots when given as that dir)
 import assert from 'node:assert/strict'
@@ -16,7 +16,7 @@ const git = (...a) => execFileSync('git', a, { cwd: project })
 git('init', '-q', '-b', 'feature/topbar')
 writeFileSync(join(project, 'a.txt'), '1')
 git('add', '.')
-git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'first')
+git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'first')
 writeFileSync(join(project, 'a.txt'), '2')
 writeFileSync(join(project, 'b.txt'), '2')
 const logFile = join(mkdtempSync(join(tmpdir(), 'operant-media-')), 'commands.log')
@@ -45,8 +45,7 @@ try {
   await page.getByText('Welcome to Operant 3').waitFor()
   await page.evaluate(async (folder) => {
     const o = window.operant
-    const crew = await o.invoke('crews:create', { name: 'shop', folder })
-    await o.invoke('runs:create', { crewId: crew.id, task: 'Count me' }).catch(() => undefined)
+    await o.invoke('crews:create', { name: 'shop', folder })
   }, project)
   await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('heading', { name: 'shop' }).waitFor({ state: 'attached' })
@@ -90,10 +89,6 @@ try {
   // Unlisted commands never get through.
   assert.equal(await page.evaluate(() => window.operant.invoke('media:command', 'quit')), false)
 
-  // The agent pill counts the open project's jobs.
-  const pill = page.getByRole('status', { name: /^Jobs:/ })
-  await pill.waitFor()
-
   // The month calendar after a short hover, and the click copy.
   await page.getByRole('button', { name: /^Clock / }).hover()
   const cal = page.getByRole('dialog', { name: 'Calendar' })
@@ -123,15 +118,19 @@ try {
         }
         const h = document.querySelector('header')
         const h1 = h.querySelector('h1')
-        return { doc: document.documentElement.scrollWidth, win: window.innerWidth, headScroll: h.scrollWidth, headClient: h.clientWidth, height: h.getBoundingClientRect().height, name: [h1.clientWidth, h1.scrollWidth], status: !!h.querySelector('[aria-label="Status and branch"]'), git: !!h.querySelector('[aria-label^="Git: "]'), overlap: overlaps(h) }
+        return { doc: document.documentElement.scrollWidth, win: window.innerWidth, headScroll: h.scrollWidth, headClient: h.clientWidth, height: h.getBoundingClientRect().height, name: [h1.clientWidth, h1.scrollWidth], chips: !!h.querySelector('[aria-label^="Git: "], [aria-label="Usage"], [aria-label="Status and branch"]'), activity: !!h.querySelector('[aria-label^="Activity"]'), overlap: overlaps(h) }
       })
       const label = `${w}px at ${scale * 100}%`
       assert.ok(m.doc <= m.win, `page overflows at ${label}: ${JSON.stringify(m)}`)
       assert.ok(m.headScroll <= m.headClient + 1, `header overflows at ${label}: ${JSON.stringify(m)}`)
       assert.equal(Math.round(m.height), 38, `one 38 px row at ${label}: ${JSON.stringify(m)}`)
+      assert.ok(!m.chips, `the git and usage chips live in the sidebar footer at ${label}`)
       assert.ok(!m.overlap, `the groups of the bar overlap at ${label}: ${JSON.stringify(m)}`)
       if (scale === 1) assert.ok(m.name[0] >= m.name[1], `the project name is readable at ${label}: ${JSON.stringify(m)}`)
       if (scale === 1) assert.ok(!m.status && m.git, `the status pill and the branch chip stay in the bar at ${label}: ${JSON.stringify(m)}`)
+      assert.ok(m.activity, `the activity button stays in the bar at ${label}: ${JSON.stringify(m)}`)
+      if (scale === 1) assert.ok(m.usage, `the usage button stays in the bar at ${label}: ${JSON.stringify(m)}`)
+      if (scale === 2 && w === 1000) assert.ok(!m.usage, 'usage collapsed into the menu at 500 css px')
       if (scale === 2 && w === 1000) assert.ok(m.status, 'status and branch collapsed into the menu at 500 css px')
       if (scale === 1) await shot(`top-bar-${w}.png`)
     }
@@ -143,26 +142,24 @@ try {
   await page.waitForTimeout(800)
   await bar.screenshot({ path: join(outDir, 'media-bar.png') })
 
-  // The '+' opens the new task dialog; the Console toggle lives on the sidebar's bottom row; the project
-  // block at the top left has its mini buttons on hover.
-  await page.getByRole('button', { name: 'Start new task' }).click()
-  await page.getByRole('dialog').getByText('Start new task').first().waitFor()
-  await page.keyboard.press('Escape')
-  await page.getByRole('complementary', { name: 'Projects' }).getByRole('button', { name: /^Console/ }).waitFor()
+  // The project block at the top left has its mini buttons on hover.
   await page.getByRole('heading', { level: 1 }).hover({ position: { x: 4, y: 4 } })
   for (const n of [/^(Update index|Index with CodeGraph)$/, /^Open .* in IDE$/, /^New shell in /, /^Actions for project /]) await page.getByRole('button', { name: n }).waitFor()
   await page.mouse.move(5, 500)
 
-  // The git chip shows the branch and the changed files, the sidebar row too; clicking the chip opens the changes.
-  const chip = page.getByRole('button', { name: /^Git: Branch feature\/topbar, 2 changed files/ })
+  // The git chip sits in the sidebar footer and shows the branch and the changed files, the sidebar row too; clicking the chip opens the changes.
+  const chip = page.getByTestId('sidebar-footer').getByRole('button', { name: /^Git: Branch feature\/topbar, 2 changed files/ })
   await chip.waitFor()
   assert.match((await chip.textContent()) ?? '', /feature\/topbar\s*2/)
-  await page.getByRole('complementary', { name: 'Projects' }).getByText('feature/topbar').waitFor()
+  await page.getByRole('complementary', { name: 'Projects' }).getByText('feature/topbar').first().waitFor()
   await chip.click()
   await page.getByTestId('git-page').getByRole('tab', { name: /^Changes/ }).waitFor()
+  await page.keyboard.press('Escape')
+  await page.getByTestId('git-page').waitFor({ state: 'detached' })
 
-  // The sidebar's bottom row holds the badges and drawer toggles as icons; it has no Settings text button, the gear does it.
+  // The sidebar's bottom row holds the icons in order: Settings, Console, Learning, Provider usage and the git chip.
   const foot = page.getByTestId('sidebar-footer')
+  await foot.getByRole('button', { name: /^Console/ }).waitFor()
   await foot.getByRole('button', { name: /^Learning health/ }).waitFor()
   await foot.getByRole('button', { name: /^Provider limits: / }).waitFor()
   assert.match((await foot.getByRole('button', { name: /^Provider limits: / }).textContent()) ?? '', /--%/, 'the usage badge shows --% without data')
@@ -171,20 +168,25 @@ try {
   await cog.click()
   await page.getByRole('heading', { name: 'Settings' }).waitFor()
   await page.keyboard.press('Escape')
-  await page.getByRole('region', { name: 'Master Terminal' }).waitFor()
   await page.screenshot({ path: join(outDir, 'sidebar-footer.png'), clip: { x: 0, y: 600, width: 260, height: 100 } })
 
-  // The status menu holds the pills and the branch chip when the bar is narrow.
+  // At the narrowest tier the terminal CLI pick is a menu in the top bar; the usage and branch chips stay in the sidebar footer.
   await page.evaluate(() => window.operant.invoke('settings:set', { uiScale: 2 }))
   await page.waitForTimeout(800)
-  await page.getByRole('button', { name: 'Status and branch' }).click()
-  await page.getByRole('status', { name: /^Jobs:/ }).waitFor()
-  await page.getByRole('button', { name: /^Git: / }).waitFor()
+  await page.getByRole('button', { name: 'Terminal CLI' }).click({ timeout: 10_000 }).catch(async (e) => {
+    const probe = await page.evaluate(() => ({ inner: window.innerWidth, bar: document.querySelector('header')?.getBoundingClientRect().width }))
+    throw new Error(`${e.message.split('\n')[0]} at ${JSON.stringify(probe)}; window ${JSON.stringify(await win((w) => w.getContentSize()))}`)
+  })
   await page.keyboard.press('Escape')
+  await foot.getByRole('button', { name: /^Git: / }).waitFor()
+  await foot.getByRole('button', { name: /^Provider limits: / }).click()
+  await page.getByRole('dialog', { name: 'Usage' }).waitFor()
+  await page.keyboard.press('Escape')
+  await page.getByRole('dialog', { name: 'Usage' }).waitFor({ state: 'detached' })
   await page.evaluate(() => window.operant.invoke('settings:set', { uiScale: 1 }))
   await page.waitForTimeout(800)
 
-  // Live settings: seconds, 12 hour, compact media, and the pills off.
+  // Live settings: seconds, 12 hour, compact media, and the media bar off.
   await page.evaluate(() => window.operant.invoke('settings:set', { topBar: { clockSeconds: true, clockFormat: '12' } }))
   await poll('12h with seconds', async () => /^\d{2}:\d{2}:\d{2}\s?(am|pm)$/i.test((await clock.textContent()) ?? ''))
   await resize(1920)
@@ -192,11 +194,9 @@ try {
   await poll('full', async () => (await bar.getByRole('slider', { name: 'Volume' }).count()) === 1)
   await page.evaluate(() => window.operant.invoke('settings:set', { topBar: { mediaSize: 'compact' } }))
   await poll('compact', async () => (await bar.getByText('Midnight City').count()) === 1)
-  await page.evaluate(() => window.operant.invoke('settings:set', { topBar: { agentPill: false, clockDate: false } }))
-  await poll('agent pill off', async () => (await pill.count()) === 0)
   await page.evaluate(() => window.operant.invoke('settings:set', { topBar: { mediaControls: false } }))
   await poll('media off', async () => (await bar.count()) === 0)
-  await page.evaluate(() => window.operant.invoke('settings:set', { topBar: { mediaControls: true, mediaSize: 'full', agentPill: true, clockDate: true, clockSeconds: false } }))
+  await page.evaluate(() => window.operant.invoke('settings:set', { topBar: { mediaControls: true, mediaSize: 'full', clockDate: true, clockSeconds: false } }))
   await bar.waitFor()
 
   // The Top bar section and the media shortcuts exist in Settings.

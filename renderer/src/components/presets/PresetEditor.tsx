@@ -1,22 +1,24 @@
 import { useState, type ReactNode } from 'react'
 import { decodeIpcError } from '@shared/ipc'
-import type { AgentKind, CacheTtl, LaunchSettings, McpMode, Preset, PresetPatch } from '@shared/types'
+import { OPTIONAL_MCP_IDS, type AgentKind, type CacheTtl, type LaunchSettings, type McpMode, type Preset, type PresetPatch } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { useCreatePreset, useShippedRole, useUpdatePreset } from '@/lib/queries'
+import { useCreatePreset, useOptionalMcp, useUpdatePreset } from '@/lib/queries'
+import { useOpenSettingsSection } from '../settings/nav-context'
+import { ModelEffortSelect } from '@/components/settings/ModelEffortSelect'
+import { STAGES, canEditFiles } from '@shared/presets'
 import { RoleTextEditor } from './RoleTextEditor'
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const MODES: Array<{ id: string; label: string; hint: string }> = [
   { id: 'acceptEdits', label: 'Accept edits', hint: 'Edits go through; other tools follow the allow and deny rules.' },
-  { id: 'dontAsk', label: "Don't ask", hint: 'Anything not allowed in advance is denied, so the operator cannot drift into editing.' },
+  { id: 'dontAsk', label: "Don't ask", hint: 'Anything not allowed in advance is refused, so the terminal cannot drift into editing.' },
   { id: 'plan', label: 'Plan', hint: 'Reads and plans only.' },
-  { id: 'manual', label: 'Manual', hint: 'Asks you in its terminal for each action.' },
+  { id: 'manual', label: 'Manual', hint: 'Asks you in its terminal before each action.' },
   { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Runs everything without asking. Only for a sandbox you trust.' },
 ]
 
@@ -31,8 +33,9 @@ interface Form {
   deny: string
   cacheTtl: CacheTtl
   contextCap: string
-  clearBetweenJobs: boolean
   mcp: McpMode
+  // Optional servers ticked (recommended, never required).
+  optional: string[]
   roleText: string
 }
 
@@ -43,6 +46,11 @@ const lines = (text: string) =>
     .filter(Boolean)
 
 const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i])
+// CodeGraph has its own select above, so it is not one of the optional ticks.
+const isOptional = (s: string) => s !== 'codegraph' && (OPTIONAL_MCP_IDS as readonly string[]).includes(s)
+
+// The servers a preset names: CodeGraph from its select, the others kept as they are, the optional ones as ticked.
+const serversOf = (f: Form, base: string[]): string[] => [...(f.mcp === 'codegraph' ? ['codegraph'] : []), ...base.filter((s) => s !== 'codegraph' && !isOptional(s)), ...f.optional]
 
 function toForm(p: Preset | null, role: string, defaultModel: string): Form {
   if (!p)
@@ -57,8 +65,8 @@ function toForm(p: Preset | null, role: string, defaultModel: string): Form {
       deny: '',
       cacheTtl: 'auto',
       contextCap: '0',
-      clearBetweenJobs: false,
       mcp: 'codegraph',
+      optional: [],
       roleText: role,
     }
   return {
@@ -72,8 +80,8 @@ function toForm(p: Preset | null, role: string, defaultModel: string): Form {
     deny: p.deny.join('\n'),
     cacheTtl: p.cacheTtl,
     contextCap: String(p.contextCap),
-    clearBetweenJobs: p.clearBetweenJobs,
     mcp: p.mcp,
+    optional: p.mcpServers.filter(isOptional),
     roleText: role,
   }
 }
@@ -89,7 +97,6 @@ function launchOf(f: Form): LaunchSettings {
     deny: lines(f.deny),
     cacheTtl: f.cacheTtl,
     contextCap: Number(f.contextCap.trim() === '' ? 0 : f.contextCap),
-    clearBetweenJobs: f.clearBetweenJobs,
     mcp: f.mcp,
   }
 }
@@ -113,18 +120,21 @@ interface Props {
   onClose: () => void
 }
 
-function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shipped?: string }) {
+function EditorForm({ preset, defaultModel, onClose }: Props) {
   const create = useCreatePreset()
   const update = useUpdatePreset()
-  const initialRole = preset ? (preset.roleText ?? shipped ?? '') : ''
+  const initialRole = preset?.roleText ?? ''
   const [form, setForm] = useState(() => toForm(preset, initialRole, defaultModel))
+  const optional = useOptionalMcp(null)
+  const openSettings = useOpenSettingsSection()
   const [error, setError] = useState<string | null>(null)
   const busy = create.isPending || update.isPending
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }))
 
-  const claude = form.agent === 'claude'
+  const stage = preset?.builtin ? STAGES[preset.builtin.replace(/-opencode$/, '')] : undefined
   const shell = form.agent === 'shell'
-  const haiku = form.model.startsWith('claude-haiku')
+  const claude = form.agent === 'claude'
+  const noEffort = /haiku-4/.test(form.model)
 
   const patchOf = (): PresetPatch => {
     const p = preset!
@@ -140,9 +150,10 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
     if (!sameList(next.deny, p.deny)) patch.deny = next.deny
     if (next.cacheTtl !== p.cacheTtl) patch.cacheTtl = next.cacheTtl
     if (next.contextCap !== p.contextCap) patch.contextCap = next.contextCap
-    if (next.clearBetweenJobs !== p.clearBetweenJobs) patch.clearBetweenJobs = next.clearBetweenJobs
     if (next.mcp !== p.mcp) patch.mcp = next.mcp
-    if (form.roleText !== initialRole) patch.roleText = p.builtin && form.roleText === shipped ? null : form.roleText
+    const servers = serversOf(form, p.mcpServers)
+    if (!sameList(servers, p.mcpServers)) patch.mcpServers = servers
+    if (form.roleText !== initialRole) patch.roleText = form.roleText
     return patch
   }
 
@@ -151,7 +162,7 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
     if (form.name.trim() === '') return setError('Give the preset a name.')
     try {
       if (!preset) {
-        await create.mutateAsync([{ ...launchOf(form), name: form.name.trim(), roleText: form.roleText }])
+        await create.mutateAsync([{ ...launchOf(form), name: form.name.trim(), roleText: form.roleText, mcpServers: serversOf(form, ['hindsight']) }])
       } else {
         const patch = patchOf()
         if (Object.keys(patch).length > 0) await update.mutateAsync([preset.id, patch])
@@ -162,47 +173,55 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
     }
   }
 
-  const save = () => {
-    void run()
-  }
-
   const mode = MODES.find((m) => m.id === form.permissionMode)
 
   return (
     <>
       <DialogBody className="sm:grid-cols-2">
+        {stage && (
+          <p className="text-sm sm:col-span-2">
+            <span className="font-medium">
+              Stage {stage.stage}: {stage.name}.
+            </span>{' '}
+            <span className="text-muted-foreground">Use it when: {stage.whenToUse}</span>
+          </p>
+        )}
+        {!shell && (
+          <p className="text-sm sm:col-span-2">
+            {canEditFiles({ tools: form.tools, deny: lines(form.deny) })
+              ? 'This preset can edit files.'
+              : 'Read-only: its tools and deny rules stop it editing files.'}
+          </p>
+        )}
         <Field id="preset-name" label="Name">
           <Input id="preset-name" value={form.name} onChange={(e) => set({ name: e.target.value })} maxLength={80} />
         </Field>
-        <Field id="preset-agent" label="Agent">
+        <Field id="preset-agent" label="Runs in">
           <Select value={form.agent} onValueChange={(v) => set({ agent: v as AgentKind })}>
             <SelectTrigger id="preset-agent" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="claude">Claude Code</SelectItem>
-              <SelectItem value="opencode">opencode</SelectItem>
+              <SelectItem value="opencode">OpenCode</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="shell">Plain shell</SelectItem>
             </SelectContent>
           </Select>
         </Field>
 
-        {!shell && (
-          <Field
-            id="preset-model"
-            label="Model"
-            hint="Opus costs several times what Sonnet does per token and Haiku far less. Changing it on a running operator restarts it and loses its cache."
-          >
+        {form.agent === 'opencode' && (
+          <Field id="preset-model" label="Model" hint="Only the models OpenCode lists. Changing it on a running terminal restarts it.">
+            <ModelEffortSelect cli="opencode" label="Preset" model={form.model} effort={form.effort} onChange={(model, effort) => set({ model, effort })} />
+          </Field>
+        )}
+        {!shell && form.agent !== 'opencode' && (
+          <Field id="preset-model" label="Model" hint="Opus costs more per token than Sonnet, and Haiku far less.">
             <Input id="preset-model" className="font-mono" value={form.model} onChange={(e) => set({ model: e.target.value })} />
           </Field>
         )}
-        {claude && !haiku && (
-          <Field
-            id="preset-effort"
-            label="Effort"
-            hint="Higher effort thinks longer and writes more output tokens. Changing it on a running operator relaunches it fresh."
-          >
+        {claude && !noEffort && (
+          <Field id="preset-effort" label="Effort" hint="Higher effort thinks longer and writes more.">
             <Select value={form.effort || 'default'} onValueChange={(v) => set({ effort: v === 'default' ? '' : v })}>
               <SelectTrigger id="preset-effort" className="w-full">
                 <SelectValue />
@@ -220,15 +239,7 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
         )}
 
         {!shell && (
-          <Field
-            id="preset-mode"
-            label="Permission mode"
-            hint={
-              <>
-                {mode?.hint} Auto mode is not offered: its classifier makes an extra model call for each action.
-              </>
-            }
-          >
+          <Field id="preset-mode" label="Permissions" hint={<>{mode?.hint} Auto mode is not offered: its classifier makes an extra model call for each action.</>}>
             <Select value={form.permissionMode} onValueChange={(v) => set({ permissionMode: v })}>
               <SelectTrigger id="preset-mode" className="w-full">
                 <SelectValue />
@@ -245,103 +256,90 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
         )}
 
         {claude && (
-          <>
-            <Field
-              id="preset-cache"
-              label="Cache lifetime"
-              hint="1 hour costs more to write but survives long idle gaps (good for a PM or reviewer that waits). Auto uses the Tokens setting."
-            >
-              <Select value={form.cacheTtl} onValueChange={(v) => set({ cacheTtl: v as CacheTtl })}>
-                <SelectTrigger id="preset-cache" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">Auto</SelectItem>
-                  <SelectItem value="5m">5 minutes</SelectItem>
-                  <SelectItem value="1h">1 hour</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field
-              id="preset-cap"
-              label="Context cap (tokens)"
-              hint="Compacts earlier, so each turn reads a smaller context. 0 uses Claude Code's default (about 967k on 1M models); otherwise 100000 to 1000000."
-            >
-              <Input
-                id="preset-cap"
-                type="number"
-                min={0}
-                max={1000000}
-                step={10000}
-                className="tabular-nums"
-                value={form.contextCap}
-                onChange={(e) => set({ contextCap: e.target.value })}
-              />
-            </Field>
-            <Field
-              id="preset-tools"
-              label="Tools"
-              hint="Comma-separated, like Read,Grep,Bash. Fewer tools mean a smaller fixed prefix on every turn. Empty keeps Claude Code's default set."
-            >
-              <Input id="preset-tools" className="font-mono" value={form.tools} onChange={(e) => set({ tools: e.target.value })} />
-            </Field>
-            <Field
-              id="preset-mcp"
-              label="MCP servers"
-              hint="CodeGraph adds its tool list to the prefix (and answers code questions in one call). None leaves it out."
-            >
-              <Select value={form.mcp} onValueChange={(v) => set({ mcp: v as McpMode })}>
-                <SelectTrigger id="preset-mcp" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="codegraph">CodeGraph</SelectItem>
-                  <SelectItem value="none">None</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field id="preset-allow" label="Allowed without asking" hint="One rule per line, like Bash(npm test*) or Edit(docs/**).">
-              <Textarea
-                id="preset-allow"
-                className="min-h-24 font-mono text-xs"
-                spellCheck={false}
-                value={form.allow}
-                onChange={(e) => set({ allow: e.target.value })}
-              />
-            </Field>
-            <Field id="preset-deny" label="Always denied" hint="One rule per line, like Bash(git push*).">
-              <Textarea
-                id="preset-deny"
-                className="min-h-24 font-mono text-xs"
-                spellCheck={false}
-                value={form.deny}
-                onChange={(e) => set({ deny: e.target.value })}
-              />
-            </Field>
-          </>
-        )}
-
-        {!shell && (
-          <div className="flex items-start justify-between gap-4 sm:col-span-2">
-            <div className="space-y-1">
-              <Label htmlFor="preset-clear" className="text-sm">
-                Clear the conversation between jobs
-              </Label>
-              <p className="text-muted-foreground text-xs">
-                When the operator is idle with no job in progress, Operant clears its context so the next job starts small instead of carrying the
-                last one. Turn off for roles that need continuity, like the PM.
-              </p>
+          <details className="group space-y-3 sm:col-span-2">
+            <summary className="cursor-pointer text-sm font-medium select-none">Advanced</summary>
+            <div className="grid gap-4 pt-1 sm:grid-cols-2">
+              <Field id="preset-cache" label="Cache lifetime" hint="1 hour costs more to write but survives long idle gaps. Auto uses the Tokens setting.">
+                <Select value={form.cacheTtl} onValueChange={(v) => set({ cacheTtl: v as CacheTtl })}>
+                  <SelectTrigger id="preset-cache" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="5m">5 minutes</SelectItem>
+                    <SelectItem value="1h">1 hour</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field id="preset-cap" label="Context cap (tokens)" hint="Compacts earlier. 0 uses Claude Code's default; otherwise 100000 to 1000000.">
+                <Input
+                  id="preset-cap"
+                  type="number"
+                  min={0}
+                  max={1000000}
+                  step={10000}
+                  className="tabular-nums"
+                  value={form.contextCap}
+                  onChange={(e) => set({ contextCap: e.target.value })}
+                />
+              </Field>
+              <Field id="preset-tools" label="Tools" hint="Comma-separated, like Read,Grep,Bash. Empty keeps Claude Code's default set.">
+                <Input id="preset-tools" className="font-mono" value={form.tools} onChange={(e) => set({ tools: e.target.value })} />
+              </Field>
+              <Field id="preset-mcp" label="MCP servers" hint="CodeGraph answers code questions in one call. None leaves it out.">
+                <Select value={form.mcp} onValueChange={(v) => set({ mcp: v as McpMode })}>
+                  <SelectTrigger id="preset-mcp" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="codegraph">CodeGraph</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field id="preset-optional" label="Optional servers" hint="Recommended, never required. The preset records the choice; tile launches do not attach MCP servers yet.">
+                <div id="preset-optional" className="space-y-2">
+                  {(optional.data ?? []).filter((e) => isOptional(e.id)).map((e) => (
+                    <div key={e.id} className="space-y-1">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          aria-label={e.name}
+                          className="size-4"
+                          checked={form.optional.includes(e.id)}
+                          onChange={(ev) => set({ optional: ev.target.checked ? [...form.optional, e.id] : form.optional.filter((x) => x !== e.id) })}
+                        />
+                        {e.name}
+                      </label>
+                      {form.optional.includes(e.id) && e.status === 'not-added' && (
+                        <p className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
+                          {e.hint}
+                          <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openSettings('mcp')}>
+                            Open MCP servers
+                          </Button>
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Field>
+              <Field id="preset-allow" label="Allowed without asking" hint="One rule per line, like Bash(npm test*).">
+                <Textarea id="preset-allow" className="min-h-24 font-mono text-xs" spellCheck={false} value={form.allow} onChange={(e) => set({ allow: e.target.value })} />
+              </Field>
+              <Field id="preset-deny" label="Always refused" hint="One rule per line, like Bash(git push*).">
+                <Textarea id="preset-deny" className="min-h-24 font-mono text-xs" spellCheck={false} value={form.deny} onChange={(e) => set({ deny: e.target.value })} />
+              </Field>
             </div>
-            <Switch id="preset-clear" checked={form.clearBetweenJobs} onCheckedChange={(v) => set({ clearBetweenJobs: v })} />
-          </div>
+          </details>
         )}
 
         {!shell && (
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="preset-role" className="text-sm">
-              Role text
+              Instructions
             </Label>
-            <RoleTextEditor value={form.roleText} onChange={(v) => set({ roleText: v })} shipped={shipped} isBuiltin={!!preset?.builtin} />
+            <RoleTextEditor value={form.roleText} onChange={(v) => set({ roleText: v })} />
+            <p className="text-muted-foreground text-xs">Sent to the terminal with every turn.</p>
           </div>
         )}
 
@@ -356,7 +354,7 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={save} disabled={busy}>
+        <Button onClick={() => void run()} disabled={busy}>
           {preset ? 'Save preset' : 'Create preset'}
         </Button>
       </DialogFooter>
@@ -366,23 +364,14 @@ function EditorForm({ preset, defaultModel, shipped, onClose }: Props & { shippe
 
 export function PresetEditor({ open, ...props }: Props & { open: boolean }) {
   const { preset } = props
-  const needsShipped = !!preset?.builtin && preset.roleText == null
-  const shipped = useShippedRole(preset?.builtin ? preset.id : null)
-  const ready = !needsShipped || shipped.data !== undefined
   return (
     <Dialog open={open} onOpenChange={(o) => !o && props.onClose()}>
       <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{preset ? `Edit ${preset.name}` : 'New preset'}</DialogTitle>
-          <DialogDescription>
-            A preset is launch settings plus one role text. A seat uses it to start agents.
-          </DialogDescription>
+          <DialogDescription>A preset is settings plus instructions for a terminal. Applying it starts nothing.</DialogDescription>
         </DialogHeader>
-        {ready ? (
-          <EditorForm key={preset?.id ?? 'new'} {...props} shipped={shipped.data} />
-        ) : (
-          <p className="text-muted-foreground py-8 text-center text-sm">Loading…</p>
-        )}
+        <EditorForm key={preset?.id ?? 'new'} {...props} />
       </DialogContent>
     </Dialog>
   )

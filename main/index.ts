@@ -6,8 +6,7 @@ import { scrubLogLine } from '../core/agents'
 import { CliServer } from '../core/cli-server'
 import { CrewIndexes } from '../core/codegraph'
 import { consoleLog } from '../core/console'
-import type { GatewayFactory } from '../core/discord-gateway'
-import { FileSecretStore } from '../core/discord-secrets'
+import { FileSecretStore } from '../core/secrets'
 import { Operant } from '../core/operant'
 import { appDataDir } from '../core/paths'
 import { SessionManager } from '../core/sessions'
@@ -15,7 +14,9 @@ import { Store } from '../core/store'
 import { DEFAULT_APPEARANCE, windowBackground } from '../shared/themes'
 import { loadEnv } from './env'
 import { isAppUrl, type AppOrigin } from './guard'
+import { attachCloseGuard, type CloseGuard } from './closeGuard'
 import { push, registerIpc } from './ipc'
+import { watchClaudeTurns, type TurnWatch } from './notify'
 import { createUpdater } from './updater'
 import { attachWindowSync } from './windowSync'
 
@@ -30,10 +31,10 @@ app.setPath('userData', appDataDir())
 const background = process.env.OPERANT_BACKGROUND === '1'
 const devUrl = process.env.VITE_DEV_URL
 
-// The operator plugin ships next to the app: in the repo during dev, in resources/ when packaged.
+// The Operant plugin (its memory skill) ships next to the app: in the repo during dev, in resources/ when packaged.
 const pluginDir = app.isPackaged ? join(process.resourcesPath, 'plugin') : join(app.getAppPath(), 'plugin')
 
-// The `operant` wrappers that operators run: resources/cli when packaged, cli/bin in the repo (the wrapper
+// The `operant` wrappers that tiles run: resources/cli when packaged, cli/bin in the repo (the wrapper
 // finds out/cli/operant.cjs from there).
 const cliDir = app.isPackaged ? join(process.resourcesPath, 'cli') : join(app.getAppPath(), 'cli', 'bin')
 
@@ -47,6 +48,20 @@ let store: Store | null = null
 let sessions: SessionManager | null = null
 let operant: Operant | null = null
 let quitting = false
+// The OS is shutting down or logging off: the window closes without a question.
+let ending = false
+let turns: TurnWatch | null = null
+let guard: CloseGuard | null = null
+let installing = (): boolean => false
+
+// A notification was clicked: bring the window forward and show its Claude tile.
+function openFromNotice(scratchId: number, crewId: number): void {
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+  push(win, 'notify:open', { scratchId, crewId })
+}
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -91,11 +106,25 @@ function createWindow(): void {
     screen.on('display-removed', cb)
   })
 
-  win.on('closed', () => (win = null))
+  // Windows is shutting down or logging off: the window closes without a question.
+  win.on('query-session-end', () => {
+    ending = true
+  })
+
+  if (operant && turns) {
+    const core = operant
+    const tw = turns
+    guard = attachCloseGuard(win, { operant: core, turns: tw, skip: () => quitting || ending || installing() })
+  }
+
+  win.on('closed', () => {
+    guard = null
+    win = null
+  })
 }
 
 app.whenReady().then(() => {
-  store = new Store(join(app.getPath('userData'), 'operant.db'))
+  store = new Store(join(app.getPath('userData'), 'operant.db'), undefined, join(app.getPath('userData'), 'backups'))
   const playground = store.ensurePlayground(join(app.getPath('userData'), 'Playground'))
   mkdirSync(playground.folder, { recursive: true })
   consoleLog.setScrubber(scrubLogLine)
@@ -108,6 +137,9 @@ app.whenReady().then(() => {
     sessions,
     indexes,
     pluginDir,
+    // The native Claude mods (plugin/mods/<id>), dev and packaged alike.
+    modPluginsDir: join(pluginDir, 'mods'),
+    backupDir: join(app.getPath('userData'), 'backups'),
     launch: {
       launchDir: join(app.getPath('userData'), 'launch'),
       rolesDir: join(app.getPath('userData'), 'roles'),
@@ -115,12 +147,13 @@ app.whenReady().then(() => {
       // The wrapper runs the CLI with the app binary as Node (ELECTRON_RUN_AS_NODE is set by the wrapper only).
       operantNode: process.execPath,
     },
-    cliServer: (collab) => new CliServer({ collab }),
-    // A bot added without a token re-checks .env once, through the same loader.
-    reloadEnv: () => {
-      loadEnv({ dir: envDir, log: (line) => console.log(line) })
-      return process.env
+    // Claude Code tiles get Operant's hooks and status line from this script (run as Node by the app binary).
+    claudeMods: {
+      node: process.execPath,
+      script: app.isPackaged ? join(process.resourcesPath, 'claude-mods', 'op-event.mjs') : join(app.getAppPath(), 'scripts', 'op-event.mjs'),
+      eventsDir: join(app.getPath('userData'), 'events'),
     },
+    cliServer: (target) => new CliServer({ target }),
     // Where usage exports are saved and import files are picked.
     fileDialogs: {
       save: async (defaultPath, filter) => {
@@ -134,28 +167,30 @@ app.whenReady().then(() => {
         return res.canceled ? null : (res.filePaths[0] ?? null)
       },
     },
-    // Bot tokens: encrypted with the OS keychain (DPAPI on Windows), one file each, outside the database.
-    discord: {
-      secrets: new FileSecretStore(join(app.getPath('userData'), 'secrets'), {
-        isAvailable: () => safeStorage.isEncryptionAvailable(),
-        encrypt: (plain) => safeStorage.encryptString(plain),
-        decrypt: (blob) => safeStorage.decryptString(blob),
-      }),
-      // The e2e runs swap in a fake gateway so no test touches the network (unpackaged runs only).
-      ...(process.env.OPERANT_E2E_DISCORD_GATEWAY && !app.isPackaged
-        ? { gateway: require(process.env.OPERANT_E2E_DISCORD_GATEWAY).createGateway as GatewayFactory }
-        : {}),
-    },
+    // API keys: encrypted with the OS keychain (DPAPI on Windows), one file each, outside the database.
+    secrets: new FileSecretStore(join(app.getPath('userData'), 'secrets'), {
+      isAvailable: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (plain) => safeStorage.encryptString(plain),
+      decrypt: (blob) => safeStorage.decryptString(blob),
+    }),
   })
   operant = core
+  turns = watchClaudeTurns(core, {
+    isWindowFocused: () => !!win && !win.isDestroyed() && win.isFocused(),
+    open: openFromNotice,
+  })
   core.seedFromEnv(process.env)
-  core.resetStaleOperators()
   void core.start()
   // First plan-limit and provider reading now; the core asks again when each is due.
   void core.providers.refresh().catch(() => undefined)
-  const updater = createUpdater({ send: (s) => push(win, 'update', s), getSettings: () => core.currentSettings })
+  const updater = createUpdater({ send: (s) => push(win, 'update', s), getSettings: () => core.currentSettings, beforeInstall: (v) => core.snapshotBeforeUpdate(v) })
   core.on('settings', () => updater.reschedule())
-  registerIpc(core, updater, () => win, appOrigin)
+  installing = () => updater.status.state === 'installing'
+  registerIpc(core, updater, () => win, appOrigin, {
+    answerClose: (action) => guard?.answer(action),
+    turnBusy: (scratchId) => turns?.busy(scratchId) ?? false,
+    setVisible: (scratchId) => turns?.setVisible(scratchId),
+  })
   updater.start()
   createWindow()
 

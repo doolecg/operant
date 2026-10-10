@@ -1,22 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Activity, AlertTriangle, PanelLeft, PanelRight, Plus, Settings, SquareTerminal, Terminal } from 'lucide-react'
+import { Bot, PanelLeft, Plus, Settings, Terminal } from 'lucide-react'
 import { ConsoleDrawer } from '@/components/console/ConsoleDrawer'
 import { useConsole } from '@/components/console/useConsole'
 import { DeleteCrewDialog, EditCrewDialog, NewCrewDialog } from '@/components/dashboard/Dialogs'
 import { GitChangesDialog } from '@/components/dashboard/GitChangesDialog'
-import { requestGitTab } from '@/components/git/openGit'
-import { onOpenRunRequest, takeOpenRunRequest } from '@/components/jobs/openRuns'
-import { requestUsageTab } from '@/components/cost/openUsage'
+import { GitDialog } from '@/components/git/GitDialog'
 import { projectActions } from '@/components/dashboard/projectActions'
 import { TerminalDrawer } from '@/components/terminal/TerminalDrawer'
 import { useTerminals } from '@/components/terminal/useTerminals'
 import { Toaster } from '@/components/ui/toaster'
-import { SeatEditor } from '@/components/seats/SeatEditor'
-import { NewTaskDialog } from '@/components/jobs/NewTaskDialog'
 import { Sidebar } from '@/components/dashboard/Sidebar'
-import { TaskModal } from '@/components/jobs/TaskModal'
-import { WorkspaceBoard } from '@/components/workspace/WorkspaceBoard'
-import { useInbox, useInboxToasts } from '@/components/workspace/useInboxSeen'
 import { TerminalView } from '@/components/terminal/TerminalView'
 import { LearningBadge } from '@/components/memory/LearningBadge'
 import { MemoryPage } from '@/components/memory/MemoryPage'
@@ -25,22 +18,25 @@ import { SettingsPage } from '@/components/settings/SettingsPage'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { StatusPill } from '@/components/topbar/StatusPill'
+import { iconBtn } from '@/components/topbar/pill'
 import { ClockPill } from '@/components/topbar/ClockPill'
 import { GitChip } from '@/components/topbar/GitChip'
 import { MediaBar } from '@/components/topbar/MediaBar'
 import { ProjectBlock } from '@/components/topbar/ProjectBlock'
 import { ViewSwitcher, type Mode } from '@/components/topbar/ViewSwitcher'
-import { iconBtn } from '@/components/topbar/pill'
+import { CliSelect } from '@/components/topbar/CliSelect'
+import { ActivityMenu } from '@/components/topbar/ActivityMenu'
+import { UsageDialog } from '@/components/cost/UsageDialog'
 import { useBarTier } from '@/components/topbar/useBarTier'
 import { mediaCommand } from '@/components/topbar/useMedia'
 import { matches } from '@/lib/keys'
-import { bridge } from '@/lib/bridge'
-import { toast } from '@/lib/toast'
-import { decodeIpcError } from '@shared/ipc'
 import { effectiveScale, stepScale, useUiScale } from '@/lib/uiScale'
-import { useAction, useCrews, useIndexStatus, useLiveUpdates, useMcpHealth, useMoveToGroup, useSaveSettings, useSettings } from '@/lib/queries'
+import { useAction, useCrews, useIndexStatus, useLiveUpdates, useMoveToGroup, useSaveSettings, useSettings } from '@/lib/queries'
+import { bridge } from '@/lib/bridge'
+import { CloseAppDialog } from '@/components/terminal/CloseAppDialog'
+import { useCloseTile } from '@/components/terminal/useCloseTile'
 import type { Crew } from '@shared/types'
+import type { MainCli } from '@shared/settings'
 
 const LAST_CREW = 'operant.lastCrew'
 const MODE = 'operant.mode'
@@ -50,9 +46,9 @@ const Divider = () => <span aria-hidden className="bg-border h-5 w-px shrink-0" 
 function readMode(): Mode {
   try {
     const v = localStorage.getItem(MODE)
-    return v === 'seats' || v === 'memory' || v === 'terminal' ? v : 'workspace'
+    return v === 'memory' ? v : 'terminal'
   } catch {
-    return 'workspace'
+    return 'terminal'
   }
 }
 
@@ -74,18 +70,17 @@ export function App() {
   const [mode, setModeState] = useState<Mode>(readMode)
   const [page, setPage] = useState<'dashboard' | 'settings'>('dashboard')
   const [settingsSection, setSettingsSection] = useState<string | undefined>()
-  const mcpDown = useMcpHealth().data ?? []
   const [consoleOpen, setConsoleOpen] = useState(false)
   const bgConsole = useConsole(consoleOpen)
-  const [openRunId, setOpenRunId] = useState<number | null>(() => takeOpenRunRequest())
   // The project a new project is added to (from a group's "+"), the project a delete or changes dialog is about.
   const [newCrewGroup, setNewCrewGroup] = useState<number | undefined>()
   const [deleteTarget, setDeleteTarget] = useState<Crew | null>(null)
   const [changesTarget, setChangesTarget] = useState<Crew | null>(null)
   const moveToGroup = useMoveToGroup()
   const [barRef, tier] = useBarTier()
-  const [statusOpen, setStatusOpen] = useState(false)
-  const [taskOpen, setTaskOpen] = useState(false)
+  const [cliOpen, setCliOpen] = useState(false)
+  const [usageOpen, setUsageOpen] = useState(false)
+  const [gitOpen, setGitOpen] = useState(false)
   // The Welcome screen shows while there is no project, until the Playground has been opened.
   const [playgroundSeen, setPlaygroundSeen] = useState(false)
 
@@ -97,9 +92,6 @@ export function App() {
       /* storage unavailable */
     }
   }
-
-  // Any view can ask for a job's task modal (cards, inbox, toasts, notifications).
-  useEffect(() => onOpenRunRequest((id) => (setPage('dashboard'), setOpenRunId(id))), [])
 
   // Fall back to the first crew when the remembered one is gone.
   useEffect(() => {
@@ -121,52 +113,60 @@ export function App() {
   const settings = useSettings()
   const saveSettings = useSaveSettings()
   useUiScale(settings.data?.uiScale)
-  const terminals = useTerminals(crews.data, settings.data?.defaultModels.claude ?? 'sonnet')
+  const terminals = useTerminals(crews.data, settings.data?.defaultModels.claude ?? 'sonnet', settings.data?.mainCli ?? 'claude', settings.data?.defaultEfforts.claude ?? '')
 
   const crew = crews.data?.find((c) => c.id === crewId)
   const layout = settings.data?.layout
   const sidebarHidden = layout?.sidebarHidden ?? false
-  const panelHidden = layout?.panelHidden ?? false
-  const inboxHidden = layout?.inboxHidden ?? false
   const setLayout = (patch: Partial<NonNullable<typeof layout>>) => saveSettings.mutate({ layout: patch })
-  // The side panel toggle acts on the pane of the open view: the Terminal side panel, or the Workspace inbox.
-  const sidePaneHidden = mode === 'terminal' ? panelHidden : inboxHidden
-  const toggleSidePane = () => {
-    if (mode === 'terminal') setLayout({ panelHidden: !panelHidden })
-    else if (mode === 'workspace') setLayout({ inboxHidden: !inboxHidden })
-  }
-  const toggleAllPanes = () => {
-    const allHidden = sidebarHidden && panelHidden && inboxHidden
-    setLayout({ sidebarHidden: !allHidden, panelHidden: !allHidden, inboxHidden: !allHidden })
-  }
-  const inbox = useInbox(crewId)
-  useInboxToasts(crewId, page === 'dashboard' && mode === 'workspace')
   const projectScratch = terminals.tabs.filter((t) => t.crewId === crewId)
+  const closeTile = useCloseTile(terminals.tabs, settings.data?.confirm.closeTile ?? true, terminals.closeTab)
+  // A Windows notification was clicked: show that Claude tile.
+  useEffect(
+    () =>
+      bridge().on('notify:open', ({ scratchId, crewId: target }) => {
+        setCrewId(target)
+        setPage('dashboard')
+        setMode('terminal')
+        terminals.setActive(scratchId)
+      }),
+    [],
+  )
   const terminalShown = page === 'dashboard' && mode === 'terminal' && crewId != null
   const tb = settings.data?.topBar
 
-  // The status pill and the git branch chip sit in the bar, or in one menu once the bar is too narrow for them.
-  const chips = (labels: boolean) => (
-    <>
-      <StatusPill crewId={crewId} jobs={!!tb?.agentPill} labels={labels} onNeedsYou={() => (setPage('dashboard'), setMode('workspace'))} />
-      <GitChip crewId={crewId} onOpen={() => crew && setChangesTarget(crew)} />
-    </>
+  // Once the bar is narrow, the terminal CLI pick moves into a menu next to the view switcher.
+  const cliMenu = (
+    <DropdownMenu open={cliOpen} onOpenChange={setCliOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className={iconBtn} aria-label="Terminal CLI">
+              <Bot />
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Terminal CLI</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="start" aria-label="Terminal CLI" className="w-auto p-2">
+        <div className="flex flex-col items-start gap-1.5" onClick={() => setCliOpen(false)}>
+          <CliSelect />
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 
   const openSettingsAt = (section?: string) => (setSettingsSection(section), setPage('settings'))
   const projectMenu = {
-    newAgent: (c: Crew) => void terminals.openTab(c, 'agent'),
+    newCli: (c: Crew, cli: MainCli) => void terminals.openTab(c, cli),
     newShell: (c: Crew) => void terminals.openTab(c, 'shell'),
     openIde: (c: Crew) => void projectActions.openIde(c),
     openFolder: (c: Crew) => void projectActions.openFolder(c),
     index: (c: Crew) => void projectActions.index(c),
     changes: (c: Crew) => setChangesTarget(c),
     copyPath: (c: Crew) => void projectActions.copyPath(c),
-    trackerNow: (c: Crew) => void projectActions.trackerNow(c),
     defaults: () => openSettingsAt('projects'),
     remove: (c: Crew) => setDeleteTarget(c),
-    openMaster: (c: Crew) => (setCrewId(c.id), setPage('dashboard'), setMode('terminal')),
-    // Selects the Playground and starts its Master Terminal when it is stopped.
     openPlayground: () => {
       const pg = crews.data?.find((c) => c.kind === 'playground')
       if (!pg) return
@@ -174,14 +174,6 @@ export function App() {
       setPlaygroundSeen(true)
       setPage('dashboard')
       setMode('terminal')
-      void (async () => {
-        try {
-          const m = await bridge().invoke('master:get', pg.id)
-          if (!m || m.status === 'stopped' || m.status === 'error') await bridge().invoke('master:start', pg.id)
-        } catch (e) {
-          toast(decodeIpcError(e).message, true)
-        }
-      })()
     },
   }
 
@@ -200,8 +192,7 @@ export function App() {
         [binds.toggleConsole, () => setConsoleOpen((v) => !v)],
         [binds.newShell, () => crew && (dash(), void terminals.openTab(crew, 'shell'))],
         [binds.toggleSidebar, () => setLayout({ sidebarHidden: !sidebarHidden })],
-        [binds.toggleSidePanel, toggleSidePane],
-        [binds.toggleAllPanels, toggleAllPanes],
+        [binds.toggleAllPanels, () => setLayout({ sidebarHidden: !sidebarHidden })],
         [binds.openInIde, () => crew && void projectActions.openIde(crew)],
         [binds.openPlayground, () => projectMenu.openPlayground()],
         [binds.mediaPlayPause, () => mediaCommand('toggle')],
@@ -219,7 +210,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [settings.data?.keybinds, settings.data?.uiScale, saveSettings, crewId, runIndex, crew, terminals.openTab, crews.data, sidebarHidden, panelHidden, inboxHidden, mode])
+  }, [settings.data?.keybinds, settings.data?.uiScale, saveSettings, crewId, runIndex, crew, terminals.openTab, crews.data, sidebarHidden, mode])
 
   return (
     <TooltipProvider>
@@ -242,38 +233,21 @@ export function App() {
                 onIndex={() => runIndex.mutate([crew.id])}
                 onIde={() => projectMenu.openIde(crew)}
                 onShell={() => projectMenu.newShell(crew)}
+                onAgent={() => projectMenu.newCli(crew, settings.data?.mainCli ?? 'claude')}
                 onEdit={() => setCrewDialog('edit')}
                 onDelete={() => setCrewDialog('delete')}
               />
             </>
           )}
           <Divider />
-          <ViewSwitcher mode={mode} onMode={(m) => (setPage('dashboard'), setMode(m))} menu={tier >= 7} badges={{ workspace: settings.data?.notifications.inbox === false ? 0 : inbox.count }} />
+          <ViewSwitcher mode={mode} onMode={(m) => (setPage('dashboard'), setMode(m))} menu={tier >= 7} />
+          {mode === 'terminal' && tier < 7 && <CliSelect />}
+          {mode === 'terminal' && tier >= 7 && cliMenu}
           {tb?.mediaControls && tier < 5 && <MediaBar enabled size={tb.mediaSize} tier={tier} />}
         </div>
         <div className="flex shrink-0 justify-center">{tb && tier < 6 && <ClockPill format={tb.clockFormat} seconds={tb.clockSeconds} date={tb.clockDate && tier < 2} />}</div>
         <div className="flex items-center justify-end gap-1.5">
-          {tier < 7 ? (
-            chips(tier < 4)
-          ) : (
-            <DropdownMenu open={statusOpen} onOpenChange={setStatusOpen}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <button type="button" className={iconBtn} aria-label="Status and branch">
-                      <Activity />
-                    </button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent>Status and branch</TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent align="end" aria-label="Status and branch" className="w-auto p-2">
-                <div className="flex flex-col items-start gap-1.5" onClick={() => setStatusOpen(false)}>
-                  {chips(true)}
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          <ActivityMenu crewId={crewId} />
           <Tooltip>
             <TooltipTrigger asChild>
               <button type="button" className={iconBtn} aria-label={sidebarHidden ? 'Show project list' : 'Hide project list'} aria-pressed={!sidebarHidden} onClick={() => setLayout({ sidebarHidden: !sidebarHidden })}>
@@ -281,36 +255,6 @@ export function App() {
               </button>
             </TooltipTrigger>
             <TooltipContent>{sidebarHidden ? 'Show project list' : 'Hide project list'} (Alt+B)</TooltipContent>
-          </Tooltip>
-          {page === 'dashboard' && (mode === 'terminal' || mode === 'workspace') && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className={iconBtn}
-                  aria-label={sidePaneHidden ? (mode === 'terminal' ? 'Show side panel' : 'Show inbox') : mode === 'terminal' ? 'Hide side panel' : 'Hide inbox'}
-                  aria-pressed={!sidePaneHidden}
-                  onClick={toggleSidePane}
-                >
-                  <PanelRight />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{sidePaneHidden ? 'Show' : 'Hide'} {mode === 'terminal' ? 'side panel' : 'inbox'} (Alt+Shift+B)</TooltipContent>
-            </Tooltip>
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className={iconBtn}
-                aria-label="Start new task"
-                disabled={crewId == null}
-                onClick={() => (setPage('dashboard'), setTaskOpen(true))}
-              >
-                <Plus />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>Start new task</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -330,40 +274,16 @@ export function App() {
             onSelect={(id) => (setCrewId(id), setPage('dashboard'), crews.data?.find((c) => c.id === id)?.kind === 'playground' && setPlaygroundSeen(true))}
             onNewCrew={(groupId) => (setNewCrewGroup(groupId), setNewCrew(true))}
             actions={projectMenu}
-            onHide={() => setLayout({ sidebarHidden: true })}
             footer={
               <>
-                <ProviderLimitBadge onOpen={() => (setPage('dashboard'), setMode('terminal'))} />
-                <LearningBadge onOpen={() => setMode('memory')} />
-                {mcpDown.length > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive gap-1 px-2"
-                        aria-label={`MCP servers down: ${mcpDown.map((d) => d.server).join(', ')}`}
-                        onClick={() => openSettingsAt('mcp')}
-                      >
-                        <AlertTriangle className="size-4" />
-                        <span className="text-xs">{mcpDown.length}</span>
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {mcpDown.map((d) => `${d.server} (${d.state === 'missing' ? 'not configured' : d.state}) for ${d.seats.join(', ')}`).join('; ')}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {terminals.tabs.length > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label="Terminals" aria-pressed={terminals.open} onClick={() => terminals.setOpen(!terminals.open)}>
-                        <SquareTerminal />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Terminals</TooltipContent>
-                  </Tooltip>
-                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="Settings" aria-pressed={page === 'settings'} onClick={() => openSettingsAt()}>
+                      <Settings />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Settings (Ctrl+,)</TooltipContent>
+                </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -382,16 +302,11 @@ export function App() {
                       )}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Console</TooltipContent>
+                  <TooltipContent>Console (Ctrl+J)</TooltipContent>
                 </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" aria-label="Settings" aria-pressed={page === 'settings'} onClick={() => openSettingsAt()}>
-                      <Settings />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Settings (Ctrl+,)</TooltipContent>
-                </Tooltip>
+                <LearningBadge onOpen={() => setMode('memory')} />
+                <ProviderLimitBadge onOpen={() => (setPage('dashboard'), setMode('terminal'), setUsageOpen(true))} />
+                <GitChip crewId={crewId} compact onOpen={() => setGitOpen(true)} />
               </>
             }
           />
@@ -399,24 +314,26 @@ export function App() {
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {page === 'settings' ? (
-            <SettingsPage initialSection={settingsSection} onClose={() => setPage('dashboard')} />
+            <div className="bg-card min-h-0 flex-1 m-1.5 overflow-hidden rounded-2xl border shadow-xs dark:shadow-none"><SettingsPage initialSection={settingsSection} onClose={() => setPage('dashboard')} /></div>
           ) : crews.data && !playgroundSeen && crews.data.every((c) => c.kind === 'playground') ? (
-            <Welcome onNewCrew={() => setNewCrew(true)} />
+            <div className="bg-card min-h-0 flex-1 m-1.5 overflow-hidden rounded-2xl border shadow-xs dark:shadow-none"><Welcome onNewCrew={() => setNewCrew(true)} /></div>
           ) : (
             <>
-              {mode === 'workspace' ? (
-                <div className="min-h-0 flex-1">{crewId != null && <WorkspaceBoard crewId={crewId} onNewTask={() => setTaskOpen(true)} />}</div>
-              ) : mode === 'terminal' ? (
+              {mode === 'terminal' ? (
                 <div className="min-h-0 flex-1">
-                  {crewId != null && <TerminalView crewId={crewId} scratch={projectScratch} onCloseScratch={terminals.closeTab} />}
-                </div>
-              ) : mode === 'memory' ? (
-                <div className="min-h-0 flex-1">
-                  <MemoryPage crewId={crewId} />
+                  {crewId != null && (
+                    <TerminalView
+                      crewId={crewId}
+                      scratch={projectScratch}
+                      active={terminals.active}
+                      onCloseScratch={closeTile.request}
+                      onStart={(kind) => crew && void terminals.openTab(crew, kind)}
+                    />
+                  )}
                 </div>
               ) : (
-                <div className="min-h-0 flex-1">
-                  <SeatEditor />
+                <div className="bg-card min-h-0 flex-1 m-1.5 rounded-2xl border shadow-xs dark:shadow-none overflow-hidden">
+                  <MemoryPage crewId={crewId} />
                 </div>
               )}
             </>
@@ -426,8 +343,9 @@ export function App() {
               tabs={terminals.tabs}
               active={terminals.active}
               onSelect={terminals.setActive}
-              onClose={terminals.closeTab}
+              onClose={closeTile.request}
               onNewShell={() => crew && void terminals.openTab(crew, 'shell')}
+              onNewAgent={() => crew && void terminals.openTab(crew, settings.data?.mainCli ?? 'claude')}
               onHide={() => terminals.setOpen(false)}
               hideCrewId={terminalShown ? crewId : null}
             />
@@ -445,13 +363,6 @@ export function App() {
       </div>
       </div>
 
-      <TaskModal
-        runId={openRunId}
-        onClose={() => setOpenRunId(null)}
-        onOpenMaster={() => (setOpenRunId(null), setPage('dashboard'), setMode('terminal'))}
-        onOpenUsage={(id) => (setOpenRunId(null), setPage('dashboard'), setMode('terminal'), requestUsageTab(id))}
-      />
-      {crewId != null && <NewTaskDialog crewId={crewId} open={taskOpen} onOpenChange={setTaskOpen} />}
       <NewCrewDialog
         open={newCrew}
         onOpenChange={(o) => (setNewCrew(o), !o && setNewCrewGroup(undefined))}
@@ -468,8 +379,7 @@ export function App() {
           crewName={crew.name}
           open
           onOpenChange={(o) => !o && setCrewDialog(null)}
-          playground={crew.kind === 'playground'}
-          onDeleted={() => crew.kind !== 'playground' && terminals.dropCrew(crew.id)}
+          onDeleted={() => terminals.dropCrew(crew.id)}
         />
       )}
       {deleteTarget && (
@@ -478,17 +388,20 @@ export function App() {
           crewName={deleteTarget.name}
           open
           onOpenChange={(o) => !o && setDeleteTarget(null)}
-          playground={deleteTarget.kind === 'playground'}
-          onDeleted={() => deleteTarget.kind !== 'playground' && terminals.dropCrew(deleteTarget.id)}
+          onDeleted={() => terminals.dropCrew(deleteTarget.id)}
         />
       )}
       {changesTarget && (
         <GitChangesDialog
           crew={changesTarget}
           onClose={() => setChangesTarget(null)}
-          onOpenPage={(c) => (setCrewId(c.id), setPage('dashboard'), setMode('terminal'), requestGitTab())}
+          onOpenPage={(c) => (setCrewId(c.id), setPage('dashboard'), setMode('terminal'), setGitOpen(true))}
         />
       )}
+      {crewId != null && <UsageDialog crewId={crewId} open={usageOpen} onOpenChange={setUsageOpen} />}
+      {crewId != null && <GitDialog crewId={crewId} open={gitOpen} onOpenChange={setGitOpen} />}
+      {closeTile.dialog}
+      <CloseAppDialog />
       <Toaster />
     </TooltipProvider>
   )
@@ -496,18 +409,17 @@ export function App() {
 
 function Welcome({ onNewCrew }: { onNewCrew: () => void }) {
   return (
-    <div className="grid flex-1 place-items-center p-10">
+    <div className="grid h-full place-items-center p-10">
       <div className="max-w-md space-y-4 text-center">
         <div aria-hidden className="text-[#d97757] text-5xl leading-none">
           ◈
         </div>
         <h1 className="text-2xl font-semibold">Welcome to Operant 3</h1>
         <p className="text-muted-foreground text-sm">
-          Add a project folder, hand it jobs, and let a Master Terminal run your seats and teams of coding agents
-          while you watch from here.
+          Add a project folder, open shells and coding agents in it, and keep its lessons, usage and git changes in one place.
         </p>
         <Button onClick={onNewCrew}>
-          <Plus /> Create your first crew
+          <Plus /> Add your first project
         </Button>
       </div>
     </div>

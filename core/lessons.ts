@@ -40,35 +40,6 @@ export const DUPLICATE_AT = 0.7
 export const isDuplicate = (a: Pick<Lesson, 'text' | 'files' | 'symbols'>, b: Pick<Lesson, 'text' | 'files' | 'symbols'>): boolean =>
   similarity(a.text, b.text) >= DUPLICATE_AT && sameTargets(a, b)
 
-const base = (p: string) => p.replace(/\\/g, '/').split('/').pop()!.toLowerCase()
-
-// Active lessons that bear on a task: they name one of its symbols or files, or share at least two of its words.
-export function matchLessons(lessons: Lesson[], task: string, symbols: string[], limit = 8): Lesson[] {
-  const syms = new Set(lower(symbols))
-  const taskWords = words(task)
-  return lessons
-    .filter((l) => l.status === 'active')
-    .map((l) => {
-      const shared = [...words(l.text)].filter((w) => taskWords.has(w)).length
-      const named = l.symbols.filter((s) => syms.has(s.toLowerCase())).length + l.files.filter((f) => syms.has(f.toLowerCase()) || syms.has(base(f))).length
-      return { l, score: named * 3 + shared, strong: named > 0 || shared >= 2 }
-    })
-    .filter((s) => s.strong)
-    .sort((a, b) => b.score - a.score || b.l.hits - a.l.hits || b.l.id - a.l.id)
-    .slice(0, limit)
-    .map((s) => s.l)
-}
-
-export function lessonLine(l: Lesson): string {
-  const where = [...l.files.slice(0, 3), ...l.symbols.slice(0, 3)]
-  const jobs = l.sourceJobs.length ? ` (from ${l.sourceJobs.map((j) => `JOB#${j}`).join(', ')})` : ''
-  return `- [${l.kind}] ${l.text}${where.length ? ` [${where.join(', ')}]` : ''}${jobs}`
-}
-
-export function lessonsSection(lessons: Lesson[]): string {
-  return `Lessons from past jobs (CodeGraph notes tagged to these files and symbols; check them against the code):\n${lessons.map(lessonLine).join('\n')}`
-}
-
 export const slug = (text: string, max = 40): string =>
   normalize(text)
     .replace(/[^a-z0-9]+/g, '-')

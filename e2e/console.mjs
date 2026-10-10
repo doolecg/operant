@@ -48,8 +48,8 @@ try {
   assert.ok(lines.some((l) => l.source === 'mcp' && l.stream === 'stdout'), 'a fake process output line')
   assert.ok(!JSON.stringify(lines).includes(SECRET), 'no secret reaches the console')
 
-  // The header icon opens it; the keybind toggles it.
-  await page.getByRole('button', { name: /^Console/ }).click()
+  // The keybind opens it; the sidebar footer's Console button does the same.
+  await page.keyboard.press('Control+j')
   const drawer = page.getByTestId('console-drawer')
   await drawer.waitFor()
   await drawer.getByText(/\[mcp\]/).first().waitFor()

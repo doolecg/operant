@@ -40,7 +40,16 @@ interface Ready {
 
 const HEADERS = { 'User-Agent': 'operant2', Accept: 'application/vnd.github+json' }
 
-export function createUpdater({ send, getSettings }: { send: (s: UpdateStatus) => void; getSettings: () => Settings }) {
+export function createUpdater({
+  send,
+  getSettings,
+  beforeInstall,
+}: {
+  send: (s: UpdateStatus) => void
+  getSettings: () => Settings
+  // Runs before an install starts (the app takes a backup snapshot here). A failure is logged and never blocks the update.
+  beforeInstall?: (version: string) => unknown
+}) {
   const currentVersion = app.getVersion()
   const enabled = app.isPackaged || process.env.OPERANT_UPDATE_TEST === '1'
   let ready: Ready | null = null
@@ -212,6 +221,11 @@ export function createUpdater({ send, getSettings }: { send: (s: UpdateStatus) =
 
   function install(relaunch: boolean): boolean {
     if (!ready || installing) return false
+    try {
+      beforeInstall?.(ready.version)
+    } catch (err) {
+      console.error('Pre-update backup failed; installing anyway', err)
+    }
     if (!startWorker(ready, relaunch)) return false
     installing = true
     report({ state: 'installing', version: ready.version })

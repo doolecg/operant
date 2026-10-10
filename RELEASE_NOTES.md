@@ -1,3 +1,33 @@
+# Operant 3.0.3
+
+Operant no longer runs jobs for you. It is now a home for your coding terminals, with Claude Code and OpenCode side by side, memory that is kept per project, and backups.
+
+**Install:** download the file for your system from the assets below (same files as 3.0.2, with the new version in the name). Operant 3 keeps itself up to date from these releases.
+
+## New
+- **Terminals for Claude Code and OpenCode.** Each project opens its agent terminals as tiles. Operant checks which CLI is installed and what it can do, and each tile shows its model and how full its context is.
+- **Claude Mods.** A Claude Code tile shows an info bar under its title, and a Subagent Panel lists the sub-agents it starts, running or completed.
+- **Soul Bank and project memory.** Keep reusable guidance in the Soul Bank and see what each project remembers, with controls to edit, export and reset it.
+- **Learning with modes and rollback.** Learning from a finished session has four modes: Off, Suggest, Controlled and Advanced. Every change it makes can be rolled back, and a Run now button learns from the Claude session you are looking at.
+- **Budgets for helper models.** Set limits on the calls and tokens that Learning and the other helper models may use, with a daily dollar cap.
+- **Backups and restore.** Make a backup of your data at any time, and restore one from the Settings page.
+- **Built-in presets.** Start a terminal from a ready-made preset, or save your own.
+- **Superpowers detection.** Operant shows whether the Superpowers plugin is installed for Claude Code.
+- **Settings reset.** Put every setting back to its default in one step.
+
+---
+
+## Changed
+- **No more Tasks, Master, Discord or operators.** Operant no longer orchestrates work. The Tasks board, the Master Terminal, the Discord bridge, jobs, seats and the operator views are gone, and their saved data is no longer shown.
+- Learning talks about sessions instead of jobs.
+
+---
+
+## Fixed
+- Learning notes say "session" instead of pointing at job numbers, which no longer exist.
+
+---
+
 # Operant 3.0.2
 
 OpenCode now starts properly as the Master Terminal, finished sessions teach the project's memory on their own, and jobs read much better.

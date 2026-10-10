@@ -122,7 +122,7 @@ describe('openInIde', () => {
 describe('gitChanges', () => {
   const root = mkdtempSync(join(tmpdir(), 'operant-git-'))
   afterAll(() => rmSync(root, { recursive: true, force: true }))
-  const git = (cwd: string, ...args: string[]) => runHidden('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd })
+  const git = (cwd: string, ...args: string[]) => runHidden('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd })
 
   it('says so for a folder that is not a repository', async () => {
     const plain = join(root, 'plain')

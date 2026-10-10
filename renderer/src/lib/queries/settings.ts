@@ -13,7 +13,6 @@ export function useSaveSettings() {
     mutationFn: (patch: SettingsPatch) => call('settings:set', patch),
     onSuccess: (s) => {
       qc.setQueryData(keys.settings, s)
-      void qc.invalidateQueries({ queryKey: keys.summary })
     },
   })
 }
@@ -22,10 +21,9 @@ export function useSaveSettings() {
 export function useResetSettings() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (section: keyof Settings) => call('settings:reset', section),
+    mutationFn: (section?: keyof Settings) => call('settings:reset', section),
     onSuccess: (s) => {
       qc.setQueryData(keys.settings, s)
-      void qc.invalidateQueries({ queryKey: keys.summary })
     },
   })
 }

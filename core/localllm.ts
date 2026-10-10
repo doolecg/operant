@@ -1,7 +1,7 @@
 import { scrubLogLine } from './agents'
 
 // A client for a local (or LAN) model server that speaks the OpenAI chat API: LM Studio, llama.cpp's server, vLLM, or
-// Ollama's /v1 layer. Shared by the learn step and the Discord front desk.
+// Ollama's /v1 layer. Shared by the learn step.
 
 export const LOCAL_LLM_DEFAULT_URL = 'http://127.0.0.1:1234'
 export const LOCAL_LLM_TIMEOUT_MS = 120_000

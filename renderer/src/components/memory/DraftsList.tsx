@@ -88,10 +88,10 @@ function DraftRow({ draft, crewName, onEdit, onDelete }: { draft: SkillDraft; cr
         <span className="font-mono text-sm">{draft.name}</span>
         <Badge variant={pending ? 'secondary' : 'outline'}>{draft.status}</Badge>
         <span className="text-muted-foreground text-xs">
-          {crewName} · {draft.sourceJobs.map((j) => `JOB#${j}`).join(', ') || 'no job'} · {timeAgo(draft.updatedAt)}
+          {crewName} · {draft.sourceJobs.length > 0 ? `${draft.sourceJobs.length} source${draft.sourceJobs.length === 1 ? '' : 's'} · ` : ''}{timeAgo(draft.updatedAt)}
         </span>
       </div>
-      <pre className="bg-muted/40 max-h-40 overflow-auto rounded p-2 font-mono text-[11px] whitespace-pre-wrap">{draft.body}</pre>
+      <pre className="bg-muted/40 max-h-40 overflow-auto rounded-md p-2 font-mono text-[11px] whitespace-pre-wrap">{draft.body}</pre>
       {draft.installedPath && <p className="text-muted-foreground font-mono text-[11px]">Installed at {draft.installedPath}</p>}
       <div className="flex flex-wrap items-center justify-end gap-1.5">
         {pending && (
@@ -128,7 +128,7 @@ export function DraftsList({ crewId, crews }: { crewId?: number; crews: Crew[] }
       </p>
       <ErrorLine error={drafts.error} />
       {list.length === 0 && !drafts.isPending ? (
-        <Empty>No skill drafts yet. One appears when a procedure repeats across jobs.</Empty>
+        <Empty>No skill drafts yet. One appears when a procedure repeats across sessions.</Empty>
       ) : (
         <ul className="space-y-2" aria-label="Skill drafts">
           {list.map((d) => (

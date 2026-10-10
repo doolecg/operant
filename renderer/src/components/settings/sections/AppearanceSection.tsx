@@ -43,7 +43,7 @@ function ColorField({ k, value, onChange, onClear, overridden }: { k: ColorKey; 
   useEffect(() => setText(value), [value])
   return (
     <div className="flex items-center gap-2 py-1.5">
-      <input type="color" aria-label={COLOR_LABELS[k]} data-testid={`custom-color-${k}`} value={value} onChange={(e) => onChange(e.target.value)} className="size-8 shrink-0 cursor-pointer rounded border bg-transparent p-0.5" />
+      <input type="color" aria-label={COLOR_LABELS[k]} data-testid={`custom-color-${k}`} value={value} onChange={(e) => onChange(e.target.value)} className="size-8 shrink-0 cursor-pointer rounded-md border bg-transparent p-0.5" />
       <span className="min-w-0 flex-1 truncate text-sm">{COLOR_LABELS[k]}</span>
       <Input
         aria-label={`${COLOR_LABELS[k]} hex`}
@@ -321,7 +321,7 @@ export function AppearanceSection() {
                 style={{ background: c }}
               />
             ))}
-            <input type="color" aria-label="Custom accent colour" data-testid="accent-picker" value={a.accent || current.accent} onChange={(e) => set({ accent: e.target.value })} className="size-8 cursor-pointer rounded border bg-transparent p-0.5" />
+            <input type="color" aria-label="Custom accent colour" data-testid="accent-picker" value={a.accent || current.accent} onChange={(e) => set({ accent: e.target.value })} className="size-8 cursor-pointer rounded-md border bg-transparent p-0.5" />
             <Input
               aria-label="Accent hex"
               data-testid="accent-hex"

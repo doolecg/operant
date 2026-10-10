@@ -12,6 +12,7 @@ describe('pricing', () => {
     expect(rateFor('claude-haiku-4-5-20251001')?.input).toBe(1)
     expect(rateFor('claude-fable-5-1')).toEqual({ input: 10, output: 50, cacheRead: 0.25 })
     expect(rateFor('claude-haiku-4-5')).toEqual({ input: 1, output: 5, cacheRead: 0.1 })
+    expect(rateFor('claude-haiku-5-5')).toEqual({ input: 0.25, output: 1.25, cacheRead: 0.025 })
     expect(rateFor('gpt-5')).toBeNull()
   })
 

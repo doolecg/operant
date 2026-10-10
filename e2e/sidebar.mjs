@@ -1,11 +1,10 @@
-// Project panel e2e: the 2.8.2 layout (header with small buttons, 24 px rows, git info, running count, needs-attention dot,
+// Project panel e2e: the 2.8.2 layout (header with small buttons, 24 px rows, git info,
 // groups), keyboard navigation (arrows, Enter, Left/Right, Esc, Alt+Arrow reorder, F2 rename, collapse that is saved), the
 // drag tab and the edge resize. Runs in the background with throwaway data.
 // Usage: node e2e/sidebar.mjs [outDir] [shotPrefix]   (shotPrefix: only take the screenshots, named <prefix>-*.png)
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
@@ -24,7 +23,7 @@ for (const n of names) {
   writeFileSync(join(folders[n], 'readme.txt'), n)
 }
 for (const n of ['atlas', 'cobalt']) {
-  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: folders[n], stdio: 'ignore', windowsHide: true })
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: folders[n], stdio: 'ignore', windowsHide: true })
   git('init', '-q', '-b', n === 'atlas' ? 'main' : 'feature/long-branch-name-here')
   git('add', '.')
   git('commit', '-q', '-m', 'first')
@@ -53,17 +52,6 @@ try {
   await inv('groups:move', crews.cobalt.id, work.id)
   await inv('groups:move', crews.delta.id, work.id)
   await inv('groups:move', crews.ember.id, play.id)
-  // Jobs: two working on atlas, one needing the user on beacon.
-  const db = new DatabaseSync(join(dataDir, 'operant.db'))
-  db.exec('PRAGMA busy_timeout = 5000')
-  const job = async (n, status) => {
-    const r = await inv('runs:create', { crewId: crews[n].id, task: `Task for ${n}`, masterCli: 'claude' })
-    db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, r.id)
-  }
-  await job('atlas', 'working')
-  await job('atlas', 'working')
-  await job('beacon', 'needs-you')
-  await job('cobalt', 'working')
   await page.reload()
   await page.waitForFunction(() => !!window.operant)
 
@@ -96,8 +84,6 @@ try {
   assert.ok(Math.abs((await box(page.getByTestId('project-panel-header'))).height - 32) <= 1, 'the header row is 32 px')
   for (const b of ['Add project', 'New group', 'Index all projects with CodeGraph', 'Refresh projects', 'Hide project list']) await aside.getByRole('button', { name: b, exact: true }).waitFor()
   assert.ok(Math.abs((await box(row('atlas'))).height - 24) <= 1, 'a project row is 24 px')
-  await aside.getByLabel('2 running').waitFor()
-  await aside.getByLabel('Needs attention').waitFor()
   await row('atlas').getByText('main').waitFor()
   await row('atlas').getByLabel('2 changed files').waitFor()
 

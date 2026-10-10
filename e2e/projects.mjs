@@ -21,7 +21,7 @@ for (const n of ['shop', 'blog', 'api']) {
   mkdirSync(folders[n])
   writeFileSync(join(folders[n], 'readme.txt'), n)
 }
-const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: folders.shop, stdio: 'ignore', windowsHide: true })
+const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: folders.shop, stdio: 'ignore', windowsHide: true })
 git('init', '-q', '-b', 'main')
 git('add', '.')
 git('commit', '-q', '-m', 'first')
@@ -74,9 +74,10 @@ try {
   await row('shop').click({ button: 'right' })
   const menu = page.getByRole('menu', { name: 'Actions for shop' })
   await menu.waitFor()
-  const labels = (await menu.getByRole('menuitem').allInnerTexts()).map((t) => t.trim())
+  const labels = (await menu.getByRole('menuitem').allInnerTexts()).map((t) => t.trim().replace(/ \(not installed\)$/, ''))
   assert.deepEqual(labels, [
-    'New agent here',
+    'New Claude terminal here',
+    'New OpenCode terminal here',
     'New shell here',
     'Open in VS Code',
     process.platform === 'win32' ? 'Open in Explorer' : process.platform === 'darwin' ? 'Reveal in Finder' : 'Open folder',
@@ -150,10 +151,12 @@ try {
   await changes.getByText('readme.txt').waitFor()
   await changes.getByText('extra.txt').waitFor()
   await page.getByTestId('git-page').getByRole('tab', { name: /^Changes\s*2$/ }).waitFor()
+  await page.keyboard.press('Escape')
+  await page.getByTestId('git-page').waitFor({ state: 'detached' })
 
   // Terminal drawer: a shell in the project folder, a second tab, closing tabs.
-  // In the Terminal view the project's shells are tiles, so the drawer is checked from the Workspace view.
-  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Workspace', exact: true }).click()
+  // In the Terminal view the project's shells are tiles, so the drawer is checked from the Memory view.
+  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Memory', exact: true }).click()
   await row('shop').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'New shell here' }).click()
   const drawer = page.getByTestId('terminal-drawer')
@@ -203,29 +206,7 @@ try {
   await page.getByRole('menuitem', { name: 'Project defaults…' }).click()
   await page.getByText('Open in IDE', { exact: true }).first().waitFor()
   await page.getByTestId(`project-row-${crews.shop.id}`).waitFor()
-  await page.getByRole('button', { name: 'Edit shop' }).click()
-  await page.getByLabel('Tracker file').fill('docs/specs/tracker.html')
-  await page.screenshot({ path: join(outDir, 'pm-tracker-setting.png') })
-  await page.getByRole('button', { name: 'Save', exact: true }).click()
-  await page.getByLabel('Tracker file').waitFor({ state: 'detached' })
-  assert.equal((await inv('crews:list')).filter((c) => c.kind !== 'playground').find((c) => c.id === crews.shop.id).trackerFile, 'docs/specs/tracker.html')
   await page.getByRole('button', { name: 'Close settings' }).click()
-
-  // The tracker: "Update tracker now" puts one job on the Board for the project manager, a second press adds to it.
-  await row('shop').click({ button: 'right' })
-  await page.getByRole('menuitem', { name: 'Update tracker now' }).click()
-  await row('shop').click({ button: 'right' })
-  await page.getByRole('menuitem', { name: 'Update tracker now' }).click()
-  await page.getByRole('menu').waitFor({ state: 'detached' })
-  const tracker = (await inv('jobs:list', crews.shop.id)).filter((j) => j.title === 'Update tracker')
-  assert.equal(tracker.length, 1)
-  assert.match(tracker[0].body, /Tracker: docs\/specs\/tracker.html/)
-  assert.match(tracker[0].body, /tick only what was verified/)
-  await row('shop').click()
-  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
-  await page.getByRole('tab', { name: /^Board/ }).click()
-  await page.getByText('Update tracker', { exact: true }).first().waitFor()
-  await page.screenshot({ path: join(outDir, 'pm-tracker-job.png') })
 
   // Delete: the dialog says what goes and what stays; the folder is never touched; the group stays.
   const all = await inv('groups:list')
@@ -240,8 +221,7 @@ try {
   await row('blog').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Delete project…' }).click()
   const dialog = page.getByRole('dialog')
-  await dialog.getByText(/Deleting the project removes 0 runs/).waitFor()
-  await dialog.getByText(/Its lessons \(0\) are deleted too/).waitFor()
+  await dialog.getByText(/Deleting the project stops its running sessions/).waitFor()
   await dialog.getByText(/spend history/).waitFor()
   await dialog.getByText(/folder and every file in it are not touched/).waitFor()
   await page.screenshot({ path: join(outDir, 'project-delete.png') })

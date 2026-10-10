@@ -1,84 +1,32 @@
-// The `operant` command agents run. Parses argv, sends one JSON line to the app's local socket with the
-// session token, prints the answer and exits with its code. Built on its own to out/cli/operant.cjs and
+// The `operant` command a tile runs. Parses argv, sends one JSON line to the app's local socket with the
+// tile's token, prints the answer and exits with its code. Built on its own to out/cli/operant.cjs and
 // run by the app binary as Node; it has no dependencies and imports nothing from the app.
-import { readFileSync } from 'node:fs'
 import { connect } from 'node:net'
 
 export const EXIT_USAGE = 2
 export const EXIT_UNREACHABLE = 7
 
 // 'strs' may be given more than once and arrives as a list.
-type Kind = 'bool' | 'int' | 'num' | 'str' | 'strs' | 'ids' | 'int?' | 'addr?'
+type Kind = 'bool' | 'str' | 'strs'
 
 interface CommandSpec {
-  // Positional names; a trailing `...` takes the rest of the words joined by spaces; `?` = optional.
+  // Positional names; a trailing `...` takes the rest of the words joined by spaces.
   pos: string[]
   flags: Record<string, Kind>
-  // Flags that must be given.
-  required?: string[]
   usage: string
 }
 
 const COMMANDS: Record<string, CommandSpec> = {
-  whoami: { pos: [], flags: {}, usage: 'operant whoami' },
-  who: { pos: [], flags: { squad: 'bool' }, usage: 'operant who [--squad]' },
-  msg: { pos: ['to', 'text...'], flags: { job: 'int' }, usage: 'operant msg <to> <text|-> [--job N]' },
-  ask: { pos: ['to', 'text...'], flags: { job: 'int' }, usage: 'operant ask user <text|-> [--job N]' },
-  inbox: { pos: [], flags: { peek: 'bool', wait: 'num' }, usage: 'operant inbox [--peek] [--wait S]' },
-  'job.list': { pos: [], flags: { open: 'bool' }, usage: 'operant job list [--open]' },
-  'job.show': { pos: ['id'], flags: {}, usage: 'operant job show N' },
-  'job.add': {
-    pos: ['title...'],
-    flags: { body: 'str', for: 'str', after: 'ids', review: 'str', priority: 'int', estimate: 'int' },
-    usage: 'operant job add <title> [--body T] [--for ADDR] [--after N,N] [--review none|pm|ADDR|user] [--priority P] [--estimate M]',
-  },
-  'job.claim': { pos: ['id?'], flags: {}, usage: 'operant job claim [N]' },
-  'job.done': { pos: ['id'], flags: { note: 'str' }, usage: 'operant job done N [--note T]' },
-  'job.release': { pos: ['id'], flags: { note: 'str' }, usage: 'operant job release N [--note T]' },
-  'job.handoff': { pos: ['id', 'to'], flags: { note: 'str' }, usage: 'operant job handoff N <to> [--note T]' },
-  'job.approve': { pos: ['id'], flags: { note: 'str' }, usage: 'operant job approve N [--note T]' },
-  'job.reject': { pos: ['id'], flags: { reason: 'str' }, required: ['reason'], usage: 'operant job reject N --reason T' },
-  'job.escalate': { pos: ['id'], flags: { reason: 'str' }, required: ['reason'], usage: 'operant job escalate N --reason T' },
-  'job.edit': {
-    pos: ['id'],
-    flags: {
-      title: 'str',
-      body: 'str',
-      note: 'str',
-      priority: 'int',
-      estimate: 'int?',
-      review: 'str',
-      for: 'addr?',
-      after: 'ids',
-      'not-after': 'ids',
-    },
-    usage: 'operant job edit N [--title T] [--body T] [--note T] [--priority P] [--estimate M|none] [--review MODE] [--for ADDR|none] [--after N,N] [--not-after N,N]',
-  },
-  // Master Terminal only: the dashboard job (JOB#) it works on. Text from the owner or agents comes back as data.
-  'run.add': { pos: ['title...'], flags: { body: 'str' }, usage: 'operant run add <title> [--body T]' },
-  'run.show': { pos: ['id'], flags: {}, usage: 'operant run show N' },
-  'run.start': { pos: ['id'], flags: {}, usage: 'operant run start N' },
-  'run.progress': { pos: ['id'], flags: { text: 'str' }, required: ['text'], usage: 'operant run progress N --text <text|->' },
-  'run.ask': { pos: ['id'], flags: { text: 'str', option: 'strs' }, required: ['text'], usage: 'operant run ask N --text <text|-> [--option A --option B ...]' },
-  'run.answer': { pos: ['id'], flags: {}, usage: 'operant run answer N' },
-  'run.review': { pos: ['id'], flags: { summary: 'str' }, required: ['summary'], usage: 'operant run review N --summary <markdown|@file|->' },
-  'run.approve': { pos: ['id'], flags: { note: 'str' }, usage: 'operant run approve N [--note T]' },
-  'run.fail': { pos: ['id'], flags: { text: 'str' }, required: ['text'], usage: 'operant run fail N --text <reason|->' },
-  'run.next': { pos: [], flags: {}, usage: 'operant run next' },
-  'run.inbox': { pos: [], flags: {}, usage: 'operant run inbox' },
-  'run.closeout': { pos: ['id'], flags: { wait: 'bool' }, usage: 'operant run closeout N [--wait]' },
-  // The project's Hindsight memory (the caller's own bank). Works for the Master and every seat.
+  // The project's Hindsight memory (the project of the tile the command runs in).
   'memory.recall': { pos: ['query...'], flags: {}, usage: 'operant memory recall <query|->' },
   'memory.retain': { pos: ['text...'], flags: { tag: 'strs' }, usage: 'operant memory retain <text|-> [--tag T ...]' },
-  // Internal: the Master plugin's hooks call it; the hook JSON arrives on stdin. Always silent and exits 0.
-  hook: { pos: ['event'], flags: {}, usage: 'operant hook <event>' },
 }
 
 // Text values that may be `-` (read from stdin).
-const TEXT = new Set(['query', 'text', 'title', 'body', 'note', 'reason', 'summary'])
+const TEXT = new Set(['query', 'text'])
 
 export const HELP = [
-  'Usage (exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 forbidden, 6 limited/cap, 7 Operant not reachable):',
+  'Usage (exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 forbidden, 6 limited, 7 Operant not reachable):',
   ...Object.values(COMMANDS).map((c) => `  ${c.usage}`),
   'Add --json for machine output. A text value of - is read from stdin.',
 ].join('\n')
@@ -90,43 +38,10 @@ export type Parsed =
 
 const camel = (s: string) => s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
 
-function jobId(v: string): number | null {
-  const m = /^#?(\d{1,15})$/.exec(v)
-  const n = m ? Number(m[1]) : NaN
-  return Number.isSafeInteger(n) && n > 0 ? n : null
-}
-
-function convert(kind: Kind, name: string, v: string): unknown {
-  switch (kind) {
-    case 'int':
-    case 'int?': {
-      if (kind === 'int?' && v === 'none') return null
-      if (!/^-?\d{1,15}$/.test(v)) throw new Error(`--${name} must be a whole number`)
-      return Number(v)
-    }
-    case 'num': {
-      const n = Number(v)
-      if (!v.trim() || !Number.isFinite(n) || n < 0) throw new Error(`--${name} must be a number of seconds`)
-      return n
-    }
-    case 'ids': {
-      const ids = v.split(',').map((s) => jobId(s.trim()))
-      if (ids.some((x) => x === null)) throw new Error(`--${name} takes job ids like 3,4`)
-      return ids
-    }
-    case 'addr?':
-      return v === 'none' ? null : v
-    case 'strs':
-      return v
-    default:
-      return v
-  }
-}
-
 // argv (without node and the script) to a request. Pure: stdin is only named, never read here.
-// Options follow the command; a flag's value is the next word whatever it looks like (so `--priority -5`
-// and `--body -` work); everything after `--` is positional. `--json` counts only where an option could
-// stand, and `--help`/`-h` only before the first positional word (so `msg pm use -h` is text).
+// Options follow the command; a flag's value is the next word whatever it looks like (so `--body -` works);
+// everything after `--` is positional. `--json` counts only where an option could stand, and `--help`/`-h` only
+// before the first positional word (so `memory retain use -h` is text).
 export function parseArgs(argv: string[]): Parsed {
   const dd = argv.indexOf('--')
   const head = dd < 0 ? argv : argv.slice(0, dd)
@@ -140,14 +55,13 @@ export function parseArgs(argv: string[]): Parsed {
   const first = words[0]
   if (first === undefined) return tail.length ? { kind: 'error', message: 'Missing command. Run: operant --help' } : { kind: 'help', text: HELP }
   if (first.startsWith('-')) return { kind: 'error', message: 'Put the command first. Run: operant --help' }
-  const group = first === 'job' || first === 'run' || first === 'memory'
-  const name = group ? `${first}.${words[1] ?? ''}` : first
+  const name = first === 'memory' ? `memory.${words[1] ?? ''}` : first
   const spec = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined
-  if (!spec) return { kind: 'error', message: `Unknown command "${group ? `${first} ${words[1] ?? ''}`.trim() : first}". Run: operant --help` }
+  if (!spec) return { kind: 'error', message: `Unknown command "${first === 'memory' ? `memory ${words[1] ?? ''}`.trim() : first}". Run: operant --help` }
   const args: Record<string, unknown> = {}
   const pos: string[] = []
   try {
-    for (let i = group ? 2 : 1; i < words.length; i++) {
+    for (let i = 2; i < words.length; i++) {
       const a = words[i]!
       if (a === '--json') {
         json = true
@@ -169,15 +83,10 @@ export function parseArgs(argv: string[]): Parsed {
       if (!kind) throw new Error(`Unknown option --${flag}. Usage: ${spec.usage}`)
       const key = camel(flag)
       if (key in args && kind !== 'strs') throw new Error(`--${flag} given twice`)
-      if (kind === 'bool') {
-        if (eq > 0) throw new Error(`--${flag} takes no value`)
-        args[key] = true
-        continue
-      }
       const value: string | undefined = eq > 0 ? a.slice(eq + 1) : words[++i]
       if (value === undefined) throw new Error(`--${flag} needs a value`)
       if (kind === 'strs') args[key] = [...((args[key] as string[] | undefined) ?? []), value]
-      else args[key] = convert(kind, flag, value)
+      else args[key] = value
     }
   } catch (err) {
     return { kind: 'error', message: (err as Error).message }
@@ -185,23 +94,12 @@ export function parseArgs(argv: string[]): Parsed {
   pos.push(...tail)
   for (const p of spec.pos) {
     const many = p.endsWith('...')
-    const optional = p.endsWith('?')
-    const key = p.replace(/(\.\.\.|\?)$/, '')
+    const key = p.replace(/\.\.\.$/, '')
     const value = many ? pos.splice(0).join(' ') : pos.shift()
-    if (value === undefined || value === '') {
-      if (optional) continue
-      return { kind: 'error', message: `Missing <${key}>. Usage: ${spec.usage}` }
-    }
-    if (key === 'id') {
-      const n = jobId(value)
-      if (n === null) return { kind: 'error', message: `"${value}" is not a job id. Usage: ${spec.usage}` }
-      args.id = n
-    } else args[key] = value
+    if (value === undefined || value === '') return { kind: 'error', message: `Missing <${key}>. Usage: ${spec.usage}` }
+    args[key] = value
   }
   if (pos.length) return { kind: 'error', message: `Unexpected "${pos[0]}". Usage: ${spec.usage}` }
-  for (const r of spec.required ?? []) {
-    if (!(r in args)) return { kind: 'error', message: `--${r} is required. Usage: ${spec.usage}` }
-  }
   const dashes = Object.keys(args).filter((k) => args[k] === '-' && TEXT.has(k))
   if (dashes.length > 1) return { kind: 'error', message: 'Only one value can be read from stdin' }
   return { kind: 'request', cmd: name, args, json, stdin: dashes[0] ?? null }
@@ -209,8 +107,7 @@ export function parseArgs(argv: string[]): Parsed {
 
 export interface Reply {
   exit: number
-  text?: string
-  data?: unknown
+  out?: string
   error?: string
 }
 
@@ -218,10 +115,10 @@ export interface Reply {
 export function render(reply: Reply, json: boolean): { stdout: string; stderr: string; code: number } {
   const code = Number.isInteger(reply.exit) && reply.exit >= 0 && reply.exit <= 7 ? reply.exit : 1
   if (json) {
-    const body = code === 0 ? { exit: 0, data: reply.data ?? null } : { exit: code, error: reply.error ?? 'error' }
+    const body = code === 0 ? { exit: 0, data: reply.out ?? null } : { exit: code, error: reply.error ?? 'error' }
     return { stdout: `${JSON.stringify(body)}\n`, stderr: '', code }
   }
-  if (code === 0) return { stdout: reply.text ? `${reply.text}\n` : '', stderr: '', code }
+  if (code === 0) return { stdout: reply.out ? `${reply.out}\n` : '', stderr: '', code }
   return { stdout: '', stderr: `operant: ${reply.error ?? 'error'}\n`, code }
 }
 
@@ -286,62 +183,8 @@ export async function readStdin(input: NodeJS.ReadableStream & { isTTY?: boolean
   return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '')
 }
 
-// The hook JSON fields `operant hook` forwards (Claude Code's own names on the left).
-const HOOK_FIELDS: Record<string, string> = {
-  session_id: 'sessionId',
-  transcript_path: 'transcriptPath',
-  source: 'source',
-  message: 'message',
-  notification_type: 'notificationType',
-  agent_id: 'agentId',
-  agent_type: 'agentType',
-  prompt: 'prompt',
-}
-
-// What the hook sends: the event name from argv plus the known fields of the JSON on stdin (text only, capped).
-export function hookArgs(event: string, stdin: string): Record<string, unknown> {
-  const args: Record<string, unknown> = { event }
-  try {
-    const body = JSON.parse(stdin) as Record<string, unknown>
-    for (const [from, to] of Object.entries(HOOK_FIELDS)) {
-      // The prompt only from UserPromptSubmit: Operant compares it with its own pointer line and an approval word.
-      if (from === 'prompt' && event !== 'UserPromptSubmit') continue
-      const v = body[from]
-      if (typeof v === 'string') args[to] = v.slice(0, 600)
-    }
-  } catch {
-    // no JSON on stdin: the event name alone still tells the app what happened
-  }
-  return args
-}
-
-// A hook must never disturb Claude Code: no output, exit 0, whatever happens.
-async function hookMain(event: string, env: NodeJS.ProcessEnv, input: NodeJS.ReadableStream & { isTTY?: boolean }): Promise<{ stdout: string; stderr: string; code: number }> {
-  const quiet = { stdout: '', stderr: '', code: 0 }
-  const socketPath = env.OPERANT_SOCKET
-  const token = env.OPERANT_TOKEN
-  if (!socketPath || !token) return quiet
-  try {
-    const stdin = await readStdin(input).catch(() => '')
-    await request(socketPath, JSON.stringify({ token, cmd: 'hook', args: hookArgs(event, stdin) }), 5000)
-  } catch {
-    // Operant is not reachable: nothing to tell
-  }
-  return quiet
-}
-
-// `--summary @file` reads the file (up to 64 KB); `@@x` is the text `@x`.
-export function readAtFile(v: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): string {
-  if (v.startsWith('@@')) return v.slice(1)
-  if (!v.startsWith('@') || v.length === 1) return v
-  const text = read(v.slice(1))
-  if (text.length > STDIN_MAX) throw new Error('The file is over 64 KB')
-  return text
-}
-
 export async function main(argv: string[], env: NodeJS.ProcessEnv, input: NodeJS.ReadableStream & { isTTY?: boolean } = process.stdin): Promise<{ stdout: string; stderr: string; code: number }> {
   const parsed = parseArgs(argv)
-  if (parsed.kind === 'request' && parsed.cmd === 'hook') return hookMain(String(parsed.args.event), env, input)
   if (parsed.kind === 'help') return { stdout: `${parsed.text}\n`, stderr: '', code: 0 }
   if (parsed.kind === 'error') return render({ exit: EXIT_USAGE, error: parsed.message }, argv.includes('--json'))
   const socketPath = env.OPERANT_SOCKET
@@ -349,13 +192,11 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv, input: NodeJS
   if (!socketPath || !token) return unreachable('OPERANT_SOCKET or OPERANT_TOKEN is not set', parsed.json)
   try {
     if (parsed.stdin) parsed.args[parsed.stdin] = await readStdin(input)
-    if (typeof parsed.args.summary === 'string') parsed.args.summary = readAtFile(parsed.args.summary)
   } catch (err) {
     return render({ exit: EXIT_USAGE, error: (err as Error).message }, parsed.json)
   }
-  const wait = typeof parsed.args.wait === 'number' ? parsed.args.wait : parsed.args.wait === true ? 125 : 0
   try {
-    const reply = await request(socketPath, JSON.stringify({ token, cmd: parsed.cmd, args: parsed.args }), (Math.min(wait, 600) + 30) * 1000)
+    const reply = await request(socketPath, JSON.stringify({ token, cmd: parsed.cmd, args: parsed.args }), 60_000)
     return render(reply, parsed.json)
   } catch (err) {
     return unreachable((err as Error).message, parsed.json)

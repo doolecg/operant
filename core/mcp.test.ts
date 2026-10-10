@@ -1,7 +1,5 @@
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildBrief } from './brief'
-import { buildClaudeRunLaunch } from './launch'
 import { McpError, McpService, maskArg, maskUrl, parseClaudeList, parseOpencodeList, redact, stripJsonc, type McpDeps } from './mcp'
 import { Store } from './store'
 import type { McpServerInput } from '../shared/types'
@@ -39,7 +37,7 @@ interface Call {
   cwd?: string
 }
 
-function setup(over: { claude?: object; project?: object; opencode?: string; listOut?: string; failAdd?: boolean } = {}) {
+function setup(over: { claude?: object; project?: object; opencode?: string; listOut?: string; failAdd?: boolean; missing?: string[]; written?: string[] } = {}) {
   const files = new Map<string, string>()
   files.set(
     '/h/.claude.json',
@@ -65,12 +63,14 @@ function setup(over: { claude?: object; project?: object; opencode?: string; lis
     run: async (cmd, args, o) => {
       calls.push({ cmd, args, cwd: o.cwd })
       if (args[1] === 'list') return cmd === 'claude' ? { code: 0, stdout: over.listOut ?? CLAUDE_LIST, stderr: '' } : { code: 0, stdout: OPENCODE_LIST, stderr: '' }
+      if (args[0] === '--version') return over.missing?.includes(cmd) ? { code: null, stdout: '', stderr: `spawn ${cmd} ENOENT` } : { code: 0, stdout: '1.0.0', stderr: '' }
       if (over.failAdd && args[1] === 'add') return { code: 1, stdout: '', stderr: `invalid ${SECRET}` }
       return { code: 0, stdout: '', stderr: '' }
     },
   }
-  const svc = new McpService({ log: (m) => logs.push(m), builtin: async (n) => ({ ok: n === 'codegraph', error: 'down' }), now: () => 1000 }, deps)
-  return { svc, files, calls, logs }
+  const written = { keys: over.written ?? [] }
+  const svc = new McpService({ log: (m) => logs.push(m), builtin: async (n) => ({ ok: n === 'codegraph', error: 'down' }), now: () => 1000, written: { get: () => written.keys, set: (k) => void (written.keys = k) } }, deps)
+  return { svc, files, calls, logs, written }
 }
 
 describe('parsing real CLI output', () => {
@@ -276,11 +276,6 @@ describe('seats and degraded jobs', () => {
     expect(JSON.parse(r.opencodeEnv!.OPENCODE_CONFIG_CONTENT!)).toEqual({ mcp: { servers: { b: { disabled: true } } } })
   })
 
-  it('passes the config file to claude -p with --strict-mcp-config', () => {
-    const l = buildClaudeRunLaunch({ cwd: '/p', mcpConfig: '/d/run-1-mcp.json' })
-    expect(l.args.slice(-3)).toEqual(['--strict-mcp-config', '--mcp-config', '/d/run-1-mcp.json'])
-    expect(buildClaudeRunLaunch({ cwd: '/p' }).args).not.toContain('--mcp-config')
-  })
 })
 
 describe('brief and seat data', () => {
@@ -290,22 +285,6 @@ describe('brief and seat data', () => {
   })
   afterEach(() => store.close())
 
-  it('names a down server in the brief and still builds it', async () => {
-    const crewId = store.createCrew('shop', '/code/shop').id
-    const run = store.createRun({ crewId, task: 'do it', masterCli: 'claude', teamId: null, seats: [], limits: { maxWorkers: 0, topTier: '', tokenBudget: 0 }, rules: '' })
-    const b = await buildBrief(
-      {
-        store,
-        explorer: { explore: async () => ({ ok: true, text: 'src' }) },
-        hindsight: { recall: async () => ({ ok: true, items: [] }) },
-        mcpDown: async () => [{ server: 'idea', state: 'failed', error: 'ECONNREFUSED', seats: ['pm'] }],
-      },
-      run,
-    )
-    expect(b.text).toMatch(/MCP servers down: idea failed \(ECONNREFUSED\), needed by pm\. The job is starting anyway/)
-    const ok = await buildBrief({ store, explorer: { explore: async () => ({ ok: true, text: '' }) }, hindsight: { recall: async () => ({ ok: true, items: [] }) }, mcpDown: async () => { throw new Error('x') } }, run)
-    expect(ok.text).not.toContain('MCP servers down')
-  })
 
   it('keeps mcpServers and the older mcp, codegraph and hindsight fields in step', () => {
     const p = store.createPreset({ name: 'a', agent: 'claude', model: 'm', permissionMode: 'dontAsk' })
@@ -315,5 +294,153 @@ describe('brief and seat data', () => {
     expect(store.updatePreset(p.id, { mcp: 'none', hindsight: false })).toMatchObject({ codegraph: false, hindsight: false, mcpServers: ['idea'] })
     const old = store.createPreset({ name: 'b', agent: 'claude', model: 'm', permissionMode: 'dontAsk', mcp: 'none', hindsight: false })
     expect(old).toMatchObject({ mcpServers: [], codegraph: false, hindsight: false })
+  })
+})
+
+describe('optional integrations', () => {
+  const GIT_ENTRY = { type: 'stdio', command: 'uvx', args: ['mcp-server-git', '--repository', folder] }
+
+  // The CLI list without its Playwright plugin line, so nothing outside the fixture decides the status.
+  const LIST_WITHOUT_PLUGIN = CLAUDE_LIST.replace(/^plugin:playwright:playwright:.*\n/m, '')
+
+  it('lists Git, Playwright and CodeGraph, and writes nothing on the way', async () => {
+    const { svc, files, calls } = setup({ listOut: LIST_WITHOUT_PLUGIN })
+    const before = new Map(files)
+    const entries = await svc.optional(folder)
+    expect(entries.map((e) => [e.id, e.status, e.runtime.ok, e.blocked])).toEqual([
+      ['git', 'not-added', true, null],
+      ['playwright', 'not-added', true, null],
+      // The fixture config holds a user-scope codegraph entry, so CodeGraph is found, not added.
+      ['codegraph', 'found', true, null],
+    ])
+    expect(entries[0]!.hint).toBe('Git MCP is not installed (optional): Add it in Settings → MCP servers')
+    expect(files).toEqual(before)
+    expect(calls.some((c) => c.args.includes('add') || c.args.includes('remove'))).toBe(false)
+  })
+
+  it('reports a missing runtime and refuses to add with the reason', async () => {
+    const { svc, calls } = setup({ missing: ['uvx'] })
+    const git = (await svc.optional(folder)).find((e) => e.id === 'git')!
+    expect(git.runtime).toMatchObject({ command: 'uvx', ok: false })
+    expect(git.blocked).toMatch(/^uvx is not installed: install uv/)
+    await expect(svc.addOptional(folder, 'git', [{ cli: 'claude', scope: 'user' }])).rejects.toThrow(/uvx is not installed/)
+    expect(calls.some((c) => c.args.includes('add'))).toBe(false)
+  })
+
+  it('needs a project for Git, and not for Playwright', async () => {
+    const { svc, calls } = setup()
+    expect((await svc.optional(null)).find((e) => e.id === 'git')!.blocked).toMatch(/Select a project first/)
+    await expect(svc.addOptional(null, 'git', [{ cli: 'claude', scope: 'user' }])).rejects.toThrow(/Select a project first/)
+    expect(calls.some((c) => c.args.includes('add'))).toBe(false)
+    await svc.addOptional(null, 'playwright', [{ cli: 'claude', scope: 'user' }])
+    expect(calls.find((c) => c.args.includes('add'))!.args).toEqual(['mcp', 'add', 'playwright', '-s', 'user', '-t', 'stdio', '--', 'npx', '@playwright/mcp@latest'])
+  })
+
+  it('writes the chosen CLIs and scopes through the add path, with the project folder for Git', async () => {
+    const { svc, calls } = setup()
+    await svc.addOptional(folder, 'git', [
+      { cli: 'claude', scope: 'local' },
+      { cli: 'opencode', scope: 'global' },
+    ])
+    expect(calls.find((c) => c.cmd === 'claude' && c.args[1] === 'add')!.args).toEqual(['mcp', 'add', 'git', '-s', 'local', '-t', 'stdio', '--', 'uvx', 'mcp-server-git', '--repository', folder])
+    expect(calls.find((c) => c.cmd === 'opencode' && c.args[1] === 'add')!.args).toEqual(['mcp', 'add', '--global', 'git', '--', 'uvx', 'mcp-server-git', '--repository', folder])
+    await expect(svc.addOptional(folder, 'git', [])).rejects.toThrow(/Pick Claude Code, OpenCode or both/)
+  })
+
+  it('finds the same server under another name or as a plugin copy, and does not call it added', async () => {
+    const { svc } = setup({ claude: { mcpServers: { 'mcp-git': GIT_ENTRY } } })
+    const entries = await svc.optional(folder)
+    expect(entries.find((e) => e.id === 'git')).toMatchObject({ status: 'found', foundAs: 'mcp-git', foundIn: 'Claude Code (user)', added: [] })
+    // A plugin's copy is shown as provided by the plugin: Operant neither adds nor removes it.
+    expect(entries.find((e) => e.id === 'playwright')).toMatchObject({
+      status: 'found',
+      provided: true,
+      foundAs: 'plugin:playwright:playwright',
+      foundIn: 'Provided by a Claude plugin',
+      added: [],
+    })
+    expect(entries.find((e) => e.id === 'git')!.provided).toBe(false)
+  })
+
+  it('shows an entry Operant wrote as added, and Remove takes only Operant entries', async () => {
+    const { svc, calls } = setup({ claude: { mcpServers: { git: GIT_ENTRY, 'by-hand': { type: 'stdio', command: 'x' } } } })
+    expect((await svc.optional(folder)).find((e) => e.id === 'git')).toMatchObject({ status: 'added', added: [{ cli: 'claude', scope: 'user' }] })
+    await svc.removeOptional(folder, 'git')
+    expect(calls.filter((c) => c.args[1] === 'remove').map((c) => c.args)).toEqual([['mcp', 'remove', '-s', 'user', 'git']])
+    await expect(svc.removeOptional(folder, 'playwright')).rejects.toThrow(/was not added by Operant/)
+  })
+
+  it('a launch leaves a missing optional server out without a warning, and attaches an installed one under the preset name', async () => {
+    const { svc } = setup()
+    const r = await svc.forRun([{ seat: 'review', servers: ['codegraph', 'git', 'playwright'] }], 'claude', folder)
+    expect(Object.keys(JSON.parse(r.claudeConfig!).mcpServers)).toEqual(['codegraph'])
+    expect(r.down).toEqual([])
+    const installed = setup({ claude: { mcpServers: { codegraph: { type: 'stdio', command: 'codegraph', args: ['serve', '--mcp'] }, 'mcp-git': GIT_ENTRY } } })
+    const r2 = await installed.svc.forRun([{ seat: 'review', servers: ['codegraph', 'git'] }], 'claude', folder)
+    expect(JSON.parse(r2.claudeConfig!).mcpServers.git).toEqual(GIT_ENTRY)
+    expect(r2.down).toEqual([])
+  })
+
+  it('startup, the built-in presets and a preset edit never change a CLI config', async () => {
+    const { svc, files } = setup()
+    const before = new Map(files)
+    await svc.optional(folder, true)
+    await svc.forRun([{ seat: 'test', servers: ['codegraph', 'playwright'] }], 'claude', folder)
+    const store = new Store(':memory:')
+    store.seedBuiltinPresets()
+    const review = store.getPresetByBuiltin('review')!
+    store.updatePreset(review.id, { mcpServers: ['codegraph', 'git'] })
+    store.close()
+    expect(files).toEqual(before)
+  })
+
+  it('CodeGraph is not added when no config holds it, and the built-in server does not count as a copy', async () => {
+    const { svc, calls } = setup({ claude: { mcpServers: {} }, listOut: CLAUDE_LIST.replace(/^codegraph: .*\n/m, '') })
+    const cg = (await svc.optional(folder)).find((e) => e.id === 'codegraph')!
+    expect(cg).toMatchObject({ status: 'not-added', added: [], provided: false, runtime: { command: 'codegraph', ok: true }, needsProject: false, blocked: null })
+    await svc.addOptional(folder, 'codegraph', [{ cli: 'claude', scope: 'user' }])
+    expect(calls.find((c) => c.cmd === 'claude' && c.args[1] === 'add')!.args).toEqual(['mcp', 'add', 'codegraph', '-s', 'user', '-t', 'stdio', '--', 'codegraph', 'serve', '--mcp'])
+  })
+
+  it('CodeGraph: a user copy under its name is found, and Remove does not touch it', async () => {
+    const { svc, calls } = setup()
+    expect((await svc.optional(folder)).find((e) => e.id === 'codegraph')).toMatchObject({ status: 'found', foundAs: 'codegraph', foundIn: 'Claude Code (user)', added: [] })
+    await expect(svc.removeOptional(folder, 'codegraph')).rejects.toThrow(/was not added by Operant/)
+    expect(calls.some((c) => c.args.includes('remove'))).toBe(false)
+  })
+
+  it('CodeGraph: an entry Operant wrote is added, and Remove forgets it', async () => {
+    const entry = { codegraph: { type: 'stdio', command: 'codegraph', args: ['serve', '--mcp'] } }
+    const { svc, calls, written } = setup({ claude: { mcpServers: entry }, written: ['claude:user:codegraph'] })
+    expect((await svc.optional(folder)).find((e) => e.id === 'codegraph')).toMatchObject({ status: 'added', added: [{ cli: 'claude', scope: 'user' }] })
+    await svc.removeOptional(folder, 'codegraph')
+    expect(calls.filter((c) => c.args[1] === 'remove').map((c) => c.args)).toEqual([['mcp', 'remove', '-s', 'user', 'codegraph']])
+    expect(written.keys).toEqual([])
+  })
+
+  it('CodeGraph: a missing codegraph command blocks Add with the reason', async () => {
+    const { svc, calls } = setup({ claude: { mcpServers: {} }, missing: ['codegraph'] })
+    const cg = (await svc.optional(folder)).find((e) => e.id === 'codegraph')!
+    expect(cg.blocked).toMatch(/^codegraph is not installed: install CodeGraph/)
+    await expect(svc.addOptional(folder, 'codegraph', [{ cli: 'claude', scope: 'user' }])).rejects.toThrow(/codegraph is not installed/)
+    expect(calls.some((c) => c.args.includes('add'))).toBe(false)
+  })
+
+  it('a launch still runs the built-in CodeGraph when no config holds it', async () => {
+    const { svc } = setup({ claude: { mcpServers: {} } })
+    const r = await svc.forRun([{ seat: 'pm', servers: ['codegraph'] }], 'claude', folder)
+    expect(JSON.parse(r.claudeConfig!).mcpServers).toEqual({ codegraph: { command: 'codegraph', args: ['serve', '--mcp'] } })
+  })
+
+  it('ships the optional servers on the stages that recommend them, and keeps the defaults', () => {
+    const store = new Store(':memory:')
+    store.seedBuiltinPresets()
+    const names = (b: string) => store.getPresetByBuiltin(b)!.mcpServers
+    expect(names('test')).toEqual(['codegraph', 'hindsight', 'playwright'])
+    expect(names('review')).toEqual(['codegraph', 'hindsight', 'git'])
+    expect(names('release')).toEqual(['codegraph', 'hindsight', 'git'])
+    expect(names('implement-opencode')).toEqual(['codegraph', 'hindsight', 'git'])
+    expect(names('plan')).toEqual(['codegraph', 'hindsight'])
+    store.close()
   })
 })

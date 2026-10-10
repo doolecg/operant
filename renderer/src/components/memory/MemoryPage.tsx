@@ -119,7 +119,7 @@ export function MemoryPage({ crewId }: { crewId: number | null }) {
       <div className="mx-auto max-w-[96rem] space-y-5 p-6">
         <div>
           <h2 className="text-xl font-semibold">Memory</h2>
-          <p className="text-muted-foreground text-sm">Everything Operant has learned from your jobs, in each place it is kept.</p>
+          <p className="text-muted-foreground text-sm">Everything Operant has learned from your sessions, in each place it is kept.</p>
         </div>
 
         <LearningStatusPanel crewId={crewId} onShowDrafts={() => setTab('drafts')} />
@@ -158,7 +158,7 @@ export function MemoryPage({ crewId }: { crewId: number | null }) {
             {tab === 'codegraph' && (
               <div className="space-y-3">
                 <p className="text-muted-foreground text-xs">
-                  CodeGraph has no notes API, so these notes live in Operant and are added to a job&apos;s brief next to the CodeGraph results for the files they name.
+                  CodeGraph has no notes API, so these notes live in Operant, tagged to the files and symbols they name.
                 </p>
                 <LessonsList filter={filter} crews={crews.data ?? []} />
               </div>

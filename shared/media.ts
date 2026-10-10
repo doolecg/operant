@@ -41,7 +41,6 @@ export interface TopBarSettings {
   clockFormat: ClockFormat
   clockSeconds: boolean
   clockDate: boolean
-  agentPill: boolean
 }
 
 export function clockText(d: Date, o: { format: ClockFormat; seconds: boolean }, locale?: string): string {

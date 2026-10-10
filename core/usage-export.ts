@@ -1,5 +1,5 @@
-import type { ExportFormat, ExportText, RunUsage, UsageReport, UsageSeries, UsageView } from '../shared/types'
-import { jobUsage, queryUsage, querySeries, type QueryDeps } from './usage-query'
+import type { ExportFormat, ExportText, UsageReport, UsageSeries, UsageView } from '../shared/types'
+import { queryUsage, querySeries, type QueryDeps } from './usage-query'
 
 // RFC 4180: a field with a comma, quote or line break is quoted and its quotes doubled. A leading = + - @ is
 // prefixed with a quote so a spreadsheet does not run it as a formula.
@@ -38,18 +38,13 @@ export function seriesCsv(s: UsageSeries): string {
   return toCsv(header, rows)
 }
 
-export function jobCsv(j: RunUsage): string {
-  const rows = j.agents.map((a) => [a.agentId, a.seat, a.model, a.status, ...totalCells(a)])
-  rows.push([null, 'TOTAL', '', '', ...totalCells(j.totals)])
-  return toCsv(['agent_id', 'seat', 'model', 'status', ...TOTAL_COLS], rows)
-}
 
 const stamp = (now: number) => new Date(now).toISOString().slice(0, 10)
 
 // Any view as text in the chosen format; JSON is the query result as the renderer sees it.
 export function exportView(d: QueryDeps, view: UsageView, format: ExportFormat): ExportText {
   if (format !== 'csv' && format !== 'json') throw new Error('The format must be csv or json')
-  let data: UsageReport | UsageSeries | RunUsage
+  let data: UsageReport | UsageSeries
   let csv: string
   let name: string
   if (view.kind === 'report') {
@@ -62,11 +57,6 @@ export function exportView(d: QueryDeps, view: UsageView, format: ExportFormat):
     data = s
     csv = seriesCsv(s)
     name = `usage-by-${s.query.bucket}${s.query.split ? `-${s.query.split}` : ''}`
-  } else if (view.kind === 'job') {
-    const j = jobUsage(d, view.runId)
-    data = j
-    csv = jobCsv(j)
-    name = `usage-job-${view.runId}`
   } else throw new Error('Unknown view')
   const filename = `${name}-${stamp(d.now())}.${format}`
   return format === 'csv'

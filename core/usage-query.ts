@@ -1,6 +1,5 @@
 import type {
-  JobAgentUsage,
-  RunUsage,
+  BudgetWindow,
   UsageFilter,
   UsageGroupBy,
   UsageQuery,
@@ -12,18 +11,16 @@ import type {
   UsageTrend,
 } from '../shared/types'
 import type { Store } from './store'
+import { BUDGET_WINDOWS, windowStart } from './usage-budgets'
 
 type Row = Record<string, unknown>
 
 // One usage row with the operator and scratch terminal it may belong to, so a row's project and seat resolve
 // whether it came from an operator, a scratch terminal, a job agent, the front desk or an import.
 const FROM = `FROM usage u
-  LEFT JOIN operators o ON o.id = u.operator_id
-  LEFT JOIN squads sq ON sq.id = o.squad_id
   LEFT JOIN scratch sc ON sc.id = u.scratch_id`
 
-const CREW = 'COALESCE(u.crew_id, sq.crew_id, sc.crew_id)'
-const SEAT = "CASE WHEN u.seat <> '' THEN u.seat WHEN o.id IS NOT NULL THEN o.role WHEN sc.id IS NOT NULL THEN 'scratch' ELSE '' END"
+const CREW = 'COALESCE(u.crew_id, sc.crew_id)'
 const LOCAL = "u.at / 1000, 'unixepoch', 'localtime'"
 
 // The SQL text each grouping resolves to. A project with no crew keeps its imported label.
@@ -31,9 +28,6 @@ const GROUP_SQL: Record<UsageGroupBy, string> = {
   day: `strftime('%Y-%m-%d', ${LOCAL})`,
   hour: `strftime('%Y-%m-%d %H:00', ${LOCAL})`,
   project: `COALESCE(CAST(${CREW} AS TEXT), CASE WHEN u.project_label <> '' THEN 'label:' || u.project_label ELSE '' END)`,
-  run: "COALESCE(CAST(u.run_id AS TEXT), '')",
-  seat: SEAT,
-  agent: "CASE WHEN u.job_agent_id IS NOT NULL THEN 'a' || u.job_agent_id WHEN u.source = 'master' THEN 'master' ELSE '' END",
   model: 'u.model',
   cli: 'u.cli',
   provider: "CASE WHEN u.provider <> '' THEN u.provider ELSE '' END",
@@ -45,7 +39,6 @@ const SOURCE_LABELS: Record<string, string> = {
   scratch: 'Scratch terminal',
   master: 'Job Master',
   agent: 'Job agent',
-  frontdesk: 'Discord front desk',
   import: 'Imported',
 }
 
@@ -85,12 +78,9 @@ export function cleanFilter(f: unknown): UsageFilter {
   num('from')
   num('to')
   num('crewId')
-  num('runId')
-  num('agentId')
   str('model')
   str('cli')
   str('provider')
-  str('seat')
   str('source')
   if (r.legacy === 'include' || r.legacy === 'exclude' || r.legacy === 'only') out.legacy = r.legacy
   return out
@@ -115,9 +105,6 @@ function where(f: UsageFilter): { sql: string; args: Array<string | number> } {
   if (f.model !== undefined) add('u.model = ?', f.model)
   if (f.cli !== undefined) add('u.cli = ?', f.cli)
   if (f.provider !== undefined) add('u.provider = ?', f.provider)
-  if (f.runId !== undefined) add('u.run_id = ?', f.runId)
-  if (f.seat !== undefined) add(`${SEAT} = ?`, f.seat)
-  if (f.agentId !== undefined) add('u.job_agent_id = ?', f.agentId)
   if (f.source !== undefined) add('u.source = ?', f.source)
   if (f.legacy === 'exclude') add('u.legacy = 0')
   if (f.legacy === 'only') add('u.legacy = 1')
@@ -146,24 +133,10 @@ export interface QueryDeps {
 // Human text for the key of one grouping.
 function labeller(store: Store): (g: UsageGroupBy, key: string) => string {
   const crews = new Map(store.listCrews().map((c) => [String(c.id), c.name]))
-  const agents = new Map<string, string>()
   const label = (g: UsageGroupBy, key: string): string => {
     switch (g) {
       case 'project':
         return key.startsWith('label:') ? key.slice(6) : key ? (crews.get(key) ?? `project ${key}`) : 'No project'
-      case 'run':
-        return key ? `JOB#${key}` : 'No job'
-      case 'agent': {
-        if (key === 'master') return 'Master'
-        if (!key) return 'No agent'
-        if (!agents.has(key)) {
-          const a = store.getJobAgent(Number(key.slice(1)))
-          agents.set(key, a ? `${a.seat}${a.model ? ` (${a.model})` : ''}` : `agent ${key.slice(1)}`)
-        }
-        return agents.get(key)!
-      }
-      case 'seat':
-        return key || 'No seat'
       case 'source':
         return SOURCE_LABELS[key] ?? (key || 'unknown')
       case 'provider':
@@ -214,7 +187,15 @@ export function queryUsage(d: QueryDeps, q: UsageQuery): UsageReport {
       deltaPct: previous.costUsd > 0 ? ((totals.costUsd - previous.costUsd) / previous.costUsd) * 100 : null,
     }
   }
-  return { query: { filter, groupBy, trend: q.trend }, rows, totals, trend }
+  const now = d.now()
+  const { from: _from, to: _to, ...scope } = filter
+  const windows = Object.fromEntries(
+    BUDGET_WINDOWS.map((w) => {
+      const win = where({ ...scope, from: windowStart(w, now) })
+      return [w, totalsOf(d.store.db.prepare(`SELECT ${AGG} ${FROM} ${win.sql}`).get(...win.args) as Row)]
+    }),
+  ) as Record<BudgetWindow, UsageTotals>
+  return { query: { filter, groupBy, trend: q.trend }, rows, totals, trend, windows }
 }
 
 export function querySeries(d: QueryDeps, q: UsageSeriesQuery): UsageSeries {
@@ -236,28 +217,3 @@ export function querySeries(d: QueryDeps, q: UsageSeriesQuery): UsageSeries {
 }
 
 // What one job spent, per agent: the Master, then every agent of the job (those that spent nothing show zeros).
-export function jobUsage(d: QueryDeps, runId: number): RunUsage {
-  const { store } = d
-  const run = store.getRun(runId)
-  const report = queryUsage(d, { filter: { runId }, groupBy: ['agent'] })
-  const byKey = new Map(report.rows.map((r) => [r.keys[0]!, r]))
-  const pick = (key: string): UsageTotals => {
-    const r = byKey.get(key)
-    byKey.delete(key)
-    return r ? { ...r } : emptyTotals()
-  }
-  const strip = (t: UsageTotals & Partial<UsageRowOut>): UsageTotals => ({
-    inputTokens: t.inputTokens,
-    outputTokens: t.outputTokens,
-    cacheRead: t.cacheRead,
-    cacheWrite: t.cacheWrite,
-    costUsd: t.costUsd,
-    turns: t.turns,
-    legacyTurns: t.legacyTurns,
-  })
-  const agents: JobAgentUsage[] = [{ agentId: null, seat: 'master', model: run?.masterModel ?? '', status: run?.status ?? '', ...strip(pick('master')) }]
-  for (const a of run ? store.listJobAgents(runId) : []) agents.push({ agentId: a.id, seat: a.seat, model: a.model, status: a.status, ...strip(pick(`a${a.id}`)) })
-  // Usage tied to an agent row that no longer exists, or to none: listed so the rows still add up to the total.
-  for (const [key, r] of byKey) agents.push({ agentId: null, seat: key ? r.labels[0]! : 'unattributed', model: '', status: '', ...strip(r) })
-  return { runId, crewId: run?.crewId ?? null, task: run?.task ?? '', totals: report.totals, agents }
-}

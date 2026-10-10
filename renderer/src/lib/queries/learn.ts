@@ -23,7 +23,6 @@ export const useMemoryFiles = (crewId: number | null) =>
 export const useDrafts = (crewId?: number, status?: DraftStatus) =>
   useQuery({ queryKey: ['learn', 'drafts', crewId ?? null, status ?? null] as const, queryFn: () => call('learn:drafts', crewId, status) })
 
-export const useLearnNow = () => useMutate('learn:run', [LEARN, ['events']])
 // The AI the learn step asks now, an empty model resolved to the cheap default (OpenCode's is looked up at run time).
 export const useLearnAi = () => useQuery({ queryKey: ['learn', 'ai'] as const, queryFn: () => call('learn:ai'), staleTime: 60_000 })
 export const useTestLearnAi = () => useMutate('learn:test', [])
@@ -36,7 +35,10 @@ export const useEditLesson = () => useMutate('learn:editLesson', [LEARN])
 export const useMergeLessons = () => useMutate('learn:mergeLessons', [LEARN])
 export const useSetLessonStatus = () => useMutate('learn:setLessonStatus', [LEARN])
 export const useMoveLesson = () => useMutate('learn:moveLesson', [LEARN])
-export const useEditDraft = () => useMutate('learn:editDraft', [LEARN])
+export const useLearnRecords = () => useQuery({ queryKey: ['learn', 'records'] as const, queryFn: () => call('learn:records') })
+export const useRollbackChange = () => useMutate('learn:rollback', [LEARN])
+export const useClearRecords = () => useMutate('learn:clearRecords', [LEARN])
+export const useEditDraft =() => useMutate('learn:editDraft', [LEARN])
 export const useApproveDraft = () => useMutate('learn:approveDraft', [LEARN])
 export const useRejectDraft = () => useMutate('learn:rejectDraft', [LEARN])
 export const useDeleteDraft = () => useMutate('learn:deleteDraft', [LEARN])
@@ -46,7 +48,6 @@ registerLive((b, qc) => [
   b.on('event', (e) => {
     if (e.kind === 'learn') void qc.invalidateQueries({ queryKey: LEARN })
   }),
-  b.on('run', () => void qc.invalidateQueries({ queryKey: ['learn', 'status'] })),
   // The switches and review mode are part of the status.
   b.on('settings', () => void Promise.all([qc.invalidateQueries({ queryKey: ['learn', 'status'] }), qc.invalidateQueries({ queryKey: ['learn', 'ai'] }), qc.invalidateQueries({ queryKey: ['learn', 'localModels'] })])),
 ])

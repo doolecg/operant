@@ -16,7 +16,7 @@ const claudeDir = mkdtempSync(join(tmpdir(), 'operant-git-claude-'))
 const root = mkdtempSync(join(tmpdir(), 'operant-git-repo-'))
 const repo = join(root, 'shop')
 mkdirSync(repo)
-const sh = (...a) => execFileSync('git', ['-c', 'user.name=Tester', '-c', 'user.email=t@example.com', '-c', 'core.autocrlf=false', ...a], { cwd: repo, encoding: 'utf8', windowsHide: true })
+const sh = (...a) => execFileSync('git', ['-c', 'user.name=Tester', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...a], { cwd: repo, encoding: 'utf8', windowsHide: true })
 const lines = Array.from({ length: 40 }, (_, i) => `const value${i + 1} = ${i + 1}`)
 sh('init', '-q', '-b', 'main')
 sh('config', 'core.autocrlf', 'false')
@@ -44,7 +44,7 @@ try {
   await page.evaluate((folder) => window.operant.invoke('crews:create', { name: 'shop', folder }), repo)
   await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
 
-  // The chip shows the branch; clicking it opens the Git tab.
+  // The chip shows the branch; clicking it opens the Git popout.
   const chip = page.getByRole('button', { name: /^Git: Branch main, 3 changed files/ })
   await chip.waitFor()
   await chip.click()
@@ -159,7 +159,11 @@ try {
   await git.getByRole('button', { name: 'Create and switch' }).click()
   await git.getByRole('button', { name: /^Branch feature\/e2e/ }).waitFor()
   assert.equal(sh('branch', '--show-current').trim(), 'feature/e2e')
-  await page.getByRole('button', { name: /^Git: Branch feature\/e2e/ }).waitFor()
+  // The popout covers the page until Esc closes it; the chip shows the new branch, and the popout opens again.
+  await page.keyboard.press('Escape')
+  await git.waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: /^Git: Branch feature\/e2e/ }).click()
+  await git.waitFor()
   await git.getByRole('tab', { name: /^Changes/ }).click()
   writeFileSync(join(repo, 'app.ts'), 'feature version\n')
   sh('commit', '-qam', 'feature change')

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { notify } from './notices'
 
 export interface Toast {
   id: number
@@ -18,6 +19,7 @@ export function dismissToast(id: number): void {
 
 // A short message in the corner; it clears itself (errors stay longer).
 export function toast(text: string, error = false): void {
+  notify(text, error ? 'error' : 'info')
   const id = next++
   toasts = [...toasts.slice(-3), { id, text, error }]
   emit()

@@ -1,0 +1,7 @@
+{"ts":1000,"tile":3,"hook_event_name":"SessionStart","session_id":"11111111-2222-4333-8444-555555555555","cwd":"C:/proj"}
+{"ts":1100,"tile":3,"hook_event_name":"UserPromptSubmit","session_id":"11111111-2222-4333-8444-555555555555"}
+{"ts":1200,"tile":3,"hook_event_name":"PreToolUse","session_id":"11111111-2222-4333-8444-555555555555","tool_name":"Agent","tool_use_id":"tu1","tool_input":{"description":"Map the code"}}
+{"ts":1300,"tile":3,"hook_event_name":"Notification","session_id":"11111111-2222-4333-8444-555555555555","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}
+{"ts":1400,"tile":3,"hook_event_name":"UserPromptSubmit","session_id":"11111111-2222-4333-8444-555555555555"}
+{"ts":1500,"tile":3,"hook_event_name":"Stop","session_id":"11111111-2222-4333-8444-555555555555"}
+{"ts":1600,"tile":3,"hook_event_name":"SessionEnd","session_id":"11111111-2222-4333-8444-555555555555"}

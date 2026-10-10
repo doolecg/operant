@@ -3,7 +3,33 @@ import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { EXIT, type CollabRequest, type CollabResult, type Identity } from './collab'
+// The exit codes `operant` reports (cli/operant.ts maps them to its own output).
+export const EXIT = {
+  OK: 0,
+  ERROR: 1,
+  USAGE: 2,
+  NOT_FOUND: 3,
+  CONFLICT: 4,
+  FORBIDDEN: 5,
+  LIMITED: 6,
+  UNREACHABLE: 7,
+} as const
+
+// Who a request runs for: the project of the tile whose token sent it.
+export interface Identity {
+  crewId: number
+}
+
+export interface CliRequest {
+  cmd: string
+  args?: Record<string, unknown>
+}
+
+export interface CliResult {
+  exit: number
+  out?: string
+  error?: string
+}
 
 export const MAX_REQUEST_BYTES = 64 * 1024
 const TOKEN_BYTES = 32
@@ -11,12 +37,12 @@ const TOKEN_BYTES = 32
 const MAX_SOCKET_PATH = 103
 
 export interface CliTarget {
-  identify(operatorId: number): Identity | null
-  run(who: Identity, req: CollabRequest, signal?: AbortSignal): Promise<CollabResult>
+  identify(tileId: number): Identity | null
+  run(who: Identity, req: CliRequest, signal?: AbortSignal): Promise<CliResult>
 }
 
 export interface CliServerOptions {
-  collab: CliTarget
+  target: CliTarget
   // Parent of the per-user socket directory on POSIX (default the OS temp dir).
   dir?: string
   maxRequestBytes?: number
@@ -27,7 +53,7 @@ export interface CliServerOptions {
   onError?: (err: unknown) => void
 }
 
-const FORBIDDEN: CollabResult = { exit: EXIT.FORBIDDEN, error: 'forbidden' }
+const FORBIDDEN: CliResult = { exit: EXIT.FORBIDDEN, error: 'forbidden' }
 
 // A directory only this user can enter, refusing a symlink or someone else's directory.
 function privateDir(dir: string): void {
@@ -54,7 +80,7 @@ export function socketPath(base = tmpdir()): string {
 // out, then close. The caller's identity comes only from its session token. Tokens and the socket path
 // are never logged.
 export class CliServer {
-  private readonly collab: CliTarget
+  private readonly target: CliTarget
   private readonly maxBytes: number
   private readonly timeoutMs: number
   private readonly base: string | undefined
@@ -67,7 +93,7 @@ export class CliServer {
   private path = ''
 
   constructor(opts: CliServerOptions) {
-    this.collab = opts.collab
+    this.target = opts.target
     this.maxBytes = opts.maxRequestBytes ?? MAX_REQUEST_BYTES
     this.timeoutMs = opts.requestTimeoutMs ?? 10_000
     this.base = opts.dir
@@ -99,19 +125,19 @@ export class CliServer {
     return path
   }
 
-  // A fresh 32-byte token for the operator's session (hex, for OPERANT_TOKEN); replaces any earlier one.
-  issueToken(operatorId: number): string {
-    this.revokeToken(operatorId)
+  // A fresh 32-byte token for the tile's session (hex, for OPERANT_TOKEN); replaces any earlier one.
+  issueToken(tileId: number): string {
+    this.revokeToken(tileId)
     const token = randomBytes(TOKEN_BYTES)
-    this.tokens.set(operatorId, token)
+    this.tokens.set(tileId, token)
     return token.toString('hex')
   }
 
-  // Refuses the operator's token from now on and drops its open connections (a waiting inbox included).
-  revokeToken(operatorId: number): void {
-    this.tokens.delete(operatorId)
-    for (const s of this.active.get(operatorId) ?? []) s.destroy()
-    this.active.delete(operatorId)
+  // Refuses the tile's token from now on and drops its open connections (a waiting inbox included).
+  revokeToken(tileId: number): void {
+    this.tokens.delete(tileId)
+    for (const s of this.active.get(tileId) ?? []) s.destroy()
+    this.active.delete(tileId)
   }
 
   async close(): Promise<void> {
@@ -135,8 +161,8 @@ export class CliServer {
     if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null
     const given = Buffer.from(token, 'hex')
     let found: number | null = null
-    for (const [operatorId, t] of this.tokens) {
-      if (timingSafeEqual(given, t) && found === null) found = operatorId
+    for (const [tileId, t] of this.tokens) {
+      if (timingSafeEqual(given, t) && found === null) found = tileId
     }
     return found
   }
@@ -155,7 +181,7 @@ export class CliServer {
       this.sockets.delete(socket)
       controller.abort()
     })
-    const reply = (r: CollabResult) => {
+    const reply = (r: CliResult) => {
       if (socket.destroyed || !socket.writable) return
       // Ends our side, then drops a peer that never closes its own.
       socket.end(`${JSON.stringify(r)}\n`, () => setTimeout(() => socket.destroy(), 1000).unref())
@@ -181,7 +207,7 @@ export class CliServer {
     })
   }
 
-  private async dispatch(socket: Socket, line: Buffer, signal: AbortSignal): Promise<CollabResult> {
+  private async dispatch(socket: Socket, line: Buffer, signal: AbortSignal): Promise<CliResult> {
     let req: unknown
     try {
       req = JSON.parse(line.toString('utf8'))
@@ -190,21 +216,21 @@ export class CliServer {
     }
     if (!req || typeof req !== 'object' || Array.isArray(req)) return { exit: EXIT.USAGE, error: 'bad request' }
     const { token, cmd, args } = req as { token?: unknown; cmd?: unknown; args?: unknown }
-    const operatorId = this.authenticate(token)
-    if (operatorId === null) return FORBIDDEN
-    const who = this.collab.identify(operatorId)
+    const tileId = this.authenticate(token)
+    if (tileId === null) return FORBIDDEN
+    const who = this.target.identify(tileId)
     if (!who) return FORBIDDEN
     if (typeof cmd !== 'string' || (args !== undefined && (args === null || typeof args !== 'object' || Array.isArray(args)))) {
       return { exit: EXIT.USAGE, error: 'bad request' }
     }
-    let set = this.active.get(operatorId)
-    if (!set) this.active.set(operatorId, (set = new Set()))
+    let set = this.active.get(tileId)
+    if (!set) this.active.set(tileId, (set = new Set()))
     set.add(socket)
     try {
-      return await this.collab.run(who, { cmd, args: args as Record<string, unknown> | undefined }, signal)
+      return await this.target.run(who, { cmd, args: args as Record<string, unknown> | undefined }, signal)
     } finally {
       set.delete(socket)
-      if (set.size === 0 && this.active.get(operatorId) === set) this.active.delete(operatorId)
+      if (set.size === 0 && this.active.get(tileId) === set) this.active.delete(tileId)
     }
   }
 }

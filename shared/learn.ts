@@ -120,7 +120,26 @@ export interface LearnSettings {
   // The local server (base URL; its API key lives in the secret store) and whether a plain-http host outside the LAN is confirmed.
   localUrl: string
   localInsecureOk: boolean
+  // off: nothing runs. suggest (default): every lesson and draft waits for review. controlled: low-risk lessons apply
+  // themselves, reversibly. advanced: also skill drafts that pass validation apply themselves.
+  mode: LearnMode
+  // Budgets per learn run (one session end). Calls include validation retries.
+  maxCallsPerReview: number
+  maxTokensPerReview: number
+  maxChangesPerReview: number
+  validationRetries: number
+  // Spend cap per day in USD across learn calls; 0 means no cap.
+  dailyUsdBudget: number
+  // What a hit budget does: stop the run, or stop and wait for a confirm (learn:runNow with confirm).
+  onLimit: LearnOnLimit
+  // Trivial-session gate, checked in code before any model call.
+  minUserTurns: number
+  minTokens: number
 }
+
+export type LearnMode = 'off' | 'suggest' | 'controlled' | 'advanced'
+export type LearnOnLimit = 'stop' | 'confirm'
+export const LEARN_MODES: LearnMode[] = ['off', 'suggest', 'controlled', 'advanced']
 
 // 'local' is a model server on this PC or the LAN that speaks the OpenAI chat API (LM Studio, Ollama, llama.cpp).
 export type LearnCli = 'claude' | 'opencode' | 'local'
@@ -148,7 +167,53 @@ const RISKY_LESSON = /https?:\/\/|www\.|`|^\s*\$ |\b(always|never)\b|\b(npm|npx|
 
 export const lessonNeedsReview = (text: string): boolean => RISKY_LESSON.test(text)
 
-export const DEFAULT_LEARN_SETTINGS: LearnSettings = { enabled: true, hindsight: true, codegraph: true, memory: true, review: 'queue', cli: 'claude', model: '', effort: '', localUrl: 'http://127.0.0.1:1234', localInsecureOk: false }
+export const DEFAULT_LEARN_SETTINGS: LearnSettings = {
+  enabled: true,
+  hindsight: true,
+  codegraph: true,
+  memory: true,
+  review: 'queue',
+  cli: 'claude',
+  model: '',
+  effort: '',
+  localUrl: 'http://127.0.0.1:1234',
+  localInsecureOk: false,
+  mode: 'suggest',
+  maxCallsPerReview: 3,
+  maxTokensPerReview: 60_000,
+  maxChangesPerReview: 5,
+  validationRetries: 1,
+  dailyUsdBudget: 0,
+  onLimit: 'stop',
+  minUserTurns: 3,
+  minTokens: 4000,
+}
+
+// A recorded automatic change (or a proposal waiting for review): what it was, what it became, and why.
+export type LearnChangeKind = 'lesson' | 'skill' | 'preset' | 'team'
+export type LearnChangeStatus = 'proposed' | 'applied' | 'rejected' | 'rolledBack' | 'failed'
+
+export interface LearnChange {
+  id: number
+  at: number
+  crewId: number | null
+  kind: LearnChangeKind
+  // The lesson, draft, preset or team the change touches (0 when none exists yet).
+  targetId: number
+  proposal: string
+  evidence: string
+  filesAffected: string[]
+  cli: string
+  model: string
+  tokens: number
+  usd: number
+  validation: string
+  status: LearnChangeStatus
+  // The text before and after the change: rollback puts `previous` back.
+  previous: string
+  next: string
+  rolledBackAt: number | null
+}
 
 export interface MemoryFile {
   file: string

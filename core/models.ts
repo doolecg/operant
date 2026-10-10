@@ -1,4 +1,4 @@
-import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelName, providerName, providerOf, type ModelEntry, type ModelList, type ModelProvider } from '../shared/models'
+import { CLAUDE_MODELS, claudeEffortsFor, modelName, providerName, providerOf, type ModelEntry, type ModelList, type ModelProvider } from '../shared/models'
 import { findService } from './opencode'
 import { runHidden } from './proc'
 
@@ -23,9 +23,8 @@ const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:+@-]*\/[A-Za-z0-9][A-Za-z0-9._:+/@-]*$/
 const VARIANT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/
 
-// Claude takes --effort for every model but Haiku.
 export function listEfforts(agent: 'claude' | 'opencode', model: string, list?: ModelList): string[] {
-  if (agent === 'claude') return model.includes('haiku') ? [] : [...CLAUDE_EFFORTS]
+  if (agent === 'claude') return claudeEffortsFor(model)
   return list?.efforts[model] ?? []
 }
 

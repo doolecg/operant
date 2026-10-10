@@ -1,6 +1,9 @@
 // Claude model ids and efforts offered everywhere (renderer selectors and the core); one source.
-export const CLAUDE_MODELS: readonly string[] = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5', 'claude-fable-5-1']
+export const CLAUDE_MODELS: readonly string[] = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 export const CLAUDE_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
+// Claude takes --effort for every model but Haiku 4.5.
+export const claudeEffortsFor = (model: string): string[] => (model.includes('haiku-4') ? [] : [...CLAUDE_EFFORTS])
 
 export interface ModelEntry {
   // provider/model, exactly as `opencode models` prints it.
@@ -67,3 +70,10 @@ export function modelName(id: string): string {
 }
 
 export const providerOf = (id: string): string => id.slice(0, Math.max(0, id.indexOf('/')))
+
+// The context window a Claude model runs in: 1M for the [1m] variants, else the standard 200k. Null for other ids, so
+// no context percentage is shown for them.
+export function claudeContextWindow(model: string): number | null {
+  if (!/^claude-/i.test(model)) return null
+  return /\[1m\]|-1m\b/i.test(model) ? 1_000_000 : 200_000
+}

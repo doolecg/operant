@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_LEARN_SETTINGS } from '../shared/learn'
-import { cliChatModel, localChatModel } from './chatmodel'
 import { claudeLearnModel } from './learn'
 import { learnModelList, resolveLearnAi } from './learn-ai'
 import { isLanHost, listLocalModels, localChat, normalizeLocalUrl, testLocal, type LocalFetch } from './localllm'
@@ -107,12 +106,4 @@ describe('local server as the learn AI and as a ChatModel', () => {
     expect(JSON.parse(calls.at(-1)!.body!).messages).toEqual([{ role: 'user', content: 'the prompt' }])
   })
 
-  it('all three adapters offer ChatModel', async () => {
-    const local = localChatModel(BASE, 'm', { fetch: server({ '/v1/chat/completions': [chatOk('hello')] }) })
-    expect(await local.chat([{ role: 'user', content: 'hi' }])).toBe('hello')
-    const seen: string[] = []
-    const cli = cliChatModel({ start: async (o) => (seen.push(o.prompt), { done: Promise.resolve({ ok: true, text: 'fine' }), stop: async () => undefined }) }, { model: 'x' })
-    expect(await cli.chat([{ role: 'system', content: 'Be brief.' }, { role: 'user', content: 'hi' }], { json: true })).toBe('fine')
-    expect(seen[0]).toBe('Instructions:\nBe brief.\n\nhi\n\nAnswer with JSON only.')
-  })
 })

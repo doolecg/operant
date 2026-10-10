@@ -37,8 +37,7 @@ export function TokensSection() {
         <CardHeader>
           <CardTitle className="text-base">Spending limits</CardTitle>
           <CardDescription>
-            Spend is estimated from operator transcripts at list prices. At a limit, operators finish their turn and then pause: no nudges, no new
-            jobs. Nothing is killed mid-edit.
+            Spend is estimated from session transcripts at list prices. A cap only warns; nothing is stopped.
           </CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
@@ -52,19 +51,11 @@ export function TokensSection() {
               onCommit={(v) => save.mutate({ dailyBudgetUsd: v })}
             />
           </Row>
-          <Row
-            label="Default daily cap per operator (USD)"
-            hint="An operator's own cap wins. 0 turns the default off."
-            htmlFor="operator-cap"
-          >
-            <NumberField
-              id="operator-cap"
-              min={0}
-              max={100000}
-              step="0.5"
-              value={t.operatorDailyCapUsd}
-              onCommit={(v) => set({ operatorDailyCapUsd: v })}
-            />
+          <Row label="5-hour budget (USD)" hint="The last 5 hours, all projects together. 0 turns it off." htmlFor="budget-5h">
+            <NumberField id="budget-5h" min={0} max={100000} step="0.5" value={s.fiveHourBudgetUsd} onCommit={(v) => save.mutate({ fiveHourBudgetUsd: v })} />
+          </Row>
+          <Row label="Weekly budget (USD)" hint="The last 7 days, all projects together. 0 turns it off." htmlFor="budget-week">
+            <NumberField id="budget-week" min={0} max={100000} step="0.5" value={s.weeklyBudgetUsd} onCommit={(v) => save.mutate({ weeklyBudgetUsd: v })} />
           </Row>
           <Row label="Warn at (% of a cap)" hint="Raises an activity event and an amber badge." htmlFor="warn-pct">
             <NumberField id="warn-pct" min={1} max={100} value={t.capWarnPct} onCommit={(v) => set({ capWarnPct: v })} />
@@ -75,7 +66,7 @@ export function TokensSection() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Waste signals</CardTitle>
-          <CardDescription>What the Cost tab flags. These only change what is reported, not what is spent.</CardDescription>
+          <CardDescription>These only change what is reported, not what is spent.</CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
           <Row
@@ -84,15 +75,6 @@ export function TokensSection() {
             htmlFor="cold-pct"
           >
             <NumberField id="cold-pct" min={1} max={100} value={t.coldThresholdPct} onCommit={(v) => set({ coldThresholdPct: v })} />
-          </Row>
-          <Row label="Output share warning (%)" hint="Flags an operator whose output is above this share of its cost." htmlFor="output-pct">
-            <NumberField
-              id="output-pct"
-              min={1}
-              max={100}
-              value={t.outputShareWarnPct}
-              onCommit={(v) => set({ outputShareWarnPct: v })}
-            />
           </Row>
         </CardContent>
       </Card>

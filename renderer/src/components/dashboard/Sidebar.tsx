@@ -4,7 +4,6 @@ import {
   ChevronDown,
   ChevronRight,
   Code2,
-  Crown,
   Download,
   FlaskConical,
   FolderOpen,
@@ -12,9 +11,9 @@ import {
   GripVertical,
   MoreHorizontal,
   Network,
-  PanelLeftClose,
   Plus,
   RefreshCw,
+  Sparkles,
   SquareTerminal,
 } from 'lucide-react'
 import { decodeIpcError } from '@shared/ipc'
@@ -26,7 +25,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ResizeHandle } from '@/components/ui/resize-handle'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { bridge } from '@/lib/bridge'
+import { CLI_SHORT, cliBlocked } from '@/lib/capabilities'
 import {
+  useCapabilities,
   useCollapseGroup,
   useCreateGroup,
   useDeleteGroup,
@@ -37,9 +38,7 @@ import {
   useRenameGroup,
   useReorderCrews,
   useReorderGroups,
-  useRuns,
   useSettings,
-  useUnread,
   useUpdateStatus,
 } from '@/lib/queries'
 import { usePanelWidth } from '@/lib/layout'
@@ -54,10 +53,8 @@ interface Props {
   onSelect: (id: number) => void
   // A group id adds the new project to that group.
   onNewCrew: (groupId?: number) => void
-  actions: Omit<ProjectMenuHandlers, 'moveTo'> & { openMaster: (c: Crew) => void; openPlayground: () => void }
-  // Hides the panel (the same toggle as the keyboard shortcut).
-  onHide?: () => void
-  // Icon buttons on the bottom row: the usage, learning and MCP badges and the Console and terminal toggles.
+  actions: Omit<ProjectMenuHandlers, 'moveTo'>
+  // Icon buttons on the bottom row: Settings, the console toggle, the learning and provider usage badges, and the git chip.
   footer?: ReactNode
 }
 
@@ -77,38 +74,6 @@ function RowGit({ crewId }: { crewId: number }) {
           {git.changes}
         </span>
       )}
-    </span>
-  )
-}
-
-// Jobs working now (a pulsing dot and the number) and a red dot when a job needs the user.
-function RowRuns({ crewId }: { crewId: number }) {
-  const runs = useRuns(crewId).data ?? []
-  const working = runs.filter((r) => r.status === 'working').length
-  const needs = runs.some((r) => r.status === 'needs-you')
-  if (!working && !needs) return null
-  return (
-    <span className="flex shrink-0 items-center gap-1.5">
-      {working > 0 && (
-        <span aria-label={`${working} running`} title={`${working} running`} className="flex items-center gap-1 text-[10px] text-orange-400 tabular-nums">
-          <span aria-hidden className="size-[7px] animate-pulse rounded-full bg-orange-400" />
-          {working}
-        </span>
-      )}
-      {needs && <span role="img" aria-label="Needs attention" title="A job needs you" className="bg-destructive size-[7px] rounded-full" />}
-    </span>
-  )
-}
-
-function CrewUnread({ crewId }: { crewId: number }) {
-  const count = useUnread(crewId).data?.user ?? 0
-  if (count <= 0) return null
-  return (
-    <span
-      aria-label={`${count} unread messages`}
-      className="bg-primary text-primary-foreground inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold tabular-nums"
-    >
-      {count > 99 ? '99+' : count}
     </span>
   )
 }
@@ -156,7 +121,7 @@ function NameEditor({ initial, label, onCommit, onCancel }: { initial: string; l
         if (e.key === 'Escape') finish(false)
       }}
       onDragStart={(e) => e.preventDefault()}
-      className="bg-background text-foreground min-w-0 flex-1 rounded border px-1.5 text-xs normal-case outline-none focus:ring-1"
+      className="bg-background text-foreground min-w-0 flex-1 rounded-md border px-1.5 text-xs normal-case outline-none focus:ring-1"
     />
   )
 }
@@ -166,7 +131,7 @@ const tiny = 'text-muted-foreground hover:text-foreground size-5 shrink-0'
 const headerBtn = 'text-muted-foreground hover:text-foreground hover:bg-foreground/[.08] size-[22px] rounded-md [&_svg]:size-3'
 const ring = 'shadow-[inset_0_0_0_1.5px_var(--primary)]'
 
-export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, actions, onHide, footer }: Props) {
+export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, actions, footer }: Props) {
   // The Playground is pinned above the list; every list below works on the real projects only.
   const playground = allCrews.find((c) => c.kind === 'playground')
   const crews = allCrews.filter((c) => c.kind !== 'playground')
@@ -184,6 +149,8 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
   const ides = useIdes().data
   const defaultIde = useSettings().data?.ide.default ?? 'code'
   const ideName = ides?.find((i) => i.id === defaultIde)?.name ?? 'IDE'
+  const mainCli = useSettings().data?.mainCli ?? 'claude'
+  const agentBlocked = cliBlocked(useCapabilities().data, mainCli)
   const platform = bridge().platform
   const panel = usePanelWidth('sidebarWidth')
   const aside = useRef<HTMLElement>(null)
@@ -411,10 +378,6 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
               <span className={cn('max-w-[60%] shrink-0 truncate font-semibold', isSelected && 'text-primary')}>{crew.name}</span>
               <RowGit crewId={crew.id} />
               <span className="flex-1" />
-              <RowRuns crewId={crew.id} />
-              <span className="group-hover:hidden group-focus-within:hidden">
-                <CrewUnread crewId={crew.id} />
-              </span>
               <span className="text-muted-foreground/70 shrink-0 font-mono text-[9px] group-hover:hidden group-focus-within:hidden">PRJ#{crew.prjNumber}</span>
             </button>
             <div data-no-nav className={cn('shrink-0 items-center', hoverOnly)}>
@@ -424,11 +387,11 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
               <Button variant="ghost" size="icon" className={tiny} aria-label={`Open ${crew.name} in ${ideName}`} title={`Open in ${ideName}`} onClick={() => actions.openIde(crew)}>
                 <Code2 className="size-3.5" />
               </Button>
+              <Button variant="ghost" size="icon" className={tiny} aria-label={`New ${CLI_SHORT[mainCli]} terminal in ${crew.name}`} title={agentBlocked ?? `New ${CLI_SHORT[mainCli]} terminal here`} disabled={!!agentBlocked} onClick={() => actions.newCli(crew, mainCli)}>
+                <Sparkles className="size-3.5" />
+              </Button>
               <Button variant="ghost" size="icon" className={tiny} aria-label={`New shell in ${crew.name}`} title="New shell here" onClick={() => actions.newShell(crew)}>
                 <SquareTerminal className="size-3.5" />
-              </Button>
-              <Button variant="ghost" size="icon" className={tiny} aria-label={`Open Master of ${crew.name}`} title="Open Master" onClick={() => actions.openMaster(crew)}>
-                <Crown className="size-3.5" />
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -463,12 +426,11 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
           <span className={cn('max-w-[60%] shrink-0 truncate font-semibold', isSelected && 'text-primary')}>{pg.name}</span>
           <RowGit crewId={pg.id} />
           <span className="flex-1" />
-          <RowRuns crewId={pg.id} />
-          <span className="group-hover:hidden group-focus-within:hidden">
-            <CrewUnread crewId={pg.id} />
-          </span>
         </button>
         <div className={cn('shrink-0 items-center', hoverOnly)}>
+          <Button variant="ghost" size="icon" className={tiny} aria-label={`New ${CLI_SHORT[mainCli]} terminal in ${pg.name}`} title={agentBlocked ?? `New ${CLI_SHORT[mainCli]} terminal here`} disabled={!!agentBlocked} onClick={() => actions.newCli(pg, mainCli)}>
+            <Sparkles className="size-3.5" />
+          </Button>
           <Button variant="ghost" size="icon" className={tiny} aria-label={`New shell in ${pg.name}`} title="New shell here" onClick={() => actions.newShell(pg)}>
             <SquareTerminal className="size-3.5" />
           </Button>
@@ -606,7 +568,7 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
       ref={aside}
       aria-label="Projects"
       style={{ width: panel.width || `min(${PANEL_DEFAULT}px, 35vw)`, minWidth: `min(${PANEL_MIN}px, 35vw)`, maxWidth: `min(${PANEL_MAX}px, 50vw)` }}
-      className="bg-muted/30 relative flex shrink-0 flex-col border-r"
+      className="bg-card relative m-1.5 mr-0 flex shrink-0 flex-col rounded-2xl border shadow-xs dark:shadow-none"
     >
       <ResizeHandle
         target={aside}
@@ -620,9 +582,6 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
       />
       <div data-testid="project-panel-header" className="flex h-8 shrink-0 items-center gap-0.5 pr-1.5 pl-3.5">
         <span className="text-primary mr-auto text-[10.5px] font-semibold tracking-[.09em] uppercase">Projects</span>
-        <Button variant="ghost" size="icon" className={headerBtn} onClick={actions.openPlayground} disabled={!playground} aria-label="Open Playground" title="Open Playground (starts its Master Terminal)">
-          <FlaskConical />
-        </Button>
         <Button variant="ghost" size="icon" className={headerBtn} onClick={() => onNewCrew()} aria-label="Add project" title="Add project">
           <Plus />
         </Button>
@@ -634,9 +593,6 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
         </Button>
         <Button variant="ghost" size="icon" className={headerBtn} onClick={() => void qc.invalidateQueries()} aria-label="Refresh projects" title="Refresh projects">
           <RefreshCw />
-        </Button>
-        <Button variant="ghost" size="icon" className={headerBtn} onClick={onHide} disabled={!onHide} aria-label="Hide project list" title="Hide project list">
-          <PanelLeftClose />
         </Button>
       </div>
 
@@ -679,14 +635,14 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
 
       <div className="space-y-2 border-t p-2">
         {update.data?.state === 'ready' && (
-          <div className="bg-card space-y-2 rounded-md border p-2.5">
+          <div className="bg-card space-y-2 rounded-xl border p-2.5">
             <p className="text-xs">Operant {update.data.version} is ready.</p>
             <Button size="sm" className="h-7 w-full" onClick={() => void bridge().invoke('update:install')}>
               <Download className="size-3.5" /> Restart to update
             </Button>
           </div>
         )}
-        <div className="flex items-center gap-1" data-testid="sidebar-footer">
+        <div className="flex min-w-0 items-center gap-0.5" data-testid="sidebar-footer">
           {footer}
         </div>
       </div>

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useAddMcp, useSettings, useUpdateMcp } from '@/lib/queries'
+import { useAddMcp, useUpdateMcp } from '@/lib/queries'
 
 const SCOPES: Record<McpCli, Array<{ id: McpScope; label: string }>> = {
   claude: [
@@ -45,9 +45,8 @@ export function McpServerDialog({ crewId, server, onClose }: { crewId: number | 
   const add = useAddMcp(crewId)
   const update = useUpdateMcp(crewId)
   const [name, setName] = useState(server?.name ?? '')
-  const mainCli = useSettings().data?.mainCli ?? 'claude'
-  const [cli, setCli] = useState<McpCli>(server?.cli ?? mainCli)
-  const [scope, setScope] = useState<McpScope>(server?.scope ?? SCOPES[server?.cli ?? mainCli][0]!.id)
+  const [cli, setCli] = useState<McpCli>(server?.cli ?? 'claude')
+  const [scope, setScope] = useState<McpScope>(server?.scope ?? SCOPES[server?.cli ?? 'claude'][0]!.id)
   const [transport, setTransport] = useState<McpTransport>(server?.transport ?? 'stdio')
   const [command, setCommand] = useState(server && server.transport === 'stdio' ? server.target : '')
   const [url, setUrl] = useState(server && server.transport !== 'stdio' ? server.target : '')

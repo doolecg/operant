@@ -1,0 +1,7 @@
+{
+  "name": "plain-english",
+  "version": "0.1.0",
+  "description": "Plain-English Claude Code: turns Claude's answers into simple language, moves all text to the summary at the end, adds next steps, and shows a status line of what the session is working on. A Haiku model checks the rules are followed.",
+  "author": { "name": "doole" },
+  "types": "./types/index.d.ts"
+}

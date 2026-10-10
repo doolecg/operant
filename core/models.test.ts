@@ -129,7 +129,9 @@ describe('models', () => {
   it('lists claude models and efforts', async () => {
     const r = await listModels('claude')
     expect(r.models).toContain('claude-fable-5-1')
-    expect(r.efforts['claude-haiku-4-5']).toEqual([])
+    expect(r.efforts['claude-haiku-5-5']).toEqual(listEfforts('claude', 'claude-opus-5-5'))
+    expect(listEfforts('claude', 'claude-haiku-5-5')).toContain('xhigh')
+    expect(listEfforts('claude', 'claude-haiku-4-5')).toEqual([])
     expect(listEfforts('claude', 'claude-opus-5-5')).toContain('xhigh')
     expect(listEfforts('opencode', 'a/b')).toEqual([])
   })

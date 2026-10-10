@@ -1,30 +1,22 @@
-import { useState } from 'react'
-import { Loader2 } from 'lucide-react'
 import { LEARN_STORES, type LearnSettings, type LearnStore } from '@shared/learn'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { timeAgo } from '@/lib/format'
-import { useHindsightStatus, useLearnNow, useLearnStatus, useLessons, useRuns, useSaveSettings, useSetLessonStatus, useSettings } from '@/lib/queries'
+import { useHindsightStatus, useLearnStatus, useLessons, useSaveSettings, useSetLessonStatus, useSettings } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { ErrorLine, STORE_LABEL } from './ui'
 
-// The learning loop at a glance: per store health, the last learn run, what waits for review, and "Learn now".
+// The learning loop at a glance: per store health, the last learn run and what waits for review.
 export function LearningStatusPanel({ crewId, onShowDrafts }: { crewId: number | null; onShowDrafts: () => void }) {
   const status = useLearnStatus(crewId ?? undefined)
   const settings = useSettings()
   const hindsight = useHindsightStatus().data
   const save = useSaveSettings()
-  const runs = useRuns(crewId)
-  const learnNow = useLearnNow()
   const pending = useLessons({ ...(crewId != null ? { crewId } : {}), status: 'pending' })
   const setStatus = useSetLessonStatus()
-  const [runId, setRunId] = useState('')
   const s = status.data
-  const finished = (runs.data ?? []).filter((r) => r.status === 'done' || r.status === 'failed')
-  const chosen = runId || (finished[0] ? String(finished[0].id) : '')
   const toggle = (patch: Partial<LearnSettings>) => save.mutate({ learn: patch })
   const last = s?.lastRun
   const total = s?.totals
@@ -42,7 +34,7 @@ export function LearningStatusPanel({ crewId, onShowDrafts }: { crewId: number |
           <>
             <div className="flex items-center justify-between gap-4 rounded-md border p-3">
               <div>
-                <div className="text-sm font-medium">Learning from finished jobs</div>
+                <div className="text-sm font-medium">Learning from finished sessions</div>
                 <div className="text-muted-foreground text-xs">
                   {s.enabled ? 'On' : 'Off'} · new lessons are {s.review === 'queue' ? 'held for your review' : 'written straight away (unless it mentions a command, link, always or never)'}
                 </div>
@@ -85,7 +77,7 @@ export function LearningStatusPanel({ crewId, onShowDrafts }: { crewId: number |
               ) : (
                 <>
                   <p className="text-xs">
-                    {last.runId != null ? `JOB#${last.runId}` : 'Master conversation'} · {timeAgo(last.at)}
+                    {timeAgo(last.at)}
                     {last.error
                       ? ''
                       : ` · ${last.extracted} found, ${last.written} written, ${last.merged} merged, ${last.staled} marked stale${last.queued ? `, ${last.queued} queued for review` : ''}`}
@@ -141,25 +133,6 @@ export function LearningStatusPanel({ crewId, onShowDrafts }: { crewId: number |
               </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Select value={chosen} onValueChange={setRunId} disabled={finished.length === 0}>
-                <SelectTrigger aria-label="Finished job to learn from" className="w-72">
-                  <SelectValue placeholder={crewId == null ? 'Pick a project first' : 'No finished jobs yet'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {finished.map((r) => (
-                    <SelectItem key={r.id} value={String(r.id)}>
-                      JOB#{r.id} · {r.task.slice(0, 50)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button variant="outline" disabled={!chosen || learnNow.isPending || !s.enabled} onClick={() => learnNow.mutate([Number(chosen)])}>
-                {learnNow.isPending && <Loader2 className="animate-spin" />} Learn now
-              </Button>
-              {learnNow.data === null && <span className="text-muted-foreground text-xs">Learning is off, so nothing ran.</span>}
-            </div>
-            <ErrorLine error={learnNow.error} />
           </>
         )}
       </CardContent>

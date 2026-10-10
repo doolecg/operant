@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { decodeIpcError } from '@shared/ipc'
 import type { Crew } from '@shared/types'
+import type { MainCli } from '@shared/settings'
+import { claudeEffortsFor } from '@shared/models'
 import { bridge } from '@/lib/bridge'
 import { toast } from '@/lib/toast'
+import { cliBlocked } from '@/lib/capabilities'
 
 export interface TerminalTab {
   scratchId: number
   crewId: number
   title: string
-  kind: 'shell' | 'agent'
+  kind: 'shell' | MainCli
   exited: boolean
 }
 
 // The tabs of the terminal drawer. Each is a scratch terminal of its project (cwd = the project folder), so the
-// session, its output buffer and its resize all use the existing scratch:* calls.
-export function useTerminals(crews: Crew[] | undefined, defaultModel: string) {
+// session, its output buffer and its resize all use the existing scratch:* calls. 'agent' opens the main CLI.
+export function useTerminals(crews: Crew[] | undefined, defaultModel: string, mainCli: MainCli = 'claude', defaultEffort = '') {
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [active, setActive] = useState<number | null>(null)
   const [open, setOpen] = useState(false)
@@ -43,16 +46,23 @@ export function useTerminals(crews: Crew[] | undefined, defaultModel: string) {
   )
 
   const openTab = useCallback(
-    async (crew: Crew, kind: 'shell' | 'agent') => {
+    async (crew: Crew, request: 'shell' | 'agent' | MainCli) => {
       const b = bridge()
+      const kind: TerminalTab['kind'] = request === 'shell' ? 'shell' : request === 'agent' ? mainCli : request
       let scratchId: number | null = null
+      // The remembered effort only when the remembered model takes one (Haiku 4.5 has none).
+      const effort = claudeEffortsFor(defaultModel).includes(defaultEffort) ? defaultEffort : ''
       try {
-        const title = kind === 'shell' ? `Shell: ${crew.name}` : `Claude: ${crew.name}`
+        if (kind !== 'shell') {
+          const blocked = cliBlocked(await b.invoke('capabilities:get'), kind)
+          if (blocked) return toast(`Could not open the terminal: ${blocked}`, true)
+        }
+        const title = kind === 'shell' ? `Shell: ${crew.name}` : `${kind === 'claude' ? 'Claude' : 'OpenCode'}: ${crew.name}`
         const row = await b.invoke('scratch:create', {
           crewId: crew.id,
           title,
-          agent: kind === 'shell' ? 'shell' : 'claude',
-          ...(kind === 'agent' ? { model: defaultModel } : {}),
+          agent: kind,
+          ...(kind === 'claude' ? { model: defaultModel, ...(effort ? { effort } : {}) } : {}),
         })
         scratchId = row.id
         await b.invoke('scratch:start', row.id)
@@ -64,7 +74,7 @@ export function useTerminals(crews: Crew[] | undefined, defaultModel: string) {
         toast(`Could not open the terminal: ${decodeIpcError(e).message}`, true)
       }
     },
-    [defaultModel],
+    [defaultModel, defaultEffort, mainCli],
   )
 
   const closeTab = useCallback((scratchId: number) => {

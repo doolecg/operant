@@ -1,11 +1,10 @@
-import { app, clipboard, dialog, ipcMain, Notification, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { consoleLog, isConsoleSource } from '../core/console'
 import { stopOwnProcess } from '../core/proc'
 import { ipcErrorOf, type Operant } from '../core/operant'
 import { CORE_CHANNELS, encodeIpcError, type IpcApi, type IpcEventName, type IpcEvents, type MainChannel } from '../shared/ipc'
 import { isTrustedSender, type AppOrigin } from './guard'
 import { createMedia } from './media'
-import { createRunNotifier } from './notify'
 import { isRunnable, resolveAllowedPath } from './openpath'
 import type { createUpdater } from './updater'
 
@@ -16,6 +15,7 @@ export function registerIpc(
   updater: ReturnType<typeof createUpdater>,
   getWindow: () => BrowserWindow | null,
   origin: AppOrigin,
+  hooks: { answerClose: (action: 'shown' | 'quit' | 'stay') => void; turnBusy: (scratchId: number) => boolean; setVisible: (scratchId: number | null) => void },
 ): void {
   // Only the main window showing the app may call; anything else (a dropped file, a navigated page) is refused.
   const trusted = (e: IpcMainInvokeEvent) => isTrustedSender(e, getWindow()?.webContents.id, origin)
@@ -84,6 +84,9 @@ export function registerIpc(
     'console:stop': (pid) => Number.isInteger(pid) && stopOwnProcess(pid),
     'media:state': () => media.state,
     'media:command': (cmd) => media.command(cmd),
+    'app:closeReply': (action) => hooks.answerClose(action),
+    'turn:busy': (scratchId) => hooks.turnBusy(scratchId),
+    'notify:visible': (scratchId) => hooks.setVisible(Number.isInteger(scratchId) ? scratchId : null),
   }
   for (const [channel, handler] of Object.entries(mainHandlers)) {
     ipcMain.handle(channel, (e, ...args: unknown[]) => {
@@ -95,43 +98,13 @@ export function registerIpc(
   const forward = <E extends IpcEventName>(name: E) =>
     operant.on(name as Exclude<E, 'update'>, ((payload: IpcEvents[E]) => push(getWindow(), name, payload)) as never)
   forward('event')
-  forward('operator:data')
-  forward('operator:status')
-  forward('operator:config')
   forward('scratch:data')
   forward('scratch:exit')
+  forward('chat:ops')
   forward('index:status')
-  forward('usage')
-  forward('caps')
-  forward('message')
-  forward('run')
-  forward('run:agents')
-  forward('discord:status')
-  forward('discord:pairing')
-  forward('unread')
-  forward('job')
-  forward('purge')
+  forward('budget')
   forward('settings')
-  const notifyRun = createRunNotifier({
-    enabled: () => operant.currentSettings.notifications.inbox,
-    focused: () => getWindow()?.isFocused() ?? false,
-    getRun: (id) => operant.runById(id),
-    show: ({ title, body }, onClick) => {
-      if (!Notification.isSupported()) return
-      const n = new Notification({ title, body })
-      n.on('click', onClick)
-      n.show()
-    },
-    onClick: (runId) => {
-      const win = getWindow()
-      if (!win || win.isDestroyed()) return
-      if (win.isMinimized()) win.restore()
-      win.show()
-      win.focus()
-      push(win, 'run:open', { runId })
-    },
-  })
-  operant.on('run', ({ runId, status }) => notifyRun(runId, status))
+  forward('claudeMods:state')
   media.on('media:state', (s) => push(getWindow(), 'media:state', s))
   media.on('media:timeline', (t) => push(getWindow(), 'media:timeline', t))
   media.on('media:art', (a) => push(getWindow(), 'media:art', a))

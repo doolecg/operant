@@ -88,7 +88,7 @@ export function TilesSection() {
           <Row label="Gap" hint="Space between tiles, in px (0 to 40)." htmlFor="tiles-gap">
             <NumberField id="tiles-gap" value={t.gaps} min={0} max={40} onCommit={(n) => set({ gaps: n })} />
           </Row>
-          <Row label="Master tile strip" hint="The context strip on the Master tile." htmlFor="tiles-strip">
+          <Row label="Tile header" hint="The header strip on each tile." htmlFor="tiles-strip">
             <Select value={t.strip} onValueChange={(v) => set({ strip: v as TileStrip })}>
               <SelectTrigger id="tiles-strip" className="w-36">
                 <SelectValue />
@@ -103,19 +103,6 @@ export function TilesSection() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Subagents and runs</CardTitle>
-        </CardHeader>
-        <CardContent className="divide-y">
-          <Row label="Open subagent tiles automatically" hint="A tile opens when a subagent starts." htmlFor="tiles-auto">
-            <Switch id="tiles-auto" checked={t.autoOpenSubagents} onCheckedChange={(v) => set({ autoOpenSubagents: v })} />
-          </Row>
-          <Row label="Close finished subagent tiles after" hint="Seconds. 0 keeps them open." htmlFor="tiles-close">
-            <NumberField id="tiles-close" value={t.closeDoneAfterSec} min={0} max={3600} onCommit={(n) => set({ closeDoneAfterSec: n })} />
-          </Row>
-        </CardContent>
-      </Card>
     </>
   )
 }

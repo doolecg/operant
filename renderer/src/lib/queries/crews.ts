@@ -4,26 +4,8 @@ import { call, keys, registerLive, useMutate } from './core'
 
 export const useCrews = () => useQuery({ queryKey: keys.crews, queryFn: () => call('crews:list') })
 
-export const useTopology = (crewId: number | null) =>
-  useQuery({
-    queryKey: keys.topology(crewId ?? -1),
-    queryFn: () => call('crews:topology', crewId!),
-    enabled: crewId != null,
-  })
-
-// What deleting the crew would remove, for the confirm dialog.
-export const useCrewCounts = (crewId: number | null, enabled = true) =>
-  useQuery({
-    queryKey: ['crewCounts', crewId ?? -1],
-    queryFn: () => call('crews:counts', crewId!),
-    enabled: enabled && crewId != null,
-    gcTime: 0,
-  })
-
-export const useCreateCrew = () => useMutate('crews:create')
 export const useUpdateCrew = () => useMutate('crews:update')
 export const useDeleteCrew = () => useMutate('crews:delete')
-export const useClearCrewHistory = () => useMutate('crews:clearHistory')
 // Saves the project list order. The list reorders at once and rolls back if the save fails.
 export function useReorderCrews() {
   const qc = useQueryClient()
@@ -45,14 +27,19 @@ export const useIndexStatus = (crewId: number | null) =>
 
 export const useEvents = () => useQuery({ queryKey: keys.events, queryFn: () => call('events:recent', 100) })
 
-export const useSummary = () => useQuery({ queryKey: keys.summary, queryFn: () => call('dashboard:summary') })
+// Clears the activity feed for every project.
+export function useClearEvents() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => call('events:clear'),
+    onSuccess: () => qc.setQueryData<OperantEvent[]>(keys.events, []),
+  })
+}
 
 registerLive((b, qc) => [
   b.on('event', (e) => {
     qc.setQueryData<OperantEvent[]>(keys.events, (old) => [e, ...(old ?? [])].slice(0, 100))
-    void qc.invalidateQueries({ queryKey: keys.summary })
     void qc.invalidateQueries({ queryKey: keys.crews })
-    if (e.crewId != null) void qc.invalidateQueries({ queryKey: keys.topology(e.crewId) })
   }),
   b.on('index:status', ({ crewId, status }) => qc.setQueryData(keys.index(crewId), status)),
 ])

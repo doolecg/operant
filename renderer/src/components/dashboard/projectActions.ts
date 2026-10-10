@@ -14,11 +14,6 @@ export const projectActions = {
       .invoke('index:run', crew.id)
       .then(() => undefined)
       .catch((e) => fail(`Could not index ${crew.name}`, e)),
-  trackerNow: (crew: Crew) =>
-    bridge()
-      .invoke('crews:trackerNow', crew.id)
-      .then((j) => toast(`Update tracker job #${j.id} is on the board`))
-      .catch((e) => fail('Could not create the tracker job', e)),
   copyPath: (crew: Crew) =>
     navigator.clipboard.writeText(crew.folder).then(
       () => toast('Path copied'),

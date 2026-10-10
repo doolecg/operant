@@ -16,6 +16,8 @@ const RATES: Array<[prefix: string, rate: Rate]> = [
   ['claude-sonnet-5-5', { input: 2, output: 10, cacheRead: 0.2 }],
   ['claude-sonnet-5', { input: 2, output: 10 }],
   ['claude-sonnet-4', { input: 3, output: 15 }],
+  // Haiku 5.5 launched 75% below Haiku 4.5 (2026-10).
+  ['claude-haiku-5-5', { input: 0.25, output: 1.25, cacheRead: 0.025 }],
   ['claude-haiku-4', { input: 1, output: 5 }],
   ['claude-haiku-4-5', { input: 1, output: 5, cacheRead: 0.1 }],
 ]

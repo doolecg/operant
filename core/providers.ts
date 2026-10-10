@@ -7,7 +7,7 @@ import { claudeDir } from './paths'
 import { costUsd, isPriced } from './pricing'
 import { runHidden } from './proc'
 import type { Store } from './store'
-import { openCodeDbPath } from './usage-ingest'
+import { openCodeDbPath } from './opencode-usage'
 
 // The slice of fetch the pollers use, so tests can hand in fake responses.
 export interface FetchResponse {
@@ -34,10 +34,6 @@ const pct = (v: number | null): number | null => (v == null ? null : Math.max(0,
 const emptyWindow = (id: string, label: string, unit = ''): ProviderWindow => ({ id, label, usedPct: null, used: null, limit: null, remaining: null, unit, resetsAt: null })
 
 // ---- Claude plan windows --------------------------------------------------------------------------------
-
-export interface PlanLimits {
-  windows: ProviderWindow[]
-}
 
 const PLAN_WINDOWS: Array<[key: string, label: string]> = [
   ['five_hour', '5-hour session'],

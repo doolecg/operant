@@ -12,7 +12,7 @@ export function Toaster() {
           key={t.id}
           role={t.error ? 'alert' : 'status'}
           className={cn(
-            'bg-popover text-popover-foreground pointer-events-auto flex items-start gap-2 rounded-md border p-3 text-sm shadow-lg',
+            'bg-popover text-popover-foreground pointer-events-auto flex items-start gap-2 rounded-xl border p-3 text-sm shadow-lg',
             t.error && 'border-destructive/60',
           )}
         >

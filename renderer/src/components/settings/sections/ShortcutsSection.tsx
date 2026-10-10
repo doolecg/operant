@@ -10,7 +10,7 @@ import { KeyRecorder, Row } from '../parts'
 const GROUPS: Array<{ title: string; ids: KeyAction[] }> = [
   { title: 'Projects', ids: ['newCrew', 'indexCrew', 'openSettings', 'toggleConsole', 'openPlayground'] },
   { title: 'Project actions', ids: ['newShell', 'openInIde'] },
-  { title: 'Panels', ids: ['toggleSidebar', 'toggleSidePanel', 'toggleAllPanels'] },
+  { title: 'Panels', ids: ['toggleSidebar', 'toggleAllPanels'] },
   { title: 'Tiles', ids: ['tileLayout', 'tileSplit', 'tileFullscreen', 'tileFocusNext', 'tileFocusPrev', 'tileClose'] },
   { title: 'View', ids: ['zoomIn', 'zoomOut', 'zoomReset'] },
   { title: 'Media (Windows)', ids: ['mediaPlayPause', 'mediaNext', 'mediaPrev', 'mediaShuffle'] },

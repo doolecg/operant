@@ -10,9 +10,8 @@ import { toast } from '@/lib/toast'
 import { decideTermKey, dropText, findFileLinks, imagePasteBytes } from '@shared/terminal-keys'
 
 interface Props {
-  // A session key: `operator:<id>` or `scratch:<id>`. A bare operator id (the drawer) is the same as `operator:<id>`.
-  sessionKey?: string
-  operatorId?: number
+  // A session key: `scratch:<id>`.
+  sessionKey: string
   // Tiles share the screen, so only the tile the user picks takes keyboard focus.
   autoFocus?: boolean
   // The project, for opening file paths from the output (Ctrl+click); without it paths are not links.
@@ -21,36 +20,41 @@ interface Props {
   cli?: string
 }
 
-type Target = { kind: 'operator' | 'scratch'; id: number }
-
-function parseKey(key: string): Target | null {
-  const m = /^(operator|scratch):(\d+)$/.exec(key)
-  return m ? { kind: m[1] as Target['kind'], id: Number(m[2]) } : null
+function parseKey(key: string): number | null {
+  const m = /^scratch:(\d+)$/.exec(key)
+  return m ? Number(m[1]) : null
 }
 
 // Attaches an xterm view to a running session: replays its buffer, then streams live output.
-export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true, crewId, cli = 'claude' }: Props) {
+export function OperatorTerminal({ sessionKey, autoFocus = true, crewId, cli = 'claude' }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const colors = useTerminalColors()
   const colorsRef = useRef(colors)
   colorsRef.current = colors
   const termRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
+  // Fits the open terminal to its host and sends the new size to the PTY (set while a session is attached).
+  const refitRef = useRef<(() => void) | null>(null)
   const settings = useSettings().data
   const settingsRef = useRef(settings)
   settingsRef.current = settings
   const propsRef = useRef({ crewId, cli })
   propsRef.current = { crewId, cli }
-  const key = sessionKey ?? (operatorId != null ? `operator:${operatorId}` : '')
+  const key = sessionKey
 
   useEffect(() => {
     const el = host.current
-    const target = parseKey(key)
-    if (!el || !target) return
+    const scratchId = parseKey(key)
+    if (!el || scratchId == null) return
     const b = bridge()
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: "'Cascadia Mono', 'SF Mono', Menlo, 'DejaVu Sans Mono', monospace",
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      cursorInactiveStyle: 'outline',
+      fontFamily: "'Cascadia Mono', 'Cascadia Code', 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace",
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      minimumContrastRatio: 4.5,
       fontSize: settingsRef.current?.terminal.fontSize ?? 13,
       scrollback: settingsRef.current?.terminal.scrollback ?? 5000,
       theme: colorsRef.current,
@@ -58,22 +62,17 @@ export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true, cre
     termRef.current = term
     const fit = new FitAddon()
     term.loadAddon(fit)
-    fitRef.current = fit
     term.open(el)
 
-    const scratch = target.kind === 'scratch'
     let disposed = false
     let pending: string[] | null = []
-    const onData = (id: number, data: string) => {
-      if (id !== target.id) return
+    const offData = b.on('scratch:data', ({ scratchId: id, data }) => {
+      if (id !== scratchId) return
       if (pending) pending.push(data)
       else term.write(data)
-    }
-    const offData = scratch
-      ? b.on('scratch:data', ({ scratchId, data }) => onData(scratchId, data))
-      : b.on('operator:data', ({ operatorId: id, data }) => onData(id, data))
+    })
     // Live chunks that arrive before the replay finishes are written after it, so nothing is lost or reordered.
-    const replay = scratch ? b.invoke('scratch:buffer', target.id) : b.invoke('operators:buffer', target.id)
+    const replay = b.invoke('scratch:buffer', scratchId)
     void replay.then((buf) => {
       if (disposed) return
       term.write(buf)
@@ -81,11 +80,8 @@ export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true, cre
       pending = null
     })
 
-    const input = term.onData((d) =>
-      void (scratch ? b.invoke('scratch:write', target.id, d) : b.invoke('operators:write', target.id, d)),
-    )
-    const send = (d: string) =>
-      void (scratch ? b.invoke('scratch:write', target.id, d) : b.invoke('operators:write', target.id, d))
+    const input = term.onData((d) => void b.invoke('scratch:write', scratchId, d))
+    const send = (d: string) => void b.invoke('scratch:write', scratchId, d)
     const isMac = b.platform === 'darwin'
     // An image on the clipboard (and no text) goes through as the CLI's image-paste key, so the agent reads it itself.
     const pasteClipboard = async () => {
@@ -167,21 +163,33 @@ export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true, cre
     }
     el.addEventListener('dragover', onOver)
     el.addEventListener('drop', onDrop)
-    const resize = () => {
-      // A hidden or collapsed host measures zero; fitting then would shrink the PTY to nothing.
-      if (el.clientWidth < 20 || el.clientHeight < 20) return
+    // Any change to the host's box (a tile move or resize, the info bar, the Mods panel, the zoom) refits it, once per
+    // frame, and the PTY gets the new rows and columns whenever they change. A hidden or collapsed host measures zero;
+    // fitting then would shrink the PTY to nothing.
+    let frame = 0
+    let sent = ''
+    const sync = () => {
+      frame = 0
+      if (disposed || el.clientWidth < 20 || el.clientHeight < 20) return
       fit.fit()
-      void (scratch
-        ? b.invoke('scratch:resize', target.id, term.cols, term.rows)
-        : b.invoke('operators:resize', target.id, term.cols, term.rows))
+      const size = `${term.cols}x${term.rows}`
+      if (size === sent) return
+      sent = size
+      void b.invoke('scratch:resize', scratchId, term.cols, term.rows)
     }
-    const ro = new ResizeObserver(() => resize())
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(sync)
+    }
+    refitRef.current = schedule
+    const ro = new ResizeObserver(schedule)
     ro.observe(el)
-    resize()
+    sync()
     if (autoFocus) term.focus()
 
     return () => {
       disposed = true
+      if (frame) cancelAnimationFrame(frame)
+      refitRef.current = null
       ro.disconnect()
       input.dispose()
       links.dispose()
@@ -191,7 +199,6 @@ export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true, cre
       offData()
       term.dispose()
       termRef.current = null
-      fitRef.current = null
     }
   }, [key, autoFocus])
 
@@ -208,12 +215,17 @@ export function OperatorTerminal({ sessionKey, operatorId, autoFocus = true, cre
     if (!term) return
     if (fontSize) term.options.fontSize = fontSize
     if (scrollback) term.options.scrollback = scrollback
-    try {
-      fitRef.current?.fit()
-    } catch {
-      /* hidden host */
-    }
+    refitRef.current?.()
   }, [fontSize, scrollback])
 
-  return <div ref={host} className="h-full w-full p-2" style={{ backgroundColor: colors.background }} />
+  // The padding sits on the wrapper, not on the host xterm fits: FitAddon measures the host's full height, so padding on
+  // it made the terminal one or two rows taller than its box and the last row was clipped at the tile's edge. The wrapper
+  // pads 12px at the sides and 8px above and below; the host itself must stay unpadded.
+  return (
+    <div className="flex h-full w-full flex-col" style={{ backgroundColor: colors.background }}>
+      <div className="op-term min-h-0 w-full flex-1 px-3 py-2" style={{ backgroundColor: colors.background }}>
+        <div ref={host} className="h-full w-full" />
+      </div>
+    </div>
+  )
 }

@@ -44,12 +44,13 @@ try {
   assert.equal(byId['zai-coding-plan'].connected, true)
   assert.equal(list.models.length, 8)
 
-  await page.getByRole('button', { name: 'Start new task' }).evaluate((el) => el.click())
-  const dlg = page.getByRole('dialog')
-  await dlg.getByRole('combobox', { name: 'Master CLI' }).click().catch(async () => dlg.locator('#run-cli').click())
-  await page.getByRole('option', { name: 'OpenCode' }).click()
+  await page.keyboard.press('Control+,')
+  await page.getByRole('heading', { name: 'Settings' }).waitFor()
+  await page.getByRole('button', { name: 'Learning', exact: true }).click()
+  await page.getByRole('combobox', { name: 'Learning CLI' }).click()
+  await page.getByRole('option', { name: 'OpenCode', exact: true }).click()
   await sleep(1200)
-  await dlg.getByRole('button', { name: 'Master model' }).click()
+  await page.getByRole('button', { name: 'Learning model' }).click()
   const filter = page.getByRole('combobox', { name: 'Filter' })
   await filter.waitFor()
   assert.ok(await filter.evaluate((el) => el === document.activeElement), 'the filter is focused on open')
@@ -82,7 +83,7 @@ try {
   // Pick one: the trigger shows the friendly name.
   await filter.fill('big pickle')
   await filter.press('Enter')
-  await dlg.getByRole('button', { name: 'Master model' }).filter({ hasText: 'Big Pickle' }).waitFor()
+  await page.getByRole('button', { name: 'Learning model' }).filter({ hasText: 'Big Pickle' }).waitFor()
   console.log('models e2e passed')
 } finally {
   await app?.close().catch(() => {})

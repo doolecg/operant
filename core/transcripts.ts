@@ -10,14 +10,18 @@ export function encodeProjectDir(cwd: string): string {
 
 // Claude Code encodes its real working directory, so resolve 8.3 short names (C:\Users\ABCDEF~1)
 // and symlinks first or the folder name won't match.
-export function transcriptPath(cwd: string, sessionId: string, env?: PathEnv): string {
+export function transcriptProjectDir(cwd: string, env?: PathEnv): string {
   let real = cwd
   try {
     real = realpathSync.native(cwd)
   } catch {
     /* folder missing: fall back to the path as given */
   }
-  return join(claudeProjectsDir(env), encodeProjectDir(real), `${sessionId}.jsonl`)
+  return join(claudeProjectsDir(env), encodeProjectDir(real))
+}
+
+export function transcriptPath(cwd: string, sessionId: string, env?: PathEnv): string {
+  return join(transcriptProjectDir(cwd, env), `${sessionId}.jsonl`)
 }
 
 export interface MessageUsage extends TokenUsage {

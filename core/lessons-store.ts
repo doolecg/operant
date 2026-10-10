@@ -125,6 +125,43 @@ export class LessonsDb {
     private readonly now: () => number = Date.now,
   ) {}
 
+  // Restore only: replaces every lesson and skill draft with the given rows, keeping their ids. Rows of a project
+  // the caller does not allow are left out (their count is returned as `dropped`).
+  replaceAll(lessons: Lesson[], drafts: SkillDraft[], allowed: (crewId: number) => boolean): { lessons: number; drafts: number; dropped: number } {
+    let dropped = 0
+    this.db.exec('BEGIN')
+    try {
+      this.db.exec('DELETE FROM lessons; DELETE FROM skill_drafts')
+      const ins = this.db.prepare(
+        'INSERT INTO lessons (id, crew_id, text, kind, scope, files, symbols, source_jobs, stores, status, hits, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      )
+      let nl = 0
+      for (const l of lessons) {
+        if (!allowed(l.crewId)) {
+          dropped++
+          continue
+        }
+        ins.run(l.id, l.crewId, l.text, l.kind, l.scope, JSON.stringify(l.files), JSON.stringify(l.symbols), JSON.stringify(l.sourceJobs), JSON.stringify(l.stores), l.status, l.hits, l.createdAt, l.updatedAt)
+        nl++
+      }
+      const insD = this.db.prepare('INSERT INTO skill_drafts (id, crew_id, name, body, source_jobs, status, installed_path, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      let nd = 0
+      for (const d of drafts) {
+        if (!allowed(d.crewId)) {
+          dropped++
+          continue
+        }
+        insD.run(d.id, d.crewId, d.name, d.body, JSON.stringify(d.sourceJobs), d.status, d.installedPath, d.createdAt, d.updatedAt)
+        nd++
+      }
+      this.db.exec('COMMIT')
+      return { lessons: nl, drafts: nd, dropped }
+    } catch (err) {
+      this.db.exec('ROLLBACK')
+      throw err
+    }
+  }
+
   addLesson(n: NewLesson): Lesson {
     const t = this.now()
     const r = this.db

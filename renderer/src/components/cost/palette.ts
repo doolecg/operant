@@ -7,14 +7,4 @@ export const KIND_COLORS = {
   cacheWrite: 'var(--chart-4)',
 } as const
 
-export const KIND_LABELS = {
-  input: 'Uncached input',
-  output: 'Output',
-  cacheRead: 'Cache read',
-  cacheWrite: 'Cache write (5m + 1h)',
-} as const
-
 export type KindKey = keyof typeof KIND_COLORS
-export const KIND_KEYS: KindKey[] = ['input', 'output', 'cacheRead', 'cacheWrite']
-
-export const MODEL_COLOR = 'var(--chart-model)'

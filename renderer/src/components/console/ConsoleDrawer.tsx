@@ -64,7 +64,7 @@ export function ConsoleDrawer({ lines, processes, onClear, onStop, onClose }: Pr
       aria-selected={source === id}
       onClick={() => setSource(id)}
       className={cn(
-        'flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors',
+        'flex items-center gap-1 rounded-md px-2 py-0.5 text-xs transition-colors',
         source === id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
       )}
     >
@@ -79,12 +79,12 @@ export function ConsoleDrawer({ lines, processes, onClear, onStop, onClose }: Pr
       aria-label="Console"
       data-testid="console-drawer"
       style={{ flexBasis: `${height}%` }}
-      className="bg-background relative flex min-h-0 shrink-0 flex-col border-t"
+      className="bg-card relative mx-1.5 mb-1.5 flex min-h-0 shrink-0 flex-col rounded-2xl border shadow-xs dark:shadow-none"
     >
       <DrawerResizeHandle root={root} label="Resize console" storageKey={HEIGHT} onHeight={setHeight} />
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
         <span className="text-sm font-medium">Console</span>
-        <div role="tablist" aria-label="Source" className="bg-muted flex flex-wrap rounded-md p-0.5">
+        <div role="tablist" aria-label="Source" className="bg-muted flex flex-wrap rounded-lg p-0.5">
           {tab('all', 'All')}
           {CONSOLE_SOURCES.map((s) => tab(s, s))}
         </div>
@@ -93,7 +93,7 @@ export function ConsoleDrawer({ lines, processes, onClear, onStop, onClose }: Pr
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search"
           aria-label="Search console"
-          className="bg-muted/50 h-7 min-w-24 flex-1 rounded border px-2 text-xs outline-none sm:max-w-56"
+          className="bg-muted/50 h-7 min-w-24 flex-1 rounded-md border px-2 text-xs outline-none sm:max-w-56"
         />
         <Button
           variant="ghost"

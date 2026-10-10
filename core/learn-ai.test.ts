@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_LEARN_SETTINGS } from '../shared/learn'
-import { cheapOpencodeModel, resolveLearnAi } from './learn-ai'
+import { checkOpencodeIds, cheapOpencodeModel, resolveLearnAi, type ModelLister } from './learn-ai'
 import { claudeLearnModel, LearnService } from './learn'
 import { LessonsDb } from './lessons-store'
-import { assertFakeClaude, type MasterAdapter, type MasterStart } from './master'
+import { assertFakeClaude, type MasterAdapter, type MasterStart } from './model-run'
 import type { ModelList } from './models'
 import { Store } from './store'
 
@@ -20,19 +20,53 @@ describe('learn AI choice', () => {
     expect(cheapOpencodeModel(['x/model-flash-preview', 'x/big-instruct'])).toBeNull()
   })
 
-  it('Claude: an empty model is Haiku, effort is dropped where the model has none', async () => {
-    expect(await resolveLearnAi({ cli: 'claude', model: '', effort: 'high' }, list)).toEqual({ cli: 'claude', model: 'claude-haiku-4-5', effort: '', isDefault: true })
+  it('Claude: an empty model is Haiku 5.5, effort is dropped where the model has none', async () => {
+    expect(await resolveLearnAi({ cli: 'claude', model: '', effort: 'high' }, list)).toEqual({ cli: 'claude', model: 'claude-haiku-5-5', effort: 'high', isDefault: true })
+    expect(await resolveLearnAi({ cli: 'claude', model: 'claude-haiku-4-5', effort: 'high' }, list)).toMatchObject({ model: 'claude-haiku-4-5', effort: '' })
     expect(await resolveLearnAi({ cli: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, list)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high', isDefault: false })
   })
 
   it('OpenCode: resolves the default at run time, checks an own model against the list and keeps only offered efforts', async () => {
     expect(await resolveLearnAi({ cli: 'opencode', model: '', effort: 'low' }, list)).toEqual({ cli: 'opencode', model: 'openai/gpt-5-mini', effort: 'low', isDefault: true })
     expect(await resolveLearnAi({ cli: 'opencode', model: 'openai/gpt-5#high', effort: 'high' }, list)).toMatchObject({ model: 'openai/gpt-5#high', effort: '' })
-    expect(await resolveLearnAi({ cli: 'opencode', model: 'nope/none', effort: '' }, list)).toMatchObject({ error: 'OpenCode does not list the model nope/none' })
+    expect(await resolveLearnAi({ cli: 'opencode', model: 'nope/none', effort: '' }, list)).toMatchObject({ error: 'Model "nope/none" is not in `opencode models`. Pick one from the list.' })
     const down = async (): Promise<ModelList> => ({ models: [], efforts: {}, error: 'opencode is not installed or not on PATH' })
     expect(await resolveLearnAi({ cli: 'opencode', model: '', effort: '' }, down)).toMatchObject({ model: null, error: 'opencode is not installed or not on PATH' })
     const dull = async (): Promise<ModelList> => ({ models: ['a/b-instruct'], efforts: {} })
     expect(await resolveLearnAi({ cli: 'opencode', model: '', effort: '' }, dull)).toMatchObject({ model: null, error: expect.stringContaining('pick one') })
+  })
+})
+
+describe('OpenCode model validation', () => {
+  const lister = (calls: boolean[], catalogue: ModelList = LIST): ModelLister => async (_cli, refresh) => (calls.push(!!refresh), catalogue)
+
+  it('a listed model is used with no refresh', async () => {
+    const calls: boolean[] = []
+    const r = await resolveLearnAi({ cli: 'opencode', model: 'openai/gpt-5', effort: '' }, lister(calls))
+    expect(r).toMatchObject({ model: 'openai/gpt-5' })
+    expect(r.error).toBeUndefined()
+    expect(calls).toEqual([false])
+  })
+
+  it('an unlisted model refreshes the catalogue once, then is refused without a model call', async () => {
+    const calls: boolean[] = []
+    const r = await resolveLearnAi({ cli: 'opencode', model: 'nope/none', effort: '' }, lister(calls))
+    expect(r).toMatchObject({ model: 'nope/none', error: 'Model "nope/none" is not in `opencode models`. Pick one from the list.' })
+    expect(calls).toEqual([false, true])
+  })
+
+  it('an unavailable catalogue refuses the saved model rather than calling it', async () => {
+    const down: ModelList = { models: [], efforts: {}, error: 'opencode is not installed or not on PATH' }
+    expect(await resolveLearnAi({ cli: 'opencode', model: 'openai/gpt-5', effort: '' }, lister([], down))).toMatchObject({
+      error: 'Model "openai/gpt-5" cannot be checked: opencode is not installed or not on PATH',
+    })
+  })
+
+  it('checkOpencodeIds names the first unlisted id and leaves the catalogue empty when offline', async () => {
+    expect(await checkOpencodeIds(['openai/gpt-5', 'x/y#high'], lister([]))).toEqual({ all: LIST, missing: 'x/y' })
+    const down: ModelList = { models: [], efforts: {}, error: 'offline' }
+    expect(await checkOpencodeIds(['x/y'], lister([], down))).toMatchObject({ all: down, missing: 'x/y' })
+    expect(await checkOpencodeIds([''], lister([]))).toMatchObject({ missing: null })
   })
 })
 
@@ -50,10 +84,10 @@ describe('learn model per CLI', () => {
     await model('p1', (u) => used.push(u))
     Object.assign(settings, { cli: 'opencode', model: '', effort: 'low' })
     await model('p2', (u) => used.push(u))
-    expect(claude.map((s) => [s.model, s.effort])).toEqual([['claude-haiku-4-5', undefined]])
+    expect(claude.map((s) => [s.model, s.effort])).toEqual([['claude-haiku-5-5', undefined]])
     expect(opencode.map((s) => [s.model, s.effort, s.permissionMode])).toEqual([['openai/gpt-5-mini', 'low', undefined]])
     expect(used).toEqual([
-      { cli: 'claude', model: 'claude-haiku-4-5' },
+      { cli: 'claude', model: 'claude-haiku-5-5' },
       { cli: 'opencode', model: 'openai/gpt-5-mini' },
     ])
   })
@@ -70,7 +104,7 @@ describe('learn model per CLI', () => {
     const opencode: MasterStart[] = []
     const settings = { ...DEFAULT_LEARN_SETTINGS, cli: 'opencode' as const, model: 'nope/none' }
     const model = claudeLearnModel(undefined, { opencode: adapter(opencode), settings: () => settings, models: list })
-    await expect(model('p')).rejects.toThrow('OpenCode does not list the model nope/none')
+    await expect(model('p')).rejects.toThrow('Model "nope/none" is not in `opencode models`. Pick one from the list.')
     expect(opencode).toEqual([])
     settings.model = 'openai/gpt-5'
     const failing = claudeLearnModel(undefined, { opencode: adapter([], { ok: false, text: 'auth failed' }), settings: () => settings, models: list })
@@ -86,7 +120,7 @@ describe('learn model per CLI', () => {
   it('a missing opencode shows up in the Test result and the learn run records the AI used', async () => {
     const store = new Store(':memory:')
     const crewId = store.createCrew('shop', '/code/shop').id
-    const settings = { ...DEFAULT_LEARN_SETTINGS, cli: 'opencode' as const, model: 'openai/gpt-5', review: 'auto' as const }
+    const settings = { ...DEFAULT_LEARN_SETTINGS, cli: 'opencode' as const, model: 'openai/gpt-5', review: 'auto' as const, mode: 'controlled' as const, minUserTurns: 0, minTokens: 0 }
     let missing = true
     const svc = new LearnService({
       store,

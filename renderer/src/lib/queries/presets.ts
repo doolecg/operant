@@ -3,15 +3,7 @@ import { call, keys, useMutate } from './core'
 
 export const usePresets = () => useQuery({ queryKey: keys.presets, queryFn: () => call('presets:list') })
 
-// The shipped role text of a built-in, to show next to an edit.
-export const useShippedRole = (presetId: number | null) =>
-  useQuery({
-    queryKey: keys.shippedRole(presetId ?? -1),
-    queryFn: () => call('presets:shippedRole', presetId!),
-    enabled: presetId != null,
-  })
-
-const presetKeys = [keys.presets, ['topology'], ['mcp', 'health']] as const
+const presetKeys = [keys.presets] as const
 
 export const useCreatePreset = () => useMutate('presets:create', presetKeys)
 export const useUpdatePreset = () => useMutate('presets:update', presetKeys)

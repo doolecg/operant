@@ -58,8 +58,8 @@ export function TopBarSection() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Clock and counts</CardTitle>
-          <CardDescription>The time pill (click it to copy the full date and time, hover for the month) and the job counts.</CardDescription>
+          <CardTitle className="text-base">Clock</CardTitle>
+          <CardDescription>The time pill (click it to copy the full date and time, hover for the month).</CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
           <Row label="Time format" htmlFor="top-clock-format">
@@ -80,29 +80,17 @@ export function TopBarSection() {
           <Row label="Show the date" hint="Like Tue 7 Oct. Hidden automatically when the window is narrow." htmlFor="top-clock-date">
             <Switch id="top-clock-date" checked={t.clockDate} onCheckedChange={(v) => set({ clockDate: v })} />
           </Row>
-          <Row label="Show job counts" hint="Running, idle and done jobs of the open project (and a needs-you chip) in the status pill; Memory always shows." htmlFor="top-agents">
-            <Switch id="top-agents" checked={t.agentPill} onCheckedChange={(v) => set({ agentPill: v })} />
-          </Row>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Panels and notifications</CardTitle>
-          <CardDescription>The buttons and keys in the top bar (Alt+B, Alt+Shift+B, Alt+Z) change the hidden panels too. They are remembered.</CardDescription>
+          <CardTitle className="text-base">Panels</CardTitle>
+          <CardDescription>The button and keys in the top bar (Alt+B, Alt+Z) hide the project list too. The choice is remembered.</CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
           <Row label="Hide the project list" htmlFor="layout-sidebar">
             <Switch id="layout-sidebar" checked={s.layout.sidebarHidden} onCheckedChange={(v) => save.mutate({ layout: { sidebarHidden: v } })} />
-          </Row>
-          <Row label="Hide the Terminal side panel" hint="Board, Messages, Activity, Usage and Git." htmlFor="layout-panel">
-            <Switch id="layout-panel" checked={s.layout.panelHidden} onCheckedChange={(v) => save.mutate({ layout: { panelHidden: v } })} />
-          </Row>
-          <Row label="Hide the Workspace inbox" htmlFor="layout-inbox">
-            <Switch id="layout-inbox" checked={s.layout.inboxHidden} onCheckedChange={(v) => save.mutate({ layout: { inboxHidden: v } })} />
-          </Row>
-          <Row label="Inbox notifications" hint="The badge on Workspace, a toast, and a system notification when a job needs you." htmlFor="notify-inbox">
-            <Switch id="notify-inbox" checked={s.notifications.inbox} onCheckedChange={(v) => save.mutate({ notifications: { inbox: v } })} />
           </Row>
         </CardContent>
       </Card>

@@ -14,9 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { usd } from '@/lib/format'
-import { pickFolder, useAction, useClearCrewHistory, useCrewCounts, useDeleteCrew, useRuns, useUpdateCrew } from '@/lib/queries'
+import { pickFolder, useAction, useDeleteCrew, useUpdateCrew } from '@/lib/queries'
 
 interface ShellProps {
   open: boolean
@@ -92,8 +90,6 @@ export function Field({ id, label, hint, children }: { id: string; label: string
   )
 }
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
-
 export function NewCrewDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: (id: number) => void }) {
   const [name, setName] = useState('')
   const [folder, setFolder] = useState('')
@@ -119,7 +115,7 @@ export function NewCrewDialog({ open, onOpenChange, onCreated }: { open: boolean
       open={open}
       onOpenChange={onOpenChange}
       title="New project"
-      description="A project is one folder you give jobs to."
+      description="A project is one folder you open terminals in."
       submitLabel="Create project"
       canSubmit={!!name.trim() && !!folder}
       pending={create.isPending}
@@ -159,21 +155,17 @@ export function EditCrewDialog({
 }) {
   const [name, setName] = useState(crew.name)
   const [folder, setFolder] = useState(crew.folder)
-  const [tracker, setTracker] = useState(crew.trackerFile)
-  const [trackerJobs, setTrackerJobs] = useState(crew.trackerJobs)
   const update = useUpdateCrew()
 
   useEffect(() => {
     if (open) {
       setName(crew.name)
       setFolder(crew.folder)
-      setTracker(crew.trackerFile)
-      setTrackerJobs(crew.trackerJobs)
       update.reset()
     }
   }, [open])
 
-  const changed = name.trim() !== crew.name || folder.trim() !== crew.folder || tracker.trim() !== crew.trackerFile || trackerJobs !== crew.trackerJobs
+  const changed = name.trim() !== crew.name || folder.trim() !== crew.folder
 
   return (
     <FormDialog
@@ -192,8 +184,6 @@ export function EditCrewDialog({
             {
               ...(name.trim() !== crew.name && { name }),
               ...(folder.trim() !== crew.folder && { folder }),
-              ...(tracker.trim() !== crew.trackerFile && { trackerFile: tracker }),
-              ...(trackerJobs !== crew.trackerJobs && { trackerJobs }),
             },
           ],
           { onSuccess: () => onOpenChange(false) },
@@ -218,19 +208,6 @@ export function EditCrewDialog({
           </Button>
         </div>
       </Field>
-      <Field
-        id="edit-crew-tracker"
-        label="Tracker file"
-        hint="Optional, relative to the project folder (for example docs/specs/tracker.html). Leave empty for none."
-      >
-        <Input id="edit-crew-tracker" value={tracker} onChange={(e) => setTracker(e.target.value)} placeholder="docs/specs/tracker.html" className="font-mono text-xs" />
-      </Field>
-      <div className="flex items-center justify-between gap-4">
-        <Label htmlFor="edit-crew-tracker-jobs" className="text-sm font-normal">
-          Open an “Update tracker” job when a job finishes
-        </Label>
-        <Switch id="edit-crew-tracker-jobs" checked={trackerJobs} onCheckedChange={setTrackerJobs} />
-      </div>
     </FormDialog>
   )
 }
@@ -241,39 +218,31 @@ export function DeleteCrewDialog({
   open,
   onOpenChange,
   onDeleted,
-  playground,
 }: {
   crewId: number
   crewName: string
   open: boolean
   onOpenChange: (o: boolean) => void
   onDeleted?: () => void
-  // The Playground cannot be deleted: the dialog clears its history instead.
-  playground?: boolean
 }) {
-  const counts = useCrewCounts(crewId, open)
   const del = useDeleteCrew()
-  const clear = useClearCrewHistory()
-  const remove = playground ? clear : del
-  const runCount = useRuns(open ? crewId : null).data?.length
-  const c = counts.data
   useEffect(() => {
-    if (open) remove.reset()
+    if (open) del.reset()
   }, [open])
 
   return (
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={playground ? `Clear history of ${crewName}` : `Delete project ${crewName}`}
+      title={`Delete project ${crewName}`}
       description="This cannot be undone."
-      submitLabel={playground ? 'Clear history' : 'Delete project'}
+      submitLabel="Delete project"
       destructive
-      canSubmit={!!c && runCount != null}
-      pending={remove.isPending}
-      error={remove.error ?? counts.error}
+      canSubmit
+      pending={del.isPending}
+      error={del.error}
       onSubmit={() =>
-        remove.mutate([crewId], {
+        del.mutate([crewId], {
           onSuccess: () => {
             onOpenChange(false)
             onDeleted?.()
@@ -281,33 +250,12 @@ export function DeleteCrewDialog({
         })
       }
     >
-      {c && playground ? (
-        <div className="space-y-2 text-sm">
-          <p>
-            This removes {plural(runCount ?? 0, 'run')}, {plural(c.messages, 'message')} and {plural(c.lessons, 'lesson')}. The Playground itself stays.
-          </p>
-          <p className="text-muted-foreground">The folder and every file in it are not touched.</p>
-        </div>
-      ) : c ? (
-        <div className="space-y-2 text-sm">
-          <p>
-            Deleting the project removes {plural(runCount ?? 0, 'run')}, {plural(c.jobs, 'job')} ({c.openJobs} open),{' '}
-            {plural(c.messages, 'message')} and {plural(c.scratch, 'terminal tile')}.
-          </p>
-          {c.running > 0 && <p>{plural(c.running, 'running session')} will be stopped.</p>}
-          <p>
-            Its lessons ({c.lessons}) are deleted too. Anything already saved outside Operant (Hindsight, CodeGraph notes, memory files) stays.
-          </p>
-          <p className="text-destructive">
-            Its spend history ({usd(c.spendUsd)} in total) is deleted with it and no longer counts in the Cost tab or the daily budget.
-          </p>
-          <p className="text-muted-foreground">
-            The project folder and every file in it are not touched. If the project is in a group, the group stays.
-          </p>
-        </div>
-      ) : (
-        <p className="text-muted-foreground text-sm">Counting what would be removed…</p>
-      )}
+      <div className="space-y-2 text-sm">
+        <p>Deleting the project stops its running sessions and removes its terminal tiles, lessons and spend history.</p>
+        <p className="text-muted-foreground">
+          Anything already saved outside Operant (Hindsight, CodeGraph notes, memory files) stays. The project folder and every file in it are not touched. If the project is in a group, the group stays.
+        </p>
+      </div>
     </FormDialog>
   )
 }

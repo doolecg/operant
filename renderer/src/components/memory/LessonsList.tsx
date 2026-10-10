@@ -91,9 +91,9 @@ function DeleteDialog({ lesson, onClose }: { lesson: Lesson; onClose: () => void
         </DialogHeader>
         <DialogBody>
           <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
-          <li>It stops appearing in job briefs and is removed from the personal memory folder.</li>
+          <li>It is removed from every memory store it was written to.</li>
           <li>
-            Taught by {lesson.sourceJobs.length === 0 ? 'no job' : `${lesson.sourceJobs.length} job${lesson.sourceJobs.length === 1 ? '' : 's'}`}; seen {lesson.hits}{' '}
+            Taught by {lesson.sourceJobs.length === 0 ? 'no session' : `${lesson.sourceJobs.length} session${lesson.sourceJobs.length === 1 ? '' : 's'}`}; seen {lesson.hits}{' '}
             {lesson.hits === 1 ? 'time' : 'times'}.
           </li>
           {lesson.stores.includes('hindsight') && <li>A copy already in Hindsight cannot be deleted from here.</li>}
@@ -121,7 +121,7 @@ function MergeDialog({ lessons, onClose, onDone }: { lessons: Lesson[]; onClose:
       <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>Merge {lessons.length} lessons</DialogTitle>
-          <DialogDescription>Pick the lesson to keep. The others are deleted; their files, symbols, jobs and hit counts move onto it.</DialogDescription>
+          <DialogDescription>Pick the lesson to keep. The others are deleted; their files, symbols, sessions and hit counts move onto it.</DialogDescription>
         </DialogHeader>
         <DialogBody>
           <div role="radiogroup" aria-label="Lesson to keep" className="space-y-2">
@@ -192,7 +192,7 @@ function LessonRow({
               </Badge>
             ))}
             <span className="text-muted-foreground">
-              {crewName} · {lesson.sourceJobs.map((j) => `JOB#${j}`).join(', ') || 'no job'} · seen {lesson.hits}x · {timeAgo(lesson.updatedAt)}
+              {crewName} · {lesson.sourceJobs.length > 0 ? `${lesson.sourceJobs.length} source${lesson.sourceJobs.length === 1 ? '' : 's'} · ` : ''}seen {lesson.hits}x · {timeAgo(lesson.updatedAt)}
             </span>
           </div>
           {(lesson.files.length > 0 || lesson.symbols.length > 0) && (
@@ -279,7 +279,7 @@ export function LessonsList({ filter, crews }: { filter: LessonFilter; crews: Cr
       </div>
       <ErrorLine error={lessons.error} />
       {list.length === 0 && !lessons.isPending ? (
-        <Empty>No lessons match. They appear here after a finished job is learned from.</Empty>
+        <Empty>No lessons match. They appear here after a finished session is learned from.</Empty>
       ) : (
         <ul className="space-y-2" aria-label="Lessons">
           {list.map((l) => (

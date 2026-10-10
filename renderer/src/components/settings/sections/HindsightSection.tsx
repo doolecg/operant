@@ -256,7 +256,7 @@ export function HindsightSection() {
                 <div className="space-y-1.5 py-3">
                   <div className="text-sm">Address for other machines</div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <code className="bg-muted rounded px-2 py-1 text-xs" aria-label="Address for other machines">
+                    <code className="bg-muted rounded-sm px-2 py-1 text-xs" aria-label="Address for other machines">
                       {shareUrl}
                     </code>
                     <CopyButton text={shareUrl} label="Copy the address for other machines" />

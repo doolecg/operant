@@ -18,6 +18,12 @@ import { createInterface } from 'node:readline'
 
 const args = process.argv.slice(2)
 
+// `claude --version` answers like Claude Code, so the capability probe finds the CLI.
+if (args[0] === '--version') {
+  process.stdout.write('2.1.0 (Claude Code)\n')
+  process.exit(0)
+}
+
 // `claude mcp list|add|remove` against CLAUDE_CONFIG_DIR/.claude.json and ./.mcp.json, in the real output format.
 // A server whose name has "bad" fails to connect, one with "auth" needs authentication, the rest connect.
 if (args[0] === 'mcp') {
@@ -78,10 +84,45 @@ const sessionId = flag('--session-id') ?? flag('--resume')
 const modelArg = flag('--model') ?? ''
 const model = modelArg.startsWith('claude-') ? modelArg : modelArg.includes('opus') ? 'claude-opus-5-5' : 'claude-sonnet-5-5'
 const operator = process.env.OPERANT_OPERATOR ?? ''
+// Hook events (Claude Mods e2e): FAKE_CLAUDE_HOOK_EVENTS names a JSON-lines file of {after, event, payload}. Each one is sent
+// through the hook command Operant put in the --settings file, on stdin, as Claude Code would, after `after` ms.
+if (process.env.FAKE_CLAUDE_HOOK_EVENTS && existsSync(process.env.FAKE_CLAUDE_HOOK_EVENTS) && flag('--settings')) {
+  const settings = JSON.parse(readFileSync(flag('--settings'), 'utf8'))
+  const steps = readFileSync(process.env.FAKE_CLAUDE_HOOK_EVENTS, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  const fire = (step) => {
+    // "StatusLine" runs the status line command with its payload (the context card reads it), as Claude Code does.
+    const command = step.event === 'StatusLine' ? settings.statusLine?.command : settings.hooks?.[step.event]?.[0]?.hooks?.[0]?.command
+    if (!command) return
+    // Git's sh by absolute path: the app's PATH may not carry it, and Claude Code runs hook commands with bash too.
+    const sh = ['C:/Program Files/Git/usr/bin/sh.exe', '/usr/bin/sh'].find((p) => existsSync(p)) ?? 'sh'
+    spawnSync(sh, ['-c', command], { input: JSON.stringify({ hook_event_name: step.event, session_id: sessionId ?? 'fake-session', ...step.payload }), env: process.env })
+  }
+  for (const step of steps) setTimeout(() => fire(step), step.after ?? 0)
+}
 const role = operator.split('@')[0]
 const configDir = process.env.CLAUDE_CONFIG_DIR
 const dir = join(configDir, 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'))
 mkdirSync(dir, { recursive: true })
+
+// FAKE_CLAUDE_PAINT (clip e2e): paints a full-height screen like Claude Code's: a header with the rows and columns the PTY
+// reports, and a footer on the last row. Repaints when the PTY size changes, so the terminal can be checked against it.
+if (process.env.FAKE_CLAUDE_PAINT && process.stdout.isTTY) {
+  let shown = ''
+  const paint = () => {
+    // Node only learns a new size from SIGWINCH, which Windows does not send: ask the console again.
+    process.stdout._refreshSize?.()
+    const rows = process.stdout.rows ?? 0
+    const cols = process.stdout.columns ?? 0
+    if (!rows || `${rows}x${cols}` === shown) return
+    shown = `${rows}x${cols}`
+    appendFileSync(join(process.env.CLAUDE_CONFIG_DIR, 'fake-claude-paint.log'), `${rows} ${cols}\n`)
+    let out = '\x1b[2J\x1b[3J\x1b[H'
+    for (let i = 1; i < rows; i++) out += (i === 1 ? `PTY rows=${rows} cols=${cols}` : `line ${i}`) + '\r\n'
+    process.stdout.write(out + 'auto mode on (shift+tab to cycle) · ← for agents')
+  }
+  paint()
+  setInterval(paint, 150).unref()
+}
 
 const record = (file, entry) => appendFileSync(join(configDir, file), JSON.stringify(entry) + '\n')
 
@@ -108,7 +149,7 @@ const line = (id, input, output, cacheRead) =>
 const transcript = join(dir, `${sessionId}.jsonl`)
 let counter = 2
 appendFileSync(transcript, line('msg_1', 20_000, 4_000, 60_000) + line('msg_2', 5_000, 12_000, 150_000))
-console.log(`fake claude ready (${operator})`)
+if (!process.env.FAKE_CLAUDE_PAINT) console.log(`fake claude ready (${operator})`)
 
 // A subagent the Master "delegated" to: <session>/subagents/agent-<n>.jsonl (+ .meta.json) next to the main transcript.
 let agents = 0
@@ -150,9 +191,9 @@ function runLines(text) {
   }
 }
 
-// The learn step (`claude -p --model claude-haiku-4-5`, prompt on stdin): answer with the lessons JSON in
+// The learn step (`claude -p --model claude-haiku-5-5`, prompt on stdin): answer with the lessons JSON in
 // CLAUDE_CONFIG_DIR/learn-response.json, as one result message, and exit.
-if ((args.includes('-p') || args.includes('--print')) && modelArg === 'claude-haiku-4-5' && existsSync(join(configDir, 'learn-response.json'))) {
+if ((args.includes('-p') || args.includes('--print')) && modelArg === 'claude-haiku-5-5' && existsSync(join(configDir, 'learn-response.json'))) {
   const text = readFileSync(join(configDir, 'learn-response.json'), 'utf8')
   process.stdin.resume()
   process.stdin.on('data', () => {})

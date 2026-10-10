@@ -7,7 +7,7 @@ export function BudgetsSection() {
       <CardHeader>
         <CardTitle className="text-base">Budgets</CardTitle>
         <CardDescription>
-          Spending caps for the day, each project and each job. They warn first, then hold queued jobs. The same editor sits on the Usage tab.
+          Spending caps for the day and each project. They warn at the warning percentage. The same editor sits on the Usage tab.
         </CardDescription>
       </CardHeader>
       <CardContent>

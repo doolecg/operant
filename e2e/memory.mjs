@@ -1,6 +1,6 @@
 // Learning loop UI e2e (R16, R18): the Memory page (lessons, Hindsight, CodeGraph notes, personal memory, skill drafts),
-// the learning status panel with Learn now, the header badge and the Learning settings. The learn model is the fake
-// claude answering from learn-response.json; Hindsight points at a closed port, so it is skipped and says why.
+// the learning status panel, the header badge and the Learning settings. The learn model is the fake
+// claude answering from learn-response.json; lessons, skill drafts and a learn run are seeded into the database, since nothing in the app triggers a learn step on demand. Hindsight points at a closed port, so it is skipped and says why.
 // Runs in the background with throwaway data. Usage: node e2e/memory.mjs [outDir]  (default docs/specs/screenshots)
 // Set OPERANT_E2E_EXE to a packaged executable to test a build instead of the dev app.
 import assert from 'node:assert/strict'
@@ -29,10 +29,18 @@ let page = null
 async function launch() {
   app = await electron.launch(packaged ? { executablePath: packaged, args: [], env } : { args: ['.'], env })
   page = await app.firstWindow()
+  // Say why the window went away, so a closed-window failure names its cause (crash, quit, exit code, main-process error).
+  const t0 = Date.now()
+  const say = (m) => console.log(`[lifecycle +${Date.now() - t0}ms] ${m}`)
+  page.on('close', () => say('page closed'))
+  page.on('crash', () => say('page crashed'))
+  app.process().on('exit', (code, signal) => say(`app process exited code=${code} signal=${signal}`))
+  app.process().stderr?.on('data', (d) => say(`main stderr: ${String(d).trim().slice(0, 300)}`))
   page.on('console', (m) => {
     if (m.type() === 'error') consoleNotes.push(`console.error: ${m.text()}`)
   })
   page.on('pageerror', (e) => consoleNotes.push(`pageerror: ${e.message}`))
+  page.setDefaultTimeout(60_000)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.waitForFunction(() => !!window.operant)
 }
@@ -42,7 +50,7 @@ const shot = async (name) => {
   await page.screenshot({ path: join(outDir, `${name}.png`) })
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-async function until(label, fn, timeout = 20_000) {
+async function until(label, fn, timeout = 60_000) {
   const end = Date.now() + timeout
   let last
   while (Date.now() < end) {
@@ -71,11 +79,6 @@ const R1 = [
   { kind: 'correction', text: 'The user wants plain commit messages with no attribution trailer.', files: [], symbols: [], scope: 'user', supersedes: [] },
   { kind: 'procedure', text: 'To release: bump the version in package.json, run the full test suite, tag the commit, then push the tag.', files: [], symbols: [], scope: 'project', supersedes: [] },
 ]
-const R2 = [
-  { kind: 'procedure', text: 'To release, bump the version in package.json, run the whole test suite, tag the commit and push the tag.', files: [], symbols: [], scope: 'project', supersedes: [] },
-  { kind: 'convention', text: 'API handlers return typed errors with a code and a message.', files: [], symbols: [], scope: 'project', supersedes: [] },
-]
-const R3 = [{ kind: 'convention', text: 'Settings pages save on blur and show their errors inline.', files: [], symbols: [], scope: 'project', supersedes: [] }]
 
 const results = []
 async function step(name, fn) {
@@ -85,8 +88,9 @@ async function step(name, fn) {
     results.push({ name, ok: true })
     console.log(`PASS ${name} (${Date.now() - t0} ms)`)
   } catch (e) {
+    const waiting = e.message.match(/waiting for .*/)?.[0]
     results.push({ name, ok: false, error: e.message.split('\n')[0] })
-    console.log(`FAIL ${name}: ${e.message.split('\n')[0]}`)
+    console.log(`FAIL ${name}: ${e.message.split('\n')[0]}${waiting ? ` (${waiting})` : ''}`)
     await page?.screenshot({ path: join(outDir, `fail-memory-${results.length}.png`) }).catch(() => {})
   }
 }
@@ -96,17 +100,28 @@ try {
   await launch()
   await page.getByText('Welcome to Operant 3').waitFor()
 
-  await step('set up a project and a finished job', async () => {
-    // A finishing job triggers a learn step of its own; the fake model must have an answer for it.
+  await step('set up a project with seeded lessons, drafts and a learn run', async () => {
     respond([])
     ids.crew = (await inv('crews:create', { name: 'alpha', folder: project })).id
-    const run = await inv('runs:create', { crewId: ids.crew, task: 'Add a health check to app.ts', masterCli: 'claude' })
-    await inv('runs:stop', run.id)
     const db = new DatabaseSync(join(dataDir, 'operant.db'))
     db.exec('PRAGMA busy_timeout = 5000')
-    db.prepare("UPDATE runs SET status = 'done', finished_at = ? WHERE id = ?").run(Date.now(), run.id)
+    const now = Date.now()
+    const addLesson = db.prepare(
+      `INSERT INTO lessons (crew_id, text, kind, scope, files, symbols, source_jobs, stores, status, hits, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (const l of R1) addLesson.run(ids.crew, l.text, l.kind, l.scope, JSON.stringify(l.files), JSON.stringify(l.symbols), '[]', JSON.stringify(['memory', 'codegraph']), 'active', 1, now, now)
+    const addDraft = db.prepare(`INSERT INTO skill_drafts (crew_id, name, body, source_jobs, status, installed_path, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)`)
+    addDraft.run(ids.crew, 'release-procedure', '---\nname: release-procedure\ndescription: How to release\n---\nBump the version, run the tests, tag, push.\n', '[]', 'pending', '', now, now)
+    addDraft.run(ids.crew, 'add-ipc-channel', '---\nname: add-ipc-channel\ndescription: How to add an IPC channel\n---\nDeclare it, handle it, expose it.\n', '[]', 'pending', '', now, now)
+    db.prepare(
+      `INSERT INTO learn_runs (crew_id, run_id, source, at, extracted, written, merged, staled, queued, skipped, error, cli, model) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(ids.crew, null, 'conversation', now, 4, 4, 0, 0, 0, JSON.stringify([{ store: 'hindsight', reason: 'Hindsight is down' }]), '', 'claude', 'claude-haiku-5-5')
+    for (const row of db.prepare('SELECT id, kind FROM lessons WHERE crew_id = ?').all(ids.crew)) ids[row.kind] = row.id
     db.close()
-    ids.run = run.id
+    await page.reload()
+    await page.waitForFunction(() => !!window.operant)
+    // The Playground stays selected after a reload, so pick the seeded project.
+    await page.locator(`[data-crew-row="${ids.crew}"]`).click()
     await page.getByRole('heading', { name: 'alpha', level: 1 }).waitFor()
   })
 
@@ -115,7 +130,7 @@ try {
     await page.getByRole('heading', { name: 'Settings' }).waitFor()
     await page.getByRole('button', { name: 'Learning', exact: true }).click()
     const sw = (name) => page.getByRole('switch', { name })
-    await sw('Learn from finished jobs').waitFor()
+    await sw('Learn from finished sessions').waitFor()
     // The default holds lessons for review; the rest of this run needs them written straight away.
     assert.equal((await inv('settings:get')).learn.review, 'queue')
     await inv('settings:set', { learn: { review: 'auto' } })
@@ -123,18 +138,20 @@ try {
     await until('codegraph off', async () => (await inv('settings:get')).learn.codegraph === false)
     await sw('Write to CodeGraph notes').click()
     await until('codegraph on', async () => (await inv('settings:get')).learn.codegraph === true)
-    await sw('Learn from finished jobs').click()
+    await sw('Learn from finished sessions').click()
     await until('master off', async () => (await inv('settings:get')).learn.enabled === false)
     assert.ok(await sw('Write to Hindsight').isDisabled(), 'store switches wait for the master switch')
-    await sw('Learn from finished jobs').click()
+    await sw('Learn from finished sessions').click()
     await until('master on', async () => (await inv('settings:get')).learn.enabled === true)
   })
 
   await step('settings: Learning AI, Test, OpenCode choice and the model default', async () => {
     const card = page.locator('div[data-slot="card"]').filter({ hasText: 'Learning AI' }).last()
     await card.waitFor()
-    assert.deepEqual(pickLearn(await inv('settings:get')), { cli: 'claude', model: '', effort: '' })
-    await card.getByTestId('learn-ai-resolved').getByText('claude-haiku-4-5').waitFor()
+    const learnNow = pickLearn(await inv('settings:get'))
+    assert.equal(learnNow.cli, 'claude')
+    assert.equal(learnNow.model, '', 'no model chosen: the cheap default')
+    await card.getByTestId('learn-ai-resolved').getByText('claude-haiku-5-5').waitFor()
     respond([])
     await card.getByRole('button', { name: 'Test', exact: true }).click()
     await card.getByTestId('learn-ai-result').getByText(/^OK, /).waitFor()
@@ -153,7 +170,7 @@ try {
     assert.ok(t.ok || t.error.length > 0, 'a failed test explains itself')
     await shot('learning-ai')
     await inv('settings:set', { learn: { cli: 'claude', model: '', effort: '' } })
-    await card.getByTestId('learn-ai-resolved').getByText('claude-haiku-4-5').waitFor()
+    await card.getByTestId('learn-ai-resolved').getByText('claude-haiku-5-5').waitFor()
   })
 
   await step('settings: Learning AI on a local model server', async () => {
@@ -195,8 +212,9 @@ try {
   })
 
   await step('settings: Hindsight section, remote URL is validated and saved, the key is write-only', async () => {
-    await page.getByRole('button', { name: 'Hindsight', exact: true }).click()
-    await page.getByRole('radio', { name: /Remote/ }).check()
+    await page.locator('main nav button', { hasText: /^Memory$/ }).click()
+    await page.getByRole('heading', { name: 'Hindsight', exact: true }).scrollIntoViewIfNeeded()
+    await page.getByRole('radio', { name: /Remote/ }).click()
     await until('remote mode', async () => (await inv('settings:get')).hindsight.mode === 'remote')
     const field = page.getByLabel('Hindsight URL')
     await field.fill('ftp://nas:9077')
@@ -218,19 +236,9 @@ try {
     await inv('hindsight:clearKey', 'remote')
   })
 
-  await step('Learn now writes lessons and records the skipped store', async () => {
-    respond(R1)
-    const info = await inv('learn:run', ids.run)
-    assert.equal(info.extracted, 4)
-    assert.ok(info.skipped.some((s) => s.store === 'hindsight'), 'Hindsight is down, so it is skipped')
-    const lessons = await inv('learn:lessons', { crewId: ids.crew })
-    assert.equal(lessons.length, 4)
-    for (const l of lessons) ids[l.kind] = l.id
-  })
-
   await step('Memory page lists the lessons with filters and search', async () => {
     await page.keyboard.press('Control+,')
-    await mode('Workspace').waitFor()
+    await mode('Terminal').waitFor()
     await mode('Memory').click()
     await page.getByRole('heading', { name: 'Memory', level: 2 }).waitFor()
     await lessonRow(ids.convention).waitFor()
@@ -257,7 +265,6 @@ try {
     await hs.getByText('Down').waitFor()
     await panel.locator('[data-store="memory"]').getByText('Up').waitFor()
     const last = panel.getByRole('group', { name: 'Last learn run' })
-    await last.getByText(`JOB#${ids.run}`).waitFor()
     await last.getByText(/Hindsight skipped/).waitFor()
     await panel.getByRole('group', { name: 'Learning totals' }).getByText('4 active').waitFor()
   })
@@ -303,7 +310,7 @@ try {
   await step('delete asks first, then removes', async () => {
     await lessonRow(ids.correction).getByRole('button', { name: `Delete lesson ${ids.correction}` }).click()
     const dialog = page.getByRole('dialog')
-    await dialog.getByText(/removed from the personal memory folder/).waitFor()
+    await dialog.getByText(/removed from every memory store/).waitFor()
     await dialog.getByRole('button', { name: 'Cancel' }).click()
     assert.equal((await inv('learn:lessons', { crewId: ids.crew, status: 'deleted' })).length, 1, 'cancel deletes nothing')
     await lessonRow(ids.correction).getByRole('button', { name: `Delete lesson ${ids.correction}` }).click()
@@ -316,7 +323,6 @@ try {
     await page.getByRole('tab', { name: 'Personal memory' }).click()
     const files = page.getByRole('list', { name: 'Personal memory files' })
     await files.waitFor()
-    await files.getByText(/operant_lesson_/).first().waitFor()
     await page.getByRole('tab', { name: 'CodeGraph notes' }).click()
     await page.getByText('CodeGraph has no notes API').waitFor()
     await page.locator('[data-lesson]').first().waitFor()
@@ -327,14 +333,12 @@ try {
   })
 
   await step('skill draft: listed, not installed until approved, then installed', async () => {
-    respond(R2)
-    await inv('learn:run', ids.run)
     await page.getByRole('tab', { name: /^Skill drafts/ }).click()
     const list = page.getByRole('list', { name: 'Skill drafts' })
     await list.waitFor()
-    const drafts = await inv('learn:drafts', ids.crew)
-    assert.equal(drafts.length, 1)
-    const d = drafts[0]
+    const drafts = await inv('learn:drafts', ids.crew, 'pending')
+    assert.equal(drafts.length, 2)
+    const d = drafts.find((x) => x.name === 'release-procedure')
     const target = join(project, '.claude', 'skills', d.name, 'SKILL.md')
     assert.ok(!existsSync(target), 'nothing is installed before approval')
     await list.getByRole('button', { name: `Edit skill draft ${d.id}` }).click()
@@ -349,12 +353,6 @@ try {
   })
 
   await step('skill draft: reject and delete', async () => {
-    // A second draft comes from a different repeated procedure.
-    respond([
-      { kind: 'procedure', text: 'To add an IPC channel, declare it in shared ipc, add the handler in core, then expose it in preload.', files: [], symbols: [], scope: 'project', supersedes: [] },
-      { kind: 'procedure', text: 'To add an IPC channel declare it in shared ipc, add a handler in core and expose it through preload.', files: [], symbols: [], scope: 'project', supersedes: [] },
-    ])
-    await inv('learn:run', ids.run)
     const pending = (await inv('learn:drafts', ids.crew, 'pending'))[0]
     assert.ok(pending, 'a second draft is pending')
     const list = page.getByRole('list', { name: 'Skill drafts' })
@@ -363,24 +361,6 @@ try {
     await list.getByRole('button', { name: `Delete skill draft ${pending.id}` }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Delete draft' }).click()
     await until('deleted', async () => (await inv('learn:drafts', ids.crew, 'rejected')).length === 0)
-  })
-
-  await step('queue mode holds lessons; Learn now from the panel; activate', async () => {
-    await page.getByRole('tab', { name: /^Lessons/ }).click()
-    // The review mode lives in Settings; the status panel has the per-store switches.
-    await inv('settings:set', { learn: { review: 'queue' } })
-    respond(R3)
-    const panel = page.getByRole('region', { name: 'Learning status' })
-    await panel.getByRole('combobox', { name: 'Finished job to learn from' }).waitFor()
-    await panel.getByRole('button', { name: 'Learn now' }).click()
-    const waiting = panel.getByRole('group', { name: 'Lessons waiting for review' })
-    await waiting.getByText(/save on blur/).waitFor()
-    await panel.getByRole('group', { name: 'Learning totals' }).getByText('1 pending review').waitFor()
-    assert.equal((await inv('learn:status', ids.crew)).pendingLessons, 1)
-    await waiting.getByRole('button', { name: /^Activate lesson/ }).click()
-    await waiting.waitFor({ state: 'detached' })
-    assert.equal((await inv('learn:status', ids.crew)).pendingLessons, 0)
-    await inv('settings:set', { learn: { review: 'auto' } })
   })
 
   await step('per-store switch in the panel is saved', async () => {
@@ -394,7 +374,7 @@ try {
   })
 
   await step('header badge shows learning health and opens the Memory page', async () => {
-    await mode('Workspace').click()
+    await mode('Terminal').click()
     const badge = page.getByRole('button', { name: /^Learning health:/ })
     await badge.waitFor()
     assert.match((await badge.getAttribute('aria-label')) ?? '', /Hindsight is down/)

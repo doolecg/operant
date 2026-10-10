@@ -18,7 +18,8 @@ export const memoryFileName = (l: Pick<Lesson, 'id' | 'scope'>): string => `oper
 function render(l: Lesson): { name: string; description: string; text: string } {
   const type = l.scope === 'user' ? 'user' : l.kind === 'correction' ? 'feedback' : 'project'
   const name = one(scrubLogLine(l.text)).slice(0, 60)
-  const description = `${l.kind} learned by Operant${l.sourceJobs.length ? ` from ${l.sourceJobs.map((j) => `JOB#${j}`).join(', ')}` : ''}`
+  const n = l.sourceJobs.length
+  const description = `${l.kind} learned by Operant${n ? ` from ${n} session${n === 1 ? '' : 's'}` : ''}`
   const where = [l.files.length ? `Files: ${l.files.join(', ')}` : '', l.symbols.length ? `Symbols: ${l.symbols.join(', ')}` : ''].filter(Boolean)
   const text = `---\nname: ${name.replace(/\n/g, ' ')}\ndescription: ${description}\ntype: ${type}\n---\n\n${scrubLogLine(l.text)}\n${where.length ? `\n${where.join('\n')}\n` : ''}`
   return { name, description, text }

@@ -7,6 +7,9 @@ import {
   type McpCli,
   type McpDown,
   type McpOverview,
+  type OptionalMcpEntry,
+  type OptionalMcpId,
+  type OptionalMcpTarget,
   type McpScope,
   type McpServer,
   type McpServerInput,
@@ -14,6 +17,7 @@ import {
   type McpTransport,
 } from '../shared/types'
 import type { RunResult } from './hindsight'
+import { OPTIONAL_MCP, aliasesOf, isAppAdded, isOptionalMcp, optionalEntry, optionalMcp, writtenKey } from './mcp-optional'
 
 // What the CLIs print and store, as found on this machine (Claude Code 2.x, OpenCode 2.x):
 //  claude mcp list   one line per server: `name: command-or-url [(HTTP)] - <mark> <status>` where the mark is
@@ -47,6 +51,8 @@ export interface McpDeps {
   writeFile: (path: string, text: string) => void
   claudeConfig: string
   opencodeGlobal: string[]
+  // End-to-end tests only: which runtimes count as present, instead of probing the machine. Null means probe.
+  runtimeOverride?: () => Record<string, boolean> | null
 }
 
 const quoteWin = (a: string) => `"${a.replace(/"/g, '\\"')}"`
@@ -96,6 +102,16 @@ export function defaultMcpDeps(env: NodeJS.ProcessEnv = process.env): McpDeps {
     },
     claudeConfig: env.CLAUDE_CONFIG_DIR ? join(env.CLAUDE_CONFIG_DIR, '.claude.json') : join(homedir(), '.claude.json'),
     opencodeGlobal: [...(env.OPENCODE_CONFIG ? [env.OPENCODE_CONFIG] : []), join(dot, 'opencode.jsonc'), join(dot, 'opencode.json')],
+    runtimeOverride:
+      env.OPERANT_E2E === '1' && env.OPERANT_E2E_RUNTIMES
+        ? () => {
+            try {
+              return JSON.parse(readFileSync(env.OPERANT_E2E_RUNTIMES!, 'utf8')) as Record<string, boolean>
+            } catch {
+              return null
+            }
+          }
+        : undefined,
   }
 }
 
@@ -301,12 +317,16 @@ const BUILTINS: Record<string, string> = { codegraph: 'codegraph serve --mcp', h
 const LIST_TIMEOUT_MS = 30_000
 const WRITE_TIMEOUT_MS = 30_000
 const CACHE_MS = 60_000
+const RUNTIME_TIMEOUT_MS = 5_000
+const RUNTIME_CACHE_MS = 10 * 60_000
 
 export interface McpOptions {
   log?: (message: string) => void
   now?: () => number
   // Whether a built-in server that is not in any config works right now.
   builtin?: (name: string) => Promise<{ ok: boolean; error?: string }>
+  // The keys (cli:scope:name) of the entries Operant wrote for optional servers that record them. Kept by the app.
+  written?: { get: () => string[]; set: (keys: string[]) => void }
 }
 
 export interface RunMcp {
@@ -329,6 +349,8 @@ interface Located {
 export class McpService {
   private readonly d: McpDeps
   private readonly cache = new Map<string, McpOverview>()
+  private readonly runtimes = new Map<string, { at: number; ok: boolean; error?: string }>()
+  private writtenMem: string[] = []
 
   constructor(
     private readonly opts: McpOptions = {},
@@ -403,6 +425,67 @@ export class McpService {
       ;[state, error] = ['failed', e instanceof Error ? e.message : String(e)]
     }
     return { id: `builtin:${name}`, name, cli: 'claude', scope: 'builtin', transport: 'stdio', target: BUILTINS[name]!, env: {}, headers: {}, state, ...(error ? { error: redact(error) } : {}), editable: false, builtin: true }
+  }
+
+  // Whether a command runs (`uvx --version`, `npx --version`), probed once per command and cached.
+  private async runtime(command: string, refresh: boolean): Promise<{ ok: boolean; error?: string }> {
+    const forced = this.d.runtimeOverride?.()
+    if (forced && command in forced) return forced[command] ? { ok: true } : { ok: false, error: `${command} is not installed` }
+    const hit = this.runtimes.get(command)
+    if (hit && !refresh && this.now() - hit.at < RUNTIME_CACHE_MS) return hit
+    const r = await this.d.run(command, ['--version'], { timeoutMs: RUNTIME_TIMEOUT_MS })
+    const res = r.code === 0 ? { ok: true } : { ok: false, error: `${command} --version did not run` }
+    this.runtimes.set(command, { at: this.now(), ...res })
+    return res
+  }
+
+  private written(): string[] {
+    return this.opts.written ? this.opts.written.get() : this.writtenMem
+  }
+
+  private setWritten(keys: string[]): void {
+    if (this.opts.written) this.opts.written.set(keys)
+    else this.writtenMem = keys
+  }
+
+  // The status of each optional integration for this folder, from the cached overview unless `refresh`.
+  async optional(folder: string | null, refresh = false): Promise<OptionalMcpEntry[]> {
+    const overview = refresh ? await this.list(folder) : await this.cached(folder)
+    const out: OptionalMcpEntry[] = []
+    for (const def of OPTIONAL_MCP) out.push(optionalEntry(def, overview.servers, await this.runtime(def.runtime.command, refresh), folder != null, this.written()))
+    return out
+  }
+
+  // The user clicked Add: writes the server into each chosen CLI and scope through the same add path as any server.
+  async addOptional(folder: string | null, id: OptionalMcpId, targets: OptionalMcpTarget[]): Promise<McpOverview> {
+    const def = optionalMcp(id)
+    if (!def) throw new McpError('That is not an optional integration')
+    if (!targets.length) throw new McpError('Pick Claude Code, OpenCode or both')
+    if (def.needsProject && !folder) throw new McpError('Select a project first: Git MCP reads one project folder')
+    const rt = await this.runtime(def.runtime.command, true)
+    if (!rt.ok) throw new McpError(`${def.runtime.command} is not installed: ${def.runtime.hint}`)
+    const { command, args } = def.launch(folder ?? '')
+    let overview = await this.list(folder)
+    const keys: string[] = []
+    for (const t of targets) {
+      overview = await this.add(folder, { name: def.server, cli: t.cli, scope: t.scope, transport: 'stdio', command, args, env: {} })
+      keys.push(`${t.cli}:${t.scope}:${def.server}`)
+    }
+    if (def.recordsWrites) this.setWritten([...new Set([...this.written(), ...keys])])
+    return overview
+  }
+
+  // Removes only the entries Operant added (the name and package it writes); a server the user added by hand stays.
+  async removeOptional(folder: string | null, id: OptionalMcpId): Promise<McpOverview> {
+    const def = optionalMcp(id)
+    if (!def) throw new McpError('That is not an optional integration')
+    const written = this.written()
+    const own = (await this.list(folder)).servers.filter((s) => isAppAdded(def, s, written))
+    if (!own.length) throw new McpError(`${def.name} was not added by Operant`)
+    let overview: McpOverview | null = null
+    for (const s of own) overview = await this.remove(folder, s.id)
+    if (def.recordsWrites) this.setWritten(written.filter((k) => !own.some((s) => writtenKey(s) === k)))
+    return overview!
   }
 
   private missing(r: RunResult): boolean {
@@ -650,7 +733,7 @@ export class McpService {
     const out = new Map<string, McpDown>()
     for (const n of needs) {
       for (const name of n.servers) {
-        const found = overview.servers.filter((s) => s.name === name)
+        const found = overview.servers.filter((s) => aliasesOf(name).includes(s.name))
         const ok = found.some((s) => s.state === 'connected' || s.state === 'unknown')
         if (ok) continue
         const worst = found[0]
@@ -677,23 +760,29 @@ export class McpService {
     return JSON.stringify({ mcpServers: servers }, null, 2) + '\n'
   }
 
-  // What a job launches with: the picked servers as launch config, and which of them are down.
+  // What a job launches with: the picked servers as launch config, and which of them are down. An optional server
+  // that the CLI does not have is left out silently: presets only recommend it. CodeGraph is also Operant's built-in,
+  // which a launch runs without any config entry, so it is never left out here.
   async forRun(needs: Array<{ seat: string; servers: string[] }>, cli: McpCli, folder: string | null): Promise<RunMcp> {
-    const names = [...new Set(needs.flatMap((n) => n.servers))]
-    if (!names.length) return { claudeConfig: null, opencodeEnv: null, down: [] }
-    const down = await this.down(needs, folder, { fresh: true, includeMissing: true })
     const located = this.locate(folder)
+    const has = (name: string) => located.some((x) => x.cli === cli && aliasesOf(name).includes(x.name))
+    const wanted = needs.map((n) => ({ seat: n.seat, servers: n.servers.filter((s) => !isOptionalMcp(s) || s in BUILTINS || has(s)) })).filter((n) => n.servers.length > 0)
+    const names = [...new Set(wanted.flatMap((n) => n.servers))]
+    if (!names.length) return { claudeConfig: null, opencodeEnv: null, down: [] }
+    const down = await this.down(wanted, folder, { fresh: true, includeMissing: true })
+    const pick = (name: string) =>
+      located.find((x) => x.cli === cli && x.name === name && !x.raw.disabled) ?? located.find((x) => x.cli === cli && !x.raw.disabled && aliasesOf(name).includes(x.name))
     if (cli === 'claude') {
       const servers: Obj = {}
       for (const name of names) {
-        const l = located.find((x) => x.cli === 'claude' && x.name === name && !x.raw.disabled)
+        const l = pick(name)
         if (l) servers[name] = claudeJson(l.raw)
         else if (name === 'codegraph') servers[name] = { command: 'codegraph', args: ['serve', '--mcp'] }
       }
       return { claudeConfig: JSON.stringify({ mcpServers: servers }, null, 2) + '\n', opencodeEnv: null, down }
     }
     const off: Obj = {}
-    for (const l of located) if (l.cli === 'opencode' && !names.includes(l.name)) off[l.name] = { disabled: true }
+    for (const l of located) if (l.cli === 'opencode' && !names.some((n) => aliasesOf(n).includes(l.name))) off[l.name] = { disabled: true }
     const cfg: Obj = {}
     if (Object.keys(off).length) {
       const g = this.d.opencodeGlobal.find((f) => this.d.readFile(f) != null)
@@ -706,14 +795,4 @@ export class McpService {
 
 function rawInput(r: Raw): Partial<McpServerInput> {
   return { transport: r.transport, command: r.command, args: r.args, url: r.url, env: r.env, headers: r.headers }
-}
-
-// One line per down server for a job brief.
-export function describeDown(down: McpDown[]): string {
-  return down
-    .map((d) => {
-      const why = d.state === 'missing' ? 'is not configured' : d.state === 'needs-auth' ? 'needs authentication' : d.state === 'pending' ? 'is waiting for approval' : d.state === 'disabled' ? 'is disabled' : `failed${d.error ? ` (${d.error})` : ''}`
-      return `${d.server} ${why}, needed by ${d.seats.join(', ')}`
-    })
-    .join('; ')
 }

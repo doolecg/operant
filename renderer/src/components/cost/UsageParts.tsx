@@ -49,14 +49,11 @@ export function UsageTable({
   rows,
   totals,
   firstHeading,
-  onOpenRow,
   caption,
 }: {
   rows: UsageRowOut[]
   totals: UsageTotals
   firstHeading: string
-  // When set, the row's label opens that row (a job opens its page).
-  onOpenRow?: (row: UsageRowOut) => void
   caption: string
 }) {
   if (rows.length === 0) return <p className="text-muted-foreground px-1 text-xs">No usage matches these filters.</p>
@@ -81,13 +78,7 @@ export function UsageTable({
           {rows.map((r) => (
             <tr key={r.keys.join('\u0000')}>
               <th scope="row" className="max-w-40 truncate px-2 py-1.5 text-left font-normal" title={r.labels.join(' / ')}>
-                {onOpenRow ? (
-                  <button type="button" className="hover:text-primary font-mono underline-offset-2 hover:underline" aria-label={`Open ${r.labels.join(' ')}`} onClick={() => onOpenRow(r)}>
-                    {r.labels.join(' / ') || r.keys.join(' / ')}
-                  </button>
-                ) : (
-                  r.labels.join(' / ') || r.keys.join(' / ') || 'Unknown'
-                )}
+                {r.labels.join(' / ') || r.keys.join(' / ') || 'Unknown'}
               </th>
               <td className={td} title={num(r.inputTokens)}>{compact(r.inputTokens)}</td>
               <td className={td} title={num(r.outputTokens)}>{compact(r.outputTokens)}</td>

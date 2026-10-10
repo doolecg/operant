@@ -24,8 +24,8 @@ export const useRepoBranches = (crewId: number | null, open = true) =>
 // After a change to the repository, whatever the Git page and the chips show is read again.
 export const refreshGit = (qc: QueryClient) => Promise.all(all.map((k) => qc.invalidateQueries({ queryKey: [k] })))
 
-registerLive((b, qc) => {
+registerLive((_b, qc) => {
   const refresh = () => void Promise.all(['gitStatus', 'gitDiff', 'gitLog', 'gitBranches'].map((k) => qc.invalidateQueries({ queryKey: [k] })))
   window.addEventListener('focus', refresh)
-  return [b.on('run', refresh), () => window.removeEventListener('focus', refresh)]
+  return [() => window.removeEventListener('focus', refresh)]
 })

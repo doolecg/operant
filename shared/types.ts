@@ -1,46 +1,22 @@
 export type AgentKind = 'claude' | 'codex' | 'shell' | 'opencode'
-// The CLIs a Master (and a seat) can run on; codex and shell stay for operators and tiles but are not offered.
-export type MasterCli = 'claude' | 'opencode'
-export type OperatorStatus = 'stopped' | 'starting' | 'running' | 'idle' | 'error'
-export type JobState = 'todo' | 'doing' | 'review' | 'done' | 'held'
-export type JobReview = 'none' | 'pm' | 'operator' | 'user'
-export type MessageParty = 'user' | 'master' | 'operator'
-export type MessageKind = 'message' | 'ask' | 'answer'
-export type OperatorKind = 'worker' | 'master'
 export type CacheTtl = 'auto' | '5m' | '1h'
 export type McpMode = 'codegraph' | 'none'
-export type CrewView = 'cards' | 'list' | 'graph' | 'tiles'
 
 export interface Crew {
   id: number
   name: string
   folder: string
   createdAt: number
-  view: CrewView
-  pmId: number | null
   // Stable PRJ# shown in the dashboard; never reused.
   prjNumber: number
   sortOrder: number
-  discordChannels: string[]
   // The project group it sits in; null is ungrouped.
   groupId: number | null
-  // The project's tracker document, relative to the folder; empty = none.
-  trackerFile: string
-  // A finished job opens an "Update tracker" board job for the project manager.
-  trackerJobs: boolean
   // 'playground' is the built-in, project-less workspace (one row, cannot be deleted, no PRJ number, not in groups).
   kind: CrewKind
 }
 
 export type CrewKind = 'project' | 'playground'
-
-export interface Squad {
-  id: number
-  crewId: number
-  name: string
-  // True for the hidden squad that holds the Master Terminal slot.
-  system: boolean
-}
 
 // The launch settings a preset defines and an operator carries its own copy of.
 export interface LaunchSettings {
@@ -56,16 +32,15 @@ export interface LaunchSettings {
   cacheTtl: CacheTtl
   // Auto-compact window in tokens, 0 = default.
   contextCap: number
-  clearBetweenJobs: boolean
   mcp: McpMode
 }
 
 export interface Preset extends LaunchSettings {
   id: number
-  // 'pm' | 'researcher' | ... for built-ins, null for user presets.
+  // 'explore' | 'implement' | ... for built-ins, null for user presets.
   builtin: string | null
   name: string
-  // null = the shipped file plugin/roles/<builtin>.md.
+  // null = no guidance text.
   roleText: string | null
   updatedAt: number
   // Local skills the seat may use, hindsight and codegraph on/off for a job that runs this seat.
@@ -73,24 +48,14 @@ export interface Preset extends LaunchSettings {
   hindsight: boolean
   codegraph: boolean
   mcpServers: string[]
+  // Built-ins only: the lifecycle stage (1 to 8), a one-line summary and when to pick it (see shared/presets.ts).
+  stage?: number
+  description?: string
+  whenToUse?: string
 }
 
-export interface Operator extends LaunchSettings {
-  id: number
-  squadId: number
-  role: string
-  status: OperatorStatus
-  kind: OperatorKind
-  presetId: number | null
-  // null = the preset's role text.
-  roleText: string | null
-  // null = the Settings default.
-  dailyCapUsd: number | null
-  // Last Claude session, for resume-restart.
-  sessionId: string | null
-  // Derived: any launch field differs from its preset (never true without a preset or for a master).
-  modified: boolean
-}
+// How a Claude tile shows its session: the Chat view (stream-json, claude-chat.ts) or the Terminal view (the TUI in a PTY).
+export type ScratchView = 'chat' | 'terminal'
 
 export interface ScratchTerminal {
   id: number
@@ -102,78 +67,17 @@ export interface ScratchTerminal {
   presetId: number | null
   cwd: string
   sessionId: string | null
+  view: ScratchView
   createdAt: number
-}
-
-export interface Job {
-  id: number
-  crewId: number
-  assigneeId: number | null
-  title: string
-  body: string
-  state: JobState
-  priority: number
-  createdBy: number | null
-  reviewerId: number | null
-  review: JobReview
-  leaseUntil: number | null
-  rejects: number
-  note: string
-  estimateMinutes: number | null
-  // First claim, for elapsed time.
-  startedAt: number | null
-  // Why it went to the user; '' when it did not.
-  escalation: string
-  // Set when assigned by its creator, the PM, the master, the user or a handoff (not by a claim): a lease
-  // expiry or a session exit keeps that assignee.
-  preassignedId: number | null
-  // True while any job this one depends on is not done; derived, never stored.
-  blocked: boolean
-  createdAt: number
-  updatedAt: number
-}
-
-export interface Message {
-  id: number
-  crewId: number
-  fromKind: MessageParty
-  fromId: number | null
-  fromLabel: string
-  toKind: MessageParty
-  toId: number | null
-  toLabel: string
-  jobId: number | null
-  kind: MessageKind
-  body: string
-  createdAt: number
-  readAt: number | null
-}
-
-export interface Link {
-  id: number
-  crewId: number
-  fromId: number
-  toId: number
-  label: string
-}
-
-export interface NodePosition {
-  crewId: number
-  nodeKey: string
-  x: number
-  y: number
 }
 
 export interface Usage {
   id: number
-  // null once the operator is purged; scratchId null for operator rows and after a tile is deleted.
-  operatorId: number | null
   scratchId: number | null
   messageId: string | null
   sessionId: string | null
   model: string
   at: number
-  jobId: number | null
   inputTokens: number
   outputTokens: number
   cacheRead: number
@@ -189,51 +93,12 @@ export interface Usage {
   legacy: boolean
 }
 
-export interface UsageBreakdownRow {
-  // 'scratch' = scratch terminals; 'operator' = everything else, purged operators' archive included.
-  group: 'operator' | 'scratch'
-  model: string
-  inputTokens: number
-  outputTokens: number
-  cacheRead: number
-  cacheW5m: number
-  cacheW1h: number
-  costUsd: number
-  turns: number
-}
-
-export interface SpendArchive {
-  crewId: number
-  day: number
-  label: string
-  model: string
-  inputTokens: number
-  outputTokens: number
-  cacheRead: number
-  cacheW5m: number
-  cacheW1h: number
-  costUsd: number
-}
-
 export interface OperantEvent {
   id: number
   crewId: number | null
-  operatorId: number | null
   kind: string
   message: string
   at: number
-}
-
-export interface OperatorContext {
-  model: string
-  contextTokens: number
-  at: number
-}
-
-export interface OperatorSpend {
-  operatorId: number
-  total: number
-  buckets: number[]
 }
 
 export interface IndexStatus {
@@ -287,31 +152,6 @@ export interface HindsightKeyState {
   remote: boolean
 }
 
-export interface ProjectHealth {
-  crewId: number
-  hindsight: HindsightStatus & { bank: string }
-  codegraph: {
-    // The `codegraph` CLI the brief explores with is on PATH.
-    cliAvailable: boolean
-    initialized: boolean
-    indexing: boolean
-    files: number
-    symbols: number
-    lastIndexedAt: number | null
-    // Files changed after the last index.
-    stale: boolean
-    error?: string
-  }
-}
-
-export interface SquadWithOperators extends Squad {
-  operators: Operator[]
-}
-
-export interface CrewTopology extends Crew {
-  squads: SquadWithOperators[]
-}
-
 export interface UpdateStatus {
   state: 'idle' | 'unsupported' | 'checking' | 'current' | 'downloading' | 'ready' | 'installing' | 'error'
   currentVersion: string
@@ -330,67 +170,10 @@ export interface AppInfo {
 
 // Dashboard calls (step 10b)
 
-export type JobRecord = Job & { deps: number[] }
-
 export interface CrewPatch {
   name?: string
   // Refused while any operator of the crew runs.
   folder?: string
-  pmId?: number | null
-  discordChannels?: string[]
-  trackerFile?: string
-  trackerJobs?: boolean
-}
-
-export interface CrewCounts {
-  squads: number
-  operators: number
-  running: number
-  jobs: number
-  openJobs: number
-  messages: number
-  scratch: number
-  // Lessons the learning loop saved for the project (deleted with it).
-  lessons: number
-  // Lifetime spend of the crew, scratch terminals and purged operators included.
-  spendUsd: number
-}
-
-export interface SquadDelete {
-  operators: number
-}
-
-export interface OperatorFromPreset {
-  squadId: number
-  role: string
-  presetId: number
-  agent?: AgentKind
-  model?: string
-}
-
-// What the card, list and graph edit forms send. Launch fields restart a running Claude operator (ruling R1);
-// role, squad, cap and clearBetweenJobs apply live.
-export type OperatorPatch = Partial<LaunchSettings> & {
-  role?: string
-  squadId?: number
-  dailyCapUsd?: number | null
-  roleText?: string | null
-}
-
-export interface ChangePlan {
-  requiresRestart: boolean
-  // Present only when effort changes. 'conversation-lost': a fresh relaunch. 'cache-kept': nothing is running.
-  effort?: 'cache-kept' | 'conversation-lost'
-  model?: 'cache-lost'
-  canResume: boolean
-  restartFields: string[]
-  liveFields: string[]
-  estimateColdCostUsd?: number
-}
-
-export interface OperatorChange {
-  operator: Operator
-  plan: ChangePlan
 }
 
 export interface SeatFields {
@@ -408,30 +191,9 @@ export type PresetInput = Pick<Preset, 'name' | 'agent' | 'model' | 'permissionM
 
 export type PresetPatch = Partial<LaunchSettings> & Partial<SeatFields> & { name?: string; roleText?: string | null }
 
-export type ModelTier = 'haiku' | 'sonnet' | 'opus'
-
-export interface TeamSeat {
-  presetId: number
-  count: number
-  model: string
-  // Claude --effort or OpenCode --variant; absent or '' = the CLI's default.
-  effort?: string
-}
-
-export interface TeamLimits {
-  // 0 = no limit.
-  maxWorkers: number
-  // Highest model tier a seat may use; '' = any.
-  topTier: ModelTier | ''
-  // Tokens a run may spend; 0 = no limit. Carried on the run for the runner and the brief.
-  tokenBudget: number
-}
-
 export interface Team {
   id: number
   name: string
-  seats: TeamSeat[]
-  limits: TeamLimits
   rules: string
   // Stable key of a team shipped with Operant; null for a team the user made.
   builtin: string | null
@@ -443,14 +205,13 @@ export interface Team {
   updatedAt: number
 }
 
-export type TeamInput = Pick<Team, 'name'> & Partial<Pick<Team, 'seats' | 'limits' | 'rules' | 'description'>>
+export type TeamInput = Pick<Team, 'name'> & Partial<Pick<Team, 'rules' | 'description'>>
 export type TeamPatch = Partial<TeamInput>
 
 // What importing a team file would do, one row per team in it.
 export interface TeamImportEntry {
   key: string
   name: string
-  seats: number
   action: 'add' | 'skip' | 'invalid'
   reason: string
 }
@@ -460,203 +221,6 @@ export interface TeamImportPreview {
   entries: TeamImportEntry[]
 }
 
-export type RunStatus = 'queued' | 'working' | 'needs-you' | 'review' | 'done' | 'failed'
-
-// The only moves a run may make; done and failed are final. A run in review is approved (done), sent back
-// (queued, at the front of its project's queue) or failed. working -> done stays for background runs.
-export const RUN_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
-  queued: ['working', 'failed'],
-  working: ['needs-you', 'review', 'done', 'failed'],
-  'needs-you': ['working', 'review', 'done', 'failed'],
-  review: ['done', 'queued', 'failed'],
-  done: [],
-  failed: [],
-}
-
-// 'master': the project's Master Terminal runs it. 'background': the headless runner (today's behaviour).
-export type RunMode = 'master' | 'background'
-// What a needs-you run waits for: an answer ('question'), the owner at a permission prompt, or the Master Terminal itself.
-export type RunWaiting = 'question' | 'permission' | 'master'
-export type ApprovedBy = 'owner-ui' | 'owner-terminal' | 'owner-discord'
-// Where the close-out (write-back, then lessons) stands for an approved run; '' = not approved yet.
-export type CloseoutState = '' | 'pending' | 'running' | 'done' | 'partial' | 'failed'
-
-// A dashboard job (JOB#): a task handed to a project's Master. Separate from the board jobs above.
-export interface Run {
-  // The JOB# number: from 20001, never reused.
-  id: number
-  crewId: number
-  task: string
-  masterCli: MasterCli
-  // The Master's model and effort (OpenCode: --variant) for this run; empty = the project Master's own.
-  masterModel: string
-  masterEffort: string
-  teamId: number | null
-  // The seats and limits this run was sent with (a copy, so editing the team later changes nothing).
-  seats: TeamSeat[]
-  limits: TeamLimits
-  rules: string
-  status: RunStatus
-  outcome: string
-  createdAt: number
-  startedAt: number | null
-  finishedAt: number | null
-  mode: RunMode
-  // Set while status is needs-you; '' otherwise.
-  waiting: RunWaiting | ''
-  // The Master's open question and its answer options (data from the Master, shown as text).
-  question: string
-  questionOptions: string[]
-  // The Master's report when it asked for review, and the owner's note when it was sent back.
-  reviewSummary: string
-  sentBackNote: string
-  // When the Master acknowledged the task (run start).
-  ackedAt: number | null
-  approvedAt: number | null
-  approvedBy: ApprovedBy | null
-  closeoutState: CloseoutState
-  // How many times the owner sent it back; a sent-back run waits at the front of its queue.
-  sendBacks: number
-}
-
-// The per-run conversation between the Master and the owner. Text in `body` is data, never instructions.
-// delivered / retry / giveup / resume: the Master gate typed (or retyped) a pointer line, gave up waiting for the Master
-// to pick it up, or the owner asked to resume; their body is JSON {nonce, line} written by Operant, never free text.
-export type RunEventKind = 'progress' | 'question' | 'reply' | 'review' | 'approved' | 'sent-back' | 'closeout' | 'delivered' | 'retry' | 'giveup' | 'resume' | 'guard'
-export interface RunEvent {
-  id: number
-  runId: number
-  at: number
-  kind: RunEventKind
-  // 'master' | 'owner-ui' | 'owner-terminal' | 'owner-discord' | 'system'
-  source: string
-  body: string
-  options: string[]
-  // When the Master read it (replies only); null = unread.
-  readAt: number | null
-}
-
-// What Operant knows about a project's Master Terminal session; fed by the plugin hooks (Claude) or the
-// OpenCode service event stream.
-export const MASTER_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SubagentStart', 'SubagentStop'] as const
-export type MasterHookEvent = (typeof MASTER_HOOK_EVENTS)[number]
-// What `operant hook <event>` reports: the hook JSON's fields Operant uses (all text capped by the CLI and the server).
-export interface HookReport {
-  event: MasterHookEvent
-  sessionId: string
-  transcriptPath: string
-  // SessionStart: startup, resume, clear or compact.
-  source: string
-  // Notification: its text and type (permission_prompt, idle_prompt, ...).
-  message: string
-  notificationType: string
-  // SubagentStart/Stop.
-  agentId: string
-  agentType: string
-  // UserPromptSubmit: the submitted prompt (capped). Used only to tell Operant's own pointer line from the owner's typing
-  // and to spot a standalone approval; it is never stored, logged or forwarded.
-  prompt?: string
-}
-export type MasterPhase = 'unknown' | 'starting' | 'idle' | 'busy' | 'needs-input' | 'exited'
-export interface MasterState {
-  crewId: number
-  phase: MasterPhase
-  cli: MasterCli
-  sessionId: string | null
-  // When the phase last changed (ms).
-  since: number
-  lastEvent: string
-  lastPromptAt: number | null
-  lastStopAt: number | null
-  // The last Notification (Claude): its type (permission_prompt, idle_prompt, ...) and message text.
-  notificationType: string
-  notification: string
-  // Subagents running now (SubagentStart minus SubagentStop).
-  agents: number
-}
-
-// A pasted image sent with a new task: base64 bytes and their MIME type.
-export interface RunImage {
-  mime: string
-  data: string
-}
-
-export interface RunInput {
-  crewId: number
-  task: string
-  masterCli: MasterCli
-  masterModel?: string
-  masterEffort?: string
-  // A saved team supplies seats, limits and rules; `seats` overrides its seats. Neither = a solo run.
-  teamId?: number | null
-  seats?: TeamSeat[]
-  // Default 'master' (the project's Master Terminal); 'background' is the opt-in headless runner.
-  mode?: RunMode
-  images?: RunImage[]
-}
-
-export interface JobAgent {
-  id: number
-  runId: number
-  seat: string
-  model: string
-  status: string
-  transcriptRef: string
-}
-
-export interface JobInput {
-  crewId: number
-  title: string
-  body?: string
-  priority?: number
-  // Assign to this operator.
-  for?: number | null
-  deps?: number[]
-  estimateMinutes?: number | null
-  review?: JobReview
-  reviewerId?: number | null
-}
-
-// The user may change every field. `state` and `assigneeId` are overrides (any state, any assignee);
-// `deps` replaces the dependency list.
-export interface JobUpdate {
-  title?: string
-  body?: string
-  priority?: number
-  estimateMinutes?: number | null
-  review?: JobReview
-  reviewerId?: number | null
-  note?: string
-  state?: JobState
-  assigneeId?: number | null
-  deps?: number[]
-}
-
-export interface MessageFilter {
-  toKind?: MessageParty
-  toId?: number | null
-  involving?: number
-  // Only messages the user sent or received (the Messages panel's conversations).
-  involvesUser?: boolean
-  kind?: MessageKind
-  unreadOnly?: boolean
-  limit?: number
-}
-
-// `to`: an operator id, or 'master', 'pm', 'squad:<name>', '<role>'.
-export interface MessageSend {
-  crewId: number
-  to: string | number
-  body: string
-  jobId?: number | null
-}
-
-export interface UnreadCounts {
-  user: number
-  master: number
-  operators: Record<number, number>
-}
-
 export interface ScratchInput {
   crewId: number
   title: string
@@ -664,6 +228,8 @@ export interface ScratchInput {
   model?: string
   effort?: string
   presetId?: number | null
+  // Default: Chat for a Claude tile, Terminal for the others.
+  view?: ScratchView
   // Default: the crew folder.
   cwd?: string
 }
@@ -673,6 +239,7 @@ export interface ScratchStatus {
   scratchId: number
   running: boolean
   sessionId: string | null
+  view?: ScratchView
 }
 
 // What one scratch terminal spent in a window; terminals without spend are left out.
@@ -684,314 +251,8 @@ export interface ScratchSpend {
 
 export type ScratchPatch = Partial<Omit<ScratchInput, 'crewId'>>
 
-export type UsagePeriod = '24h' | '7d' | '30d'
-
-export interface KindCost {
-  input: number
-  output: number
-  cacheRead: number
-  cacheWrite: number
-}
-
-export interface UsageCell extends UsageBreakdownRow {
-  // cost_usd split by token kind, from list prices (an estimate: the stored total is the truth).
-  kindCostUsd: KindCost
-}
-
-export interface CapProgress {
-  capUsd: number
-  spentUsd: number
-  pct: number
-  paused: boolean
-}
-
-// Why a turn rebuilt the prompt cache, inferred from the turn before it: a gap past the cache lifetime,
-// a different model, or neither (the prompt itself changed).
-export type ColdCause = 'idle' | 'model' | 'prompt'
-
-export interface OperatorUsage {
-  operatorId: number
-  address: string
-  kind: OperatorKind
-  model: string
-  costUsd: number
-  turns: number
-  inputTokens: number
-  outputTokens: number
-  cacheRead: number
-  cacheWrite: number
-  kindCostUsd: KindCost
-  // read / (read + writes + input); null when there is no exact turn.
-  hitRatio: number | null
-  coldCount: number
-  // The cause of the latest cold turn in the period; null when there was none.
-  lastColdCause: ColdCause | null
-  // Output tokens' cost over total cost, 0..1.
-  outputShare: number
-  medianContext: number
-  avgCostPerJobUsd: number | null
-  // Today's spend against the operator's daily cap; null when no cap applies.
-  cap: CapProgress | null
-  unpriced: boolean
-}
-
-export interface JobUsage {
-  jobId: number
-  title: string
-  costUsd: number
-  turns: number
-  operators: number[]
-}
-
-export type WasteKind = 'cold-repeated' | 'output-share' | 'no-tool-streak' | 'context-high' | 'job-cost'
-
-export interface WasteSignal {
-  kind: WasteKind
-  operatorId: number | null
-  jobId: number | null
-  text: string
-  value: number
-  threshold: number
-}
-
-export interface UsageBreakdownResult {
-  crewId: number
-  period: UsagePeriod
-  since: number
-  totalUsd: number
-  // This crew's exact spend since local midnight, whatever the period.
-  today: number
-  // Operators (purged ones' archive included) plus scratch terminals, split by kind and model.
-  rows: UsageCell[]
-  byKind: KindCost
-  byModel: Array<{ model: string; costUsd: number }>
-  scratch: { costUsd: number; turns: number }
-  operators: OperatorUsage[]
-  // Top 10 by cost, and the median cost of all jobs with spend.
-  jobs: JobUsage[]
-  medianJobCostUsd: number
-  waste: WasteSignal[]
-}
-
-export interface CapStatus {
-  daily: CapProgress | null
-  operators: Record<number, CapProgress>
-}
-
-export interface PurgeCandidate {
-  operatorId: number
-  label: string
-  crewId: number | null
-  deletedAt: number
-  // Past retention with no job or unread message holding it back.
-  eligible: boolean
-  blockers: string[]
-}
-
-export interface PurgeStatus {
-  enabled: boolean
-  retentionDays: number
-  candidates: PurgeCandidate[]
-}
-
-export interface PurgeOutcome {
-  operatorId: number
-  label: string
-  purged: boolean
-  blockers: string[]
-}
-
-export type GraphNodeType = 'crew' | 'squad' | 'operator' | 'master' | 'user'
-export type GraphWindow = '1h' | '24h' | 'all'
-
-export interface GraphNode {
-  // 'crew', 'user', `squad:<id>`, `op:<id>` (the Master slot too): the key node positions are saved under.
-  key: string
-  type: GraphNodeType
-  label: string
-  status?: OperatorStatus
-  operatorId?: number
-  squadId?: number
-}
-
-export interface GraphEdge {
-  id: string
-  from: string
-  to: string
-  // 'member': crew > squad > operator; 'message': aggregated messages in the window; 'link': a user-drawn
-  // link; 'job': jobs one operator created for another.
-  kind: 'member' | 'message' | 'link' | 'job'
-  label: string
-  count: number
-  linkId?: number
-}
-
-export interface GraphData {
-  crewId: number
-  window: GraphWindow
-  nodes: GraphNode[]
-  edges: GraphEdge[]
-  positions: NodePosition[]
-}
-
 export type IpcErrorCode = 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN' | 'BAD_ARGS' | 'RATE_LIMITED' | 'INBOX_FULL' | 'INTERNAL'
 
-export interface CapEvent {
-  action: 'warn' | 'pause'
-  scope: 'operator' | 'daily' | 'project' | 'job'
-  operatorId: number | null
-  // Set for a project or job cap.
-  crewId?: number
-  runId?: number
-  spentUsd: number
-  capUsd: number
-  pct: number
-}
-
-// Discord
-
-export interface DiscordBot {
-  id: number
-  name: string
-  // The bot's own instructions for the front desk, applied to every reply.
-  rules: string
-  // Discord user ids allowed to start jobs. Anyone else gets chat-only replies.
-  allowlist: string[]
-  homeChannel: string
-  generalChannel: string
-  // The key of the token in the secret store. The token itself is never held here.
-  tokenRef: string
-  // Answer only when mentioned (direct messages always count), or every message.
-  mentionOnly: boolean
-  // The front desk starts a job only after the user reacts to confirm it.
-  confirmStart: boolean
-  enabled: boolean
-  // The CLI jobs started from this bot run on; unset = claude.
-  masterCli?: MasterCli
-  // Each request from an allowlisted user in a server channel gets its own named thread, and every reply goes there.
-  threadPerRequest: boolean
-  // 'auto' names the thread by code; 'ai' asks the front desk model for a title (a few tokens), falling back to code.
-  threadNames: DiscordThreadNames
-  // Minutes of quiet before Discord archives the thread: 60, 1440, 4320 or 10080.
-  threadArchive: DiscordThreadArchive
-  // Which AI answers in Discord (the front desk and thread titles). Claude and OpenCode cost tokens; a local
-  // OpenAI-compatible server (LM Studio, Ollama, llama.cpp) is free.
-  ai: DiscordBotAi
-  // What is copied from runs into their Discord threads (by code, no model tokens): nothing, results only
-  // (questions, reviews, outcome, failures) or results plus progress lines.
-  mirror: DiscordMirror
-  // Discord user ids (a subset of the allowlist) allowed the destructive commands: /stop, /restart, /sendback,
-  // the Send back button and the Master commands. Empty = the first user on the allowlist only.
-  admins: string[]
-}
-
-export type DiscordMirror = 'off' | 'results' | 'progress'
-export const DISCORD_MIRRORS: readonly DiscordMirror[] = ['off', 'results', 'progress']
-
-export type DiscordAiCli = 'claude' | 'opencode' | 'local'
-export interface DiscordBotAi {
-  cli: DiscordAiCli
-  // Empty = the cheap default (Claude Haiku) or, for a local server, whatever it has loaded.
-  model: string
-  effort: string
-  localUrl: string
-}
-export const DEFAULT_DISCORD_AI: DiscordBotAi = { cli: 'claude', model: '', effort: '', localUrl: 'http://127.0.0.1:1234' }
-
-export interface DiscordAiTestResult {
-  ok: boolean
-  answer: string
-  error: string
-  ms: number
-}
-
-export type DiscordThreadNames = 'auto' | 'ai'
-export type DiscordThreadArchive = 60 | 1440 | 4320 | 10080
-export const DISCORD_THREAD_ARCHIVES: readonly DiscordThreadArchive[] = [60, 1440, 4320, 10080]
-
-// A thread the bot made for a request; kept so a restart still routes replies in it.
-export interface DiscordThread {
-  botId: number
-  threadId: string
-  parentId: string
-  userId: string
-  crewId: number | null
-  runId: number | null
-  // The title without the JOB# prefix, and the name the thread has now.
-  title: string
-  name: string
-  createdAt: number
-}
-
-export interface DiscordBotView extends DiscordBot {
-  hasToken: boolean
-  health: DiscordHealth
-}
-
-export interface DiscordBotInput {
-  name: string
-  rules?: string
-  allowlist?: string[]
-  homeChannel?: string
-  generalChannel?: string
-  mentionOnly?: boolean
-  confirmStart?: boolean
-  enabled?: boolean
-  masterCli?: MasterCli
-  threadPerRequest?: boolean
-  threadNames?: DiscordThreadNames
-  threadArchive?: DiscordThreadArchive
-  ai?: Partial<DiscordBotAi>
-  mirror?: DiscordMirror
-  admins?: string[]
-  // Stored in the secret store, never in the database.
-  token?: string
-}
-
-export type DiscordBotPatch = Partial<Omit<DiscordBotInput, 'token'>>
-
-export type DiscordState = 'disconnected' | 'connecting' | 'connected' | 'error'
-
-export interface DiscordHealth {
-  botId: number
-  state: DiscordState
-  username: string
-  guilds: number
-  error: string
-  // The most recent error, kept after the bot disconnects or reconnects. Plain language, never a token.
-  lastError: string
-  // Epoch ms of the last state change.
-  since: number
-}
-
-// One configured channel as the bot sees it; `missing` lists the permissions it lacks there.
-export interface DiscordChannelCheck {
-  id: string
-  found: boolean
-  name: string
-  guild: string
-  missing: string[]
-}
-
-export interface DiscordTestResult {
-  tokenValid: boolean
-  username: string
-  guilds: Array<{ id: string; name: string }>
-  // 'missing' when Discord refused the privileged Message Content intent (switch it on in the developer portal).
-  intents: 'ok' | 'missing' | 'unknown'
-  channels: DiscordChannelCheck[]
-  // Why the token failed, or why nothing could be checked (no token saved).
-  error: string
-}
-
-export interface DiscordPairing {
-  code: string
-  userId: string
-  username: string
-  // The direct-message channel the request came from (used to tell the user they were approved).
-  channelId: string
-  createdAt: number
-}
 
 // MCP servers (R19). A server is read from the CLI's own config; values of env and headers never leave core.
 export type McpCli = 'claude' | 'opencode'
@@ -1039,6 +300,35 @@ export interface McpOverview {
   checkedAt: number
 }
 
+// Optional integrations (Git MCP, Playwright MCP): never installed by Operant unless the user clicks Add.
+export const OPTIONAL_MCP_IDS = ['git', 'playwright', 'codegraph'] as const
+export type OptionalMcpId = (typeof OPTIONAL_MCP_IDS)[number]
+export interface OptionalMcpTarget {
+  cli: McpCli
+  scope: McpScope
+}
+export interface OptionalMcpEntry {
+  id: OptionalMcpId
+  name: string
+  description: string
+  enables: string
+  // The server name Operant writes into a CLI's config.
+  server: string
+  // not-added: nothing; added: Operant's own entries; found: the same server under another name or added by hand.
+  status: 'not-added' | 'added' | 'found'
+  added: OptionalMcpTarget[]
+  foundAs?: string
+  foundIn?: string
+  // The found copy comes from a Claude plugin or connector: shown, never added or removed by Operant.
+  provided: boolean
+  runtime: { command: string; ok: boolean; error?: string }
+  needsProject: boolean
+  // Why Add cannot run right now (the runtime is missing, or no project is picked), or null.
+  blocked: string | null
+  // What a preset that names this server shows while it is not installed.
+  hint: string
+}
+
 // A server a seat needs that is not working.
 export interface McpDown {
   server: string
@@ -1049,7 +339,7 @@ export interface McpDown {
 
 // Usage page (R20): any grouping and filter of the usage rows, with totals that are the sum of the rows.
 
-export type UsageGroupBy = 'day' | 'hour' | 'project' | 'run' | 'seat' | 'agent' | 'model' | 'cli' | 'provider' | 'source'
+export type UsageGroupBy = 'day' | 'hour' | 'project' | 'model' | 'cli' | 'provider' | 'source'
 
 export interface UsageFilter {
   // Local milliseconds; `from` is inclusive, `to` exclusive.
@@ -1111,6 +401,8 @@ export interface UsageReport {
   // Always the sum of `rows`.
   totals: UsageTotals
   trend: UsageTrend | null
+  // Spend in each budget window ending now; the filter's project, model, CLI and provider apply, its dates do not.
+  windows: Record<BudgetWindow, UsageTotals>
 }
 
 export interface UsageSeriesQuery {
@@ -1135,24 +427,7 @@ export interface UsageSeries {
   totals: UsageTotals
 }
 
-export interface JobAgentUsage extends UsageTotals {
-  // null for the Master (and for usage the reader could not tie to an agent).
-  agentId: number | null
-  seat: string
-  model: string
-  status: string
-}
-
-export interface RunUsage {
-  runId: number
-  crewId: number | null
-  task: string
-  totals: UsageTotals
-  // The Master first, then every agent of the job, with the usage each one spent.
-  agents: JobAgentUsage[]
-}
-
-export type UsageView = { kind: 'report'; query: UsageQuery } | { kind: 'series'; query: UsageSeriesQuery } | { kind: 'job'; runId: number }
+export type UsageView = { kind: 'report'; query: UsageQuery } | { kind: 'series'; query: UsageSeriesQuery }
 
 export type ExportFormat = 'csv' | 'json'
 
@@ -1164,35 +439,28 @@ export interface ExportText {
 
 // Budgets (R20): caps for the day (the existing daily budget in settings), each project and each job.
 
+// The windows a spend is measured over: the last 5 hours, the local day, the last 7 days.
+export type BudgetWindow = 'fiveHour' | 'day' | 'week'
+
 export interface BudgetConfig {
-  // Daily spend per project, by crew id as text; missing or 0 = no cap.
+  // Spend per project in each window, by crew id as text; missing or 0 = no budget.
+  projectFiveHourUsd: Record<string, number>
   projectDailyUsd: Record<string, number>
-  // Default cap for one job's whole run; 0 = none. `jobUsd` per JOB# overrides it.
-  jobDefaultUsd: number
-  jobUsd: Record<string, number>
-  // At the cap, hold queued jobs (the project's for a project or job cap, all for the day budget).
-  pauseQueue: boolean
-  // A job over its own cap is stopped (ends as failed).
-  stopJobAtCap: boolean
+  projectWeeklyUsd: Record<string, number>
 }
 
 export interface BudgetProgress {
   capUsd: number
   spentUsd: number
   pct: number
-  paused: boolean
 }
 
 export interface BudgetStatus {
   config: BudgetConfig
-  day: BudgetProgress | null
-  projects: Array<BudgetProgress & { crewId: number }>
-  jobs: Array<BudgetProgress & { runId: number; crewId: number }>
-  // Why queued jobs are held right now ('' when none are).
-  held: Array<{ crewId: number | null; reason: string }>
+  projects: Array<BudgetProgress & { crewId: number; window: BudgetWindow }>
+  // The all-projects caps from settings, one per window that has a cap.
+  global: Array<BudgetProgress & { window: BudgetWindow }>
 }
-
-export type BudgetTarget = { scope: 'day' } | { scope: 'project'; crewId: number } | { scope: 'job'; runId: number }
 
 // Import and move (R21)
 

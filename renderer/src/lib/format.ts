@@ -18,6 +18,3 @@ export const usd = (n: number) =>
   })
 
 export const compact = (n: number) => n.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })
-
-// Context window by model family; the 5.x models and Opus/Sonnet 4.6+ have 1M.
-export const contextWindow = (model: string) => (model.startsWith('claude-haiku') ? 200_000 : 1_000_000)

@@ -7,54 +7,65 @@
    variables onto <html> (renderer/src/lib/theme.ts, from shared/themes.ts) and sets data-theme and data-scheme. */
 :root {
   --radius: 0.625rem;
-  --background: #09090b;
-  --foreground: #fafafa;
-  --card: #18181b;
-  --card-foreground: #fafafa;
-  --popover: #1f1f23;
-  --popover-foreground: #fafafa;
+  --background: #171717;
+  --foreground: #ececec;
+  --card: #1f1f1f;
+  --card-foreground: #ececec;
+  --popover: #262626;
+  --popover-foreground: #ececec;
   --primary: #d97757;
-  --primary-foreground: #0f0e0d;
-  --secondary: #171719;
-  --secondary-foreground: #fafafa;
-  --muted: #1c1c1e;
-  --muted-foreground: #a1a1aa;
-  --accent: #262628;
-  --accent-foreground: #fafafa;
-  --destructive: #f85149;
-  --border: #303031;
-  --input: #39393b;
+  --primary-foreground: #141414;
+  --secondary: #242424;
+  --secondary-foreground: #ececec;
+  --muted: #262626;
+  --muted-foreground: #9a9a9a;
+  --accent: #2a2a2a;
+  --accent-foreground: #ececec;
+  --destructive: #f06a5f;
+  --border: #2f2f2f;
+  --input: #363636;
   --ring: #d97757;
-  --chart-1: #8fa9c7;
-  --chart-2: #e3b27a;
-  --chart-3: #9cb88a;
-  --chart-4: #c89ab8;
-  --chart-5: #8dbab3;
+  --chart-1: #7aa6e3;
+  --chart-2: #e6c15a;
+  --chart-3: #8fbf7f;
+  --chart-4: #a98bd6;
+  --chart-5: #5fb3a8;
   --chart-6: #f0883e;
-  --chart-other: #83838a;
+  --chart-other: #808080;
   --chart-model: #7aa6e3;
-  --sidebar: #18181b;
-  --sidebar-foreground: #fafafa;
+  --sidebar: #141414;
+  --sidebar-foreground: #ececec;
   --sidebar-primary: #d97757;
-  --sidebar-primary-foreground: #0f0e0d;
-  --sidebar-accent: #2f2f31;
-  --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: #303031;
+  --sidebar-primary-foreground: #141414;
+  --sidebar-accent: #343434;
+  --sidebar-accent-foreground: #ececec;
+  --sidebar-border: #2f2f2f;
   --sidebar-ring: #d97757;
-  --success: #9cb88a;
-  --warning: #f0b35a;
+  --success: #8fbf7f;
+  --warning: #e6b85c;
   --info: #7aa6e3;
   --working: #f0883e;
   --agent: #e3b27a;
   --link: #d97757;
-  --glow: #1c1917;
+  --glow: #1f1c1a;
   --overlay: rgb(0 0 0 / 0.6);
   --xy-minimap-mask: rgb(0 0 0 / 0.45);
-  --syn-k: #c89ab8;
-  --syn-s: #9cb88a;
-  --syn-n: #e3b27a;
-  --syn-f: #8fa9c7;
-  --syn-t: #8dbab3;
+  --syn-k: #a98bd6;
+  --syn-s: #8fbf7f;
+  --syn-n: #e6c15a;
+  --syn-f: #7aa6e3;
+  --syn-t: #5fb3a8;
+  --bubble: #2b2b2b;
+  --code: #1b1b1b;
+  --ctx-system: #7aa6e3;
+  --ctx-tools: #5fb3a8;
+  --ctx-mcp: #a98bd6;
+  --ctx-agents: #8fbf7f;
+  --ctx-memory: #e6c15a;
+  --ctx-skills: #d987b0;
+  --ctx-messages: #e0704f;
+  --ctx-free: #353535;
+  --ctx-tick: #e6b85c;
 }
 
 /* Tailwind's palette colours used for status dots and text are dark-theme shades; light schemes get readable ones. */
@@ -72,6 +83,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 6px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -109,6 +121,19 @@
   --color-working: var(--working);
   --color-agent: var(--agent);
   --color-link: var(--link);
+  --color-bubble: var(--bubble);
+  --color-code: var(--code);
+  --color-ctx-system: var(--ctx-system);
+  --color-ctx-tools: var(--ctx-tools);
+  --color-ctx-mcp: var(--ctx-mcp);
+  --color-ctx-agents: var(--ctx-agents);
+  --color-ctx-memory: var(--ctx-memory);
+  --color-ctx-skills: var(--ctx-skills);
+  --color-ctx-messages: var(--ctx-messages);
+  --color-ctx-free: var(--ctx-free);
+  --color-ctx-tick: var(--ctx-tick);
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Ubuntu', sans-serif;
+  --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
 }
 
 @layer base {
@@ -152,3 +177,10 @@
 .media-marquee {
   animation: media-marquee var(--dur, 8s) linear infinite alternate;
 }
+
+/* Terminals: a slim, rounded overlay scrollbar (colours come from the xterm theme). */
+.op-term .xterm .xterm-scrollable-element > .scrollbar.vertical { width: 10px !important; }
+.op-term .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box;
+}
+.op-term .xterm .xterm-scrollable-element > .shadow { display: none; }

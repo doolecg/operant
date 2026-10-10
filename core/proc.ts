@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
 import type { ConsoleSource } from '../shared/console'
 import { consoleLog, LineBuffer } from './console'
 import { hiddenConsoleEnv } from './hideshim'
@@ -10,6 +12,9 @@ export interface HiddenSpawnOptions extends Omit<SpawnOptions, 'windowsHide'> {
   source?: ConsoleSource
   // Skip console logging and process tracking (helpers like taskkill).
   quiet?: boolean
+  // false: stdout is not copied to the in-app console (a stream-json process is far too chatty); stderr and the
+  // start and exit lines still are.
+  logStdout?: boolean
 }
 
 export interface RunResult {
@@ -40,7 +45,7 @@ export function describeCommand(cmd: string, args: string[], source: ConsoleSour
 const children = new Map<number, ChildProcess>()
 
 export function spawnHidden(cmd: string, args: string[], opts: HiddenSpawnOptions = {}): ChildProcess {
-  const { source: given, quiet, ...rest } = opts
+  const { source: given, quiet, logStdout, ...rest } = opts
   const source = given ?? sourceFor(cmd)
   // A detached daemon or hook anywhere in the tree would open a visible console on Windows: see hideshim.ts.
   if (!quiet && process.platform === 'win32') rest.env = hiddenConsoleEnv(rest.env ?? process.env)
@@ -57,9 +62,11 @@ export function spawnHidden(cmd: string, args: string[], opts: HiddenSpawnOption
     consoleLog.processStarted({ pid: child.pid, source, command: label, startedAt: Date.now() })
     log('info', `started: ${label}`)
   })
-  child.stdout?.on('data', (b) => {
-    for (const l of out.push(String(b))) log('stdout', l)
-  })
+  if (logStdout !== false) {
+    child.stdout?.on('data', (b) => {
+      for (const l of out.push(String(b))) log('stdout', l)
+    })
+  }
   child.stderr?.on('data', (b) => {
     for (const l of err.push(String(b))) log('stderr', l)
   })
@@ -104,8 +111,28 @@ export function runHidden(
   })
 }
 
+// Where a command on PATH runs from: a native executable is started directly, a .cmd or .bat (an npm install, a test
+// fixture) needs the shell. Null when it is not on PATH.
+export function resolveCli(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  exists: (p: string) => boolean = existsSync,
+): { file: string; shell: boolean } | null {
+  const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
+  const dirs = (env[key] ?? '').split(platform === 'win32' ? ';' : delimiter).filter(Boolean)
+  const candidates = platform === 'win32' ? [`${name}.exe`, `${name}.cmd`, `${name}.bat`] : [name]
+  for (const dir of dirs) {
+    for (const c of candidates) {
+      const full = join(dir, c)
+      if (exists(full)) return { file: full, shell: platform === 'win32' && !c.endsWith('.exe') }
+    }
+  }
+  return null
+}
+
 // Kills a whole tree on Windows (shell: true leaves cmd.exe in front of the real program), else a plain kill.
-export function killTree(child: ChildProcess): void {
+export function killTree(child: { pid?: number; kill: () => unknown }): void {
   if (process.platform === 'win32' && child.pid) spawnHidden('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', quiet: true }).on('error', () => {})
   else child.kill()
 }

@@ -49,14 +49,13 @@ try {
   }, project)
   await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
-  const master = page.getByRole('region', { name: 'Master Terminal' })
-  await master.getByRole('button', { name: 'Start' }).first().click()
+  await page.keyboard.press('Alt+Shift+T')
   await page.locator('.xterm').first().waitFor()
 
   // Default: the Dark theme, terminal following it.
   assert.equal(await attr('theme'), 'dark')
   assert.equal(await css('--background'), def('dark').bg)
-  assert.equal(await termBg(), rgb(def('dark').bg))
+  assert.equal(await termBg(), rgb(def('dark').card))
 
   // Each theme sets every variable of its token table, the scheme and the terminal colours.
   for (const id of ['nord', 'paper', 'dracula', 'daylight', 'void']) {
@@ -66,7 +65,7 @@ try {
     for (const [k, v] of Object.entries(t)) assert.equal(await css(k), v, `${id} ${k}`)
     assert.equal(await attr('scheme'), def(id).scheme)
     assert.equal(await page.evaluate(() => document.documentElement.classList.contains('dark')), def(id).scheme === 'dark')
-    await poll(`${id} terminal`, async () => (await termBg()) === rgb(def(id).bg))
+    await poll(`${id} terminal`, async () => (await termBg()) === rgb(def(id).card))
     assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), rgb(def(id).bg), `${id} page background`)
   }
 
@@ -83,7 +82,7 @@ try {
   await set({ theme: 'paper', terminalFollowsTheme: false })
   await poll('terminal stays dark', async () => (await termBg()) === rgb('#09090b'))
   await set({ terminalFollowsTheme: true })
-  await poll('terminal follows again', async () => (await termBg()) === rgb(def('paper').bg))
+  await poll('terminal follows again', async () => (await termBg()) === rgb(def('paper').card))
 
   // Settings > Appearance: the picker previews on hover and keeps the choice on click.
   await set({ theme: 'nord' })
@@ -111,7 +110,8 @@ try {
   assert.equal(await css('--ring'), '#5b9cff')
   await page.getByTestId('accent-hex').fill('#ff8800')
   await poll('accent hex', async () => (await css('--primary')) === '#ff8800')
-  await page.getByRole('button', { name: 'Reset', exact: true }).click()
+  // The settings page has a Reset of its own; this one is the accent card's.
+  await page.getByTestId('accent-hex').locator('xpath=ancestor::*[@data-slot="card"][1]').getByRole('button', { name: 'Reset', exact: true }).click()
   await poll('accent reset', async () => (await css('--primary')) === def('dracula').accent)
 
   // Custom themes: edit colours live, save under a name, change, export/import and delete.
@@ -160,7 +160,7 @@ try {
   // Restart: the last theme comes back, and the window is painted in its colour before the page loads.
   await set({ theme: 'gruvbox', accent: '' })
   await page.keyboard.press('Escape')
-  await poll('terminal after settings closes', async () => (await termBg()) === rgb(def('gruvbox').bg))
+  await poll('terminal after settings closes', async () => (await termBg()) === rgb(def('gruvbox').card))
   await app.close()
   app = await launch()
   page = await app.firstWindow()
@@ -168,7 +168,8 @@ try {
   await poll('theme after restart', async () => (await attr('theme')) === 'gruvbox')
   assert.equal(await css('--background'), def('gruvbox').bg)
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.getByRole('region', { name: 'Master Terminal' }).getByRole('button', { name: 'Start' }).first().click()
+  await page.getByRole('heading', { name: 'shop', level: 1 }).waitFor()
+  await page.keyboard.press('Alt+Shift+T')
   await page.locator('.xterm').first().waitFor()
 
   // Screenshots of the app in three themes.

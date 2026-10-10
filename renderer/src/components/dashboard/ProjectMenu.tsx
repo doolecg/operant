@@ -1,19 +1,21 @@
-import { Bot, ClipboardCheck, Code2, Copy, FolderInput, FolderOpen, FolderOutput, FolderPlus, GitCompare, Network, Settings2, SquareTerminal, Trash2 } from 'lucide-react'
+import { Code2, Copy, FolderInput, FolderOpen, FolderOutput, FolderPlus, GitCompare, Network, Settings2, Sparkles, SquareTerminal, Trash2 } from 'lucide-react'
 import type { ProjectGroup } from '@shared/projects'
 import type { Crew } from '@shared/types'
+import type { MainCli } from '@shared/settings'
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
+import { CLI_SHORT, cliBlocked, MAIN_CLIS } from '@/lib/capabilities'
+import { useCapabilities } from '@/lib/queries'
 import { folderLabel } from './projectActions'
 
 export interface ProjectMenuHandlers {
-  newAgent: (c: Crew) => void
+  newCli: (c: Crew, cli: MainCli) => void
   newShell: (c: Crew) => void
   openIde: (c: Crew) => void
   openFolder: (c: Crew) => void
   index: (c: Crew) => void
   changes: (c: Crew) => void
   copyPath: (c: Crew) => void
-  trackerNow: (c: Crew) => void
   // null = ungrouped, 'new' = a fresh group.
   moveTo: (c: Crew, target: number | null | 'new') => void
   defaults: (c: Crew) => void
@@ -37,11 +39,17 @@ export function ProjectMenuContent({ kind, crew, groups, ideName, platform, alig
   const K = (kind === 'context' ? CONTEXT : DROPDOWN) as typeof CONTEXT
   const others = groups.filter((g) => g.id !== crew.groupId)
   const contentProps = kind === 'dropdown' ? { align } : {}
+  const caps = useCapabilities().data
   return (
     <K.Content aria-label={`Actions for ${crew.name}`} className="w-60" {...contentProps}>
-      <K.Item onSelect={() => h.newAgent(crew)}>
-        <Bot /> New agent here
-      </K.Item>
+      {MAIN_CLIS.map((cli) => {
+        const blocked = cliBlocked(caps, cli)
+        return (
+          <K.Item key={cli} disabled={!!blocked} title={blocked} onSelect={() => h.newCli(crew, cli)}>
+            <Sparkles /> New {CLI_SHORT[cli]} terminal here{blocked ? ' (not installed)' : ''}
+          </K.Item>
+        )
+      })}
       <K.Item onSelect={() => h.newShell(crew)}>
         <SquareTerminal /> New shell here
       </K.Item>
@@ -73,11 +81,6 @@ export function ProjectMenuContent({ kind, crew, groups, ideName, platform, alig
       {crew.groupId != null && (
         <K.Item onSelect={() => h.moveTo(crew, null)}>
           <FolderOutput /> Remove from group
-        </K.Item>
-      )}
-      {crew.trackerFile && (
-        <K.Item onSelect={() => h.trackerNow(crew)}>
-          <ClipboardCheck /> Update tracker now
         </K.Item>
       )}
       <K.Item onSelect={() => h.defaults(crew)}>

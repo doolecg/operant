@@ -7,7 +7,7 @@ const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 function Calendar({ now }: { now: Date }) {
   const grid = monthGrid(now)
   return (
-    <div role="dialog" aria-label="Calendar" className="bg-popover text-popover-foreground absolute right-0 top-full z-50 mt-1 w-56 rounded-md border p-2 text-xs shadow-md">
+    <div role="dialog" aria-label="Calendar" className="bg-popover text-popover-foreground absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border p-2 text-xs shadow-lg">
       <div className="mb-1 flex justify-between font-medium">
         <span>{now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</span>
         <span className="text-muted-foreground">week {isoWeek(now)}</span>
@@ -28,7 +28,7 @@ function Calendar({ now }: { now: Date }) {
             <tr key={i}>
               <td className="text-muted-foreground font-mono text-[10px]">{w.week}</td>
               {w.days.map((d, j) => (
-                <td key={j} className={d === now.getDate() ? 'bg-primary text-primary-foreground rounded' : ''}>
+                <td key={j} className={d === now.getDate() ? 'bg-primary text-primary-foreground rounded-full' : ''}>
                   {d ?? ''}
                 </td>
               ))}
@@ -75,7 +75,7 @@ export function ClockPill({ format, seconds, date }: { format: ClockFormat; seco
         type="button"
         onClick={copy}
         aria-label={`Clock ${fullDateTime(now, { format })}; click to copy`}
-        className="hover:bg-foreground/10 flex h-6 items-center gap-2 rounded-[7px] px-2 font-mono text-xs tabular-nums transition-colors"
+        className="hover:bg-foreground/10 flex h-6 items-center gap-2 rounded-full px-2 font-mono text-xs tabular-nums transition-colors"
       >
         <span data-testid="clock-time">{clockText(now, { format, seconds })}</span>
         {date && <span className="text-muted-foreground">{dateText(now)}</span>}

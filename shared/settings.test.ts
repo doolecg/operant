@@ -12,11 +12,19 @@ describe('settings', () => {
     })
     expect(s.dailyBudgetUsd).toBe(0)
     expect(s.defaultModels).toEqual({ claude: 'opus' })
-    expect(s).toMatchObject({ mainCli: 'claude', mainModel: '', mainEffort: '' })
     expect(s.updates).toEqual({ channel: 'stable', checkHours: 24, installOnQuit: true })
     expect(s.keybinds.newCrew).toBe('Mod+Shift+N')
-    expect(Object.keys(s.keybinds).sort()).toEqual(['indexCrew', 'mediaNext', 'mediaPlayPause', 'mediaPrev', 'mediaShuffle', 'newCrew', 'newShell', 'openInIde', 'openPlayground', 'openSettings', 'tileClose', 'tileFocusNext', 'tileFocusPrev', 'tileFullscreen', 'tileLayout', 'tileSplit', 'toggleAllPanels', 'toggleConsole', 'toggleSidePanel', 'toggleSidebar', 'zoomIn', 'zoomOut', 'zoomReset'])
+    expect(Object.keys(s.keybinds).sort()).toEqual(['indexCrew', 'mediaNext', 'mediaPlayPause', 'mediaPrev', 'mediaShuffle', 'newCrew', 'newShell', 'openInIde', 'openPlayground', 'openSettings', 'tileClose', 'tileFocusNext', 'tileFocusPrev', 'tileFullscreen', 'tileLayout', 'tileSplit', 'toggleAllPanels', 'toggleConsole', 'toggleSidebar', 'zoomIn', 'zoomOut', 'zoomReset'])
     expect('defaultReview' in s).toBe(false)
+  })
+
+  it('remembers the Claude effort only as a real level', () => {
+    expect(DEFAULT_SETTINGS.defaultEfforts).toEqual({ claude: '' })
+    expect(sanitizeSettings({ defaultEfforts: { claude: ' xhigh ' } }).defaultEfforts).toEqual({ claude: 'xhigh' })
+    expect(sanitizeSettings({ defaultEfforts: { claude: 'turbo' } }).defaultEfforts).toEqual({ claude: '' })
+    expect(sanitizeSettings({ defaultEfforts: 'max' }).defaultEfforts).toEqual({ claude: '' })
+    expect(mergeSettings(DEFAULT_SETTINGS, { defaultEfforts: { claude: 'max' } }).defaultEfforts).toEqual({ claude: 'max' })
+    expect(mergeSettings(DEFAULT_SETTINGS, { defaultModels: { claude: 'opus' } }).defaultEfforts).toEqual({ claude: '' })
   })
 
   it('sanitises the learning AI choice', () => {
@@ -25,16 +33,11 @@ describe('settings', () => {
     expect(sanitizeSettings({ learn: { cli: 'codex', model: '--evil flag', effort: '-x' } }).learn).toMatchObject({ cli: 'claude', model: '', effort: '' })
   })
 
-  it('sanitises the main CLI choice', () => {
-    expect(sanitizeSettings({ mainCli: 'opencode' })).toMatchObject({ mainCli: 'opencode', mainModel: '', mainEffort: '' })
-    expect(sanitizeSettings({ mainCli: 'opencode', mainModel: 'openai/gpt-5', mainEffort: 'high' })).toMatchObject({ mainModel: 'openai/gpt-5', mainEffort: 'high' })
-    expect(sanitizeSettings({ mainCli: 'codex', mainModel: '--x', mainEffort: '-y' })).toMatchObject({ mainCli: 'claude', mainModel: '', mainEffort: '' })
-  })
 
   it('sanitises the dragged panel widths', () => {
-    expect(sanitizeSettings({ layout: { sidebarWidth: 301.4, rightWidth: 'wide' } }).layout).toMatchObject({ sidebarWidth: 301, rightWidth: 0 })
-    expect(sanitizeSettings({ layout: { sidebarWidth: -9, rightWidth: 99999 } }).layout).toMatchObject({ sidebarWidth: 0, rightWidth: 4000 })
-    expect(mergeSettings(DEFAULT_SETTINGS, { layout: { rightWidth: 500 } }).layout).toMatchObject({ sidebarWidth: 0, rightWidth: 500 })
+    expect(sanitizeSettings({ layout: { sidebarWidth: 301.4 } }).layout).toMatchObject({ sidebarWidth: 301 })
+    expect(sanitizeSettings({ layout: { sidebarWidth: -9 } }).layout).toMatchObject({ sidebarWidth: 0 })
+    expect(sanitizeSettings({ layout: { sidebarWidth: 99999 } }).layout).toMatchObject({ sidebarWidth: 4000 })
   })
 
   it('clamps and defaults the tokens and collaboration groups', () => {
@@ -43,32 +46,16 @@ describe('settings', () => {
       collab: { nudgeIdleSeconds: 0, leaseMinutes: 90.6, maxRejects: -1, purgeRetentionDays: 7.2, purgeEnabled: 'no', longJobElapsedMinutes: NaN },
     })
     expect(s.tokens).toEqual({
-      operatorDailyCapUsd: 0,
       capWarnPct: 100,
       coldThresholdPct: 50,
-      outputShareWarnPct: 1,
       defaultCacheTtl: 'auto',
       subagentCacheTtl: '1h',
       pinClaudeVersion: true,
     })
-    expect(s.collab).toEqual({
-      ...DEFAULT_SETTINGS.collab,
-      nudgeIdleSeconds: 1,
-      leaseMinutes: 91,
-      maxRejects: 0,
-      purgeRetentionDays: 7,
-    })
-    expect(DEFAULT_SETTINGS.collab.purgeRetentionDays).toBe(30)
-    expect(DEFAULT_SETTINGS.collab.purgeEnabled).toBe(true)
     expect(DEFAULT_SETTINGS.tokens.capWarnPct).toBe(80)
     expect(DEFAULT_SETTINGS.tokens).toMatchObject({ defaultCacheTtl: 'auto', subagentCacheTtl: '5m', pinClaudeVersion: true })
   })
 
-  it('keeps the Claude hooks in runs off by default and sanitises it', () => {
-    expect(DEFAULT_SETTINGS.runs.useClaudeHooks).toBe(false)
-    expect(sanitizeSettings({ runs: { useClaudeHooks: 'yes' } }).runs.useClaudeHooks).toBe(false)
-    expect(mergeSettings(DEFAULT_SETTINGS, { runs: { useClaudeHooks: true } }).runs.useClaudeHooks).toBe(true)
-  })
 
   it('merges nested patches without dropping sibling values', () => {
     const s = mergeSettings(DEFAULT_SETTINGS, { updates: { channel: 'beta' }, keybinds: { indexCrew: '' }, dailyBudgetUsd: 25 })
@@ -78,12 +65,6 @@ describe('settings', () => {
     expect(s.dailyBudgetUsd).toBe(25)
   })
 
-  it('merges collaboration and token patches field by field', () => {
-    const s = mergeSettings(DEFAULT_SETTINGS, { collab: { leaseMinutes: 10, purgeEnabled: false }, tokens: { operatorDailyCapUsd: 5 } })
-    expect(s.collab).toEqual({ ...DEFAULT_SETTINGS.collab, leaseMinutes: 10, purgeEnabled: false })
-    expect(s.tokens).toEqual({ ...DEFAULT_SETTINGS.tokens, operatorDailyCapUsd: 5 })
-    expect(s.keybinds.openSettings).toBe('Mod+,')
-  })
 
   it('keeps only an http(s) Hindsight URL', () => {
     expect(sanitizeSettings({ hindsightUrl: ' http://nas:9077 ' }).hindsightUrl).toBe('http://nas:9077')
@@ -111,40 +92,89 @@ describe('settings', () => {
     expect(ok).toMatchObject({ mode: 'lan', bindHost: '100.101.102.103', port: 9100, openBind: true })
   })
 
-  it('sanitises the hide flags, terminal, tiles and notification settings', () => {
+  it('sanitises the hide flag, terminal and tiles settings', () => {
     const d = sanitizeSettings({})
-    expect(d.layout).toMatchObject({ sidebarHidden: false, panelHidden: false, inboxHidden: false })
+    expect(d.layout).toEqual({ sidebarWidth: 0, sidebarHidden: false })
     expect(d.terminal).toEqual({ copyOnSelect: false, fontSize: 13, scrollback: 5000, fileLinks: true, dropPaths: true })
-    expect(d.tiles).toEqual({ layout: 'dwindle', gaps: 6, autoOpenSubagents: true, closeDoneAfterSec: 30, strip: 'normal', runawayMinutes: 0 })
-    expect(d.notifications).toEqual({ inbox: true })
+    expect(d.tiles).toEqual({ layout: 'dwindle', gaps: 6, strip: 'normal' })
     const bad = sanitizeSettings({
-      layout: { sidebarHidden: 'yes', panelHidden: true },
+      layout: { sidebarHidden: 'yes' },
       terminal: { copyOnSelect: 1, fontSize: 99, scrollback: 10, fileLinks: false, dropPaths: 'no' },
-      tiles: { layout: 'grid', gaps: -4, autoOpenSubagents: false, closeDoneAfterSec: 99999, strip: 'big', runawayMinutes: 2.6 },
-      notifications: { inbox: 'off' },
+      tiles: { layout: 'grid', gaps: -4, strip: 'big' },
     })
-    expect(bad.layout).toMatchObject({ sidebarHidden: false, panelHidden: true, inboxHidden: false })
+    expect(bad.layout).toEqual({ sidebarWidth: 0, sidebarHidden: false })
     expect(bad.terminal).toEqual({ copyOnSelect: false, fontSize: 32, scrollback: 500, fileLinks: false, dropPaths: true })
-    expect(bad.tiles).toEqual({ layout: 'dwindle', gaps: 0, autoOpenSubagents: false, closeDoneAfterSec: 3600, strip: 'normal', runawayMinutes: 3 })
-    expect(bad.notifications.inbox).toBe(true)
+    // A saved chat composer switch from before the Chat view is dropped on load.
+    expect(sanitizeSettings({ terminal: { chatComposer: true } }).terminal).toEqual({ copyOnSelect: false, fontSize: 13, scrollback: 5000, fileLinks: true, dropPaths: true })
+    expect(bad.tiles).toEqual({ layout: 'dwindle', gaps: 0, strip: 'normal' })
+    // A saved layout from before the side panel was removed keeps the project list and drops the rest.
+    const old = sanitizeSettings({ layout: { sidebarHidden: true, panelHidden: true, rightWidth: 300 }, keybinds: { toggleSidePanel: 'Alt+X' } })
+    expect(old.layout).toEqual({ sidebarWidth: 0, sidebarHidden: true })
+    expect(old.keybinds).not.toHaveProperty('toggleSidePanel')
+  })
+
+  it('sanitises the main CLI, the info bar and the context thresholds', () => {
+    const d = sanitizeSettings({})
+    expect(d).toMatchObject({ mainCli: 'claude', infoBar: true, contextWarnPct: 60, contextDangerPct: 85 })
+    expect(sanitizeSettings({ mainCli: 'codex', infoBar: 'no', contextWarnPct: 0, contextDangerPct: 500 })).toMatchObject({ mainCli: 'claude', infoBar: true, contextWarnPct: 1, contextDangerPct: 100 })
+    expect(sanitizeSettings({ mainCli: 'opencode', infoBar: false, contextWarnPct: 40.6 })).toMatchObject({ mainCli: 'opencode', infoBar: false, contextWarnPct: 41 })
+    expect(mergeSettings(DEFAULT_SETTINGS, { mainCli: 'opencode' }).mainCli).toBe('opencode')
   })
 
   it('merges partial layout, terminal and tiles patches and labels every key action', () => {
-    const m = mergeSettings(DEFAULT_SETTINGS, { layout: { sidebarHidden: true }, terminal: { fontSize: 16 }, tiles: { layout: 'master' }, notifications: { inbox: false } })
-    expect(m.layout).toMatchObject({ sidebarHidden: true, panelHidden: false, sidebarWidth: 0 })
+    const m = mergeSettings(DEFAULT_SETTINGS, { layout: { sidebarHidden: true }, terminal: { fontSize: 16 }, tiles: { layout: 'master' } })
+    expect(m.layout).toEqual({ sidebarHidden: true, sidebarWidth: 0 })
     expect(m.terminal).toMatchObject({ fontSize: 16, scrollback: 5000 })
     expect(m.tiles).toMatchObject({ layout: 'master', gaps: 6 })
-    expect(m.notifications.inbox).toBe(false)
     expect(KEY_ACTIONS.map((a) => a.id).sort()).toEqual(Object.keys(DEFAULT_SETTINGS.keybinds).sort())
     expect(KEY_ACTIONS.every((a) => a.label.length > 0)).toBe(true)
-    expect(DEFAULT_SETTINGS.keybinds).toMatchObject({ toggleSidePanel: 'Alt+Shift+B', toggleAllPanels: 'Alt+Z' })
+    expect(DEFAULT_SETTINGS.keybinds).toMatchObject({ toggleAllPanels: 'Alt+Z' })
   })
 
   it('sanitises the top bar settings and leaves media keys unbound', () => {
     expect(DEFAULT_SETTINGS.keybinds).toMatchObject({ mediaPlayPause: '', mediaNext: '', mediaPrev: '', mediaShuffle: '' })
-    const t = sanitizeSettings({ topBar: { mediaSize: 'huge', clockFormat: '13', clockSeconds: 'yes', clockDate: false, agentPill: 0 } }).topBar
-    expect(t).toMatchObject({ mediaSize: 'full', clockFormat: 'auto', clockSeconds: false, clockDate: false, agentPill: true })
+    const t = sanitizeSettings({ topBar: { mediaSize: 'huge', clockFormat: '13', clockSeconds: 'yes', clockDate: false } }).topBar
+    expect(t).toMatchObject({ mediaSize: 'full', clockFormat: 'auto', clockSeconds: false, clockDate: false })
     const m = mergeSettings(DEFAULT_SETTINGS, { topBar: { mediaSize: 'compact', clockFormat: '12', clockSeconds: true } }).topBar
     expect(m).toMatchObject({ mediaSize: 'compact', clockFormat: '12', clockSeconds: true, clockDate: true })
+  })
+})
+
+describe('claudeMods settings', () => {
+  const allOff = { subagents: false, promptEnhancer: false, designPicker: false, ideaShelf: false, folderTracker: false, plainEnglish: false }
+
+  it('defaults the master switch on, the sub-agent mod on and the rest off', () => {
+    expect(DEFAULT_SETTINGS.claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
+    const off = sanitizeSettings({ claudeMods: { enabled: false, mods: { ...allOff, subagents: false, ideaShelf: true } } }).claudeMods
+    expect(off).toEqual({ enabled: false, mods: { ...allOff, ideaShelf: true }, keepWarm: true })
+  })
+
+  it('migrates the old subagentPanel switch into mods.subagents', () => {
+    expect(sanitizeSettings({ claudeMods: { enabled: true, subagentPanel: false } }).claudeMods.mods.subagents).toBe(false)
+    expect(sanitizeSettings({ claudeMods: { enabled: true, subagentPanel: true } }).claudeMods.mods.subagents).toBe(true)
+    // A stored mods value wins over the old flag.
+    expect(sanitizeSettings({ claudeMods: { subagentPanel: false, mods: { subagents: true } } }).claudeMods.mods.subagents).toBe(true)
+  })
+
+  it('loads a saved chatLook switch from before the Chat view without error', () => {
+    const s = sanitizeSettings({ claudeMods: { enabled: true, mods: { chatLook: true, subagents: true } } }).claudeMods
+    expect(s).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
+    expect(Object.keys(s.mods)).not.toContain('chatLook')
+  })
+
+  it('drops unknown mod ids and non-boolean values back to the defaults', () => {
+    const s = sanitizeSettings({ claudeMods: { enabled: 'no', mods: { subagents: 0, ideaShelf: true, nope: true } } }).claudeMods
+    expect(s).toEqual({ enabled: true, mods: { ...allOff, subagents: true, ideaShelf: true }, keepWarm: true })
+    const gone = sanitizeSettings({ claudeMods: { enabled: true, keepWarm: false, mods: { sessionMonitor: true, assumptionCheck: true } } }).claudeMods
+    expect(Object.keys(gone.mods)).not.toContain('sessionMonitor')
+    expect(Object.keys(gone.mods)).not.toContain('assumptionCheck')
+    expect(gone.keepWarm).toBe(false)
+    expect(sanitizeSettings({ claudeMods: 'yes' }).claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
+    expect(sanitizeSettings({ claudeMods: null }).claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
+  })
+
+  it('merges a partial patch without losing the other switches', () => {
+    const off = mergeSettings(DEFAULT_SETTINGS, { claudeMods: { enabled: false, mods: { ...allOff, subagents: true } } })
+    expect(off.claudeMods).toEqual({ enabled: false, mods: { ...allOff, subagents: true }, keepWarm: true })
   })
 })

@@ -169,25 +169,6 @@ export async function listChildSessions(
 }
 
 // A session's messages, oldest first ({ data: [...] }: user { text }, assistant { content: reasoning/text/tool blocks },
-// idle). Anything unrecognised yields no lines. Empty when the service is down or errors.
-export async function listSessionMessages(
-  sessionId: string,
-  deps: Partial<Pick<OpenCodeDeps, 'fetch' | 'readJson'>> = {},
-): Promise<unknown[]> {
-  const d = { ...defaults, ...deps }
-  const cfg = findService(d)
-  if (!cfg) return []
-  try {
-    const r = await d.fetch(`${cfg.url}/api/session/${encodeURIComponent(sessionId)}/message`, { headers: { Authorization: cfg.auth } })
-    if (!r.ok) return []
-    const data = await r.json()
-    const body = obj(data)
-    return Array.isArray(data) ? data : Array.isArray(body.data) ? body.data : Array.isArray(body.items) ? body.items : []
-  } catch {
-    return []
-  }
-}
-
 export type OpenCodePhase = 'idle' | 'busy' | 'needs-input'
 
 // A service event type -> the Master's phase, or null when it says nothing about it. Permission and question
@@ -215,63 +196,6 @@ export interface PhaseWatchOptions {
 
 // Follows one OpenCode Master through the shared service's event stream. Until the session id is known, the newest
 // top-level session of the project folder is looked up (the polling fallback); a dropped stream reconnects.
-// Resolves when `signal` aborts. Never throws.
-export async function watchOpenCodePhase(o: PhaseWatchOptions, deps: Partial<OpenCodeDeps> = {}): Promise<void> {
-  const d: OpenCodeDeps = { ...defaults, ...deps }
-  let sessionId = o.sessionId ?? ''
-  const dec = new TextDecoder()
-  const adopt = async (cfg: ServiceConfig): Promise<void> => {
-    try {
-      const r = await d.fetch(`${cfg.url}/api/session`, { headers: { Authorization: cfg.auth } })
-      if (!r.ok) return
-      const data = await r.json()
-      const body = obj(data)
-      const list = Array.isArray(data) ? data : Array.isArray(body.data) ? body.data : []
-      const mine = list.map(obj).filter((s) => !s.parentID && String(obj(s.location).directory ?? s.directory ?? '') === o.cwd)
-      const id = mine.at(-1)?.id
-      if (typeof id === 'string' && id) sessionId = id
-    } catch {
-      // the service is down; retried
-    }
-  }
-  while (!o.signal.aborted) {
-    const cfg = findService(d)
-    if (cfg) {
-      if (!sessionId) await adopt(cfg)
-      try {
-        const r = await d.fetch(`${cfg.url}/api/event`, { headers: { Authorization: cfg.auth }, signal: o.signal })
-        const reader = r.body?.getReader()
-        let buf = ''
-        while (reader && !o.signal.aborted) {
-          const { value, done } = await reader.read()
-          if (done) break
-          buf += dec.decode(value, { stream: true })
-          let i: number
-          while ((i = buf.indexOf('\n')) >= 0) {
-            const line = buf.slice(0, i).trim()
-            buf = buf.slice(i + 1)
-            if (!line.startsWith('data:')) continue
-            try {
-              const e = obj(JSON.parse(line.slice(5)))
-              const sid = String(obj(e.data).sessionID ?? '')
-              if (!sid || (sessionId && sid !== sessionId)) continue
-              const phase = phaseFor(String(e.type))
-              if (!phase) continue
-              if (!sessionId) await adopt(cfg)
-              if (sid === sessionId) o.onPhase(phase, String(e.type), sid)
-            } catch {
-              // a malformed line is skipped
-            }
-          }
-        }
-      } catch {
-        // aborted, or the service restarted
-      }
-    }
-    if (!o.signal.aborted) await d.sleep(sessionId ? (o.retryMs ?? 5000) : (o.pollMs ?? 3000))
-  }
-}
-
 function missing(e: unknown): Error {
   const code = (e as NodeJS.ErrnoException | undefined)?.code
   if (code === 'ENOENT') return new Error('OpenCode is not installed or not on PATH (the `opencode` command was not found)')

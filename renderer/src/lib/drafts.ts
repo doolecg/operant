@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react'
-import { DRAFT_PREFIX, draftKey, pruneDrafts, type DraftKind } from '@shared/drafts'
+import { DRAFT_PREFIX, pruneDrafts } from '@shared/drafts'
 
 // Drafts live in a Map (for useSyncExternalStore) and mirror to localStorage so they survive a restart.
 const store = new Map<string, string>()
@@ -68,10 +68,6 @@ export function useDraftByKey(key: string): [string, (v: string) => void, () => 
   const set = useCallback((v: string) => setDraftByKey(key, v), [key])
   const clear = useCallback(() => clearDraftByKey(key), [key])
   return [value, set, clear]
-}
-
-export function useDraft(kind: DraftKind, id: number): [string, (v: string) => void, () => void] {
-  return useDraftByKey(draftKey(kind, id))
 }
 
 export function resetDraftsForTest() {

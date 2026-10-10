@@ -89,11 +89,11 @@ export function MediaBar({ enabled, size, tier = 0 }: { enabled: boolean; size: 
       role="group"
       aria-label="Media controls"
       className={cn(
-        'group/media bg-foreground/5 relative flex min-w-[96px] shrink items-center overflow-hidden rounded-lg',
+        'group/media bg-foreground/5 relative flex min-w-[96px] shrink items-center overflow-hidden rounded-full',
         full ? 'h-[34px] gap-1.5 py-0.5 pl-1 pr-2' : 'h-[30px] pl-[3px] pr-3',
       )}
     >
-      <div className={cn('bg-muted grid shrink-0 place-items-center overflow-hidden', full ? 'size-6 rounded-[5px]' : 'size-[18px] rounded')}>
+      <div className={cn('bg-muted grid shrink-0 place-items-center overflow-hidden', full ? 'size-6 rounded-full' : 'size-[18px] rounded-full')}>
         {s.art ? <img src={s.art} alt="" className="size-full object-cover" /> : <Music2 className="text-muted-foreground size-3" />}
       </div>
       <button

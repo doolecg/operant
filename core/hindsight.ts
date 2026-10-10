@@ -88,6 +88,9 @@ export function bankFor(folder: string): string {
   return `operant-${name}-${h.toString(36)}`
 }
 
+// The global bank for user preferences that hold across every project (the Soul Bank).
+export const SOUL_BANK = 'operant-soul'
+
 export type RecallResult = { ok: true; items: string[] } | { ok: false; error: string }
 export type RetainResult = { ok: true } | { ok: false; error: string }
 
@@ -345,5 +348,19 @@ export class HindsightService {
   async retain(bank: string, content: string, tags: string[], context = 'Operant job outcome'): Promise<RetainResult> {
     const r = await this.post(`/v1/default/banks/${encodeURIComponent(bank)}/memories`, { items: [{ content, tags, context }], async: true })
     return r.ok ? { ok: true } : r
+  }
+
+  // Removes a whole bank. The HTTP route is not confirmed against every Hindsight version: a refusal is returned as is.
+  async deleteBank(bank: string): Promise<RetainResult> {
+    try {
+      const r = await this.d.fetch(`${this.url}/v1/default/banks/${encodeURIComponent(bank)}`, {
+        method: 'DELETE',
+        headers: this.headers(),
+        signal: AbortSignal.timeout(30000),
+      })
+      return r.ok ? { ok: true } : { ok: false, error: `Hindsight answered ${r.status} for the bank delete` }
+    } catch {
+      return { ok: false, error: `unreachable at ${this.url}` }
+    }
   }
 }

@@ -1,0 +1,6 @@
+{
+  "name": "prompt-enhancer",
+  "version": "0.1.0",
+  "description": "Prompt Enhancer: rewrites a rough prompt right in the prompt bar. It names the installed skills Claude should load, lists the big choices Claude should ask you about first, and says what the finished result should look like.",
+  "types": "./types/index.d.ts"
+}

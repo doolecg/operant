@@ -1,5 +1,4 @@
-// Usage page e2e (R20 to R22): seeded usage rows, the Usage tab (filters, totals, trend, grouping, a job's page, budgets
-// with a held queue and Resume, export buttons), the provider limits with a stubbed Claude endpoint and a fake OpenCode
+// Usage page e2e (R20 to R22): seeded usage rows, the Usage tab (filters, totals, trend, grouping, budgets, export buttons), the provider limits with a stubbed Claude endpoint and a fake OpenCode
 // database, the header badge, and the Import and Export settings page against a fake Operant 2.8.2 data folder.
 // Runs in the background with throwaway data. Usage: node e2e/usage.mjs [outDir]  (default docs/specs/screenshots)
 // Set OPERANT_E2E_EXE to a packaged executable to test a build instead of the dev app.
@@ -92,44 +91,34 @@ try {
 
   const crew = await inv('crews:create', { name: 'shop', folder: shop })
   const other = await inv('crews:create', { name: 'docs', folder: join(projects, 'Legacy One') })
-  const run = await inv('runs:create', { crewId: crew.id, task: 'Add a health check to app.ts', masterCli: 'claude' })
 
-  // Seed usage the way the backend stores it: rows per message with a model, seat, CLI and optional job and agent.
+  // Seed usage the way the backend stores it: rows per message with a model, CLI and source.
   const db = new DatabaseSync(join(dataDir, 'operant.db'))
   db.exec('PRAGMA busy_timeout = 5000')
-  const agent = db.prepare('INSERT INTO job_agents (run_id, seat, model, status, transcript_ref) VALUES (?, ?, ?, ?, ?)')
-  const pm = Number(agent.run(run.id, 'pm', 'claude-opus-5-5', 'done', 'a1.jsonl').lastInsertRowid)
-  const builder = Number(agent.run(run.id, 'builder', 'claude-sonnet-5-5', 'working', 'a2.jsonl').lastInsertRowid)
-  const reviewer = Number(agent.run(run.id, 'reviewer', 'claude-haiku-4-5', 'done', 'a3.jsonl').lastInsertRowid)
   const add = db.prepare(
-    `INSERT INTO usage (at, model, input_tokens, output_tokens, cache_read, cache_w5m, cache_w1h, cost_usd, crew_id, run_id, job_agent_id, cli, provider, source, seat, ext_key, legacy)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+    `INSERT INTO usage (at, model, input_tokens, output_tokens, cache_read, cache_w5m, cache_w1h, cost_usd, crew_id, cli, provider, source, ext_key, legacy)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
   )
   const DAY = 86400000
   let k = 0
-  const row = (daysAgo, model, i, o, cr, cw, cost, crewId, runId, agentId, cli, provider, source, seat) =>
-    add.run(NOW - daysAgo * DAY - 600_000, model, i, o, cr, cw, 0, cost, crewId, runId, agentId, cli, provider, source, seat, `e2e-${k++}`)
+  const row = (daysAgo, model, i, o, cr, cw, cost, crewId, cli, provider, source) =>
+    add.run(NOW - daysAgo * DAY - 600_000, model, i, o, cr, cw, 0, cost, crewId, cli, provider, source, `e2e-${k++}`)
   for (let d = 0; d < 14; d++) {
-    row(d, 'claude-sonnet-5-5', 30_000 + d * 700, 5_000 + d * 120, 180_000, 20_000, 0.55 + (d % 5) * 0.18, crew.id, null, null, 'claude', 'anthropic', 'operator', 'builder')
-    if (d % 2 === 0) row(d, 'claude-opus-5-5', 12_000, 2_500, 90_000, 8_000, 0.9 + (d % 3) * 0.3, crew.id, null, null, 'claude', 'anthropic', 'operator', 'lead')
-    if (d % 3 === 0) row(d, 'opencode/big-pickle', 20_000, 3_000, 0, 0, 0.12, crew.id, null, null, 'opencode', 'opencode', 'operator', 'builder')
-    if (d % 4 === 0) row(d, 'claude-haiku-4-5', 8_000, 900, 40_000, 0, 0.05, other.id, null, null, 'claude', 'anthropic', 'operator', 'docs')
+    row(d, 'claude-sonnet-5-5', 30_000 + d * 700, 5_000 + d * 120, 180_000, 20_000, 0.55 + (d % 5) * 0.18, crew.id, 'claude', 'anthropic', 'scratch')
+    if (d % 2 === 0) row(d, 'claude-opus-5-5', 12_000, 2_500, 90_000, 8_000, 0.9 + (d % 3) * 0.3, crew.id, 'claude', 'anthropic', 'scratch')
+    if (d % 3 === 0) row(d, 'opencode/big-pickle', 20_000, 3_000, 0, 0, 0.12, crew.id, 'opencode', 'opencode', 'scratch')
+    if (d % 4 === 0) row(d, 'claude-haiku-4-5', 8_000, 900, 40_000, 0, 0.05, other.id, 'claude', 'anthropic', 'scratch')
   }
-  // The job: Master (no agent row) plus three agents, today.
-  row(0, 'claude-opus-5-5', 20_000, 4_000, 120_000, 10_000, 1.35, crew.id, run.id, null, 'claude', 'anthropic', 'master', 'master')
-  row(0, 'claude-opus-5-5', 15_000, 3_000, 80_000, 6_000, 0.88, crew.id, run.id, pm, 'claude', 'anthropic', 'agent', 'pm')
-  row(0, 'claude-sonnet-5-5', 42_000, 9_000, 260_000, 30_000, 0.74, crew.id, run.id, builder, 'claude', 'anthropic', 'agent', 'builder')
-  row(0, 'claude-haiku-4-5', 9_000, 1_200, 50_000, 0, 0.06, crew.id, run.id, reviewer, 'claude', 'anthropic', 'agent', 'reviewer')
   db.close()
 
   await page.locator('[data-crew-row]').getByText('shop', { exact: true }).click({ position: { x: 4, y: 4 } })
   await page.getByRole('heading', { name: 'shop', level: 1 }).waitFor()
   await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
-  const tabs = page.getByRole('tablist', { name: 'Workspace panels' })
-  assert.equal(await tabs.getByRole('tab', { name: 'Cost' }).count(), 0, 'the Cost tab was renamed')
-  await tabs.getByRole('tab', { name: 'Usage' }).click()
-  await page.getByRole('heading', { name: 'Usage', exact: true }).waitFor()
-  await page.getByRole('button', { name: 'Widen the Usage panel' }).click()
+  // Usage opens as a popout from the sidebar footer's badge; Esc closes it.
+  const usageModal = () => page.getByRole('dialog', { name: 'Usage' })
+  await page.getByTestId('sidebar-footer').getByRole('button', { name: /^Provider limits: / }).click()
+  await usageModal().getByRole('heading', { name: 'Usage', exact: true }).waitFor()
+  await usageModal().getByRole('button', { name: 'Widen the Usage panel' }).click()
 
   // Totals: the cards show the sum of the rows, and the table's total row says the same.
   const filterFrom = (() => {
@@ -156,7 +145,7 @@ try {
   await table.getByRole('columnheader', { name: 'Model' }).waitFor()
   const byModel = await inv('usage:report', { filter: base, groupBy: ['model'] })
   assert.equal(await table.locator('tbody tr').count(), byModel.rows.length)
-  for (const g of ['Project', 'CLI', 'Seat', 'Day']) {
+  for (const g of ['Project', 'CLI', 'Day']) {
     await group.getByRole('button', { name: g }).click()
     await table.getByRole('columnheader', { name: g }).waitFor()
   }
@@ -172,24 +161,6 @@ try {
   const today = await inv('usage:report', { filter: { from: new Date().setHours(0, 0, 0, 0), crewId: crew.id }, groupBy: [] })
   await totals.getByText(money(today.totals.costUsd)).first().waitFor()
   await page.getByRole('group', { name: 'Date range' }).getByRole('button', { name: '30 days' }).click()
-
-  // A job's page: cost per agent, reachable from the Usage tab and from the job panel.
-  await group.getByRole('button', { name: 'Job' }).click()
-  await page.getByRole('button', { name: `Open JOB#${run.id}` }).click()
-  const jobTable = page.getByRole('region', { name: `Cost per agent for JOB#${run.id}` })
-  await jobTable.waitFor()
-  const ju = await inv('usage:job', run.id)
-  assert.equal(ju.agents.length, 4, 'Master and three agents')
-  for (const name of ['Master', 'pm', 'builder', 'reviewer']) await jobTable.getByRole('row', { name: new RegExp(`^${name}`) }).waitFor()
-  await jobTable.locator('tfoot').getByText(money(ju.totals.costUsd)).waitFor()
-  assert.ok(Math.abs(ju.agents.reduce((a, x) => a + x.costUsd, 0) - ju.totals.costUsd) < 1e-9, 'job total is the sum of its agents')
-  await shot('usage-job')
-  await page.getByRole('button', { name: 'All usage' }).click()
-  await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Workspace', exact: true }).click()
-  await page.locator('[data-run-card]').getByRole('button', { name: `Open JOB#${run.id}`, exact: true }).click()
-  await page.getByRole('dialog', { name: `JOB#${run.id}` }).getByRole('button', { name: 'Usage' }).click()
-  await jobTable.waitFor()
-  await page.getByRole('button', { name: 'All usage' }).click()
 
   // Export: the buttons are there (the save dialog is native, so the text comes through the same backend call).
   await page.getByRole('button', { name: 'Export CSV' }).first().waitFor()
@@ -212,35 +183,33 @@ try {
   await shot('usage-providers')
   assert.equal(await page.getByText('e2e-not-a-real-token').count(), 0, 'keys are never shown')
 
-  // The header badge (at least 80% used) opens the Usage tab from anywhere.
+  // Esc closes the popout; the sidebar badge (at least 80% used) opens it from anywhere.
+  await page.keyboard.press('Escape')
+  await usageModal().waitFor({ state: 'detached' })
   const badge = page.getByRole('button', { name: /^Provider limits: Claude/ })
   await badge.waitFor()
-  await tabs.getByRole('tab', { name: /^Board/ }).click()
   await badge.click()
-  await tabs.getByRole('tab', { name: 'Usage', selected: true }).waitFor()
+  await usageModal().waitFor()
+  await page.keyboard.press('Escape')
+  await usageModal().waitFor({ state: 'detached' })
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click()
 
-  // Budgets in settings: a project cap, the queue held when it is passed, and Resume.
-  await page.getByRole('button', { name: 'Budgets', exact: true }).click()
+  // Budgets in settings: a project cap shows its spend against it.
+  await page.locator('main nav button', { hasText: 'Tokens and budgets' }).click()
+  await page.getByRole('heading', { name: 'Budgets', exact: true }).scrollIntoViewIfNeeded()
   await page.getByLabel('Project shop cap in USD').fill('0.5')
   await page.getByLabel('Project shop cap in USD').blur()
   await until('project cap saved', async () => (await inv('budgets:get')).config.projectDailyUsd[String(crew.id)] === 0.5)
-  await until('project paused', async () => (await inv('budgets:get')).projects.find((p) => p.crewId === crew.id)?.paused === true, 20_000).catch(() => {})
-  const second = await inv('runs:create', { crewId: crew.id, task: 'Second job, held by the cap', masterCli: 'claude' })
-  await until('queue held', async () => (await inv('budgets:get')).held.length > 0, 20_000)
-  await page.getByText('Queued jobs are on hold').waitFor()
+  await until('project progress', async () => (await inv('budgets:get')).projects.find((p) => p.crewId === crew.id)?.capUsd === 0.5, 20_000)
+  await page.getByRole('progressbar', { name: 'Project shop spend against cap' }).waitFor()
   await shot('budgets')
-  await page.getByRole('button', { name: 'Resume held project shop' }).click()
-  await until('queue resumed', async () => (await inv('budgets:get')).held.length === 0)
-  // The job itself starts when the project has a free slot (the first job still holds it); what Resume guarantees is no hold.
-  assert.equal((await inv('budgets:get')).held.length, 0)
-  assert.ok(['queued', 'working'].includes((await inv('runs:get', second.id)).status))
   await page.getByLabel('Project shop cap in USD').fill('0')
   await page.getByLabel('Project shop cap in USD').blur()
   await until('project cap cleared', async () => ((await inv('budgets:get')).config.projectDailyUsd[String(crew.id)] ?? 0) === 0)
 
   // Import and export: preview the fake 2.8.2 folder, apply, and a second preview shows nothing new.
-  await page.getByRole('button', { name: 'Import and export', exact: true }).click()
+  await page.locator('main nav button', { hasText: 'Data and reset' }).click()
+  await page.getByRole('heading', { name: 'Import and export', exact: true }).scrollIntoViewIfNeeded()
   await page.getByRole('button', { name: 'Preview import from Operant 2.8.2' }).click()
   const preview = page.getByRole('region', { name: 'Import preview' })
   await preview.waitFor()

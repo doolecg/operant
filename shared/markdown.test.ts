@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { markdownToPlain, parseMarkdown, safeHref, sectionize, type Block, type Inline } from './markdown'
+import { isNextSteps, markdownToPlain, sectionName, parseMarkdown, safeHref, sectionize, type Block, type Inline } from './markdown'
 
 const links = (v: unknown, out: string[] = []): string[] => {
   if (Array.isArray(v)) v.forEach((x) => links(x, out))
@@ -159,5 +159,28 @@ describe('sectionize', () => {
     const blocks = parseMarkdown('a\n\n## B\n\nc\n\n---\n\nd')
     const s = sectionize(blocks, 2)
     expect(s.flatMap((x) => [...(x.heading ? [x.heading] : []), ...x.blocks])).toEqual(blocks)
+  })
+})
+
+describe('reply sections', () => {
+  const first = (src: string) => parseMarkdown(src)[0]!
+  it('names headings and bold lead-ins', () => {
+    expect(sectionName(first('## Summary'))).toBe('summary')
+    expect(sectionName(first('**Next steps:**'))).toBe('next steps')
+    expect(sectionName(first('**Not verified**'))).toBe('not verified')
+  })
+  it('leaves other text alone', () => {
+    expect(sectionName(first('**Summary** and more words'))).toBeNull()
+    expect(sectionName(first('## Something else'))).toBeNull()
+    expect(sectionName(first('Summary'))).toBeNull()
+  })
+  it('knows the next-steps sections', () => {
+    expect(isNextSteps('next steps')).toBe(true)
+    expect(isNextSteps('summary')).toBe(false)
+    expect(isNextSteps(null)).toBe(false)
+  })
+  it('parses the common chat features', () => {
+    const b = parseMarkdown(['# T', '', '- [x] a', '  - nested', '', '1. one', '', '> q', '', '| a | b |', '|---|---|', '| 1 | 2 |', '', '---', '', '```ts', 'x', '```'].join('\n'))
+    expect(b.map((x) => x.t)).toEqual(['heading', 'list', 'list', 'quote', 'table', 'hr', 'code'])
   })
 })

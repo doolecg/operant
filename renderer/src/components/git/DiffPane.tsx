@@ -219,7 +219,7 @@ export function DiffPane({
                       type="button"
                       aria-expanded={!closed}
                       aria-label={`${closed ? 'Expand' : 'Collapse'} ${h.header}`}
-                      className="hover:text-foreground text-muted-foreground flex items-center gap-1 rounded px-1"
+                      className="hover:text-foreground text-muted-foreground flex items-center gap-1 rounded-md px-1"
                       onClick={() =>
                         setCollapsed((cur) => {
                           const n = new Set(cur)

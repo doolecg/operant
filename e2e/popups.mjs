@@ -1,6 +1,6 @@
-// Popups and resize e2e: with many items (30 seats, 300 OpenCode models, 25 groups, 40 MCP servers) every dialog and
+// Popups and resize e2e: with many items (300 OpenCode models, 25 groups, 40 MCP servers) every dialog and
 // menu stays inside a small window (1000x640) and at UI scale 200%, with its header and footer in view and its body
-// scrolling; every dialog type fits at 1000x640, 1920x1080 and UI scale 200% (large ones fill the window at 1080p); long model lists get a filter box; the side panels resize by drag and keyboard and persist across a restart.
+// scrolling; every dialog type fits at 1000x640, 1920x1080 and UI scale 200% (large ones fill the window at 1080p); long model lists get a filter box; the project list resizes by drag and keyboard and persists across a restart.
 // Usage: node e2e/popups.mjs   (screenshots go to docs/specs/screenshots)
 import assert from 'node:assert/strict'
 import { execSync } from 'node:child_process'
@@ -27,6 +27,12 @@ const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT
 const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
 env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+// Settings pages: the nav buttons, or the page select below 900px wide (UI scale 200% and small windows).
+const openSettingsPage = async (label) => {
+  const select = page.getByRole('combobox', { name: 'Settings page' })
+  if (await select.isVisible().catch(() => false)) return select.selectOption({ label })
+  await page.locator('main nav button', { hasText: label }).first().click()
+}
 
 let app = null
 let page = null
@@ -82,7 +88,6 @@ try {
   await sleep(800)
   await page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: 'Terminal', exact: true }).click()
   const side = page.getByRole('complementary', { name: 'Projects' })
-  const col = page.getByRole('region', { name: 'Workspace panels' })
   const sw0 = (await box(side)).width
   const sh = await box(page.getByRole('separator', { name: 'Resize project list' }))
   await page.mouse.move(sh.x + sh.width / 2, sh.y + 300)
@@ -91,23 +96,14 @@ try {
   await page.mouse.up()
   const sw1 = (await box(side)).width
   assert.ok(sw1 > sw0 + 60, `dragging the project list handle widens it (${sw0} to ${sw1})`)
-  const ch = await box(page.getByRole('separator', { name: 'Resize workspace panels' }))
-  const cw0 = (await box(col)).width
-  await page.mouse.move(ch.x + ch.width / 2, ch.y + 300)
-  await page.mouse.down()
-  await page.mouse.move(ch.x + ch.width / 2 - 120, ch.y + 300, { steps: 6 })
-  await page.mouse.up()
-  const cw1 = (await box(col)).width
-  assert.ok(cw1 > cw0 + 80, `dragging the workspace handle widens the column (${cw0} to ${cw1})`)
   await page.getByRole('separator', { name: 'Resize project list' }).focus()
   await page.keyboard.press('ArrowRight')
   const sw2 = (await box(side)).width
   assert.ok(sw2 > sw1, `an arrow key resizes the sidebar (${sw1} to ${sw2})`)
-  await page.getByRole('separator', { name: 'Resize workspace panels' }).hover()
   await shot('panel-resize')
   await sleep(600)
   const saved = (await inv('settings:get')).layout
-  assert.ok(saved.sidebarWidth > 0 && saved.rightWidth > 0, `widths are saved ${JSON.stringify(saved)}`)
+  assert.ok(saved.sidebarWidth > 0, `the width is saved ${JSON.stringify(saved)}`)
 
   // Restart: the widths come back.
   await app.close()
@@ -117,9 +113,7 @@ try {
   await win((w) => w.setContentSize(1500, 900))
   await sleep(1000)
   const sw3 = (await box(page.getByRole('complementary', { name: 'Projects' }))).width
-  const cw3 = (await box(page.getByRole('region', { name: 'Workspace panels' }))).width
   assert.ok(Math.abs(sw3 - sw2) <= 2, `the sidebar width persists across a restart (${sw2} vs ${sw3})`)
-  assert.ok(Math.abs(cw3 - cw1) <= 2, `the right column width persists across a restart (${cw1} vs ${cw3})`)
   // Limits: a huge drag stops at the maximum; Home resets.
   await page.getByRole('separator', { name: 'Resize project list' }).focus()
   for (let i = 0; i < 60; i++) await page.keyboard.press('Shift+ArrowRight')
@@ -128,9 +122,6 @@ try {
   await page.keyboard.press('Home')
   await sleep(500)
   assert.ok((await box(page.getByRole('complementary', { name: 'Projects' }))).width < 300, 'Home resets the sidebar')
-  await page.getByRole('separator', { name: 'Resize workspace panels' }).dblclick()
-  await sleep(500)
-  assert.equal((await inv('settings:get')).layout.rightWidth, 0, 'double click resets the right column')
 
   // Small window from here on.
   await win((w) => w.setContentSize(1000, 640))
@@ -155,27 +146,14 @@ try {
     await inside(dd, `${tag} dropdown menu`)
     await page.keyboard.press('Escape')
 
-    // New task: Team mode with 30 seats and OpenCode seats with 300 models.
-    // At 200% in 1000x640 the workspace itself is cramped, so the button is activated directly.
-    await page.getByRole('button', { name: 'Start new task' }).evaluate((el) => el.click())
-    const dlg = page.getByRole('dialog')
-    await dlg.getByRole('button', { name: 'Team', exact: true }).click()
-    for (let i = 0; i < 30; i++) await dlg.getByRole('button', { name: 'Add seat' }).click()
-    await dlg.getByLabel('Task').fill('Many seats')
-    await dialogOk(`${tag} new task`, { footer: 'Send' })
-    if (scale === 1) {
-      await shot('popup-many-seats')
-      await dlg.getByRole('combobox', { name: 'Seat 1 preset' }).click()
-      const list = page.getByRole('listbox')
-      await inside(list, `${tag} preset select list`)
-      await page.keyboard.press('Escape')
-    }
-    // Model list: switch the Master to OpenCode, filter the 300 models.
-    await dlg.locator('[data-slot=dialog-body]').evaluate((el) => (el.scrollTop = 0))
-    await dlg.getByRole('combobox', { name: 'Master CLI' }).click().catch(async () => dlg.locator('#run-cli').click())
-    await page.getByRole('option', { name: 'OpenCode' }).click()
+    // Model list: the Learning AI on OpenCode, filter the 300 models.
+    await page.keyboard.press('Control+,')
+    await page.getByRole('heading', { name: 'Settings' }).waitFor()
+    await openSettingsPage('Learning')
+    await page.getByRole('combobox', { name: 'Learning CLI' }).click()
+    await page.getByRole('option', { name: 'OpenCode', exact: true }).click()
     await sleep(1500)
-    await dlg.getByRole('button', { name: 'Master model' }).click()
+    await page.getByRole('button', { name: 'Learning model' }).click()
     const filter = page.getByRole('combobox', { name: 'Filter' })
     await filter.waitFor()
     const pop = page.getByRole('listbox', { name: 'Options' })
@@ -185,27 +163,17 @@ try {
     assert.equal(await pop.getByRole('option').count(), 1, `${tag}: the filter narrows the models to one`)
     if (scale === 1) await shot('popup-model-search')
     await filter.press('Enter')
-    await page.getByRole('button', { name: 'Master model' }).filter({ hasText: 'Model 299 Instruct' }).waitFor()
-    await page.keyboard.press('Escape')
-    await dlg.waitFor({ state: 'detached' })
+    await page.getByRole('button', { name: 'Learning model' }).filter({ hasText: 'Model 299 Instruct' }).waitFor()
+    await inv('settings:set', { learn: { cli: 'claude', model: '', effort: '' } })
 
-    // Settings: team dialog with many seats, seat dialog with 40 MCP servers.
-    await page.keyboard.press('Control+,')
-    await page.getByRole('heading', { name: 'Settings' }).waitFor()
-    await page.locator('main nav button', { hasText: 'Teams' }).first().click()
+    // Settings: the team dialog.
+    await openSettingsPage('Presets')
     await page.getByRole('button', { name: /New team/ }).first().click()
     const td = page.getByRole('dialog')
     await td.getByLabel('Name', { exact: true }).fill('big')
-    for (let i = 0; i < 30; i++) await td.getByRole('button', { name: 'Add seat' }).click()
-    await dialogOk(`${tag} team`, { footer: 'Create team' })
+    await dialogOk(`${tag} team`, { footer: 'Create team', scrolls: false })
     await page.keyboard.press('Escape')
     await td.waitFor({ state: 'detached' })
-    await page.getByRole('button', { name: 'Presets', exact: true }).click()
-    await page.getByRole('button', { name: /^Seat settings for project manager$/ }).click()
-    await page.getByRole('list', { name: 'MCP servers' }).getByRole('listitem').nth(30).waitFor({ timeout: 60_000 })
-    await dialogOk(`${tag} seat`, { footer: 'Save seat', scrolls: false })
-    await page.keyboard.press('Escape')
-    await page.getByRole('dialog').waitFor({ state: 'detached' })
     await page.getByRole('button', { name: 'Close settings' }).click()
     await page.getByRole('complementary', { name: 'Projects' }).getByText('alpha', { exact: true }).waitFor()
   }
@@ -221,40 +189,23 @@ try {
   const settingsPage = async (nav) => {
     await page.keyboard.press('Control+,')
     await page.getByRole('heading', { name: 'Settings' }).waitFor()
-    await page.locator('main nav button', { hasText: nav }).first().click()
+    await openSettingsPage(nav)
   }
   const sidebarRight = async (name) => {
     await page.getByRole('complementary', { name: 'Projects' }).getByText(name, { exact: true }).first().click({ button: 'right' })
   }
   const dialogTypes = [
-    { name: 'new task', large: true, open: async () => {
-      await page.getByRole('button', { name: 'Start new task' }).evaluate((el) => el.click())
-      const d = page.getByRole('dialog')
-      await d.getByRole('button', { name: 'Team', exact: true }).click()
-      for (let i = 0; i < 6; i++) await d.getByRole('button', { name: 'Add seat' }).click()
-    } },
     { name: 'mcp add', large: true, open: async () => {
       await settingsPage('MCP servers')
       await page.getByRole('button', { name: 'Add server' }).click()
     } },
-    { name: 'discord bot', large: true, open: async () => {
-      await settingsPage('Discord')
-      await page.getByRole('button', { name: 'Add bot' }).click()
-    } },
     { name: 'team', large: true, open: async () => {
-      await settingsPage('Teams')
+      await settingsPage('Presets')
       await page.getByRole('button', { name: /New team/ }).first().click()
-      const d = page.getByRole('dialog')
-      for (let i = 0; i < 6; i++) await d.getByRole('button', { name: 'Add seat' }).click()
     } },
     { name: 'preset editor', large: true, open: async () => {
       await settingsPage('Presets')
       await page.getByRole('button', { name: /New preset/ }).first().click()
-    } },
-    { name: 'seat settings', large: true, open: async () => {
-      await settingsPage('Presets')
-      await page.getByRole('button', { name: /^Seat settings for project manager$/ }).click()
-      await page.getByRole('list', { name: 'MCP servers' }).getByRole('listitem').nth(30).waitFor({ timeout: 60_000 })
     } },
     { name: 'new project', large: false, open: async () => {
       await page.getByRole('button', { name: /^(Add|New) project$/ }).first().evaluate((el) => el.click())
@@ -311,7 +262,7 @@ try {
   await sleep(800)
   await page.keyboard.press('Control+,')
   await page.getByRole('heading', { name: 'Settings' }).waitFor()
-  await page.locator('main nav button', { hasText: 'General' }).first().click()
+  await openSettingsPage('General')
   await page.getByRole('combobox', { name: 'UI scale' }).waitFor()
   await page.getByRole('button', { name: /^UI scale 125%/ }).click()
   await page.getByRole('menuitem', { name: 'Reset' }).waitFor()

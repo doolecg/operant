@@ -1,0 +1,7 @@
+{
+  "name": "design-picker",
+  "version": "0.1.0",
+  "description": "Design Picker: when Claude asks you to choose a design style, the mod opens a site showing what each style looks like, so you pick by seeing instead of reading.",
+  "author": { "name": "doole" },
+  "types": "./types/index.d.ts"
+}

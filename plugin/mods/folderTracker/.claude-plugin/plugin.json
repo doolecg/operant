@@ -1,0 +1,6 @@
+{
+  "name": "folder-tracker",
+  "version": "0.1.0",
+  "description": "Same-Folder Session Tracker: when two sessions work on the same project, each one shows what the other is doing, so they don't undo each other's work.",
+  "types": "./types/index.d.ts"
+}

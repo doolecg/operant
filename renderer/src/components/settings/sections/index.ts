@@ -1,46 +1,51 @@
 import type { ComponentType } from "react";
+import type { SettingsSectionId } from "../pages";
 import { AppearanceSection } from "./AppearanceSection";
+import { AuxSection } from "./AuxSection";
+import { BackupsSection } from "./BackupsSection";
 import { BudgetsSection } from "./BudgetsSection";
-import { CollaborationSection } from "./CollaborationSection";
-import { DiscordSection } from "./DiscordSection";
+import { CodegraphSection } from "./CodegraphSection";
 import { GeneralSection } from "./GeneralSection";
 import { HindsightSection } from "./HindsightSection";
 import { ImportExportSection } from "./ImportExportSection";
 import { LearningSection } from "./LearningSection";
 import { McpSection } from "./McpSection";
+import { MemorySection } from "./MemorySection";
+import { ModsSection } from "./ModsSection";
 import { PresetsSection } from "./PresetsSection";
 import { ProjectsSection } from "./ProjectsSection";
+import { ResetSection } from "./ResetSection";
 import { ShortcutsSection } from "./ShortcutsSection";
+import { SuperpowersSection } from "./SuperpowersSection";
 import { TeamsSection } from "./TeamsSection";
 import { TerminalSection, TilesSection } from "./TerminalSection";
+import { TerminalsSection } from "./TerminalsSection";
 import { TokensSection } from "./TokensSection";
 import { TopBarSection } from "./TopBarSection";
 
-// The settings sub-navigation renders from this list.
-export const SETTINGS_SECTIONS: Array<{
-  id: string;
-  label: string;
-  component: ComponentType;
-}> = [
-  { id: "general", label: "General", component: GeneralSection },
-  { id: "appearance", label: "Appearance", component: AppearanceSection },
-  {
-    id: "collaboration",
-    label: "Collaboration",
-    component: CollaborationSection,
-  },
-  { id: "projects", label: "Projects", component: ProjectsSection },
-  { id: "topbar", label: "Top bar", component: TopBarSection },
-  { id: "terminal", label: "Terminal", component: TerminalSection },
-  { id: "tiles", label: "Tiles", component: TilesSection },
-  { id: "tokens", label: "Tokens", component: TokensSection },
-  { id: "budgets", label: "Budgets", component: BudgetsSection },
-  { id: "presets", label: "Presets", component: PresetsSection },
-  { id: "teams", label: "Teams", component: TeamsSection },
-  { id: "learning", label: "Learning", component: LearningSection },
-  { id: "hindsight", label: "Hindsight", component: HindsightSection },
-  { id: "mcp", label: "MCP servers", component: McpSection },
-  { id: "discord", label: "Discord", component: DiscordSection },
-  { id: "import", label: "Import and export", component: ImportExportSection },
-  { id: "shortcuts", label: "Shortcuts", component: ShortcutsSection },
-];
+// Each settings section component, by its section id. The pages in ../pages.ts compose these.
+export const SECTION_COMPONENTS: Record<SettingsSectionId, ComponentType> = {
+  general: GeneralSection,
+  appearance: AppearanceSection,
+  projects: ProjectsSection,
+  topbar: TopBarSection,
+  terminals: TerminalsSection,
+  terminal: TerminalSection,
+  tiles: TilesSection,
+  mods: ModsSection,
+  tokens: TokensSection,
+  budgets: BudgetsSection,
+  presets: PresetsSection,
+  teams: TeamsSection,
+  learning: LearningSection,
+  memory: MemorySection,
+  aux: AuxSection,
+  hindsight: HindsightSection,
+  codegraph: CodegraphSection,
+  backups: BackupsSection,
+  superpowers: SuperpowersSection,
+  mcp: McpSection,
+  import: ImportExportSection,
+  shortcuts: ShortcutsSection,
+  reset: ResetSection,
+};

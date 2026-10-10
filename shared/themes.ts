@@ -24,6 +24,12 @@ export interface ThemeDef {
   working: string
   termBlack: string
   ansi: Ansi
+  // Optional fixed values for the surfaces the mix formulas get wrong (set on Dark and Light only).
+  border?: string
+  muted?: string
+  input?: string
+  sidebar?: string
+  hover?: string
 }
 
 export type Ansi = Record<
@@ -58,21 +64,27 @@ const def = (id: string, r: Raw): ThemeDef => ({
 })
 
 export const BUILTIN_THEMES: ThemeDef[] = [
+  // Claude-app neutrals: the page, cards and popovers are three greys; the accent is the coral.
   {
     id: 'dark', name: 'Dark', note: 'Neutral dark', scheme: 'dark',
-    bg: '#09090b', glow: '#1c1917', card: '#18181b', surface: '#1f1f23', text: '#fafafa', dim: '#a1a1aa',
-    accent: '#d97757', onAccent: '#0f0e0d', agent: '#e3b27a', done: '#9cb88a', danger: '#f85149', warn: '#f0b35a',
-    info: '#7aa6e3', working: '#f0883e', termBlack: '#27272a', ansi: ANSI,
+    bg: '#171717', glow: '#1f1c1a', card: '#1f1f1f', surface: '#262626', text: '#ececec', dim: '#9a9a9a',
+    accent: '#d97757', onAccent: '#141414', agent: '#e3b27a', done: '#8fbf7f', danger: '#f06a5f', warn: '#e6b85c',
+    info: '#7aa6e3', working: '#f0883e', termBlack: '#262626',
+    border: '#2f2f2f', muted: '#262626', input: '#363636', sidebar: '#141414', hover: '#2a2a2a',
+    ansi: {
+      ...ANSI, blue: '#7aa6e3', cyan: '#5fb3a8', magenta: '#a98bd6', green: '#8fbf7f', yellow: '#e6c15a', red: '#e0704f', brightMagenta: '#d987b0',
+    },
   },
   {
     id: 'light', name: 'Light', note: 'Clean white', scheme: 'light',
-    bg: '#f8f8fa', glow: '#e7e5e4', card: '#ffffff', surface: '#ffffff', text: '#18181b', dim: '#52525b',
-    accent: '#c2410c', onAccent: '#ffffff', agent: '#6e3fd0', done: '#15702f', danger: '#cf222e', warn: '#9a6700',
-    info: '#1b7c83', working: '#e8590c', termBlack: '#24292f',
+    bg: '#faf9f7', glow: '#f0ede7', card: '#ffffff', surface: '#ffffff', text: '#1a1a1a', dim: '#6b6862',
+    accent: '#c96442', onAccent: '#ffffff', agent: '#8a5600', done: '#2f6f2a', danger: '#c4402c', warn: '#9a6700',
+    info: '#2f6aa3', working: '#d9600f', termBlack: '#24292f',
+    border: '#e8e6e1', muted: '#f2f0ec', input: '#dedbd4', sidebar: '#f5f4f1', hover: '#efede8',
     ansi: {
-      red: '#cf222e', green: '#116329', yellow: '#4d2d00', blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+      red: '#c4502c', green: '#3f7a2c', yellow: '#a57f00', blue: '#3b6ea8', magenta: '#7a55b5', cyan: '#2f7a72', white: '#6e7781',
       brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37', brightYellow: '#633c01', brightBlue: '#218bff',
-      brightMagenta: '#a475f9', brightCyan: '#3192aa', brightWhite: '#8c959f',
+      brightMagenta: '#b04a82', brightCyan: '#3192aa', brightWhite: '#8c959f',
     } as Ansi,
   },
   def('obsidian', {
@@ -398,12 +410,12 @@ export function tokensFor(d: ThemeDef, accentOverride = ''): Record<string, stri
   const accent = accentOverride || d.accent
   const onAccentTry = accentOverride ? onAccentFor(accent) : d.onAccent
   const onAccent = contrast(onAccentTry, accent) >= 4.5 ? onAccentTry : onAccentFor(accent)
-  const muted = mix(d.bg, d.text, 0.08)
+  const muted = d.muted ?? mix(d.bg, d.text, 0.08)
   const surfaces = [d.bg, d.card, d.surface, muted]
   const text = (hex: string) => ensureContrast(hex, [d.bg, d.card], 4.5, s)
   const graphic = (hex: string) => ensureContrast(hex, [d.bg, d.card], 3, s)
   const accentTint = mix(d.bg, d.text, 0.12)
-  const border = mix(d.bg, d.text, 0.16)
+  const border = d.border ?? mix(d.bg, d.text, 0.16)
   const a = d.ansi
   return {
     '--background': d.bg,
@@ -418,11 +430,11 @@ export function tokensFor(d: ThemeDef, accentOverride = ''): Record<string, stri
     '--secondary-foreground': d.text,
     '--muted': muted,
     '--muted-foreground': ensureContrast(d.dim, surfaces, 4.5, s),
-    '--accent': accentTint,
+    '--accent': d.hover ?? accentTint,
     '--accent-foreground': d.text,
     '--destructive': text(d.danger),
     '--border': border,
-    '--input': mix(d.bg, d.text, 0.2),
+    '--input': d.input ?? mix(d.bg, d.text, 0.2),
     '--ring': accent,
     '--chart-1': graphic(a.blue),
     '--chart-2': graphic(a.yellow),
@@ -432,7 +444,7 @@ export function tokensFor(d: ThemeDef, accentOverride = ''): Record<string, stri
     '--chart-6': graphic(d.working),
     '--chart-other': graphic(mix(d.dim, d.bg, 0.2)),
     '--chart-model': graphic(d.info),
-    '--sidebar': d.card,
+    '--sidebar': d.sidebar ?? d.card,
     '--sidebar-foreground': d.text,
     '--sidebar-primary': accent,
     '--sidebar-primary-foreground': onAccent,
@@ -454,6 +466,17 @@ export function tokensFor(d: ThemeDef, accentOverride = ''): Record<string, stri
     '--syn-n': a.yellow,
     '--syn-f': a.blue,
     '--syn-t': a.cyan,
+    '--bubble': mix(d.card, d.text, 0.06),
+    '--code': s === 'dark' ? mix(d.bg, d.card, 0.5) : mix(d.bg, d.text, 0.015),
+    '--ctx-system': graphic(a.blue),
+    '--ctx-tools': graphic(a.cyan),
+    '--ctx-mcp': graphic(a.magenta),
+    '--ctx-agents': graphic(a.green),
+    '--ctx-memory': graphic(a.yellow),
+    '--ctx-skills': graphic(a.brightMagenta),
+    '--ctx-messages': graphic(a.red),
+    '--ctx-free': mix(d.bg, d.text, 0.14),
+    '--ctx-tick': text(d.warn),
   }
 }
 
@@ -464,6 +487,10 @@ export interface XtermColors {
   cursor: string
   cursorAccent: string
   selectionBackground: string
+  selectionInactiveBackground: string
+  scrollbarSliderBackground: string
+  scrollbarSliderHoverBackground: string
+  scrollbarSliderActiveBackground: string
   black: string
   red: string; green: string; yellow: string; blue: string; magenta: string; cyan: string; white: string
   brightBlack: string; brightRed: string; brightGreen: string; brightYellow: string; brightBlue: string
@@ -473,16 +500,24 @@ export interface XtermColors {
 export function xtermColors(d: ThemeDef, accentOverride: string, follows: boolean): XtermColors {
   if (!follows) {
     const k = baseOf('dark')
-    return { ...k.ansi, black: k.termBlack, background: '#09090b', foreground: '#e4e4e7', cursor: '#e4e4e7', cursorAccent: '#09090b', selectionBackground: '#3f3f46' }
+    return { ...k.ansi, black: k.termBlack, background: '#09090b', foreground: '#e4e4e7', cursor: '#e4e4e7', cursorAccent: '#09090b', selectionBackground: '#3f3f46', selectionInactiveBackground: '#27272a', scrollbarSliderBackground: '#e4e4e733', scrollbarSliderHoverBackground: '#e4e4e759', scrollbarSliderActiveBackground: '#d9775799' }
   }
   const accent = accentOverride || d.accent
+  const bg = d.card
+  const dark = d.scheme === 'dark'
+  const ansi = { ...d.ansi } as Record<string, string>
+  for (const k of Object.keys(ansi)) ansi[k] = ensureContrast(ansi[k]!, [bg], 4.5, d.scheme)
   return {
-    ...d.ansi,
+    ...(ansi as unknown as Ansi),
     black: d.termBlack,
-    background: d.bg,
+    background: bg,
     foreground: d.text,
     cursor: accent,
-    cursorAccent: d.bg,
-    selectionBackground: mix(d.bg, accent, 0.35),
+    cursorAccent: bg,
+    selectionBackground: mix(bg, accent, dark ? 0.3 : 0.22),
+    selectionInactiveBackground: mix(bg, d.text, dark ? 0.14 : 0.1),
+    scrollbarSliderBackground: d.text + '33',
+    scrollbarSliderHoverBackground: d.text + '59',
+    scrollbarSliderActiveBackground: accent + '99',
   }
 }

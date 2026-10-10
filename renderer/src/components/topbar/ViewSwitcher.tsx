@@ -3,11 +3,11 @@ import type { KeyboardEvent } from 'react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-export type Mode = 'workspace' | 'terminal' | 'seats' | 'memory'
-export const MODES: Mode[] = ['workspace', 'terminal', 'seats', 'memory']
-export const MODE_LABEL: Record<Mode, string> = { workspace: 'Workspace', terminal: 'Terminal', seats: 'Seats', memory: 'Memory' }
+export type Mode = 'terminal' | 'memory'
+export const MODES: Mode[] = ['terminal', 'memory']
+export const MODE_LABEL: Record<Mode, string> = { terminal: 'Terminal', memory: 'Memory' }
 
-// Workspace | Terminal | Seats | Memory as a pill track; the active pill is filled with the accent and grows wider with a springy ease.
+// Terminal | Memory as a pill track; the active pill is filled with the accent and grows wider with a springy ease.
 // Left and right arrow keys move between the pills. `menu` swaps the track for a dropdown when the bar is too narrow.
 export function ViewSwitcher({ mode, onMode, menu, badges }: { mode: Mode; onMode: (m: Mode) => void; menu: boolean; badges?: Partial<Record<Mode, number>> }) {
   if (menu) {

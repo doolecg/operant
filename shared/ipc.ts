@@ -1,127 +1,70 @@
 import type { ModelList } from './models'
 import type { ConsoleLine, ConsoleProcess, ConsoleSource } from './console'
-import type { DraftStatus, LearnAi, LearnRunInfo, LearnStatus, LearnTestResult, LearnStore, Lesson, LessonFilter, LessonPatch, LessonStatus, MemoryFile, SkillDraft } from './learn'
+import type { DraftStatus, LearnAi, LearnChange, LearnChangeStatus, LearnRunInfo, LearnStatus, LearnTestResult, LearnStore, Lesson, LessonFilter, LessonPatch, LessonStatus, MemoryFile, SkillDraft } from './learn'
+import type { AuxStatus, BackupEntry, BackupPartName, MemoryDiagnostics, MemoryExport, PresetImportItem, RecallOutput, ResetResult, SuperpowersStatus } from './ops'
+import type { EnhanceContext } from './prompt-enhance'
 import type {
-  AgentKind,
   AppInfo,
   BudgetConfig,
   BudgetStatus,
-  BudgetTarget,
+  BudgetWindow,
   ExportFormat,
   ExportText,
+  OptionalMcpEntry,
+  OptionalMcpId,
+  OptionalMcpTarget,
   ImportPreview,
   ImportResult,
   ImportSource,
-  RunUsage,
   ProvidersStatus,
   UsageQuery,
   UsageReport,
   UsageSeries,
   UsageSeriesQuery,
   UsageView,
-  CapEvent,
-  CapStatus,
-  ChangePlan,
   Crew,
-  CrewCounts,
-  DiscordAiTestResult,
-  DiscordBotAi,
-  DiscordBotInput,
-  DiscordBotPatch,
-  DiscordBotView,
-  DiscordHealth,
-  DiscordPairing,
-  DiscordTestResult,
   CrewPatch,
-  CrewTopology,
-  CrewView,
-  GraphData,
-  GraphWindow,
   IndexStatus,
   HindsightAdapter,
   HindsightKeyState,
   HindsightStatus,
   HindsightTestResult,
-  ProjectHealth,
-  JobAgent,
   IpcErrorCode,
-  JobState,
-  JobInput,
-  JobRecord,
-  JobUpdate,
-  Link,
-  Message,
-  MessageFilter,
-  MessageSend,
-  NodePosition,
   OperantEvent,
-  Operator,
-  OperatorChange,
-  OperatorContext,
-  McpDown,
   McpOverview,
   McpServerInput,
-  OperatorFromPreset,
-  OperatorPatch,
-  OperatorSpend,
-  OperatorStatus,
   Preset,
   PresetInput,
   PresetPatch,
-  PurgeOutcome,
-  PurgeStatus,
-  Run,
-  RunEvent,
-  MasterState,
-  RunInput,
-  RunStatus,
   ScratchInput,
   ScratchPatch,
   ScratchSpend,
   ScratchStatus,
   ScratchTerminal,
-  Squad,
-  SquadDelete,
   Team,
   TeamImportPreview,
   TeamInput,
   TeamPatch,
-  UnreadCounts,
   UpdateStatus,
-  UsageBreakdownResult,
-  UsagePeriod,
 } from './types'
 import type { GitChanges, GitInfo, IdeId, IdeInfo, ProjectGroup } from './projects'
 import type { GitBranches, GitCommit, GitCommitDetails, GitCommitResult, GitDiff, GitDiffRequest, GitHunkRef, GitResult, GitStatus } from './git'
 import type { Settings, SettingsPatch } from './settings'
 import type { MediaState, MediaTimeline } from './media'
-
-export interface DashboardSummary {
-  operatorsRunning: number
-  operatorsTotal: number
-  tasksOpen: number
-  spendToday: number
-  dailyBudgetUsd: number
-}
+import type { CapabilityReport, ClaudeTileState } from './claude-mods'
+import type { RunningCounts } from './notify'
+import { CHAT_CHANNELS, type ChatApi, type ChatEvents } from './claude-chat'
 
 // Request/response calls: renderer -> main via ipcRenderer.invoke. Every one is validated in core; a
 // refusal rejects with an `IpcError` (code + message the dashboard can show).
-export interface IpcApi {
+export interface IpcApi extends ChatApi {
   // Crews
   'crews:list': () => Crew[]
-  'crews:topology': (crewId: number) => CrewTopology | null
   'crews:create': (input: { name: string; folder: string }) => Crew
   'crews:update': (crewId: number, patch: CrewPatch) => Crew
-  // Saves the project list order: these crews first, in this order.
-  // Opens (or extends) the project's "Update tracker" board job by hand.
-  'crews:trackerNow': (crewId: number) => JobRecord
   'crews:reorder': (crewIds: number[]) => Crew[]
-  // What a delete would remove, for the confirm dialog.
-  'crews:counts': (crewId: number) => CrewCounts
   // Stops every session, then removes the crew with its jobs, messages, spend history and tiles.
-  'crews:delete': (crewId: number) => CrewCounts
-  // Deletes a project's runs, messages and lessons (the Playground's "Clear history"); no file on disk is touched.
-  'crews:clearHistory': (crewId: number) => CrewCounts
+  'crews:delete': (crewId: number) => void
 
   // Project groups. Removing a group puts its projects back in the list; no folder is touched.
   'groups:list': () => ProjectGroup[]
@@ -162,71 +105,25 @@ export interface IpcApi {
   'git:pull': (crewId: number) => GitResult
   'git:push': (crewId: number) => GitResult
 
-  // Squads
-  'squads:create': (input: { crewId: number; name: string }) => Squad
-  'squads:update': (squadId: number, patch: { name: string }) => Squad
-  // Soft-deletes the squad's operators (the full operator flow), then the squad.
-  'squads:delete': (squadId: number) => SquadDelete
 
-  // Operators
-  'operators:create': (input: { squadId: number; role: string; agent: AgentKind; model: string }) => Operator
-  'operators:createFromPreset': (input: OperatorFromPreset) => Operator
-  // Role, squad and daily cap only; applies live.
-  'operators:update': (operatorId: number, patch: { role?: string; squadId?: number; dailyCapUsd?: number | null }) => Operator
-  // What a change would do (restart? cache or conversation lost? cold-cache cost), without saving.
-  'operators:previewChange': (operatorId: number, patch: OperatorPatch) => ChangePlan
-  // Saves the change; a running Claude operator is relaunched fresh when the plan says so (ruling R1).
-  'operators:applyChange': (operatorId: number, patch: OperatorPatch) => OperatorChange
-  'operators:start': (operatorId: number) => void
-  'operators:stop': (operatorId: number) => void
-  'operators:restart': (operatorId: number) => void
-  // Soft delete: stops it, releases its jobs, moves its reviews, drops its unread messages and links.
-  'operators:delete': (operatorId: number) => void
-  'operators:write': (operatorId: number, data: string) => void
-  'operators:resize': (operatorId: number, cols: number, rows: number) => void
-  'operators:buffer': (operatorId: number) => string
-  'operators:context': () => Record<number, OperatorContext>
 
-  // Master Terminal (one per crew; use operators:write/resize/buffer with its id)
-  'master:get': (crewId: number) => Operator | null
-  'master:start': (crewId: number) => Operator
-  'master:stop': (crewId: number) => void
-  // Where the project's Master Terminal is (fed by the plugin hooks, or OpenCode's service events).
-  'master:state': (crewId: number) => MasterState
 
   // Presets
   'presets:list': () => Preset[]
   'presets:create': (input: PresetInput) => Preset
   // `apply` copies the new values to the operators that were unmodified before this edit (running ones take
   // them on their next restart).
-  'presets:update': (presetId: number, patch: PresetPatch, apply?: boolean) => Preset
+  'presets:update': (presetId: number, patch: PresetPatch) => Preset
   'presets:duplicate': (presetId: number, name?: string) => Preset
   'presets:delete': (presetId: number) => void
   // Built-ins go back to their shipped values and role text.
   'presets:reset': (presetId: number) => Preset
   'presets:restoreBuiltins': () => Preset[]
-  // The shipped role text of a built-in ('' for a user preset), to show next to an edit.
-  'presets:shippedRole': (presetId: number) => string
-  // Copies the preset over the given operators (default: every operator that uses it).
-  'presets:applyToOperators': (presetId: number, operatorIds?: number[]) => Operator[]
-  // "Save as new preset": the operator's settings become a user preset it is linked to.
-  'presets:saveFromOperator': (operatorId: number, name: string) => Preset
-  // "Revert to preset".
-  'presets:revertOperator': (operatorId: number) => Operator
+  // Preset files: export one preset (or all), and read a file before importing it (apply false) or import it (apply true).
+  'presets:export': (presetId?: number) => ExportText
+  'presets:importPreview': (text: string) => PresetImportItem[]
+  'presets:import': (text: string) => PresetImportItem[]
 
-  // Jobs (the user actor)
-  'jobs:list': (crewId: number, open?: boolean) => JobRecord[]
-  'jobs:get': (jobId: number) => JobRecord
-  'jobs:create': (input: JobInput) => JobRecord
-  'jobs:update': (jobId: number, patch: JobUpdate) => JobRecord
-  'jobs:delete': (jobId: number) => void
-  'jobs:approve': (jobId: number, note?: string) => JobRecord
-  'jobs:reject': (jobId: number, reason: string) => JobRecord
-  // Approve-to-start for a held job.
-  'jobs:approveStart': (jobId: number) => JobRecord
-  'jobs:escalate': (jobId: number, reason: string) => JobRecord
-  // Any state and/or assignee.
-  'jobs:move': (jobId: number, patch: { state?: JobState; assigneeId?: number | null }) => JobRecord
   // Aliases of the jobs calls until the renderer moves over (removed in step 13).
 
   // Model ids the given CLI offers (OpenCode asks the CLI; an error explains an empty list).
@@ -247,78 +144,10 @@ export interface IpcApi {
   'teams:importPreview': () => TeamImportPreview | null
   'teams:import': (path: string) => Team[]
 
-  // Dashboard jobs (JOB#). A run over its team's limits is refused.
-  'runs:list': (crewId: number) => Run[]
-  'runs:get': (runId: number) => Run
-  'runs:create': (input: RunInput) => Run
-  // Cancels a queued job or stops a running one; either ends as failed.
-  'runs:stop': (runId: number) => Run
-  'runs:agents': (runId: number) => JobAgent[]
-  // Edits the task of a queued job; refused once it has started.
-  'runs:update': (runId: number, patch: { task?: string }) => Run
-  // Deletes a finished job (done or failed) and its agents; a queued or working one is refused.
-  'runs:delete': (runId: number) => void
-  // The tail of one job agent's transcript as plain text lines (secrets removed, size-capped).
-  'runs:agentLog': (runId: number, agentId: number) => string[]
-  // The images pasted into a job's task as data URLs (only files inside the project's .operant-attachments folder; at most 8, 8 MB each). Missing files are skipped.
-  'runs:images': (runId: number) => string[]
-  // Jobs that may run at once per project (default 1).
-  // Approves a job in review: it is done and its close-out is pending.
-  'runs:approve': (runId: number, note?: string) => Run
-  // Sends a job in review back to the front of its queue with the owner's note (required).
-  'runs:sendBack': (runId: number, note: string) => Run
-  // The owner's reply to the Master's question (or a note while it works); the Master reads it with `operant run answer`.
-  'runs:answer': (runId: number, text: string) => RunEvent
-  // The job's conversation: progress, questions, replies, review, approval.
-  'runs:events': (runId: number) => RunEvent[]
-  // Retry or Resume for a master-mode job waiting on the Master (did not start, did not pick up the task, stopped, or
-  // Operant was closed): starts the Master when it is not running (Claude --resume, OpenCode --continue), then types
-  // the job's pointer line at the next idle. Also restarts the Master for a queued job whose automatic start was used.
-  'runs:resumeMaster': (runId: number) => Run
-  // Starts the close-out of an approved master-mode job (write-back, CodeGraph, learn) or retries a partial / failed
-  // one; a running or finished one is left alone. Does not wait: closeoutState and the 'closeout' run events show progress.
-  'runs:closeout': (runId: number) => Run
-  'runs:getLimit': () => number
-  'runs:setLimit': (limit: number) => number
 
-  // Discord bots. Tokens go in through create/setToken and never come back out.
-  'discord:list': () => DiscordBotView[]
-  'discord:create': (input: DiscordBotInput) => DiscordBotView
-  'discord:update': (botId: number, patch: DiscordBotPatch) => DiscordBotView
-  'discord:delete': (botId: number) => void
-  'discord:setToken': (botId: number, token: string) => DiscordBotView
-  'discord:clearToken': (botId: number) => DiscordBotView
-  'discord:connect': (botId: number) => DiscordBotView
-  'discord:disconnect': (botId: number) => DiscordBotView
-  'discord:health': () => DiscordHealth[]
-  'discord:test': (botId: number) => DiscordTestResult
-  'discord:testAi': (botId: number, ai?: Partial<DiscordBotAi>) => DiscordAiTestResult
-  'discord:localModels': (url: string) => string[]
-  'discord:pairings': (botId: number) => DiscordPairing[]
-  'discord:approvePairing': (botId: number, code: string) => DiscordBotView
-  'discord:denyPairing': (botId: number, code: string) => void
 
-  // Links
-  'links:list': (crewId: number) => Link[]
-  'links:create': (input: { crewId: number; fromId: number; toId: number; label?: string }) => Link
-  'links:update': (linkId: number, patch: { label?: string; fromId?: number; toId?: number }) => Link
-  'links:delete': (linkId: number) => void
 
-  // Messages (the user's side)
-  'messages:list': (crewId: number, filter?: MessageFilter) => Message[]
-  'messages:send': (input: MessageSend) => Message[]
-  // Own message, while nobody has read it.
-  'messages:edit': (messageId: number, body: string) => Message
-  'messages:delete': (messageId: number) => void
-  // Marks the user's unread messages read (all, or the ids); consent requests stay until answered.
-  'messages:markRead': (crewId: number, ids?: number[]) => number
-  'messages:unread': (crewId: number) => UnreadCounts
-  // Consent card: Approve / Decline a `operant ask user` request.
-  'messages:answer': (askId: number, approved: boolean, note?: string) => Message[]
 
-  // Views and tiles
-  'views:get': (crewId: number) => CrewView
-  'views:set': (crewId: number, view: CrewView) => Crew
   'tiles:getLayout': (crewId: number) => unknown
   'tiles:saveLayout': (crewId: number, layout: unknown) => void
 
@@ -340,15 +169,10 @@ export interface IpcApi {
   'scratch:resize': (scratchId: number, cols: number, rows: number) => void
   'scratch:buffer': (scratchId: number) => string
 
-  // Usage, caps, purge
-  'usage:series': (crewId: number) => OperatorSpend[]
-  'usage:breakdown': (crewId: number, period: UsagePeriod) => UsageBreakdownResult
   // Any grouping and filter of the usage rows (day, project, job, seat, agent, model, CLI, provider): totals are the sum of the rows.
   'usage:report': (query: UsageQuery) => UsageReport
   // Cost and tokens per hour or day, optionally split (a line per model, project, ...).
   'usage:timeseries': (query: UsageSeriesQuery) => UsageSeries
-  // What one JOB# spent per agent (Master first).
-  'usage:job': (runId: number) => RunUsage
   // CSV or JSON text of any view, for the renderer to save.
   'usage:exportText': (view: UsageView, format: ExportFormat) => ExportText
   // The same, written to a file the user picks (null when they cancel).
@@ -356,8 +180,6 @@ export interface IpcApi {
   // Budgets: the daily budget lives in settings; project and job caps and what a cap does live here.
   'budgets:get': () => BudgetStatus
   'budgets:set': (patch: Partial<BudgetConfig>) => BudgetStatus
-  // "Resume" after a cap: count spend from now on and let held jobs start.
-  'budgets:resume': (target: BudgetTarget) => BudgetStatus
   // Import from Operant 2.8.2 (its data folder) or from an export file: preview what would be added, then apply.
   'import:preview': (source: ImportSource) => ImportPreview
   'import:apply': (source: ImportSource) => ImportResult
@@ -369,21 +191,10 @@ export interface IpcApi {
   // Plan limits and usage of the services behind the CLIs (Claude, OpenCode providers, z.ai).
   'providers:status': () => ProvidersStatus
   'providers:refresh': () => ProvidersStatus
-  'caps:status': () => CapStatus
-  // "Resume" after a pause: count spend from now on.
-  'caps:reset': (target: number | 'daily') => CapStatus
-  'purge:status': () => PurgeStatus
-  // One deleted operator or all; the data-safety blockers (open jobs, unread messages) always apply.
-  'purge:now': (target: number | 'all') => PurgeOutcome[]
 
-  // Graph
-  'graph:get': (crewId: number, window?: GraphWindow) => GraphData
-  'graph:savePositions': (crewId: number, positions: Array<Pick<NodePosition, 'nodeKey' | 'x' | 'y'>>) => void
-  'graph:clear': (crewId: number) => void
 
   'index:status': (crewId: number) => IndexStatus | null
   'index:run': (crewId: number) => IndexStatus | null
-  'health:project': (crewId: number) => ProjectHealth
   'hindsight:status': () => HindsightStatus
   'hindsight:act': (action: 'start' | 'stop' | 'restart') => HindsightStatus
   // Network addresses a shared server can bind, Tailscale marked.
@@ -399,8 +210,6 @@ export interface IpcApi {
 
   // Learning loop and Memory Manager. Lessons come from finished jobs and Master conversations.
   'learn:status': (crewId?: number) => LearnStatus
-  // "Learn now": runs the learn step on a finished job; null when learning is off.
-  'learn:run': (runId: number) => LearnRunInfo | null
   // The AI the learn step asks now (an empty model resolved to the cheap default) and a one-call test of it.
   'learn:ai': () => LearnAi
   'learn:test': () => LearnTestResult
@@ -423,20 +232,57 @@ export interface IpcApi {
   'learn:approveDraft': (id: number) => SkillDraft
   'learn:rejectDraft': (id: number) => SkillDraft
   'learn:deleteDraft': (id: number) => void
+  // Runs the learn step on a Claude tile's finished session now; `confirm` lets it pass a budget that asks first.
+  'learn:runNow': (tileId: number, confirm?: boolean) => LearnRunInfo | null
+  // Automatic changes (and proposals), newest first; rollback puts the replaced text back.
+  'learn:records': (filter?: { crewId?: number; status?: LearnChangeStatus }) => LearnChange[]
+  'learn:rollback': (changeId: number) => LearnChange
+  'learn:clearRecords': (crewId?: number) => number
+  // Memory: the lessons (Operant's own, editable), a recall with the policy in settings, export, reset and diagnostics.
+  'memory:recall': (query: string, crewId?: number) => RecallOutput
+  'memory:edit': (id: number, patch: LessonPatch) => Lesson
+  'memory:delete': (id: number) => Lesson
+  'memory:export': () => MemoryExport
+  'memory:reset': (req: { scope: 'soul' | 'project' | 'all'; crewId?: number; confirm: boolean }) => ResetResult
+  'memory:diagnostics': () => MemoryDiagnostics
+  // Model calls of the learn and memory work: today's counts, spend and any limit in force.
+  'aux:status': () => AuxStatus
+  // Rewrites rough composer text with the promptEnhance aux model (counted, capped, retried). `commands` are the chat's own skills.
+  // `context` is what 'aux:enhanceContext' returned (memories and code symbols, capped again before use).
+  'aux:enhancePrompt': (text: string, commands?: Array<{ name: string; description: string }>, context?: EnhanceContext) => string
+  // The small recall and CodeGraph lookups for the tile's project, run in parallel with timeouts (no model call).
+  'aux:enhanceContext': (text: string, scratchId: number) => EnhanceContext
+  // A full rebuild of a project's CodeGraph index (discards it first); only a project Operant knows.
+  'codegraph:rebuild': (folder: string) => IndexStatus
+  'codegraph:status': (folder: string) => IndexStatus
+  'backup:create': (label?: string) => { name: string; path: string; bytes: number }
+  'backup:list': () => BackupEntry[]
+  'backup:restore': (name: string, confirm: boolean) => BackupPartName[]
+  'backup:delete': (name: string) => void
+  'superpowers:status': () => SuperpowersStatus
   // MCP servers for the project's folder (null = user-level only); `refresh` re-runs the status checks.
   'mcp:list': (crewId: number | null, refresh?: boolean) => McpOverview
   'mcp:add': (crewId: number | null, input: McpServerInput) => McpOverview
   'mcp:update': (crewId: number | null, serverId: string, input: McpServerInput) => McpOverview
   'mcp:setEnabled': (crewId: number | null, serverId: string, enabled: boolean) => McpOverview
   'mcp:remove': (crewId: number | null, serverId: string) => McpOverview
-  // Servers the team seats need that are down, for the header badge.
-  'mcp:health': () => McpDown[]
+  // Optional integrations: their status for the project's folder; `refresh` re-runs the CLI checks and the runtime probe.
+  'mcp:optional': (crewId: number | null, refresh?: boolean) => OptionalMcpEntry[]
+  // Adds the optional server to the chosen CLIs and scopes (the user clicked Add); removes Operant's own entries.
+  'mcp:optionalAdd': (crewId: number | null, id: OptionalMcpId, targets: OptionalMcpTarget[]) => McpOverview
+  'mcp:optionalRemove': (crewId: number | null, id: OptionalMcpId) => McpOverview
   'events:recent': (limit: number) => OperantEvent[]
-  'dashboard:summary': () => DashboardSummary
+  // Clears the activity feed (every project's events).
+  'events:clear': () => void
+  // Which Claude Code and OpenCode CLIs are on PATH, their versions, and what each can do. Cached; refresh re-probes.
+  'capabilities:get': () => Promise<CapabilityReport>
+  'capabilities:refresh': () => Promise<CapabilityReport>
+  // A Claude Code tile's sub-agents, status line and events state (null when the tile has none yet).
+  'claudeMods:get': (tileId: number) => ClaudeTileState | null
   'settings:get': () => Settings
   'settings:set': (patch: SettingsPatch) => Settings
   // "Reset section to defaults".
-  'settings:reset': (section: keyof Settings) => Settings
+  'settings:reset': (section?: keyof Settings) => Settings
   // Handled by main (needs Electron), not by core.
   'app:pickFolder': () => string | null
   // Shows the project folder in the file manager.
@@ -459,6 +305,12 @@ export interface IpcApi {
   // buttons: toggle | next | prev | shuffle | focus | vol <0..1>; any other command is refused (false).
   'media:state': () => MediaState
   'media:command': (cmd: string) => boolean
+  // The owner's answer to the close-app dialog: quit, or stay open.
+  'app:closeReply': (action: 'shown' | 'quit' | 'stay') => void
+  // Whether a tile's Claude is mid-turn (main tracks the turns it sees).
+  'turn:busy': (scratchId: number) => boolean
+  // The terminal tile on screen and focused (null when none): a finished turn of that tile does not notify while the window has focus.
+  'notify:visible': (scratchId: number | null) => void
 }
 
 export type IpcChannel = keyof IpcApi
@@ -478,42 +330,34 @@ export type MainChannel =
   | 'console:stop'
   | 'media:state'
   | 'media:command'
+  | 'app:closeReply'
+  | 'turn:busy'
+  | 'notify:visible'
 export type CoreChannel = Exclude<IpcChannel, MainChannel>
 
 // Push messages: main -> renderer.
 export interface IpcEvents {
   event: OperantEvent
-  'operator:data': { operatorId: number; data: string }
-  'operator:status': { operatorId: number; status: OperatorStatus }
-  // An operator was added, edited, restarted with new settings, or deleted (`removed`).
-  'operator:config': { operatorId: number; crewId: number | null; removed: boolean }
   'scratch:data': { scratchId: number; data: string }
+  // The batched updates of a Chat view tile (see shared/claude-chat.ts).
+  'chat:ops': ChatEvents['chat:ops']
   'scratch:exit': { scratchId: number; exitCode: number }
   'index:status': { crewId: number; status: IndexStatus }
-  usage: { operatorId: number; context: OperatorContext }
-  // A warning or a pause from the spending caps.
-  caps: CapEvent
-  message: { crewId: number; messageId: number; change: 'created' | 'edited' | 'deleted' | 'read' }
-  // The unread count of the user inbox ('user') or of an operator (the Master slot included).
-  unread: { crewId: number; to: 'user' | number; count: number }
-  job: { crewId: number; jobId: number; kind: string }
-  // A dashboard job (JOB#) was created or changed status.
-  run: { crewId: number; runId: number; status: RunStatus }
-  // A job's agent list changed (an agent appeared, finished or got a model).
-  'run:agents': { crewId: number; runId: number }
-  // The owner clicked an OS notification: open that run's task modal.
-  'run:open': { runId: number }
-  // A Discord bot connected, dropped or failed.
-  'discord:status': DiscordHealth
-  // A bot got a new pairing request.
-  'discord:pairing': { botId: number }
-  purge: { kind: 'operator-purged' | 'squad-purged'; crewId: number | null; operatorId: number | null; squadId: number | null; label: string }
+  // A project went over its warning share of a daily budget.
+  // crewId is null for the all-projects cap.
+  budget: { crewId: number | null; window: BudgetWindow; spentUsd: number; capUsd: number; pct: number }
   settings: Settings
   update: UpdateStatus
   'console:line': ConsoleLine
   'media:state': MediaState
+  // A Claude Code tile's state after each change (sub-agents, status line).
+  'claudeMods:state': ClaudeTileState
   'media:timeline': MediaTimeline | null
   'media:art': string | null
+  // The window asks to close while something runs: the renderer shows the dialog and answers app:closeReply.
+  'app:closeRequest': RunningCounts
+  // A finished or waiting Claude tile was clicked in a notification: show that tile.
+  'notify:open': { scratchId: number; crewId: number }
 }
 
 export type IpcEventName = keyof IpcEvents
@@ -530,14 +374,10 @@ export interface OperantBridge {
 
 export const CORE_CHANNELS: CoreChannel[] = [
   'crews:list',
-  'crews:topology',
   'crews:create',
   'crews:update',
-  'crews:trackerNow',
   'crews:reorder',
-  'crews:counts',
   'crews:delete',
-  'crews:clearHistory',
   'groups:list',
   'groups:create',
   'groups:rename',
@@ -565,26 +405,6 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'git:fetch',
   'git:pull',
   'git:push',
-  'squads:create',
-  'squads:update',
-  'squads:delete',
-  'operators:create',
-  'operators:createFromPreset',
-  'operators:update',
-  'operators:previewChange',
-  'operators:applyChange',
-  'operators:start',
-  'operators:stop',
-  'operators:restart',
-  'operators:delete',
-  'operators:write',
-  'operators:resize',
-  'operators:buffer',
-  'operators:context',
-  'master:get',
-  'master:start',
-  'master:stop',
-  'master:state',
   'presets:list',
   'presets:create',
   'presets:update',
@@ -592,20 +412,9 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'presets:delete',
   'presets:reset',
   'presets:restoreBuiltins',
-  'presets:shippedRole',
-  'presets:applyToOperators',
-  'presets:saveFromOperator',
-  'presets:revertOperator',
-  'jobs:list',
-  'jobs:get',
-  'jobs:create',
-  'jobs:update',
-  'jobs:delete',
-  'jobs:approve',
-  'jobs:reject',
-  'jobs:approveStart',
-  'jobs:escalate',
-  'jobs:move',
+  'presets:export',
+  'presets:importPreview',
+  'presets:import',
   'models:list',
   'teams:list',
   'teams:create',
@@ -617,46 +426,15 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'teams:export',
   'teams:importPreview',
   'teams:import',
-  'runs:list',
-  'runs:get',
-  'runs:create',
-  'runs:stop',
-  'runs:agents',
-  'runs:update',
-  'runs:delete',
-  'runs:agentLog',
-  'runs:images',
-  'runs:approve',
-  'runs:sendBack',
-  'runs:answer',
-  'runs:events',
-  'runs:resumeMaster',
-  'runs:closeout',
-  'runs:getLimit',
-  'runs:setLimit',
-  'discord:list',
-  'discord:create',
-  'discord:update',
-  'discord:delete',
-  'discord:setToken',
-  'discord:clearToken',
-  'discord:connect',
-  'discord:disconnect',
-  'discord:health',
-  'discord:test',
-  'discord:testAi',
-  'discord:localModels',
-  'discord:pairings',
-  'discord:approvePairing',
-  'discord:denyPairing',
-  'health:project',
   'hindsight:status',
   'mcp:list',
   'mcp:add',
   'mcp:update',
   'mcp:setEnabled',
   'mcp:remove',
-  'mcp:health',
+  'mcp:optional',
+  'mcp:optionalAdd',
+  'mcp:optionalRemove',
   'hindsight:act',
   'hindsight:adapters',
   'hindsight:test',
@@ -665,7 +443,6 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'hindsight:clearKey',
   'hindsight:generateKey',
   'learn:status',
-  'learn:run',
   'learn:ai',
   'learn:test',
   'learn:localModels',
@@ -683,19 +460,26 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'learn:approveDraft',
   'learn:rejectDraft',
   'learn:deleteDraft',
-  'links:list',
-  'links:create',
-  'links:update',
-  'links:delete',
-  'messages:list',
-  'messages:send',
-  'messages:edit',
-  'messages:delete',
-  'messages:markRead',
-  'messages:unread',
-  'messages:answer',
-  'views:get',
-  'views:set',
+  'learn:runNow',
+  'learn:records',
+  'learn:rollback',
+  'learn:clearRecords',
+  'memory:recall',
+  'memory:edit',
+  'memory:delete',
+  'memory:export',
+  'memory:reset',
+  'memory:diagnostics',
+  'aux:status',
+  'aux:enhancePrompt',
+  'aux:enhanceContext',
+  'codegraph:rebuild',
+  'codegraph:status',
+  'backup:create',
+  'backup:list',
+  'backup:restore',
+  'backup:delete',
+  'superpowers:status',
   'tiles:getLayout',
   'tiles:saveLayout',
   'scratch:list',
@@ -709,16 +493,12 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'scratch:write',
   'scratch:resize',
   'scratch:buffer',
-  'usage:series',
-  'usage:breakdown',
   'usage:report',
   'usage:timeseries',
-  'usage:job',
   'usage:exportText',
   'usage:export',
   'budgets:get',
   'budgets:set',
-  'budgets:resume',
   'import:preview',
   'import:apply',
   'import:pickFile',
@@ -726,17 +506,14 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'data:exportFile',
   'providers:status',
   'providers:refresh',
-  'caps:status',
-  'caps:reset',
-  'purge:status',
-  'purge:now',
-  'graph:get',
-  'graph:savePositions',
-  'graph:clear',
   'index:status',
   'index:run',
   'events:recent',
-  'dashboard:summary',
+  'events:clear',
+  'capabilities:get',
+  'capabilities:refresh',
+  'claudeMods:get',
+  ...CHAT_CHANNELS,
   'settings:get',
   'settings:set',
   'settings:reset',
@@ -758,6 +535,9 @@ export const MAIN_CHANNELS: MainChannel[] = [
   'console:stop',
   'media:state',
   'media:command',
+  'app:closeReply',
+  'turn:busy',
+  'notify:visible',
 ]
 
 // What a rejected call carries. Electron only passes an error's message across the bridge, so main encodes

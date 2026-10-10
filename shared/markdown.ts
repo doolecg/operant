@@ -518,3 +518,35 @@ export function sectionize(blocks: Block[], level: 2 | 3): MdSection[] {
   push()
   return out
 }
+
+// Section titles of a reply ("Summary", "Next steps" ...). A heading, or a paragraph that is only a bold lead-in
+// ("**Summary**" or "**Summary:**"), whose text is one of these names. Nothing is rewritten; this only drives styling.
+const SECTION_NAMES = [
+  'summary',
+  'tl;dr',
+  'tldr',
+  'next steps',
+  'next step',
+  'what changed',
+  'changes',
+  'verified',
+  'not verified',
+  'open points',
+  'open questions',
+  'decisions',
+  'notes',
+  'results',
+  'files',
+]
+
+export function sectionName(b: Block): string | null {
+  let text: string
+  if (b.t === 'heading') text = inlineText(b.c)
+  else if (b.t === 'p' && b.c.length === 1 && b.c[0]!.t === 'strong') text = inlineText(b.c)
+  else return null
+  const name = text.trim().replace(/[:：.\s]+$/, '').toLowerCase()
+  return SECTION_NAMES.includes(name) ? name : null
+}
+
+// Whether a section name introduces a list of things still to do.
+export const isNextSteps = (name: string | null): boolean => name === 'next steps' || name === 'next step' || name === 'open points'

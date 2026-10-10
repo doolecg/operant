@@ -358,9 +358,9 @@ export function exportBundle(store: Store, now: number): Bundle {
   const rows = store.db
     .prepare(
       `SELECT u.id, u.ext_key, u.at, u.model, u.cli, u.provider, u.source, u.legacy, u.input_tokens, u.output_tokens, u.cache_read, u.cache_w5m + u.cache_w1h AS cache_write, u.cost_usd,
-              u.project_label, COALESCE(u.crew_id, sq.crew_id, sc.crew_id) AS crew,
-              CASE WHEN u.seat <> '' THEN u.seat WHEN o.id IS NOT NULL THEN o.role WHEN sc.id IS NOT NULL THEN 'scratch' ELSE '' END AS seat
-       FROM usage u LEFT JOIN operators o ON o.id = u.operator_id LEFT JOIN squads sq ON sq.id = o.squad_id LEFT JOIN scratch sc ON sc.id = u.scratch_id ORDER BY u.at, u.id`,
+              u.project_label, COALESCE(u.crew_id, sc.crew_id) AS crew,
+              CASE WHEN sc.id IS NOT NULL THEN 'scratch' ELSE u.seat END AS seat
+       FROM usage u LEFT JOIN scratch sc ON sc.id = u.scratch_id ORDER BY u.at, u.id`,
     )
     .all() as Array<Record<string, unknown>>
   const folderOf = new Map(crews.map((c) => [c.id, c.folder]))
@@ -494,7 +494,6 @@ export function applyRead(store: Store, read: Read): ImportResult {
           cli: u.cli,
           provider: u.provider,
           source: 'import',
-          seat: u.seat,
           crewId: u.crewId,
           projectLabel: u.label,
           inputTokens: u.inputTokens,

@@ -25,6 +25,9 @@ extraResources:
     to: cli
   - from: cli/bin
     to: cli
+  # The Claude Code hook and status line script (dependency-free), run by the app binary as Node.
+  - from: scripts/op-event.mjs
+    to: claude-mods/op-event.mjs
   # The window and taskbar icon, loaded at runtime.
   - from: build/icon.png
     to: icon.png
