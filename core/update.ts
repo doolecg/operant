@@ -39,12 +39,18 @@ export function checkIntervalMs(hours: unknown): number {
   return Math.min(24, Math.max(0, Math.round(h))) * 3_600_000
 }
 
-// Is version a newer than b? Compares major.minor.patch; a leading "v" is ignored.
+// Is version a newer than b? Compares major.minor.patch; a leading "v" is ignored. A pre-release (3.0.4-dev.7) is older
+// than its release (3.0.4) and newer than the dev build before it (3.0.4-dev.6).
 export function newer(a: string, b: string): boolean {
-  const pa = a.replace(/^v/, '').split(/[.-]/).map(Number)
-  const pb = b.replace(/^v/, '').split(/[.-]/).map(Number)
-  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0)
-  return false
+  const split = (v: string) => {
+    const [core = '', pre] = v.replace(/^v/, '').split('-', 2)
+    return { nums: core.split('.').map(Number), pre: pre === undefined ? null : Number(pre.split('.').pop()) || 0 }
+  }
+  const pa = split(a)
+  const pb = split(b)
+  for (let i = 0; i < 3; i++) if ((pa.nums[i] || 0) !== (pb.nums[i] || 0)) return (pa.nums[i] || 0) > (pb.nums[i] || 0)
+  if (pa.pre === null || pb.pre === null) return pa.pre === null && pb.pre !== null
+  return pa.pre > pb.pre
 }
 
 // stable: the newest non-prerelease; beta: the highest version, prereleases included. Drafts never count.

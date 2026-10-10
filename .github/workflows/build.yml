@@ -10,7 +10,22 @@ permissions:
   contents: write
 
 jobs:
+  # A push to dev-<version> publishes a pre-release (<version>-dev.<run>) for the Dev update channel only.
+  # Stable users never see it: the updater skips pre-releases unless the channel is Dev.
+  dev-release:
+    if: startsWith(github.ref, 'refs/heads/dev-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the pre-release
+        run: |
+          TAG="${GITHUB_REF_NAME#dev-}-dev.${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Dev build $TAG" --notes "Test build from $GITHUB_REF_NAME. Only the Dev update channel offers it."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build:
+    needs: [dev-release]
+    if: ${{ !cancelled() && (needs.dev-release.result == 'success' || needs.dev-release.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +51,11 @@ jobs:
       # so each installer is built on a matching runner.
       - run: npm ci
 
+      - name: Version the dev build
+        if: startsWith(github.ref, 'refs/heads/dev-')
+        shell: bash
+        run: npm pkg set version="${GITHUB_REF_NAME#dev-}-dev.${GITHUB_RUN_NUMBER}"
+
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -48,7 +68,7 @@ jobs:
       # Branch builds keep their installers for a few days. A tag's go onto the release instead, and a full artifact
       # quota never fails the build.
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/heads/dev-') }}
         continue-on-error: true
         with:
           retention-days: 3
@@ -62,10 +82,12 @@ jobs:
 
       # A tag's installers go onto its GitHub release (made by the release process) for the in-app updater.
       - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/dev-')
         shell: bash
         run: |
           shopt -s nullglob
-          gh release upload "$GITHUB_REF_NAME" dist/*.msi dist/*.dmg dist/*.AppImage dist/*.deb --clobber
+          TAG="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF" == refs/heads/dev-* ]]; then TAG="${GITHUB_REF_NAME#dev-}-dev.${GITHUB_RUN_NUMBER}"; fi
+          gh release upload "$TAG" dist/*.msi dist/*.dmg dist/*.AppImage dist/*.deb --clobber
         env:
           GH_TOKEN: ${{ github.token }}

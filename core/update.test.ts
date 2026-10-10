@@ -27,6 +27,11 @@ describe('update', () => {
     expect(newer('v2.1.0', '2.0.9')).toBe(true)
     expect(newer('2.0.0', '2.0.0')).toBe(false)
     expect(newer('1.9.9', '2.0.0')).toBe(false)
+    expect(newer('3.0.4-dev.7', '3.0.4-dev.6')).toBe(true)
+    expect(newer('3.0.4-dev.6', '3.0.4-dev.7')).toBe(false)
+    expect(newer('3.0.4', '3.0.4-dev.9')).toBe(true)
+    expect(newer('3.0.4-dev.9', '3.0.4')).toBe(false)
+    expect(newer('3.0.4-dev.1', '3.0.3')).toBe(true)
     expect(newer('10.0.0', '9.9.9')).toBe(true)
   })
 

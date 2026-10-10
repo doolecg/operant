@@ -98,14 +98,14 @@ export function GeneralSection() {
         </CardHeader>
         <CardContent className="divide-y">
           <UpdateRow status={update.data} />
-          <Row label="Channel" hint="Beta also offers pre-release versions." htmlFor="channel">
+          <Row label="Channel" hint="Dev also offers the test builds made from the dev branch before they are released." htmlFor="channel">
             <Select value={s.updates.channel} onValueChange={(v) => save.mutate({ updates: { channel: v as 'stable' | 'beta' } })}>
               <SelectTrigger id="channel" className="w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="stable">Stable</SelectItem>
-                <SelectItem value="beta">Beta</SelectItem>
+                <SelectItem value="beta">Dev</SelectItem>
               </SelectContent>
             </Select>
           </Row>
