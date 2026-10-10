@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { Bot, Flame, FolderTree, Lightbulb, MessageSquareText, Palette, Sparkles, type LucideIcon } from 'lucide-react'
+import { Bot, Command, Flame, FolderTree, Lightbulb, MessageSquareText, Palette, Sparkles, type LucideIcon } from 'lucide-react'
 import type { CapabilityReport, ClaudeTileState, ModId } from '@shared/claude-mods'
 import type { Settings } from '@shared/settings'
 import { SubagentPanel } from './SubagentPanel'
@@ -23,8 +23,8 @@ export interface ModAvailability {
 }
 
 export interface ClaudeMod {
-  // 'keepWarm' is an Operant feature of the Chat view (kind 'chat'), not a Claude Code mod.
-  id: ModId | 'keepWarm'
+  // 'keepWarm' and 'commandMenu' are Operant features of the Chat view (kind 'chat'), not Claude Code mods.
+  id: ModId | 'keepWarm' | 'commandMenu'
   title: string
   // One line for the settings card.
   description: string
@@ -68,4 +68,13 @@ export const CLAUDE_MODS: ClaudeMod[] = [
   { id: 'folderTracker', title: 'Same-Folder Tracker', description: 'When two sessions work in the same project, each shows what the other is editing and warns when both touch the same file.', appliesTo: 'claude', icon: FolderTree, defaultEnabled: false, kind: 'native' },
   { id: 'plainEnglish', title: 'Plain-English Claude Code', description: 'Simple language, all prose in a summary at the end with next steps, and a status line of what the session is doing. A Haiku check flags replies that miss the rules.', appliesTo: 'claude', icon: MessageSquareText, defaultEnabled: false, kind: 'native' },
   { id: 'keepWarm', title: 'Keep warm', description: 'Keeps the prompt cache warm while a chat tile is idle by sending a one-word ping just before the cache expires. Start it with /keepwarm (6h, 90m, always, off, status). Each ping costs tokens. Chat view only.', appliesTo: 'claude', icon: Flame, defaultEnabled: true, kind: 'chat' },
+  {
+    id: 'commandMenu',
+    title: 'Commands menu',
+    description: "The Commands button in the Chat view lists Claude Code's slash commands. /status, /mcp and /doctor show their result there. The others run only on Claude Code's own screen, so the menu says so instead of opening the terminal.",
+    appliesTo: 'claude',
+    icon: Command,
+    defaultEnabled: true,
+    kind: 'chat',
+  },
 ]

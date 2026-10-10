@@ -171,11 +171,11 @@ describe('suggestion highlighting', () => {
   })
   it('lists /keepwarm with Claude commands and finds it by name or description', () => {
     const all = withLocalCommands([])
-    expect(all.map((c) => c.name)).toEqual(['keepwarm'])
-    expect(withLocalCommands(all)).toHaveLength(1)
+    expect(all.filter((c) => !c.terminalOnly).map((c) => c.name)).toEqual(['keepwarm'])
+    expect(withLocalCommands(all).filter((c) => c.name === 'keepwarm')).toHaveLength(1)
     expect(filterCommands(all, 'keep')[0]?.name).toBe('keepwarm')
     expect(filterCommands(all, 'cache')[0]?.name).toBe('keepwarm')
-    expect(withLocalCommands([], false)).toEqual([])
+    expect(withLocalCommands([], false).map((c) => c.name)).not.toContain('keepwarm')
   })
 })
 

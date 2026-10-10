@@ -1,5 +1,5 @@
 import { claudeContextWindow, modelName } from '@shared/models'
-import { itemsOf, toolVerb, type ChatCommand, type ChatItem, type ChatModel, type ChatState, type SubagentItem, type ToolItem } from '@shared/claude-chat'
+import { isAgentTool, itemsOf, mcpParts, toolVerb, type ChatCommand, type ChatItem, type ChatModel, type ChatState, type SubagentItem, type ToolItem } from '@shared/claude-chat'
 
 // Pure helpers of the Chat view (formatting, menus, suggestions, the agent list). No React here so they can be tested.
 
@@ -122,9 +122,47 @@ export const LOCAL_COMMANDS: ChatCommand[] = [
   { name: 'keepwarm', description: 'Keep the prompt cache warm: bare for 6h, a window such as 90m, always, off, or status', argumentHint: '[6h|90m|always|off|status]', source: 'built-in', terminalOnly: false },
 ]
 
+// Claude Code's own commands that its chat protocol does not list: they only run in its terminal screen, so choosing
+// one moves the tile to the Terminal view and types it there.
+const TERMINAL_COMMANDS: Array<[string, string]> = [
+  ['permissions', 'Manage allow and deny rules for tools'],
+  ['doctor', 'Check the health of your Claude Code install'],
+  ['config', 'Open the settings screen'],
+  ['status', 'Show version, model, account and connectivity'],
+  ['login', 'Sign in to your Anthropic account'],
+  ['logout', 'Sign out of your Anthropic account'],
+  ['mcp', 'Manage MCP servers'],
+  ['agents', 'Manage sub-agents'],
+  ['hooks', 'Manage hook configurations'],
+  ['memory', 'Edit Claude memory files'],
+  ['ide', 'Manage IDE integrations'],
+  ['vim', 'Switch between Vim and normal editing mode'],
+  ['theme', 'Change the colour theme'],
+  ['terminal-setup', 'Install the Shift+Enter key binding'],
+  ['help', 'Show help and the available commands'],
+  ['resume', 'Resume an earlier conversation'],
+  ['rewind', 'Rewind the conversation or code to an earlier point'],
+  ['export', 'Export the conversation'],
+  ['statusline', 'Set up the status line'],
+  ['output-style', 'Choose an output style'],
+  ['add-dir', 'Add a working directory'],
+  ['usage', 'Show plan usage and limits'],
+  ['plugin', 'Manage plugins and marketplaces'],
+  ['privacy-settings', 'View and update privacy settings'],
+  ['release-notes', 'View the release notes'],
+  ['todos', 'List the current todo items'],
+  ['bug', 'Report a problem to Anthropic'],
+]
+
+// The terminal-only commands the Commands menu runs itself (the rest say they need Claude Code's own screen).
+export const RUNS_IN_CHAT = new Set(['status', 'mcp', 'doctor'])
+
 export function withLocalCommands(commands: ChatCommand[], keepWarm = true): ChatCommand[] {
   const have = new Set(commands.map((c) => c.name))
-  return [...commands, ...LOCAL_COMMANDS.filter((c) => !have.has(c.name) && (keepWarm || c.name !== 'keepwarm'))]
+  const terminal = TERMINAL_COMMANDS.filter(([name]) => !have.has(name)).map(
+    ([name, description]): ChatCommand => ({ name, description, argumentHint: '', source: 'built-in', terminalOnly: true }),
+  )
+  return [...commands, ...LOCAL_COMMANDS.filter((c) => !have.has(c.name) && (keepWarm || c.name !== 'keepwarm')), ...terminal].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 // The description split into runs, the words that contain something the owner typed marked as hits.
@@ -172,7 +210,7 @@ export function noticeChipIcon(source: string, tone: string): ChipIcon {
   }
 }
 
-export function filterCommands(commands: ChatCommand[], query: string, limit = 8): ChatCommand[] {
+export function filterCommands(commands: ChatCommand[], query: string, limit = 200): ChatCommand[] {
   const q = query.toLowerCase()
   const starts: ChatCommand[] = []
   const has: ChatCommand[] = []
@@ -199,6 +237,45 @@ export function toolRowParts(t: ToolItem): ToolRowParts {
   const stat = t.diff ? `+${t.diff.added} −${t.diff.removed}` : null
   const tone = t.status === 'failed' ? 'failed' : t.status === 'denied' ? 'denied' : 'normal'
   return { verb: toolVerb(t.name, finished), target: t.summary, stat, tone }
+}
+
+export type ToolIconKey = 'memory' | 'code' | 'web' | 'file' | 'edit' | 'terminal' | 'search' | 'skill' | 'agent' | 'todo' | 'plug' | 'tool'
+
+// Which icon a tool call gets in its row.
+export function toolIconKey(name: string): ToolIconKey {
+  const mcp = mcpParts(name)
+  if (mcp) {
+    const s = mcp.server.toLowerCase()
+    if (s === 'hindsight' || s.includes('mem')) return 'memory'
+    if (s === 'codegraph') return 'code'
+    if (s === 'playwright') return 'web'
+    return 'plug'
+  }
+  switch (name) {
+    case 'Read':
+    case 'LS':
+      return 'file'
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write':
+    case 'NotebookEdit':
+      return 'edit'
+    case 'Bash':
+    case 'PowerShell':
+      return 'terminal'
+    case 'Grep':
+    case 'Glob':
+      return 'search'
+    case 'WebFetch':
+    case 'WebSearch':
+      return 'web'
+    case 'Skill':
+      return 'skill'
+    case 'TodoWrite':
+      return 'todo'
+    default:
+      return isAgentTool(name) ? 'agent' : 'tool'
+  }
 }
 
 export const isToolRunning = (t: ToolItem): boolean => t.status === 'preparing' || t.status === 'running'

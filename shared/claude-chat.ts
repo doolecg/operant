@@ -624,8 +624,28 @@ const VERBS: Record<string, [string, string]> = {
   TodoWrite: ['Updating', 'Updated'],
 }
 
-// "Reading" / "Read" for a tool; other tools use their name.
-export const toolVerb = (name: string, done: boolean): string => VERBS[name]?.[done ? 1 : 0] ?? (isAgentTool(name) ? 'Agent:' : name)
+const MCP_SERVERS: Record<string, string> = { codegraph: 'CodeGraph', hindsight: 'Hindsight', playwright: 'Playwright', git: 'Git', coolify: 'Coolify', plugin_playwright_playwright: 'Playwright' }
+const titleCase = (s: string): string => s.replace(/[_-]+/g, ' ').trim().replace(/^./, (c) => c.toUpperCase())
+
+// "mcp__codegraph__codegraph_explore" as { server: 'CodeGraph', tool: 'Explore' }; null for a built-in tool.
+export function mcpParts(name: string): { server: string; tool: string } | null {
+  const m = /^mcp__(.+?)__(.+)$/.exec(name)
+  if (!m) return null
+  const raw = m[1]!
+  const server = MCP_SERVERS[raw] ?? titleCase(raw.replace(/^claude_ai_/, ''))
+  const stem = raw.replace(/^claude_ai_/, '').toLowerCase()
+  const tool = m[2]!.replace(new RegExp(`^${stem}[_-]?`, 'i'), '') || m[2]!
+  return { server, tool: titleCase(tool.replace(/^hindsight[_-]/i, '')) }
+}
+
+// "Reading" / "Read" for a tool; other tools use their name (an MCP tool as "CodeGraph · Explore").
+export const toolVerb = (name: string, done: boolean): string => {
+  const known = VERBS[name]?.[done ? 1 : 0]
+  if (known) return known
+  if (isAgentTool(name)) return 'Agent:'
+  const mcp = mcpParts(name)
+  return mcp ? `${mcp.server} · ${mcp.tool}` : name
+}
 
 // What the status line shows while a tool runs: "Reading TileFrame.tsx…".
 export function runningWord(name: string, input: unknown): string {

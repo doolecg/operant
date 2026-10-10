@@ -23,7 +23,7 @@ const STORE_HINT: Record<LearnStore, string> = {
 const MODE_LABEL: Record<LearnMode, string> = { off: 'Off', suggest: 'Suggest', controlled: 'Controlled', advanced: 'Advanced' }
 const MODE_HINT: Record<LearnMode, string> = {
   off: 'Nothing runs.',
-  suggest: 'Every lesson and draft waits for your review.',
+  suggest: 'Edits and drafts wait for your review. New lessons follow the Review setting.',
   controlled: 'Low-risk lessons apply themselves, and can be rolled back.',
   advanced: 'Also applies skill drafts that pass validation.',
 }

@@ -54,10 +54,11 @@ import { exportTeams, parseTeamFile } from './team-presets'
 import { applyRead, exportBundle, previewRead, readSource, type ImportDeps } from './import'
 import { gitChanges, gitInfo, listIdes, openInIde } from './projecttools'
 import * as repoGit from './git'
-import { killAllOwn, resolveCli } from './proc'
+import { killAllOwn, resolveCli, runHidden } from './proc'
+import { scrubLogLine } from './agents'
 import { ChatHub, ChatSession, type ChatLaunchSpec, type ChatSpawn } from './claude-chat'
 import { listChatFiles } from './chat-files'
-import { emptyChatState, type ChatState } from '../shared/claude-chat'
+import { emptyChatState, stripAnsi, type ChatState } from '../shared/claude-chat'
 import { PLAYGROUND_KEPT, type Store } from './store'
 import { JsonlTail, parseLine, transcriptPath } from './transcripts'
 import { CapabilityProber, systemProbeDeps, type ProbeDeps } from './capabilities'
@@ -829,10 +830,21 @@ export class Operant extends EventEmitter<PushEvents> {
     }
   }
 
-  private capabilityHandlers(): Group<'capabilities'> & Group<'claudeMods'> {
+  // `claude doctor` for the Chat view's /doctor: its report as plain text, colours and secrets removed.
+  private async claudeDoctor(): Promise<string> {
+    const cli = resolveCli('claude')
+    if (!cli) throw bad('Claude Code is not on PATH')
+    const r = await runHidden(cli.file, ['doctor'], { shell: cli.shell, timeoutMs: 60_000, quiet: true })
+    const text = stripAnsi(`${r.stdout}${r.stderr}`).split(/\r?\n/).map(scrubLogLine).join('\n').trim()
+    if (!text) throw bad('claude doctor printed nothing')
+    return text.slice(0, 20_000)
+  }
+
+  private capabilityHandlers(): Group<'capabilities'> & Group<'claudeMods'> & Group<'claude'> {
     return {
       'capabilities:get': (): Promise<CapabilityReport> => this.prober.get(),
       'capabilities:refresh': (): Promise<CapabilityReport> => this.prober.refresh(),
+      'claude:doctor': () => this.claudeDoctor(),
       'claudeMods:get': (tileId): ClaudeTileState | null => this.claudeAgents?.get(tileId) ?? null,
     }
   }

@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { AgentKind, CacheTtl, Crew, LaunchSettings, McpMode, OperantEvent, Preset, ScratchSpend, ScratchTerminal, ScratchView, Team, TeamInput, TeamPatch, Usage } from '../shared/types'
 import type { SeatFields } from '../shared/types'
-import { LEARN_AI_MIGRATION, LESSONS_MIGRATION } from './lessons-store'
+import { LEARN_AI_MIGRATION, LESSONS_MIGRATION, SKILL_FIX_MIGRATION } from './lessons-store'
 import { BUILTIN_TEAMS, RETIRED_TEAMS, TEAM_RENAMES } from './team-presets'
 import { presetTextFor } from './preset-text'
 import { buildBackup, writeBackup } from './backup'
@@ -467,6 +467,8 @@ export const MIGRATIONS: string[] = [
    DROP TABLE IF EXISTS squads;`,
   // Claude tiles open in the Chat view or the Terminal view; existing tiles keep the Terminal.
   `ALTER TABLE scratch ADD COLUMN view TEXT NOT NULL DEFAULT 'terminal';`,
+  // Skill drafts can fix an installed skill (the file it rewrites and the text it replaced).
+  SKILL_FIX_MIGRATION,
 ]
 
 export const PLAYGROUND_KEPT = 'The Playground cannot be deleted; you can rename it or change its folder'

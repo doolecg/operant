@@ -221,8 +221,9 @@ export class ChatMapper {
   }
 
   // The owner sent a message: shows the bubble at once (queued when a turn is running).
-  noteUserMessage(text: string, images: ChatImage[]): ChatOp[] {
-    const queued = this.turnActive
+  // `read`: Claude reads it right away (a plan denial's comment), so it never shows the Queued tag.
+  noteUserMessage(text: string, images: ChatImage[], read = false): ChatOp[] {
+    const queued = this.turnActive && !read
     const id = `u:${this.now()}:${this.seq++}`
     this.addItem({ kind: 'user', id, parent: null, text, images, queued, at: this.now() })
     if (queued) this.queuedAwaitTurn = false
@@ -308,6 +309,12 @@ export class ChatMapper {
     this.refreshAgents()
     this.refreshTurn()
     return { body }
+  }
+
+  // The request id of a plan waiting for the owner's answer, if any.
+  pendingPlanRequest(): string | null {
+    for (const it of this.state.items) if (it.kind === 'plan' && it.requestId !== null && it.answer === null && this.pending.has(it.requestId)) return it.requestId
+    return null
   }
 
   hasPending(requestId?: string): boolean {

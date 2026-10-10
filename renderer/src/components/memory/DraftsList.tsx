@@ -91,6 +91,16 @@ function DraftRow({ draft, crewName, onEdit, onDelete }: { draft: SkillDraft; cr
           {crewName} · {draft.sourceJobs.length > 0 ? `${draft.sourceJobs.length} source${draft.sourceJobs.length === 1 ? '' : 's'} · ` : ''}{timeAgo(draft.updatedAt)}
         </span>
       </div>
+      <div className="flex flex-wrap items-center gap-2" data-draft-kind={draft.targetPath ? 'fix' : 'new'}>
+        {draft.targetPath ? (
+          <>
+            <Badge variant="outline">Fix to {draft.name}</Badge>
+            <span className="text-muted-foreground font-mono text-[11px] break-all">{draft.targetPath}</span>
+          </>
+        ) : (
+          <Badge variant="outline">New skill, installs to ~/.claude/skills/{draft.name}</Badge>
+        )}
+      </div>
       <pre className="bg-muted/40 max-h-40 overflow-auto rounded-md p-2 font-mono text-[11px] whitespace-pre-wrap">{draft.body}</pre>
       {draft.installedPath && <p className="text-muted-foreground font-mono text-[11px]">Installed at {draft.installedPath}</p>}
       <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -124,7 +134,7 @@ export function DraftsList({ crewId, crews }: { crewId?: number; crews: Crew[] }
   return (
     <div className="space-y-3">
       <p className="text-muted-foreground text-xs">
-        Drafted from procedures that repeated. A skill is installed into the project only when you click Approve and install.
+        Drafted from working procedures and fixes to installed skills. A new skill is installed to ~/.claude/skills, and a fix rewrites its skill, only when you click Approve and install.
       </p>
       <ErrorLine error={drafts.error} />
       {list.length === 0 && !drafts.isPending ? (

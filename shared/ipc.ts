@@ -277,6 +277,8 @@ export interface IpcApi extends ChatApi {
   // Which Claude Code and OpenCode CLIs are on PATH, their versions, and what each can do. Cached; refresh re-probes.
   'capabilities:get': () => Promise<CapabilityReport>
   'capabilities:refresh': () => Promise<CapabilityReport>
+  // `claude doctor` as plain text: the Chat view's /doctor.
+  'claude:doctor': () => Promise<string>
   // A Claude Code tile's sub-agents, status line and events state (null when the tile has none yet).
   'claudeMods:get': (tileId: number) => ClaudeTileState | null
   'settings:get': () => Settings
@@ -512,6 +514,7 @@ export const CORE_CHANNELS: CoreChannel[] = [
   'events:clear',
   'capabilities:get',
   'capabilities:refresh',
+  'claude:doctor',
   'claudeMods:get',
   ...CHAT_CHANNELS,
   'settings:get',

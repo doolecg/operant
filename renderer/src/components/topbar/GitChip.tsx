@@ -4,8 +4,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useGitInfo } from '@/lib/queries'
 import { pillBtn } from './pill'
 
-// The compact chip (sidebar footer) takes the free width instead of the pill's fixed one.
-const compactBtn = 'inline-flex h-6 min-w-0 flex-1 items-center gap-1.5 whitespace-nowrap rounded-full bg-foreground/[0.06] px-2.5 text-xs outline-none transition-colors hover:bg-foreground/10 focus-visible:ring-[3px] focus-visible:ring-ring/50'
+// The compact chip (sidebar footer) is as wide as its content and shrinks (the branch truncates) when the footer is tight.
+const compactBtn = 'inline-flex h-6 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-foreground/[0.06] px-2.5 text-xs outline-none transition-colors hover:bg-foreground/10 focus-visible:ring-[3px] focus-visible:ring-ring/50'
 
 export function gitSummary(g: GitInfo): string {
   const parts = [g.detached ? `Detached at ${g.branch}` : `Branch ${g.branch}`]

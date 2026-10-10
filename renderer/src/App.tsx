@@ -8,6 +8,7 @@ import { GitDialog } from '@/components/git/GitDialog'
 import { projectActions } from '@/components/dashboard/projectActions'
 import { TerminalDrawer } from '@/components/terminal/TerminalDrawer'
 import { useTerminals } from '@/components/terminal/useTerminals'
+import { useWaitingTiles } from '@/components/terminal/useWaitingTiles'
 import { Toaster } from '@/components/ui/toaster'
 import { Sidebar } from '@/components/dashboard/Sidebar'
 import { TerminalView } from '@/components/terminal/TerminalView'
@@ -120,6 +121,8 @@ export function App() {
   const sidebarHidden = layout?.sidebarHidden ?? false
   const setLayout = (patch: Partial<NonNullable<typeof layout>>) => saveSettings.mutate({ layout: patch })
   const projectScratch = terminals.tabs.filter((t) => t.crewId === crewId)
+  const waitingTiles = useWaitingTiles()
+  const waitingCrews = new Set(terminals.tabs.filter((t) => waitingTiles.has(t.scratchId)).map((t) => t.crewId))
   const closeTile = useCloseTile(terminals.tabs, settings.data?.confirm.closeTile ?? true, terminals.closeTab)
   // A Windows notification was clicked: show that Claude tile.
   useEffect(
@@ -274,6 +277,7 @@ export function App() {
             onSelect={(id) => (setCrewId(id), setPage('dashboard'), crews.data?.find((c) => c.id === id)?.kind === 'playground' && setPlaygroundSeen(true))}
             onNewCrew={(groupId) => (setNewCrewGroup(groupId), setNewCrew(true))}
             actions={projectMenu}
+            waiting={waitingCrews}
             footer={
               <>
                 <Tooltip>
@@ -338,7 +342,7 @@ export function App() {
               )}
             </>
           )}
-          {terminals.open && terminals.tabs.some((t) => !terminalShown || t.crewId !== crewId) && (
+          {terminals.open && !terminalShown && terminals.tabs.length > 0 && (
             <TerminalDrawer
               tabs={terminals.tabs}
               active={terminals.active}
@@ -347,7 +351,6 @@ export function App() {
               onNewShell={() => crew && void terminals.openTab(crew, 'shell')}
               onNewAgent={() => crew && void terminals.openTab(crew, settings.data?.mainCli ?? 'claude')}
               onHide={() => terminals.setOpen(false)}
-              hideCrewId={terminalShown ? crewId : null}
             />
           )}
           {consoleOpen && (

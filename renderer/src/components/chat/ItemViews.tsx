@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { AlertCircle, Box, ChevronRight, Copy, Gauge, Info, Minimize2, Plug, Square, Webhook, type LucideIcon } from 'lucide-react'
+import { AlertCircle, Bot, Box, BrainCircuit, ChevronRight, Copy, FileText, Gauge, Globe, Info, ListChecks, Minimize2, Network, Pencil, Plug, Search, Sparkles, Square, SquareTerminal, Webhook, Wrench, type LucideIcon } from 'lucide-react'
 import {
   partialTarget,
   type CommandItem,
@@ -14,7 +14,22 @@ import {
 } from '@shared/claude-chat'
 import { Markdown, CopyTextButton } from '@/components/ui/markdown'
 import { cn } from '@/lib/utils'
-import { agentContext, agentRowFor, agentTitle, agentTldr, firstLines, formatDuration, isToolRunning, kTokens, noticeChipIcon, toolRowParts, type ChipIcon } from './chatHelpers'
+import { agentContext, agentRowFor, agentTitle, agentTldr, firstLines, formatDuration, isToolRunning, kTokens, noticeChipIcon, toolIconKey, toolRowParts, type ChipIcon, type ToolIconKey } from './chatHelpers'
+
+const TOOL_ICONS: Record<ToolIconKey, LucideIcon> = {
+  memory: BrainCircuit,
+  code: Network,
+  web: Globe,
+  file: FileText,
+  edit: Pencil,
+  terminal: SquareTerminal,
+  search: Search,
+  skill: Sparkles,
+  agent: Bot,
+  todo: ListChecks,
+  plug: Plug,
+  tool: Wrench,
+}
 
 export function Spinner({ className }: { className?: string }) {
   return <span aria-hidden className={cn('border-input border-t-foreground size-3 shrink-0 animate-spin rounded-full border-[1.5px] motion-reduce:animate-none', className)} />
@@ -180,6 +195,7 @@ export const ToolRow = memo(function ToolRow({ t, small }: { t: ToolItem; small?
   const running = isToolRunning(t)
   const target = p.target || (t.status === 'preparing' ? partialTarget(t.name, t.partial) : '')
   const state = running ? 'running' : t.status
+  const Icon = TOOL_ICONS[toolIconKey(t.name)]
   return (
     <div data-chat="tool">
       <button
@@ -190,10 +206,11 @@ export const ToolRow = memo(function ToolRow({ t, small }: { t: ToolItem; small?
         className={cn(rowBtn, small && 'text-xs')}
       >
         <ChevronRight className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} aria-hidden />
+        <Icon className="size-3.5 shrink-0" aria-hidden />
         <span className="min-w-0 truncate">
           {p.tone === 'denied' && <span className="text-foreground">Denied: </span>}
-          <span className={cn('text-foreground', p.tone === 'failed' && 'text-destructive')}>{p.verb}</span>
-          {target && <span> {target}</span>}
+          <span className={cn('text-foreground font-medium', p.tone === 'failed' && 'text-destructive')}>{p.verb}</span>
+          {target && <span className="text-muted-foreground/80"> {target}</span>}
         </span>
         {p.stat && (
           <span className="shrink-0 text-xs">

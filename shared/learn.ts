@@ -56,6 +56,12 @@ export interface SkillDraft {
   status: DraftStatus
   // Where an approved draft was installed.
   installedPath: string
+  // A fix: the installed skill file it rewrites. '' for a new skill.
+  targetPath: string
+  // A fix's file before it was rewritten, so rolling it back restores the text. Set on approval.
+  previousBody: string
+  // The lesson the draft came from (0 for a draft that predates this, or none): a procedure is drafted once.
+  lessonId: number
   createdAt: number
   updatedAt: number
 }
@@ -95,6 +101,8 @@ export interface LearnStoreStatus {
 
 export interface LearnStatus {
   enabled: boolean
+  // A learn step is running now.
+  running: boolean
   review: LearnReview
   stores: LearnStoreStatus[]
   lastRun: LearnRunInfo | null

@@ -48,6 +48,11 @@ export const LESSONS_MIGRATION = `CREATE TABLE lessons (
 export const LEARN_AI_MIGRATION = `ALTER TABLE learn_runs ADD COLUMN cli TEXT NOT NULL DEFAULT '';
    ALTER TABLE learn_runs ADD COLUMN model TEXT NOT NULL DEFAULT '';`
 
+// A skill draft can be a fix to an installed skill (where it goes, the text it replaces) and remembers its lesson (additive).
+export const SKILL_FIX_MIGRATION = `ALTER TABLE skill_drafts ADD COLUMN target_path TEXT NOT NULL DEFAULT '';
+   ALTER TABLE skill_drafts ADD COLUMN previous_body TEXT NOT NULL DEFAULT '';
+   ALTER TABLE skill_drafts ADD COLUMN lesson_id INTEGER NOT NULL DEFAULT 0;`
+
 type Row = Record<string, unknown>
 
 const list = (v: unknown): string[] => {
@@ -83,6 +88,9 @@ const toDraft = (r: Row): SkillDraft => ({
   sourceJobs: nums(r.source_jobs),
   status: r.status as DraftStatus,
   installedPath: String(r.installed_path),
+  targetPath: String(r.target_path ?? ''),
+  previousBody: String(r.previous_body ?? ''),
+  lessonId: Number(r.lesson_id ?? 0),
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
 })
@@ -144,14 +152,16 @@ export class LessonsDb {
         ins.run(l.id, l.crewId, l.text, l.kind, l.scope, JSON.stringify(l.files), JSON.stringify(l.symbols), JSON.stringify(l.sourceJobs), JSON.stringify(l.stores), l.status, l.hits, l.createdAt, l.updatedAt)
         nl++
       }
-      const insD = this.db.prepare('INSERT INTO skill_drafts (id, crew_id, name, body, source_jobs, status, installed_path, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      const insD = this.db.prepare(
+        'INSERT INTO skill_drafts (id, crew_id, name, body, source_jobs, status, installed_path, target_path, previous_body, lesson_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      )
       let nd = 0
       for (const d of drafts) {
         if (!allowed(d.crewId)) {
           dropped++
           continue
         }
-        insD.run(d.id, d.crewId, d.name, d.body, JSON.stringify(d.sourceJobs), d.status, d.installedPath, d.createdAt, d.updatedAt)
+        insD.run(d.id, d.crewId, d.name, d.body, JSON.stringify(d.sourceJobs), d.status, d.installedPath, d.targetPath ?? '', d.previousBody ?? '', d.lessonId ?? 0, d.createdAt, d.updatedAt)
         nd++
       }
       this.db.exec('COMMIT')
@@ -199,9 +209,12 @@ export class LessonsDb {
     return this.getLesson(id)!
   }
 
-  addDraft(crewId: number, name: string, body: string, sourceJobs: number[]): SkillDraft {
+  // `targetPath`: the installed skill file a fix rewrites ('' for a new skill). `lessonId`: the lesson the draft came from.
+  addDraft(crewId: number, name: string, body: string, sourceJobs: number[], targetPath = '', lessonId = 0): SkillDraft {
     const t = this.now()
-    const r = this.db.prepare('INSERT INTO skill_drafts (crew_id, name, body, source_jobs, created_at, updated_at) VALUES (?,?,?,?,?,?)').run(crewId, name, body, JSON.stringify(sourceJobs), t, t)
+    const r = this.db
+      .prepare('INSERT INTO skill_drafts (crew_id, name, body, source_jobs, target_path, lesson_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(crewId, name, body, JSON.stringify(sourceJobs), targetPath, lessonId, t, t)
     return this.getDraft(Number(r.lastInsertRowid))!
   }
 
@@ -215,13 +228,13 @@ export class LessonsDb {
     return rows.map(toDraft).filter((d) => (crewId == null || d.crewId === crewId) && (!status || d.status === status))
   }
 
-  updateDraft(id: number, p: Partial<Pick<SkillDraft, 'name' | 'body' | 'status' | 'installedPath' | 'sourceJobs'>>): SkillDraft {
+  updateDraft(id: number, p: Partial<Pick<SkillDraft, 'name' | 'body' | 'status' | 'installedPath' | 'sourceJobs' | 'previousBody'>>): SkillDraft {
     const cur = this.getDraft(id)
     if (!cur) throw new Error(`No skill draft ${id}`)
     const n = { ...cur, ...defined(p) } as SkillDraft
     this.db
-      .prepare('UPDATE skill_drafts SET name=?, body=?, status=?, installed_path=?, source_jobs=?, updated_at=? WHERE id=?')
-      .run(n.name, n.body, n.status, n.installedPath, JSON.stringify(n.sourceJobs), this.now(), id)
+      .prepare('UPDATE skill_drafts SET name=?, body=?, status=?, installed_path=?, source_jobs=?, previous_body=?, updated_at=? WHERE id=?')
+      .run(n.name, n.body, n.status, n.installedPath, JSON.stringify(n.sourceJobs), n.previousBody, this.now(), id)
     return this.getDraft(id)!
   }
 

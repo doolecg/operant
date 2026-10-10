@@ -57,6 +57,8 @@ describe('learning loop', () => {
       exists: (p) => files.has(p.replace(/\\/g, '/')),
       readFile: (p) => (p.replace(/\\/g, '/') === '/code/shop/core/cart.ts' ? 'export function cartTotal() {}' : null),
       writeFile: (p, c) => void installed.push([p, c]),
+      skillsHome: () => '/home/me/.claude/skills',
+      installedSkills: () => [],
       ...extra,
     })
 
@@ -155,7 +157,7 @@ describe('learning loop', () => {
   })
 
   it('queues lessons for review without writing them, until approved', async () => {
-    settings.mode = 'suggest'
+    settings.review = 'queue'
     const svc = service()
     answers.push(lesson({}))
     const r = await svc.onConversationEnd(crewId, finishedRun())
@@ -207,15 +209,12 @@ describe('learning loop', () => {
   describe('skill drafts', () => {
     const proc = (text: string) => JSON.stringify([{ kind: 'procedure', text, files: [], symbols: [] }])
 
-    it('drafts a pending skill when a procedure repeats, and installs nothing until approved', async () => {
+    it('drafts a pending skill from one working procedure, and installs nothing until approved', async () => {
       const svc = service()
       answers.push(proc('Run the full vitest suite then the typecheck before handing back'))
       await svc.onConversationEnd(crewId, finishedRun())
-      expect(svc.drafts()).toEqual([])
-      answers.push(proc('Run the vitest suite and the typecheck before handing the work back'))
-      await svc.onConversationEnd(crewId, finishedRun())
       const [d] = svc.drafts()
-      expect(d).toMatchObject({ status: 'pending', installedPath: '' })
+      expect(d).toMatchObject({ status: 'pending', installedPath: '', targetPath: '' })
       expect(d!.body).toContain('vitest')
       expect(installed).toEqual([])
       // no second draft for the same procedure
@@ -228,7 +227,7 @@ describe('learning loop', () => {
       const ok = svc.approveDraft(d!.id)
       expect(ok.status).toBe('approved')
       expect(installed).toHaveLength(1)
-      expect(installed[0]![0].replace(/\\/g, '/')).toBe(`/code/shop/.claude/skills/${d!.name}/SKILL.md`)
+      expect(installed[0]![0].replace(/\\/g, '/')).toBe(`/home/me/.claude/skills/${d!.name}/SKILL.md`)
       expect(installed[0]![1]).toContain('Extra step.')
       expect(() => svc.approveDraft(d!.id)).toThrow(/pending/)
     })
@@ -239,8 +238,8 @@ describe('learning loop', () => {
       await svc.onConversationEnd(crewId, finishedRun())
       await svc.onConversationEnd(crewId, finishedRun())
       const d = svc.drafts()[0]!
-      files.add(`/code/shop/.claude/skills/${d.name}/SKILL.md`)
-      expect(() => svc.approveDraft(d.id)).toThrow(/already exists/)
+      files.add(`/home/me/.claude/skills/${d.name}/SKILL.md`)
+      expect(() => svc.approveDraft(d.id)).toThrow(/already installed/)
       expect(svc.rejectDraft(d.id).status).toBe('rejected')
       expect(installed).toEqual([])
       expect(() => svc.editDraft(d.id, { name: '../evil' })).toThrow()

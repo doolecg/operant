@@ -34,7 +34,7 @@ export function ModsSection() {
 
       {CLAUDE_MODS.map((mod) => {
         const chat = mod.kind === 'chat'
-        const on = chat ? m.keepWarm : m.mods[mod.id as ModId]
+        const on = chat ? (mod.id === 'commandMenu' ? m.commandMenu : m.keepWarm) : m.mods[mod.id as ModId]
         const Icon = mod.icon
         const unavailable = mod.kind === 'panel' && caps && !caps.subagentEvents && mod.id === 'subagents'
         return (
@@ -53,14 +53,16 @@ export function ModsSection() {
                   unavailable
                     ? 'Unavailable: this Claude Code install does not send sub-agent events.'
                     : chat
-                      ? "An Operant feature of the Chat view, not a Claude Code mod. Off hides /keepwarm and stops any active keep-warm."
+                      ? mod.id === 'commandMenu'
+                        ? 'An Operant feature of the Chat view, not a Claude Code mod. Off hides the Commands button.'
+                        : 'An Operant feature of the Chat view, not a Claude Code mod. Off hides /keepwarm and stops any active keep-warm.'
                       : mod.kind === 'panel'
                         ? "Operant's own panel. Uses Operant's hook events; no model calls."
                         : 'A native Claude Code mod (plugin/mods/' + mod.id + '). Loaded into Claude Code when a tile starts.'
                 }
                 htmlFor={`mod-${mod.id}`}
               >
-                <Switch id={`mod-${mod.id}`} checked={on} disabled={(!chat && !m.enabled) || !!unavailable} onCheckedChange={(v) => (chat ? setMods({ keepWarm: v }) : setMods({ mods: { ...m.mods, [mod.id as ModId]: v } }))} />
+                <Switch id={`mod-${mod.id}`} checked={on} disabled={(!chat && !m.enabled) || !!unavailable} onCheckedChange={(v) => (chat ? setMods(mod.id === 'commandMenu' ? { commandMenu: v } : { keepWarm: v }) : setMods({ mods: { ...m.mods, [mod.id as ModId]: v } }))} />
               </Row>
             </CardContent>
           </Card>

@@ -144,9 +144,9 @@ describe('claudeMods settings', () => {
   const allOff = { subagents: false, promptEnhancer: false, designPicker: false, ideaShelf: false, folderTracker: false, plainEnglish: false }
 
   it('defaults the master switch on, the sub-agent mod on and the rest off', () => {
-    expect(DEFAULT_SETTINGS.claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
+    expect(DEFAULT_SETTINGS.claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true, commandMenu: true })
     const off = sanitizeSettings({ claudeMods: { enabled: false, mods: { ...allOff, subagents: false, ideaShelf: true } } }).claudeMods
-    expect(off).toEqual({ enabled: false, mods: { ...allOff, ideaShelf: true }, keepWarm: true })
+    expect(off).toEqual({ enabled: false, mods: { ...allOff, ideaShelf: true }, keepWarm: true, commandMenu: true })
   })
 
   it('migrates the old subagentPanel switch into mods.subagents', () => {
@@ -158,23 +158,23 @@ describe('claudeMods settings', () => {
 
   it('loads a saved chatLook switch from before the Chat view without error', () => {
     const s = sanitizeSettings({ claudeMods: { enabled: true, mods: { chatLook: true, subagents: true } } }).claudeMods
-    expect(s).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
+    expect(s).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true, commandMenu: true })
     expect(Object.keys(s.mods)).not.toContain('chatLook')
   })
 
   it('drops unknown mod ids and non-boolean values back to the defaults', () => {
     const s = sanitizeSettings({ claudeMods: { enabled: 'no', mods: { subagents: 0, ideaShelf: true, nope: true } } }).claudeMods
-    expect(s).toEqual({ enabled: true, mods: { ...allOff, subagents: true, ideaShelf: true }, keepWarm: true })
+    expect(s).toEqual({ enabled: true, mods: { ...allOff, subagents: true, ideaShelf: true }, keepWarm: true, commandMenu: true })
     const gone = sanitizeSettings({ claudeMods: { enabled: true, keepWarm: false, mods: { sessionMonitor: true, assumptionCheck: true } } }).claudeMods
     expect(Object.keys(gone.mods)).not.toContain('sessionMonitor')
     expect(Object.keys(gone.mods)).not.toContain('assumptionCheck')
     expect(gone.keepWarm).toBe(false)
-    expect(sanitizeSettings({ claudeMods: 'yes' }).claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
-    expect(sanitizeSettings({ claudeMods: null }).claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true })
+    expect(sanitizeSettings({ claudeMods: 'yes' }).claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true, commandMenu: true })
+    expect(sanitizeSettings({ claudeMods: null }).claudeMods).toEqual({ enabled: true, mods: { ...allOff, subagents: true }, keepWarm: true, commandMenu: true })
   })
 
   it('merges a partial patch without losing the other switches', () => {
     const off = mergeSettings(DEFAULT_SETTINGS, { claudeMods: { enabled: false, mods: { ...allOff, subagents: true } } })
-    expect(off.claudeMods).toEqual({ enabled: false, mods: { ...allOff, subagents: true }, keepWarm: true })
+    expect(off.claudeMods).toEqual({ enabled: false, mods: { ...allOff, subagents: true }, keepWarm: true, commandMenu: true })
   })
 })

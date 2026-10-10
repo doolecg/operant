@@ -14,17 +14,31 @@ Operant no longer runs jobs for you. It is now a home for your coding terminals,
 - **Built-in presets.** Start a terminal from a ready-made preset, or save your own.
 - **Superpowers detection.** Operant shows whether the Superpowers plugin is installed for Claude Code.
 - **Settings reset.** Put every setting back to its default in one step.
+- **Commands menu in the Chat view.** A Commands button lists every slash command. /status, /mcp and /doctor show their results right there, and the commands that only run on Claude Code's own screen say so instead of failing. You can switch it off in Settings, Claude Mods.
+- **Activity box.** A small box in the corner of a chat shows when learning is running, and which Hindsight memories and CodeGraph symbols the last prompt enhance used.
+- **Deny a plan.** A plan from Claude can be denied, with or without a comment. If you type a message while a plan is waiting, it is sent as the comment, so Claude reads it first.
+- **Recover an enhanced prompt.** Right-click Enhance prompt to bring back the last enhanced prompt.
+- **Projects flash when Claude waits for you.** A project's row pulses amber while one of its Claude tiles needs an answer.
+- **Skills learned from your sessions.** A procedure that worked becomes a skill draft. Approved skills install to your global Claude skills folder, so every session can use them. When a session shows an installed skill is wrong, Operant drafts a fix, and rolling it back restores the old text.
+- **Plan usage rings.** The sidebar shows Claude's 5-hour and weekly usage as two rings. Hover over them to see the reset times.
 
 ---
 
 ## Changed
 - **No more Tasks, Master, Discord or operators.** Operant no longer orchestrates work. The Tasks board, the Master Terminal, the Discord bridge, jobs, seats and the operator views are gone, and their saved data is no longer shown.
 - Learning talks about sessions instead of jobs.
+- **Learning writes to the project's memory automatically** when Review is set to Automatic, with any number of lessons per session. Lessons that mention a command, a link, or always / never still wait for your review.
+- Enhance prompt knows Operant's own skills, such as team work with its subagent limits, and never suggests a brainstorming skill.
+- Tool calls in the chat have icons, and MCP tools have readable names, such as "CodeGraph · Explore".
 
 ---
 
 ## Fixed
 - Learning notes say "session" instead of pointing at job numbers, which no longer exist.
+- Text in a chat box is kept when you switch projects, Settings or Memory.
+- Opening a terminal no longer leaves an empty panel at the bottom.
+- The "Claude edited" colour shows in the Agents panel.
+- The git pill in the sidebar no longer stretches across empty space.
 
 ---
 

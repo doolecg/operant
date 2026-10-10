@@ -191,7 +191,7 @@ export const QuestionCard = memo(function QuestionCard({ scratchId, item }: { sc
   )
 })
 
-const PLAN_LABEL = { approved: 'Plan approved', 'approved-edits': 'Plan approved, edits accepted', kept: 'Kept planning', expired: 'Plan expired' } as const
+const PLAN_LABEL = { approved: 'Plan approved', 'approved-edits': 'Plan approved, edits accepted', kept: 'Plan denied', expired: 'Plan expired' } as const
 
 export const PlanCard = memo(function PlanCard({ scratchId, item }: { scratchId: number; item: PlanItem }) {
   const [keeping, setKeeping] = useState(false)
@@ -218,11 +218,11 @@ export const PlanCard = memo(function PlanCard({ scratchId, item }: { scratchId:
               autoFocus
               value={msg}
               onChange={(e) => setMsg(e.target.value)}
-              placeholder="What should change? (optional)"
+              placeholder="Why deny it? What should change?"
               className="border-border bg-background focus-visible:ring-ring/50 min-w-0 flex-1 rounded-[9px] border px-2.5 py-[5px] text-[13px] outline-none focus-visible:ring-2"
             />
             <button type="submit" className={primary}>
-              Keep planning
+              Deny plan
             </button>
             <button type="button" className={textBtn} onClick={() => setKeeping(false)}>
               Cancel
@@ -236,8 +236,11 @@ export const PlanCard = memo(function PlanCard({ scratchId, item }: { scratchId:
             <button type="button" className={outline} onClick={() => send('approve')}>
               Approve
             </button>
-            <button type="button" className={textBtn} onClick={() => setKeeping(true)}>
-              Keep planning
+            <button type="button" className={outline} onClick={() => setKeeping(true)}>
+              Deny with comment
+            </button>
+            <button type="button" className={textBtn} onClick={() => send('keep')}>
+              Deny
             </button>
           </div>
         )

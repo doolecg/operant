@@ -29,14 +29,11 @@ interface Props {
   onNewShell: () => void
   onNewAgent: () => void
   onHide: () => void
-  // While the Terminal view shows this project, its terminals are tiles there and stay out of the drawer.
-  hideCrewId?: number | null
 }
 
 // Bottom drawer with the terminals opened from the project menu. Its height is a percentage of the window and
 // every tab keeps running while another is shown or the drawer is hidden.
-export function TerminalDrawer({ tabs: all, active, onSelect, onClose, onNewShell, onNewAgent, onHide, hideCrewId = null }: Props) {
-  const tabs = all.filter((t) => t.crewId !== hideCrewId)
+export function TerminalDrawer({ tabs, active, onSelect, onClose, onNewShell, onNewAgent, onHide }: Props) {
   const [height, setHeight] = useState(readHeight)
   const root = useRef<HTMLElement>(null)
   const cli = CLI_SHORT[useSettings().data?.mainCli ?? 'claude']

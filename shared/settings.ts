@@ -44,6 +44,8 @@ export interface ClaudeModsSettings {
   mods: Record<ModId, boolean>
   // /keepwarm in the Chat view (an Operant feature, not a Claude Code mod). It only ever pings after the owner runs /keepwarm.
   keepWarm: boolean
+  // The commands menu in the Chat view (the Commands button and / commands that run only on Claude Code's own screen).
+  commandMenu: boolean
 }
 
 export interface Settings {
@@ -191,7 +193,7 @@ export const DEFAULT_SETTINGS: Settings = {
   layout: { sidebarWidth: 0, sidebarHidden: false },
   terminal: { copyOnSelect: false, fontSize: 13, scrollback: 5000, fileLinks: true, dropPaths: true },
   tiles: { layout: 'dwindle', gaps: 6, strip: 'normal' },
-  claudeMods: { enabled: true, mods: { ...MOD_DEFAULT_ENABLED }, keepWarm: true },
+  claudeMods: { enabled: true, mods: { ...MOD_DEFAULT_ENABLED }, keepWarm: true, commandMenu: true },
   confirm: { closeTile: true, closeApp: true },
   notify: { finished: true, needs: true },
   topBar: {
@@ -234,7 +236,7 @@ export function sanitizeClaudeMods(raw: unknown): ClaudeModsSettings {
     const v = stored[id] ?? (id === 'subagents' && typeof r.subagentPanel === 'boolean' ? r.subagentPanel : undefined)
     if (typeof v === 'boolean') mods[id] = v
   }
-  return { enabled: typeof r.enabled === 'boolean' ? r.enabled : true, mods, keepWarm: typeof r.keepWarm === 'boolean' ? r.keepWarm : true }
+  return { enabled: typeof r.enabled === 'boolean' ? r.enabled : true, mods, keepWarm: typeof r.keepWarm === 'boolean' ? r.keepWarm : true, commandMenu: typeof r.commandMenu === 'boolean' ? r.commandMenu : true }
 }
 
 // The legacy hindsightUrl (non-empty means remote) migrates into hindsight.url and mode; hindsightUrl mirrors the

@@ -92,8 +92,8 @@ describe('learn modes, budgets and records', () => {
     expect(trivialSession(userLines(3), { minUserTurns: 3, minTokens: 10 })).toBe('')
   })
 
-  it('suggest queues every lesson and records it as proposed, without writing it', async () => {
-    settings.mode = 'suggest'
+  it('review queue holds every lesson as proposed, without writing it', async () => {
+    settings.review = 'queue'
     const { svc, changes } = service()
     answers.push(one({}))
     const r = await svc.onConversationEnd(crewId, 's1')
@@ -153,18 +153,19 @@ describe('learn modes, budgets and records', () => {
     expect(changes.list()).toHaveLength(0)
   })
 
-  it('applies at most maxChangesPerReview, and queues the rest', async () => {
+  it('writes every lesson of a session to the project bank, whatever maxChangesPerReview says; a risky one waits', async () => {
     settings.maxChangesPerReview = 1
     const { svc, changes } = service()
     answers.push(
       JSON.stringify([
         { kind: 'convention', text: 'Cart totals are computed in cents', files: [], symbols: [] },
         { kind: 'pitfall', text: 'The tax rate is read from the store settings only', files: [], symbols: [] },
+        { kind: 'pitfall', text: 'Always run npm test before committing', files: [], symbols: [] },
       ]),
     )
     const r = await svc.onConversationEnd(crewId, 's1')
-    expect(r).toMatchObject({ written: 1, queued: 1 })
-    expect(changes.list().map((c) => c.status).sort()).toEqual(['applied', 'proposed'])
+    expect(r).toMatchObject({ written: 2, queued: 1 })
+    expect(changes.list().map((c) => c.status).sort()).toEqual(['applied', 'applied', 'proposed'])
   })
 
   it('a user-scope lesson goes to the Soul Bank, a project lesson to its project bank', async () => {

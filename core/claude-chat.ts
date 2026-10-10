@@ -527,12 +527,16 @@ export class ChatSession {
       return this.keepWarm.command(kw)
     }
     if (!this.ensureRunning()) return
+    // A message sent while a plan waits is the comment on it: the plan is denied with that text, which Claude reads first.
+    const planRequest = images.length ? null : this.mapper.pendingPlanRequest()
     this.push(
       this.mapper.noteUserMessage(
         text,
         images.map((i) => ({ mediaType: i.mediaType, dataUrl: `data:${i.mediaType};base64,${i.base64}` })),
+        planRequest !== null,
       ),
     )
+    if (planRequest && this.answer(planRequest, { kind: 'plan', approve: 'keep', message: text })) return
     const content: unknown[] = [...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mediaType, data: i.base64 } }))]
     if (text) content.push({ type: 'text', text })
     this.write({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: this.deps.sessionId })

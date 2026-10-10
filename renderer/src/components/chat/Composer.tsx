@@ -1,16 +1,20 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { KeepWarmLine } from './KeepWarmLine'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Check, ChevronDown, CornerDownLeft, Loader2, Plus, Sparkles, Square, Undo2, X } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Command, CornerDownLeft, Loader2, Plus, Sparkles, Square, Undo2, X } from 'lucide-react'
 import type { ChatState } from '@shared/claude-chat'
 import { describeEnhanceContext } from '@shared/prompt-enhance'
 import { bridge } from '@/lib/bridge'
 import { useSettings } from '@/lib/queries'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { applySuggestion, currentModel, filterCommands, highlightParts, modeLabel, modeOptions, nextMode, triggerAt, withLocalCommands, type Trigger } from './chatHelpers'
 import { EffortPopover } from './EffortPopover'
+import { setActivity } from './activityStore'
+import { CommandMenu } from './CommandMenu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { chatActions } from './useChat'
 
 interface Attachment {
@@ -21,7 +25,10 @@ interface Attachment {
 
 // The box starts as one line and grows up to this share of the tile's height, then scrolls.
 const MAX_SHARE = 0.4
-const toolbarBtn = 'text-muted-foreground hover:bg-accent hover:text-foreground inline-flex h-[26px] items-center gap-1 rounded-[7px] px-2 text-[13px] disabled:opacity-50'
+// Kept while the app runs so a chat bar keeps its text (and the last enhanced prompt) across project, Settings and Memory switches.
+const drafts = new Map<number, string>()
+const lastEnhanced = new Map<number, string>()
+const toolbarBtn ='text-muted-foreground hover:bg-accent hover:text-foreground inline-flex h-[26px] items-center gap-1 rounded-[7px] px-2 text-[13px] disabled:opacity-50'
 
 const readImage = (file: File): Promise<Attachment | null> =>
   new Promise((resolve) => {
@@ -65,7 +72,14 @@ interface Props {
 
 export function Composer({ scratchId, state, launchEffort, tileModel, disabled, onSent }: Props) {
   const qc = useQueryClient()
-  const [text, setText] = useState('')
+  const [text, setTextState] = useState(() => drafts.get(scratchId) ?? '')
+  const setText = (v: string | ((t: string) => string)) =>
+    setTextState((t) => {
+      const next = typeof v === 'function' ? v(t) : v
+      if (next) drafts.set(scratchId, next)
+      else drafts.delete(scratchId)
+      return next
+    })
   const [caret, setCaret] = useState(0)
   const [images, setImages] = useState<Attachment[]>([])
   const [files, setFiles] = useState<string[]>([])
@@ -73,6 +87,10 @@ export function Composer({ scratchId, state, launchEffort, tileModel, disabled, 
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [recall, setRecall] = useState(-1)
   const keepWarmOn = useSettings().data?.claudeMods.keepWarm ?? true
+  const commandMenuOn = useSettings().data?.claudeMods.commandMenu ?? true
+  const allCommands = withLocalCommands(state.commands, keepWarmOn)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPick, setMenuPick] = useState<string | null>(null)
   const [enhancing, setEnhancing] = useState(false)
   const [undo, setUndo] = useState<string | null>(null)
   const [phase, setPhase] = useState<'context' | 'rewrite'>('context')
@@ -127,7 +145,7 @@ export function Composer({ scratchId, state, launchEffort, tileModel, disabled, 
   }, [trigger?.kind, trigger?.query, scratchId])
   const hits: Array<{ key: string; insert: string; label: string; hint: string }> =
     trigger?.kind === '/'
-      ? commandHits.map((c) => ({ key: c.name, insert: c.name, label: `/${c.name}`, hint: c.terminalOnly ? 'Terminal only' : c.description }))
+      ? commandHits.map((c) => ({ key: c.name, insert: c.name, label: `/${c.name}`, hint: c.terminalOnly ? `Opens in Terminal · ${c.description}` : c.description }))
       : trigger?.kind === '@'
         ? files.map((f) => ({ key: f, insert: f, label: f, hint: '' }))
         : []
@@ -171,15 +189,18 @@ export function Composer({ scratchId, state, launchEffort, tileModel, disabled, 
     const run = ++enhanceRun.current
     setEnhancing(true)
     setPhase('context')
+    setActivity(scratchId, { phase: 'context' })
     try {
       const commands = state.commands.map((c) => ({ name: c.name, description: c.description }))
       const context = await bridge().invoke('aux:enhanceContext', original, scratchId).catch(() => undefined)
       if (run !== enhanceRun.current) return
       setPhase('rewrite')
+      setActivity(scratchId, { phase: 'rewrite', context: context ?? null })
       const out = await bridge().invoke('aux:enhancePrompt', original, commands, context)
       if (run !== enhanceRun.current) return
       setUsedNote(describeEnhanceContext(context))
       setText(out)
+      lastEnhanced.set(scratchId, out)
       setUndo(original)
       if (undoTimer.current) clearTimeout(undoTimer.current)
       undoTimer.current = setTimeout(() => setUndo(null), 15_000)
@@ -187,12 +208,13 @@ export function Composer({ scratchId, state, launchEffort, tileModel, disabled, 
     } catch (e) {
       if (run === enhanceRun.current) toast(`Could not enhance the prompt: ${e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '') : String(e)}`, true)
     } finally {
-      if (run === enhanceRun.current) setEnhancing(false)
+      if (run === enhanceRun.current) (setEnhancing(false), setActivity(scratchId, { phase: 'idle' }))
     }
   }
   const cancelEnhance = () => {
     enhanceRun.current++
     setEnhancing(false)
+    setActivity(scratchId, { phase: 'idle' })
   }
   const undoEnhance = () => {
     if (undo !== null) setText(undo)
@@ -202,6 +224,15 @@ export function Composer({ scratchId, state, launchEffort, tileModel, disabled, 
   const submit = async () => {
     const body = text.trim()
     if ((!body && images.length === 0) || disabled) return
+    // A command that runs only on Claude Code's screen opens the Commands menu on it instead of going to Claude.
+    const name = images.length === 0 ? /^\/([^\s/]+)/.exec(body)?.[1] : undefined
+    if (name && commandMenuOn && allCommands.some((c) => c.name === name && c.terminalOnly)) {
+      setText('')
+      setRecall(-1)
+      setMenuPick(name)
+      setMenuOpen(true)
+      return
+    }
     const ok = await chatActions.send(scratchId, body, images.map(({ mediaType, base64 }) => ({ mediaType, base64 })))
     if (!ok) return
     setText('')
@@ -261,15 +292,24 @@ export function Composer({ scratchId, state, launchEffort, tileModel, disabled, 
             <Loader2 className="size-3.5 animate-spin" aria-hidden /> {phase === 'context' ? 'Gathering context…' : 'Enhancing…'}
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={() => void enhance()}
-            disabled={!text.trim() || running}
-            title={running ? 'Wait for Claude to finish' : !text.trim() ? 'Write a prompt first, then enhance it' : 'Rewrite this prompt with the skills to load, what to ask first and when it is done'}
-            className="bg-accent/60 text-muted-foreground hover:bg-accent hover:text-foreground inline-flex h-[26px] items-center gap-1.5 rounded-full px-3 text-[13px] disabled:opacity-50 disabled:hover:bg-accent/60"
-          >
-            <Sparkles className="size-3.5" aria-hidden /> Enhance prompt
-          </button>
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <button
+                type="button"
+                onClick={() => void enhance()}
+                disabled={!text.trim() || running}
+                title={running ? 'Wait for Claude to finish' : !text.trim() ? 'Write a prompt first, then enhance it' : 'Rewrite this prompt with the skills to load, what to ask first and when it is done. Right-click to recover the last enhanced prompt'}
+                className="bg-accent/60 text-muted-foreground hover:bg-accent hover:text-foreground inline-flex h-[26px] items-center gap-1.5 rounded-full px-3 text-[13px] disabled:opacity-50 disabled:hover:bg-accent/60"
+              >
+                <Sparkles className="size-3.5" aria-hidden /> Enhance prompt
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem disabled={!lastEnhanced.has(scratchId)} onSelect={() => (setText(lastEnhanced.get(scratchId) ?? ''), area.current?.focus())}>
+                Recover last enhanced prompt
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         )}
         {undo !== null && !enhancing && (
           <button type="button" onClick={undoEnhance} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[13px] underline-offset-2 hover:underline">
@@ -362,6 +402,32 @@ export function Composer({ scratchId, state, launchEffort, tileModel, disabled, 
             </DropdownMenuContent>
           </DropdownMenu>
           <input ref={picker} type="file" multiple hidden onChange={(e) => (void addFiles([...(e.target.files ?? [])]), (e.target.value = ''))} />
+
+          {commandMenuOn && (
+            <Popover
+              open={menuOpen}
+              onOpenChange={(open) => {
+                setMenuOpen(open)
+                if (!open) setMenuPick(null)
+              }}
+            >
+              <PopoverTrigger className={cn(toolbarBtn, 'w-[26px] justify-center px-0')} aria-label="Claude commands" title="Claude Code commands">
+                <Command className="size-3.5" aria-hidden />
+              </PopoverTrigger>
+              <PopoverContent side="top" align="start" className="w-96 p-0">
+                <CommandMenu
+                  commands={allCommands}
+                  state={state}
+                  initial={menuPick}
+                  onInsert={(name) => {
+                    setText(`/${name} `)
+                    setMenuOpen(false)
+                    area.current?.focus()
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+          )}
 
           <DropdownMenu>
             <DropdownMenuTrigger className={toolbarBtn} aria-label={`Permission mode: ${modeLabel(state.permissionMode)}`} title="Permission mode (Shift+Tab)">

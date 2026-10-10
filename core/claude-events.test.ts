@@ -20,11 +20,11 @@ const mods = (on: Partial<Record<ModId, boolean>> = {}) => ({ ...MOD_DEFAULT_ENA
 
 describe('Claude mods config', () => {
   it('is null when Claude mods are off', () => {
-    expect(claudeModsConfig(paths, { enabled: false, mods: mods({ subagents: true }), keepWarm: true })).toBeNull()
+    expect(claudeModsConfig(paths, { enabled: false, mods: mods({ subagents: true }), keepWarm: true, commandMenu: true })).toBeNull()
   })
 
   it('registers the session and sub-agent events, and the Agent matcher, while the subagents mod is on', () => {
-    const cfg = claudeModsConfig(paths, { enabled: true, mods: mods({ subagents: true }), keepWarm: true })!
+    const cfg = claudeModsConfig(paths, { enabled: true, mods: mods({ subagents: true }), keepWarm: true, commandMenu: true })!
     expect(Object.keys(cfg.hooks).sort()).toEqual(['Notification', 'PostToolUse', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit'])
     expect(cfg.hooks.PreToolUse).toEqual([{ matcher: 'Agent', hooks: [{ type: 'command', command: expect.any(String) }] }])
     expect(cfg.hooks.SessionStart).toEqual([{ hooks: [{ type: 'command', command: expect.any(String) }] }])
@@ -32,7 +32,7 @@ describe('Claude mods config', () => {
   })
 
   it('registers no hooks for the native mods alone, but keeps the status line', () => {
-    const cfg = claudeModsConfig(paths, { enabled: true, mods: mods({ subagents: false, folderTracker: true }), keepWarm: true })!
+    const cfg = claudeModsConfig(paths, { enabled: true, mods: mods({ subagents: false, folderTracker: true }), keepWarm: true, commandMenu: true })!
     expect(cfg.hooks).toEqual({})
     expect(cfg.statusLine.command).toContain(' status ')
   })
@@ -43,7 +43,7 @@ describe('Claude mods config', () => {
       'ELECTRON_RUN_AS_NODE=1 "C:/Program Files/Operant 3/Operant 3.exe" "C:/app/scripts/op-event.mjs" hook "C:/Users/Dayle Frost/AppData/Roaming/Operant2/events"',
     )
     expect(modsCommand({ ...paths, eventsDir: 'C:/a$b' }, 'hook')).toBeNull()
-    expect(claudeModsConfig({ ...paths, script: 'C:/x"y.mjs' }, { enabled: true, mods: mods({ subagents: true }), keepWarm: true })).toBeNull()
+    expect(claudeModsConfig({ ...paths, script: 'C:/x"y.mjs' }, { enabled: true, mods: mods({ subagents: true }), keepWarm: true, commandMenu: true })).toBeNull()
   })
 })
 

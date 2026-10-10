@@ -56,7 +56,12 @@ interface Props {
   actions: Omit<ProjectMenuHandlers, 'moveTo'>
   // Icon buttons on the bottom row: Settings, the console toggle, the learning and provider usage badges, and the git chip.
   footer?: ReactNode
+  // Projects with a Claude tile that waits for the owner: their rows flash.
+  waiting?: ReadonlySet<number>
 }
+
+// A row that waits for the owner: amber, pulsing (steady amber when the system asks for reduced motion).
+const flash = 'bg-amber-400/20 text-foreground animate-pulse motion-reduce:animate-none'
 
 const PANEL_DEFAULT = 250
 const PANEL_MIN = 160
@@ -131,7 +136,7 @@ const tiny = 'text-muted-foreground hover:text-foreground size-5 shrink-0'
 const headerBtn = 'text-muted-foreground hover:text-foreground hover:bg-foreground/[.08] size-[22px] rounded-md [&_svg]:size-3'
 const ring = 'shadow-[inset_0_0_0_1.5px_var(--primary)]'
 
-export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, actions, footer }: Props) {
+export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, actions, footer, waiting }: Props) {
   // The Playground is pinned above the list; every list below works on the real projects only.
   const playground = allCrews.find((c) => c.kind === 'playground')
   const crews = allCrews.filter((c) => c.kind !== 'playground')
@@ -342,6 +347,8 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
             data-crew-row={crew.id}
             data-nav-current={isCurrent && focused ? 'true' : undefined}
             data-nav-label={`project:${crew.name}`}
+            data-waiting={waiting?.has(crew.id) ? 'true' : undefined}
+            title={waiting?.has(crew.id) ? 'Waiting for you' : undefined}
             onDragStart={(e) => {
               dragging.current = { kind: 'crew', id: crew.id }
               setDragId(dragging.current)
@@ -353,7 +360,7 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
             onDragEnd={endDrag}
             className={cn(
               'group relative flex h-6 items-center gap-[5px] rounded-md pr-1 pl-4 text-[13px] transition-colors',
-              isSelected ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
+              waiting?.has(crew.id) ? flash : isSelected ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
               over === `crew:${crew.id}` && dragId?.id !== crew.id && 'ring-primary ring-1',
               dragId?.kind === 'crew' && dragId.id === crew.id && 'opacity-50',
               isCurrent && focused && ring,
@@ -416,9 +423,10 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
         role="treeitem"
         aria-selected={isSelected}
         data-playground-row={pg.id}
+        data-waiting={waiting?.has(pg.id) ? 'true' : undefined}
         className={cn(
           'group relative flex h-7 items-center gap-[5px] rounded-md pr-1 pl-2 text-[13px] transition-colors',
-          isSelected ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
+          waiting?.has(pg.id) ? flash : isSelected ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
         )}
       >
         <button type="button" onClick={() => onSelect(pg.id)} title={pg.folder} className="flex h-full min-w-0 flex-1 items-center gap-[6px] text-left outline-none">
