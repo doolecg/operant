@@ -194,7 +194,7 @@ export const DEFAULT_LEARN_SETTINGS: LearnSettings = {
   dailyUsdBudget: 0,
   onLimit: 'stop',
   minUserTurns: 3,
-  minTokens: 4000,
+  minTokens: 2000,
 }
 
 // A recorded automatic change (or a proposal waiting for review): what it was, what it became, and why.

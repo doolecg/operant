@@ -1,9 +1,10 @@
 import { useMemo } from 'react'
-import { GitBranch } from 'lucide-react'
+import { Brain, GitBranch, Loader2 } from 'lucide-react'
 import type { ChatItem } from '@shared/claude-chat'
+import type { LearnStatus } from '@shared/learn'
 import { cn } from '@/lib/utils'
 import { useChatState } from '@/components/chat/useChat'
-import { useGitInfo, useRepoStatus } from '@/lib/queries'
+import { useGitInfo, useLearnStatus, useRepoStatus } from '@/lib/queries'
 import { legendFiles, rightNowHeadline, touchedFiles, type TouchedFile } from './rightNow'
 
 // The dot colours of the legend and the file list: purple read, orange edited, yellow not committed in git.
@@ -21,6 +22,16 @@ function FileRow({ file }: { file: TouchedFile }) {
   )
 }
 
+// The learning row: what the learn step is doing now, else how the last one ended.
+function learnLine(s: LearnStatus): string {
+  if (s.running) return 'Learning from this session…'
+  const r = s.lastRun
+  if (!r) return 'Memory: nothing learned yet'
+  if (r.error) return `Memory: ${r.error}`
+  const queued = r.queued > 0 ? `, ${r.queued} to review` : ''
+  return `Learned ${r.extracted} ${r.extracted === 1 ? 'lesson' : 'lessons'}: ${r.written} saved${queued}`
+}
+
 // The "Right now" card at the top of the Agents panel. Terminal tiles show only the branch: their conversation is not in
 // the chat stream, so the headline and the file list are left out.
 export function RightNowCard({ tileId, crewId, chat }: { tileId: number; crewId: number | null; chat: boolean }) {
@@ -30,6 +41,7 @@ export function RightNowCard({ tileId, crewId, chat }: { tileId: number; crewId:
   const gitPaths = useMemo(() => (status?.files ?? []).map((f) => f.path), [status?.files])
   const items: ChatItem[] = state?.items ?? []
   const rn = useMemo(() => (state ? rightNowHeadline(items, state.turn) : null), [state, items])
+  const learn = useLearnStatus(crewId ?? undefined).data
   const files = useMemo(() => touchedFiles(items, gitPaths), [items, gitPaths])
   const legend = legendFiles(files)
   const showHeadline = chat && !!rn
@@ -70,6 +82,12 @@ export function RightNowCard({ tileId, crewId, chat }: { tileId: number; crewId:
           ) : (
             <span className="text-muted-foreground shrink-0">clean, nothing changed</span>
           )}
+        </div>
+      )}
+      {learn?.enabled && (
+        <div role="status" aria-label="Learning now" className={cn('flex items-center gap-2 text-xs', chat && rn ? 'border-border mt-3 border-t pt-3' : 'mt-3')}>
+          {learn.running ? <Loader2 aria-hidden className="text-primary size-3.5 shrink-0 animate-spin" /> : <Brain aria-hidden className="text-muted-foreground size-3.5 shrink-0" />}
+          <span className="min-w-0 flex-1 truncate">{learnLine(learn)}</span>
         </div>
       )}
       {chat && rn && (

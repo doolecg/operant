@@ -9,7 +9,6 @@ import type { ScratchView } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { OperatorTerminal } from '@/components/dashboard/OperatorTerminal'
 import { ChatView } from '@/components/chat/ChatView'
-import { LearningPill } from '@/components/chat/LearningPill'
 import { ChatHeaderControls, ChatStateBadge, ViewSwitch } from '@/components/chat/ChatHeader'
 import { CLI_SHORT, cliBlocked } from '@/lib/capabilities'
 import { call, useCapabilities, useCrews, useSettings } from '@/lib/queries'
@@ -89,13 +88,11 @@ export function TerminalView({ crewId, scratch, active, onCloseScratch, onStart 
       return (
         <div className="relative h-full min-h-0">
           <ChatView scratchId={t.scratch.scratchId} launchEffort={effortOf(t)} tileModel={views?.[t.scratch.scratchId]?.model ?? ''} onTerminal={() => void switchView(t, 'terminal')} />
-          <LearningPill />
         </div>
       )
     return (
       <div className="relative h-full min-h-0">
         <OperatorTerminal sessionKey={`scratch:${t.scratch.scratchId}`} autoFocus={false} crewId={crewId} cli={t.scratch.kind} />
-        <LearningPill />
       </div>
     )
   }

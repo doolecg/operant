@@ -92,6 +92,11 @@ describe('learn modes, budgets and records', () => {
     expect(trivialSession(userLines(3), { minUserTurns: 3, minTokens: 10 })).toBe('')
   })
 
+  it('the default token minimum fits inside the 12,000-character transcript tail the step reads', () => {
+    const tail = `${userLines(3)}\n${'x'.repeat(12_000)}`.slice(-12_000)
+    expect(trivialSession(tail, { ...DEFAULT_LEARN_SETTINGS, minUserTurns: 0 })).toBe('')
+  })
+
   it('review queue holds every lesson as proposed, without writing it', async () => {
     settings.review = 'queue'
     const { svc, changes } = service()
