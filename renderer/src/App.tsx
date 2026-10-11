@@ -246,10 +246,10 @@ export function App() {
           <ViewSwitcher mode={mode} onMode={(m) => (setPage('dashboard'), setMode(m))} menu={tier >= 7} />
           {mode === 'terminal' && tier < 7 && <CliSelect />}
           {mode === 'terminal' && tier >= 7 && cliMenu}
-          {tb?.mediaControls && tier < 5 && <MediaBar enabled size={tb.mediaSize} tier={tier} />}
         </div>
         <div className="flex shrink-0 justify-center">{tb && tier < 6 && <ClockPill format={tb.clockFormat} seconds={tb.clockSeconds} date={tb.clockDate && tier < 2} />}</div>
         <div className="flex items-center justify-end gap-1.5">
+          {tb?.mediaControls && tier < 5 && <MediaBar enabled size={tb.mediaSize} tier={tier} />}
           <ActivityMenu crewId={crewId} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -278,6 +278,7 @@ export function App() {
             onNewCrew={(groupId) => (setNewCrewGroup(groupId), setNewCrew(true))}
             actions={projectMenu}
             waiting={waitingCrews}
+            onShowTerminal={() => setMode('terminal')}
             footer={
               <>
                 <Tooltip>

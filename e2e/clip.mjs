@@ -1,29 +1,28 @@
 // Clip e2e: no terminal in a Terminal view tile draws a row past its tile's visible body, the last whole row is visible,
-// and a Claude terminal shows as many rows as its PTY. A Claude tile paints a footer on its last row (fixtures/bin/
-// fake-claude.mjs with FAKE_CLAUDE_PAINT), and the fixture logs the size it painted, which is the PTY's size.
+// and a Claude tile (the real claude on Haiku, no turn is sent) is measured like any other. The old check that the xterm
+// rows equal the PTY rows and that Claude's footer row is visible needed a scripted painter; the real
+// claude's screen is not under our control, so those two are not checked.
 // Runs over window sizes and UI scales, a split of two tiles, a fullscreen toggle and the master layout, with the Claude
 // Mods panel open beside them. Runs in the background with throwaway data.
 // Usage: node e2e/clip.mjs [phase] [outDir]  (phase names the screenshots: clip-<phase>-*.png)
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const phase = process.argv[2] ?? 'after'
 const outDir = resolve(process.argv[3] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-clip-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-clip-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-clip-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-clip-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 writeFileSync(join(project, 'app.ts'), 'export const a = 1\n')
-const paintLog = join(claudeDir, 'fake-claude-paint.log')
-// The PTY's rows as the Claude fixture last painted them (one "rows cols" line per size it drew).
-const ptyRows = () => (existsSync(paintLog) ? Number(readFileSync(paintLog, 'utf8').trim().split('\n').pop().split(' ')[0]) : null)
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir, FAKE_CLAUDE_PAINT: '1' }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir })
 
 const SIZES = [
   [1400, 900],
@@ -54,29 +53,24 @@ try {
           const rowEls = [...x.querySelectorAll('.xterm-rows > div')]
           const screen = r(x.querySelector('.xterm-screen'))
           const bodyBottom = r(body).bottom
-          const footer = rowEls.findIndex((e) => e.textContent.includes('auto mode on'))
           return {
             tile: tile?.getAttribute('aria-label') ?? '?',
-            claude: footer >= 0,
+            claude: (tile?.getAttribute('aria-label') ?? '').startsWith('Claude:'),
             rows: rowEls.length,
             cell: rowEls[0] ? r(rowEls[0]).height : 0,
             overflowPx: Math.max(0, screen.bottom - bodyBottom),
             slackPx: contentH - screen.height,
-            footerRow: footer,
-            footerClipPx: footer >= 0 ? Math.max(0, r(rowEls[footer]).bottom - bodyBottom) : 0,
           }
         })
     })
 
   // The first problem a terminal shows, or null when it is clean.
-  const problemOf = (t, pty) => {
+  const problemOf = (t) => {
     if (t.overflowPx > 0.5) return `rows draw ${t.overflowPx.toFixed(1)}px past the tile body`
-    if (t.footerClipPx > 0.5) return `footer clipped by ${t.footerClipPx.toFixed(1)}px`
-    if (t.claude && pty !== t.rows) return `xterm ${t.rows} rows vs PTY ${pty}`
     if (t.slackPx >= t.cell + 0.5) return `${t.slackPx.toFixed(1)}px unused, a whole row would fit`
     return null
   }
-  const judge = (list) => list.map((t) => ({ t, p: problemOf(t, t.claude ? ptyRows() : null) })).filter((x) => x.p)
+  const judge = (list) => list.map((t) => ({ t, p: problemOf(t) })).filter((x) => x.p)
 
   // Waits for the PTY to catch up with the new size (up to 8s), then returns the terminals and their problems.
   const settle = async () => {
@@ -99,6 +93,7 @@ try {
   await page.locator('[data-crew-row]').getByText('clip', { exact: true }).click({ button: 'right', position: { x: 4, y: 4 } })
   await page.getByRole('menuitem', { name: 'New Claude terminal here' }).click()
   await page.getByRole('region', { name: /^Claude: / }).waitFor({ timeout: 20_000 })
+  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Terminal', exact: true }).click() // new Claude tiles open in Chat
   await page.keyboard.press('Alt+Shift+T') // a shell beside it: a split of two tiles
   await page.locator('[data-tile]').nth(1).waitFor({ timeout: 20_000 })
   await page.locator('.xterm').nth(1).waitFor({ timeout: 20_000 })
@@ -108,7 +103,7 @@ try {
     const { list, problems } = await settle()
     const claude = list.filter((t) => t.claude).length
     console.log(`${label}: terminals ${list.length} (claude ${claude}) rows ${list.map((t) => t.rows).join(' ')} problems ${problems.length}`)
-    for (const { t, p } of problems) console.log(`  ${t.tile}: ${p} (rows ${t.rows}, PTY ${ptyRows() ?? '-'}, overflow ${t.overflowPx.toFixed(1)}px, slack ${t.slackPx.toFixed(1)}px)`)
+    for (const { t, p } of problems) console.log(`  ${t.tile}: ${p} (rows ${t.rows}, overflow ${t.overflowPx.toFixed(1)}px, slack ${t.slackPx.toFixed(1)}px)`)
     failures.push(...problems.map((x) => `${label} ${x.t.tile}: ${x.p}`))
     if (shotName) await shot(shotName)
   }
@@ -122,7 +117,7 @@ try {
     }
   }
 
-  // Fullscreen: the Claude tile fills the surface and keeps its last row inside the tile; then it is restored.
+  // Fullscreen: the Claude tile fills the surface and keeps its rows inside the tile; then it is restored.
   await setScale(1.25)
   await win([1920, 1080])
   await page.waitForTimeout(500)

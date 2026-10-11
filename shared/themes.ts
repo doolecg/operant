@@ -375,10 +375,12 @@ export interface Appearance {
   accent: string
   // Terminals take the theme's colours; off keeps the fixed dark terminal.
   terminalFollowsTheme: boolean
+  // A fine grain laid over the whole window, 0 (off) to 100.
+  noise: number
   customThemes: CustomTheme[]
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { theme: DEFAULT_THEME, accent: '', terminalFollowsTheme: true, customThemes: [] }
+export const DEFAULT_APPEARANCE: Appearance = { theme: DEFAULT_THEME, accent: '', terminalFollowsTheme: true, noise: 25, customThemes: [] }
 
 export function sanitizeAppearance(raw: unknown): Appearance {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
@@ -388,6 +390,7 @@ export function sanitizeAppearance(raw: unknown): Appearance {
     theme: known(r.theme) ? r.theme : DEFAULT_APPEARANCE.theme,
     accent: normalizeHex(r.accent) ?? '',
     terminalFollowsTheme: typeof r.terminalFollowsTheme === 'boolean' ? r.terminalFollowsTheme : DEFAULT_APPEARANCE.terminalFollowsTheme,
+    noise: typeof r.noise === 'number' && Number.isFinite(r.noise) ? Math.round(Math.min(100, Math.max(0, r.noise))) : DEFAULT_APPEARANCE.noise,
     customThemes,
   }
 }

@@ -9,6 +9,7 @@ import {
   FolderOpen,
   FolderPlus,
   GripVertical,
+  Globe,
   MoreHorizontal,
   Network,
   Plus,
@@ -44,6 +45,7 @@ import {
 import { usePanelWidth } from '@/lib/layout'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { openBrowser } from '@/components/browser/useBrowser'
 import { gitSummary } from '@/components/topbar/GitChip'
 import { ProjectMenuContent, type ProjectMenuHandlers } from './ProjectMenu'
 
@@ -58,6 +60,8 @@ interface Props {
   footer?: ReactNode
   // Projects with a Claude tile that waits for the owner: their rows flash.
   waiting?: ReadonlySet<number>
+  // Called when a row button opens something that lives in the Terminal view (the browser), so the view can switch to it.
+  onShowTerminal?: () => void
 }
 
 // A row that waits for the owner: amber, pulsing (steady amber when the system asks for reduced motion).
@@ -136,7 +140,7 @@ const tiny = 'text-muted-foreground hover:text-foreground size-5 shrink-0'
 const headerBtn = 'text-muted-foreground hover:text-foreground hover:bg-foreground/[.08] size-[22px] rounded-md [&_svg]:size-3'
 const ring = 'shadow-[inset_0_0_0_1.5px_var(--primary)]'
 
-export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, actions, footer, waiting }: Props) {
+export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, actions, footer, waiting, onShowTerminal }: Props) {
   // The Playground is pinned above the list; every list below works on the real projects only.
   const playground = allCrews.find((c) => c.kind === 'playground')
   const crews = allCrews.filter((c) => c.kind !== 'playground')
@@ -400,6 +404,9 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
               <Button variant="ghost" size="icon" className={tiny} aria-label={`New shell in ${crew.name}`} title="New shell here" onClick={() => actions.newShell(crew)}>
                 <SquareTerminal className="size-3.5" />
               </Button>
+              <Button variant="ghost" size="icon" className={tiny} aria-label={`Open browser in ${crew.name}`} title="Open browser here" onClick={() => (onSelect(crew.id), onShowTerminal?.(), void openBrowser(crew.id).catch(failed))}>
+                <Globe className="size-3.5" />
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className={tiny} aria-label={`More actions for ${crew.name}`} title="More">
@@ -485,7 +492,7 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
           onDrop={(e) => dropOnGroup(e, g)}
           onDragEnd={endDrag}
           className={cn(
-            'group text-muted-foreground relative mt-2 flex h-6 cursor-pointer items-center gap-1 rounded-md pr-1 pl-4 text-[10.5px] font-semibold tracking-[.06em] uppercase',
+            'group text-foreground relative mt-2 flex h-7 cursor-pointer items-center gap-1 rounded-md pr-1 pl-4 text-[13px] font-bold',
             over === `group:${g.id}` && 'ring-primary ring-1',
             dragId?.kind === 'group' && dragId.id === g.id && 'opacity-50',
             isCurrent && focused && ring,
@@ -562,9 +569,9 @@ export function Sidebar({ crews: allCrews, selected, onSelect, onNewCrew, action
           </div>
         </div>
         {!g.collapsed && (
-          <div className="space-y-px pt-px">
+          <div className="border-border/60 ml-5 space-y-px border-l pt-px pl-1">
             {members.map(crewRow)}
-            {members.length === 0 && <p className="text-muted-foreground px-4 py-1 text-xs">Empty. Drag a project here.</p>}
+            {members.length === 0 && <p className="text-muted-foreground px-3 py-1 text-xs">Empty. Drag a project here.</p>}
           </div>
         )}
       </section>

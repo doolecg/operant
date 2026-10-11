@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -88,6 +88,7 @@ describe('Operant: Chat view tiles', () => {
       transcriptFile: (_cwd, id) => join(bin, `${id}.jsonl`),
       cliServer: () => cli,
       scheduler,
+      now: () => Date.now(),
       learnModel: async () => '[]',
       learn: { learnNow: async (crewId: number, sessionId: string | null) => void learned.push([crewId, sessionId]) } as unknown as LearnService,
       launch: { platform: 'linux', launchDir: '/data/launch', rolesDir: '/data/roles', cliDir: '/app/cli', operantNode: '/app/operant', baseEnv: { PATH: bin }, writer: { mkdir: () => {}, writeFile: () => {} } },
@@ -204,8 +205,12 @@ describe('Operant: Chat view tiles', () => {
     const sessionId = store.getScratch(t.id)!.sessionId!
     lastChild().child.out({ type: 'system', subtype: 'init', session_id: sessionId, model: 'claude-opus-5-5', permissionMode: 'default' })
 
+    const exits: { switching?: boolean }[] = []
+    op.on('scratch:exit', (e) => void exits.push(e))
     const status = await op.handlers['scratch:setView'](t.id, 'terminal')
     expect(status).toMatchObject({ running: true, view: 'terminal', sessionId })
+    // The chat process ended for the switch: the tile must not be shown as exited.
+    expect(exits).toEqual([expect.objectContaining({ switching: true })])
     const cmd = ptys[0]!.written.join('')
     expect(cmd).toContain(`--session-id ${sessionId}`)
     expect(cmd).not.toContain('--resume')
@@ -246,6 +251,75 @@ describe('Operant: Chat view tiles', () => {
     const texts = (await op.handlers['chat:snapshot'](t.id)).items.map((i) => (i.kind === 'user' ? i.text : i.kind))
     expect(texts).toContain('first question')
     expect(children[1]!.spawn.args).toContain('--session-id')
+  })
+
+  describe('idle learn', () => {
+    const MIN = 60_000
+    const say = (t: { id: number }, line: unknown) => appendFileSync(join(bin, `${store.getScratch(t.id)!.sessionId}.jsonl`), `${JSON.stringify(line)}\n`)
+    const assistant = (text: string) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+    const started = () => {
+      const t = makeTile()
+      op.startScratch(t.id)
+      return t
+    }
+    beforeEach(() => vi.useFakeTimers({ toFake: ['Date'] }))
+    afterEach(() => vi.useRealTimers())
+
+    it('learns once after the transcript has been quiet for the idle minutes, and again after it grows', () => {
+      const t = started()
+      say(t, assistant('Working on it'))
+      op.pollUsage()
+      vi.advanceTimersByTime(4 * MIN)
+      op.pollUsage()
+      expect(learned).toEqual([])
+      vi.advanceTimersByTime(MIN)
+      op.pollUsage()
+      op.pollUsage()
+      expect(learned).toEqual([[store.getScratch(t.id)!.crewId, store.getScratch(t.id)!.sessionId]])
+      say(t, assistant('More work'))
+      op.pollUsage()
+      vi.advanceTimersByTime(5 * MIN)
+      op.pollUsage()
+      expect(learned).toHaveLength(2)
+    })
+
+    // A turn through the Chat view: the message starts it (working), the result event finishes it (idle).
+    const flush = () => op.chat.flush()
+    const turn = async (t: { id: number }, finish: boolean) => {
+      const { child } = lastChild()
+      child.out({ type: 'system', subtype: 'init', session_id: store.getScratch(t.id)!.sessionId, model: 'claude-opus-5-5', permissionMode: 'default' })
+      op.handlers['chat:send'](t.id, { text: 'go' })
+      say(t, assistant('working'))
+      await flush()
+      if (finish) {
+        child.out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 5, total_cost_usd: 0.01 })
+        await flush()
+      }
+    }
+
+    it('learns a few seconds after a turn finishes, without waiting the idle minutes', async () => {
+      const t = started()
+      await turn(t, true)
+      op.pollUsage()
+      expect(learned).toEqual([])
+      vi.advanceTimersByTime(6_000)
+      op.pollUsage()
+      expect(learned).toHaveLength(1)
+    })
+
+    it('does not learn while a turn is still working, or when idle learning is off', async () => {
+      const t = started()
+      await turn(t, false)
+      op.pollUsage()
+      vi.advanceTimersByTime(10 * MIN)
+      op.pollUsage()
+      expect(learned).toEqual([])
+      lastChild().child.out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 5, total_cost_usd: 0.01 })
+      op.handlers['settings:set']({ learn: { idleMinutes: 0 } })
+      vi.advanceTimersByTime(10 * MIN)
+      op.pollUsage()
+      expect(learned).toEqual([])
+    })
   })
 
   it('stops chat processes on quit', async () => {

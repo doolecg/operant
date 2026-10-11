@@ -1,17 +1,20 @@
 // MCP servers e2e: the MCP page (status badges, add, edit, disable, remove with confirmation, secrets masked).
-// Runs in the background with throwaway data and fake claude and opencode CLIs (e2e/fixtures/bin).
+// Runs in the background with throwaway data, the real claude and the fake opencode CLI (e2e/fixtures/bin).
 // Usage: node e2e/mcp.mjs [outDir]  (default docs/specs/screenshots)
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-mcp-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-mcp-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-mcp-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-mcp-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 const ocFile = join(dataDir, 'opencode.json')
 const SECRET = 'sk-e2e-secret-123456'
 
@@ -33,9 +36,7 @@ const runtimesFile = join(dataDir, 'runtimes.json')
 const setRuntimes = (runtimes) => writeFileSync(runtimesFile, JSON.stringify(runtimes))
 setRuntimes({ uvx: false, npx: true, codegraph: true })
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_E2E_RUNTIMES: runtimesFile, OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir, OPENCODE_CONFIG: ocFile }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir, extra: { OPERANT_E2E_RUNTIMES: runtimesFile, OPENCODE_CONFIG: ocFile } })
 const packaged = process.env.OPERANT_E2E_EXE
 
 let app = null

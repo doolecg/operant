@@ -2,21 +2,22 @@
 // restore. Each time the root is the size of the viewport (within 1px) and each open terminal fills its tile to within
 // one character cell. Runs in the background with throwaway data. Usage: node e2e/fill.mjs [outDir]  (default docs/specs/screenshots)
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-fill-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-fill-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-fill-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-fill-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 writeFileSync(join(project, 'app.ts'), 'export const a = 1\n')
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir })
 
 // The automatic scale for a window content size, as renderer/src/lib/uiScale.ts computes it.
 const autoScale = (w, h) => Math.round(Math.min(1.75, Math.max(1, Math.min(w / 1600, h / 900))) * 20) / 20

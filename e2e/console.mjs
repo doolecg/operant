@@ -1,26 +1,27 @@
-// Console e2e: a background command (the fake claude's `mcp list`) logs into the in-app console, the drawer opens from the
+// Console e2e: a background command (the claude `mcp list`) logs into the in-app console, the drawer opens from the
 // header icon and the rebindable key, filters by source, searches, clears, and nothing secret shows. Runs in the background
 // with throwaway data. Usage: node e2e/console.mjs [outDir]  (default docs/specs/screenshots)
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-console-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-console-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-console-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-console-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 const SECRET = 'sk-e2e-secret-123456'
 writeFileSync(
   join(claudeDir, '.claude.json'),
   JSON.stringify({ mcpServers: { 'files-srv': { type: 'stdio', command: 'npx', args: ['files-mcp', `--api-key=${SECRET}`], env: { API_KEY: SECRET } } } }),
 )
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir })
 const packaged = process.env.OPERANT_E2E_EXE
 
 let app = null
@@ -37,7 +38,7 @@ try {
   await page.getByRole('heading', { name: 'console-demo' }).waitFor()
   assert.equal(await page.getByTestId('console-drawer').count(), 0, 'the drawer starts closed')
 
-  // A background command: the MCP status check runs the (fake) claude CLI and its output must land in the console.
+  // A background command: the MCP status check runs the real claude CLI and its output must land in the console.
   await inv('mcp:list', crew.id, true)
   let lines = []
   for (const end = Date.now() + 15_000; Date.now() < end; await page.waitForTimeout(250)) {
@@ -45,7 +46,7 @@ try {
     if (lines.some((l) => l.source === 'mcp' && l.stream === 'info' && /exited/.test(l.text))) break
   }
   assert.ok(lines.some((l) => l.source === 'mcp' && l.stream === 'info' && /^started:/.test(l.text)), 'a started line for the mcp process')
-  assert.ok(lines.some((l) => l.source === 'mcp' && l.stream === 'stdout'), 'a fake process output line')
+  assert.ok(lines.some((l) => l.source === 'mcp' && l.stream === 'stdout'), 'a process output line')
   assert.ok(!JSON.stringify(lines).includes(SECRET), 'no secret reaches the console')
 
   // The keybind opens it; the sidebar footer's Console button does the same.

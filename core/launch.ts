@@ -81,6 +81,8 @@ export interface LaunchContext {
   mods?: Record<string, unknown>
   // The plugin folders of the enabled native Claude mods (plugin/mods/<id>), one --plugin-dir each.
   modPlugins?: string[]
+  // The embedded browser's MCP endpoint. The config file holds no secret: Claude expands ${OPERANT_TOKEN} from the tile's env.
+  browserMcp?: { url: string }
 }
 
 const MODEL_RE = /^[a-z0-9][a-z0-9.\-[\]]{0,63}$/
@@ -189,6 +191,13 @@ export const capFlag = (cap: number): string => (cap === 1_000_000 ? '1M' : `${M
 // Haiku 4.5 is the only Claude model without --effort; Haiku 5.5 takes it.
 export const noEffort = (model: string): boolean => model.startsWith('claude-haiku-4')
 
+export const E2E_CLAUDE_MODEL = 'claude-haiku-5-5'
+
+// e2e runs use the real Claude CLI, always on Haiku 5.5 (cheap); anywhere else the model is unchanged.
+export function e2eClaudeModel<T extends string | undefined>(model: T, env: NodeJS.ProcessEnv = process.env): T | typeof E2E_CLAUDE_MODEL {
+  return env.OPERANT_E2E ? E2E_CLAUDE_MODEL : model
+}
+
 export const shellOf = (ctx: Pick<LaunchContext, 'shell' | 'platform'>): ShellKind => ctx.shell ?? (ctx.platform === 'win32' ? 'powershell' : 'sh')
 
 const CMD_UNSUPPORTED = 'cmd.exe is not supported for launching agents: set Settings > Shell to PowerShell or sh'
@@ -248,7 +257,7 @@ function claudeCore(parts: ClaudeParts, ctx: LaunchContext): LaunchResult {
   assertShell(ctx)
   const p = pathOf(ctx)
   const s = parts.settings
-  const model = checkModel(s.model)
+  const model = e2eClaudeModel(checkModel(s.model))
   const effort = checkEffort(s.effort)
   const tools = checkTools(s.tools)
   const ttl = checkTtl(s.cacheTtl === 'auto' ? (ctx.defaultCacheTtl ?? 'auto') : s.cacheTtl)
@@ -284,6 +293,15 @@ function claudeCore(parts: ClaudeParts, ctx: LaunchContext): LaunchResult {
     add('--append-system-prompt-file', parts.guidance.path)
   }
   if (cap) add('--autocompact', capFlag(cap))
+  if (ctx.browserMcp && (!supported || supported.has('--mcp-config'))) {
+    const url = checkPath('browserMcp', ctx.browserMcp.url)
+    const f: LaunchFile = {
+      path: p.join(ctx.launchDir, 'browser-mcp.json'),
+      content: stable({ mcpServers: { 'operant-browser': { type: 'http', url, headers: { Authorization: 'Bearer ${OPERANT_TOKEN}' } } } }),
+    }
+    files.push(f)
+    add('--mcp-config', f.path)
+  }
   add('--plugin-dir', ctx.pluginDir)
   for (const dir of ctx.modPlugins ?? []) add('--plugin-dir', checkPath('modPlugin', dir))
   if (parts.resume) add('--resume', sessionId)
@@ -312,7 +330,12 @@ export function buildScratchLaunch(scratch: ScratchTerminal, ctx: LaunchContext,
   if (scratch.agent === 'shell') return { file: null, args: [], env: {}, files: [], cwd }
   assertShell(ctx)
   if (scratch.agent === 'codex') return { file: 'codex', args: ['-m', checkModel(scratch.model)], env: operantEnv(ctx), files: [], cwd }
-  if (scratch.agent === 'opencode') return { file: 'opencode', args: [], env: { ...operantEnv(ctx), OPENCODE_CLI_CONFIG_CONTENT: OPENCODE_CLI_OVERLAY }, files: [], cwd }
+  if (scratch.agent === 'opencode') {
+    const env: Record<string, string> = { ...operantEnv(ctx), OPENCODE_CLI_CONFIG_CONTENT: OPENCODE_CLI_OVERLAY }
+    const config = opencodeConfigContent(ctx)
+    if (config) env.OPENCODE_CONFIG_CONTENT = config
+    return { file: 'opencode', args: [], env, files: [], cwd }
+  }
   checkId('scratchId', scratch.id)
   const preset = opts.preset ?? null
   const settings: LaunchSettings = {
@@ -336,6 +359,26 @@ export function buildScratchLaunch(scratch: ScratchTerminal, ctx: LaunchContext,
 // OpenCode's TUI in a tile: its own session tabs are off (OpenCode merges this overlay over the owner's cli.json).
 const OPENCODE_CLI_OVERLAY = JSON.stringify({ tabs: { mode: 'off' } })
 
+// OpenCode's config overlay (OPENCODE_CONFIG_CONTENT): the embedded browser as a remote MCP server. The token never reaches
+// disk or this string: OpenCode expands {env:OPERANT_TOKEN} from the tile's env. `base` is an existing overlay to merge into.
+export function opencodeConfigContent(ctx: Pick<LaunchContext, 'browserMcp'>, base?: string): string | null {
+  if (!ctx.browserMcp) return base ?? null
+  const url = checkPath('browserMcp', ctx.browserMcp.url)
+  let cfg: Record<string, unknown> = {}
+  if (base) {
+    try {
+      const parsed: unknown = JSON.parse(base)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) cfg = parsed as Record<string, unknown>
+    } catch {
+      return base
+    }
+  }
+  const mcp = cfg.mcp && typeof cfg.mcp === 'object' && !Array.isArray(cfg.mcp) ? (cfg.mcp as Record<string, unknown>) : {}
+  const servers = mcp.servers && typeof mcp.servers === 'object' && !Array.isArray(mcp.servers) ? (mcp.servers as Record<string, unknown>) : {}
+  const entry = { type: 'remote', url, headers: { Authorization: 'Bearer {env:OPERANT_TOKEN}' }, disabled: false }
+  return JSON.stringify({ ...cfg, mcp: { ...mcp, servers: { ...servers, 'operant-browser': entry } } })
+}
+
 // A one-shot model call (learn, skill drafts): one non-interactive `claude -p` run whose events stream as JSON lines.
 // The prompt is written to its stdin, never put on the command line.
 export interface RunLaunch {
@@ -352,8 +395,9 @@ export function buildClaudeRunLaunch(
   const add = (flag: string, value: string) => {
     if (!ctx.supported || ctx.supported.has(flag)) args.push(flag, value)
   }
-  if (run.model) add('--model', checkModel(run.model))
-  if (run.effort && !noEffort(run.model ?? '')) add('--effort', checkEffort(run.effort))
+  const model = e2eClaudeModel(run.model ? checkModel(run.model) : undefined)
+  if (model) add('--model', model)
+  if (run.effort && !noEffort(model ?? '')) add('--effort', checkEffort(run.effort))
   if (run.permissionMode && run.permissionMode !== 'default') add('--permission-mode', checkMode(run.permissionMode))
   // A settings file that turns every hook off (the user's and plugins'); quoted because the spawn goes through a shell.
   if (run.settingsFile) add('--settings', `"${checkPath('settingsFile', run.settingsFile)}"`)
@@ -400,5 +444,7 @@ export function buildChatLaunch(scratch: ScratchTerminal, ctx: LaunchContext, op
   add('--forward-subagent-text')
   if (!supported || supported.has('--permission-prompt-tool') || supported.has('--permission-prompts')) stream.push('--permission-prompt-tool', 'stdio')
   if (opts.preset?.permissionMode === 'bypassPermissions') add('--allow-dangerously-skip-permissions')
+  // Chat starts in Auto mode unless a preset sets its own.
+  if (!base.args.includes('--permission-mode')) add('--permission-mode', 'auto')
   return { ...base, args: [...stream, ...base.args] }
 }

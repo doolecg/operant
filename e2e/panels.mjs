@@ -4,16 +4,19 @@
 // Usage: node e2e/panels.mjs [outDir]  (default docs/specs/screenshots)
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-panels-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-panels-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-panels-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-panels-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 writeFileSync(join(project, 'app.ts'), 'export const a = 1\n')
 // A git repo, so the top bar shows the branch chip that opens the Git popout.
 const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: project, stdio: 'ignore', windowsHide: true })
@@ -22,9 +25,7 @@ git('add', '.')
 git('commit', '-qm', 'init')
 writeFileSync(join(project, 'notes.txt'), 'changed\n')
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir })
 
 let app = null
 let page = null

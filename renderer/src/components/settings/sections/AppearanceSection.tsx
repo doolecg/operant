@@ -345,6 +345,30 @@ export function AppearanceSection() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Texture</CardTitle>
+          <CardDescription>A fine grain over the whole window, like Zen. Applies live.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Row label="Noise" hint="0 turns the grain off." htmlFor="appearance-noise">
+            <div className="flex items-center gap-2">
+              <input
+                id="appearance-noise"
+                type="range"
+                min={0}
+                max={100}
+                value={a.noise}
+                aria-label="Noise"
+                onChange={(e) => set({ noise: Number(e.target.value) })}
+                className="accent-primary h-1 w-40"
+              />
+              <span className="text-muted-foreground w-8 text-right text-xs tabular-nums">{a.noise}</span>
+            </div>
+          </Row>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Terminals</CardTitle>
         </CardHeader>
         <CardContent>

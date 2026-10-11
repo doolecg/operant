@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-import { Code2, Maximize2, Minimize2, Sparkle, SquareTerminal, X } from 'lucide-react'
+import { Code2, Globe, Maximize2, Minimize2, Sparkle, SquareTerminal, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -39,7 +39,13 @@ export function TileIcon({ kind, compact }: { kind: string; compact?: boolean })
     )
   return (
     <span aria-hidden className={cn('bg-foreground/[0.08] grid shrink-0 place-items-center rounded-md', chip)}>
-      {kind === 'opencode' ? <Code2 className={cn('text-foreground', ic)} /> : <SquareTerminal className={cn('text-muted-foreground', ic)} />}
+      {kind === 'opencode' ? (
+        <Code2 className={cn('text-foreground', ic)} />
+      ) : kind === 'browser' ? (
+        <Globe className={cn('text-foreground', ic)} />
+      ) : (
+        <SquareTerminal className={cn('text-muted-foreground', ic)} />
+      )}
     </span>
   )
 }

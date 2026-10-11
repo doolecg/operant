@@ -86,6 +86,10 @@ export function ThemeApplier(): null {
   useEffect(() => {
     if (t) applyTheme(t.def, t.accent)
   }, [t])
+  const noise = useSettings().data?.appearance.noise
+  useEffect(() => {
+    if (noise !== undefined) document.documentElement.style.setProperty('--noise', String(noise / 100))
+  }, [noise])
   return null
 }
 

@@ -4,6 +4,8 @@ import { IDE_IDS, type IdeId } from './projects'
 import type { CacheTtl } from './types'
 import type { ClockFormat, MediaSize, TopBarSettings } from './media'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, type Appearance } from './themes'
+import { DEFAULT_BROWSER_SETTINGS, type BrowserSettings } from './browser'
+import { sanitizePerCrew } from './browser-compat'
 import { MOD_DEFAULT_ENABLED, MOD_IDS, type ModId } from './claude-mods'
 import { CLAUDE_EFFORTS } from './models'
 
@@ -102,6 +104,8 @@ export interface Settings {
   claudeMods: ClaudeModsSettings
   // The top bar: Windows media controls and the clock and date pill. All apply live.
   topBar: TopBarSettings
+  // The embedded browser: AI control (the debugging port needs a restart to turn on), home page and search URL.
+  browser: BrowserSettings
   // Ask before closing a terminal tile or Operant itself (a "Don't ask again" turns the ask off here).
   confirm: { closeTile: boolean; closeApp: boolean }
   // Windows notifications for a Claude turn that finished and for Claude waiting on the owner.
@@ -194,6 +198,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminal: { copyOnSelect: false, fontSize: 13, scrollback: 5000, fileLinks: true, dropPaths: true },
   tiles: { layout: 'dwindle', gaps: 6, strip: 'normal' },
   claudeMods: { enabled: true, mods: { ...MOD_DEFAULT_ENABLED }, keepWarm: true, commandMenu: true },
+  browser: { ...DEFAULT_BROWSER_SETTINGS },
   confirm: { closeTile: true, closeApp: true },
   notify: { finished: true, needs: true },
   topBar: {
@@ -272,6 +277,7 @@ export function sanitizeSettings(raw: unknown): Settings {
   const keys = r.keybinds ?? {}
   const tokens = r.tokens ?? {}
   const top = r.topBar ?? {}
+  const browser = r.browser ?? {}
   const confirm = r.confirm ?? {}
   const notify = r.notify ?? {}
   const learn = r.learn ?? {}
@@ -279,6 +285,10 @@ export function sanitizeSettings(raw: unknown): Settings {
   const term = r.terminal ?? {}
   const tiles = r.tiles ?? {}
   const mods = r.claudeMods ?? {}
+  const webUrl = (v: unknown, fallback: string, needsQuery = false) => {
+    const u = str(v, '', 500).trim()
+    return HTTP_URL.test(u) && (!needsQuery || u.includes('%s')) ? u : fallback
+  }
   const flag = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
   return {
     learn: {
@@ -301,6 +311,7 @@ export function sanitizeSettings(raw: unknown): Settings {
       onLimit: learn.onLimit === 'confirm' ? 'confirm' : 'stop',
       minUserTurns: Math.round(num(learn.minUserTurns, d.learn.minUserTurns, 0, 100)),
       minTokens: Math.round(num(learn.minTokens, d.learn.minTokens, 0, 10_000_000)),
+      idleMinutes: Math.round(num(learn.idleMinutes, d.learn.idleMinutes, 0, 1440)),
     },
     memory: sanitizeMemory(r.memory),
     auxModels: sanitizeAuxModels(r.auxModels),
@@ -353,6 +364,13 @@ export function sanitizeSettings(raw: unknown): Settings {
       clockFormat: (['auto', '24', '12'] as const).includes(top.clockFormat) ? (top.clockFormat as ClockFormat) : d.topBar.clockFormat,
       clockSeconds: flag(top.clockSeconds, d.topBar.clockSeconds),
       clockDate: flag(top.clockDate, d.topBar.clockDate),
+    },
+    browser: {
+      aiControl: flag(browser.aiControl, d.browser.aiControl),
+      homeUrl: webUrl(browser.homeUrl, d.browser.homeUrl),
+      searchUrl: webUrl(browser.searchUrl, d.browser.searchUrl, true),
+      autonomy: browser.autonomy === 'full' || browser.autonomy === 'confirm' ? browser.autonomy : d.browser.autonomy,
+      perCrew: sanitizePerCrew(browser.perCrew),
     },
     confirm: {
       closeTile: flag(confirm.closeTile, d.confirm.closeTile),

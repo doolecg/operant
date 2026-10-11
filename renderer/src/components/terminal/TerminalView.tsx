@@ -7,6 +7,8 @@ import type { MainCli } from '@shared/settings'
 import { decodeIpcError } from '@shared/ipc'
 import type { ScratchView } from '@shared/types'
 import { Button } from '@/components/ui/button'
+import { BrowserTile } from '@/components/browser/BrowserTile'
+import { useBrowserActions } from '@/components/browser/useBrowser'
 import { OperatorTerminal } from '@/components/dashboard/OperatorTerminal'
 import { ChatView } from '@/components/chat/ChatView'
 import { ChatHeaderControls, ChatStateBadge, ViewSwitch } from '@/components/chat/ChatHeader'
@@ -16,7 +18,7 @@ import { toast } from '@/lib/toast'
 import { TileIcon } from './TileFrame'
 import { TileInfoBar, TileStatus } from './TileInfoBar'
 import { TileSurface } from './TileSurface'
-import { useProjectTiles, type TileInfo } from './useProjectTiles'
+import { isScratchTile, useProjectTiles, type ScratchTileInfo, type TileInfo } from './useProjectTiles'
 import type { TerminalTab } from './useTerminals'
 
 const HEADING: Record<string, string> = { claude: 'Claude Code', opencode: 'OpenCode', shell: 'Shell' }
@@ -38,16 +40,18 @@ export function TerminalView({ crewId, scratch, active, onCloseScratch, onStart 
   const strip = settings?.tiles.strip ?? 'normal'
   const blocked = cliBlocked(useCapabilities().data, cli)
   const tiles = useProjectTiles(crewId, scratch)
-  const activeTile = tiles.find((t) => t.scratch.scratchId === active)?.id ?? null
+  const scratchTiles = tiles.filter(isScratchTile)
+  const browser = useBrowserActions(crewId)
+  const activeTile = scratchTiles.find((t) => t.scratch.scratchId === active)?.id ?? null
   const crew = useCrews().data?.find((c) => c.id === crewId)
   const [focusedId, setFocusedId] = useState<string | null>(null)
   // The Claude tile the Subagent Panel follows: the focused one, else the first Claude tile.
-  const claudeTile = tiles.find((t) => t.id === focusedId && t.scratch.kind === 'claude') ?? tiles.find((t) => t.scratch.kind === 'claude')
+  const claudeTile = scratchTiles.find((t) => t.id === focusedId && t.scratch.kind === 'claude') ?? scratchTiles.find((t) => t.scratch.kind === 'claude')
   const claudeScratchId = claudeTile?.scratch.scratchId ?? null
   // The Learning settings learn from this session when asked to run now.
   useEffect(() => setActiveClaudeTile(claudeScratchId), [claudeScratchId])
   // The focused tile is the one on screen: its finished turn does not raise a Windows notification.
-  const focusedScratchId = tiles.find((t) => t.id === focusedId)?.scratch.scratchId ?? null
+  const focusedScratchId = scratchTiles.find((t) => t.id === focusedId)?.scratch.scratchId ?? null
   useEffect(() => {
     void call('notify:visible', focusedScratchId).catch(() => undefined)
   }, [focusedScratchId])
@@ -58,11 +62,11 @@ export function TerminalView({ crewId, scratch, active, onCloseScratch, onStart 
     [],
   )
 
-  const close = (t: TileInfo) => onCloseScratch(t.scratch.scratchId)
+  const close = (t: TileInfo) => (t.scratch ? onCloseScratch(t.scratch.scratchId) : void browser.close.mutate())
 
   // Each Claude tile is in the Chat or the Terminal view (a property of the scratch terminal).
   const qc = useQueryClient()
-  const claudeIds = tiles
+  const claudeIds = scratchTiles
     .filter((t) => t.scratch.kind === 'claude')
     .map((t) => t.scratch.scratchId)
     .join(',')
@@ -71,17 +75,19 @@ export function TerminalView({ crewId, scratch, active, onCloseScratch, onStart 
     queryFn: async () => Object.fromEntries((await call('scratch:list', crewId)).map((s) => [s.id, { view: s.view, effort: s.effort, model: s.model }])),
     enabled: claudeIds !== '',
   }).data
-  const viewOf = (t: TileInfo): ScratchView | undefined => (t.scratch.kind === 'claude' ? views?.[t.scratch.scratchId]?.view : 'terminal')
-  const switchView = (t: TileInfo, view: ScratchView) =>
+  const viewOf = (t: ScratchTileInfo): ScratchView | undefined => (t.scratch.kind === 'claude' ? views?.[t.scratch.scratchId]?.view : 'terminal')
+  const switchView = (t: ScratchTileInfo, view: ScratchView) =>
     call('scratch:setView', t.scratch.scratchId, view)
       .then(() => qc.invalidateQueries({ queryKey: ['scratchViews'] }))
       .catch((e) => toast(decodeIpcError(e).message, true))
-  const effortOf = (t: TileInfo) => {
+  const effortOf = (t: ScratchTileInfo) => {
     const e = views?.[t.scratch.scratchId]?.effort
     return e && e !== 'default' ? e : null
   }
 
-  const body = (t: TileInfo) => {
+  const body = (tile: TileInfo) => {
+    if (!isScratchTile(tile)) return <BrowserTile crewId={crewId} />
+    const t = tile
     const view = viewOf(t)
     if (view === undefined) return null
     if (t.scratch.kind === 'claude' && view === 'chat')
@@ -118,7 +124,9 @@ export function TerminalView({ crewId, scratch, active, onCloseScratch, onStart 
             tiles={tiles}
             onClose={close}
             body={body}
-            chrome={(t) => {
+            chrome={(tile) => {
+              if (!isScratchTile(tile)) return { icon: <TileIcon kind="browser" compact={strip === 'compact'} />, heading: 'Browser', subtitle: crew?.name }
+              const t = tile
               if (t.scratch.kind === 'claude' && viewOf(t) === 'chat')
                 return {
                   icon: (
@@ -145,7 +153,7 @@ export function TerminalView({ crewId, scratch, active, onCloseScratch, onStart 
                   ),
               }
             }}
-            info={(t) => (t.scratch.kind === 'shell' || (t.scratch.kind === 'claude' && viewOf(t) !== 'terminal') ? null : <TileInfoBar tile={t.scratch} crew={crew} />)}
+            info={(t) => (!isScratchTile(t) || t.scratch.kind === 'shell' || (t.scratch.kind === 'claude' && viewOf(t) !== 'terminal') ? null : <TileInfoBar tile={t.scratch} crew={crew} />)}
             onFocusChange={setFocusedId}
             focusId={activeTile}
           />

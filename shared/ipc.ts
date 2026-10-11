@@ -2,6 +2,9 @@ import type { ModelList } from './models'
 import type { ConsoleLine, ConsoleProcess, ConsoleSource } from './console'
 import type { DraftStatus, LearnAi, LearnChange, LearnChangeStatus, LearnRunInfo, LearnStatus, LearnTestResult, LearnStore, Lesson, LessonFilter, LessonPatch, LessonStatus, MemoryFile, SkillDraft } from './learn'
 import type { AuxStatus, BackupEntry, BackupPartName, MemoryDiagnostics, MemoryExport, PresetImportItem, RecallOutput, ResetResult, SuperpowersStatus } from './ops'
+import type { BrowserAction, BrowserCapture, BrowserConfirm, BrowserConfirmEnd, BrowserDevTools, BrowserFound, BrowserHistoryEntry, BrowserNav, BrowserRect, BrowserState, BrowserZoom } from './browser'
+import type { Bookmark, ClearResult, CookieDraft, CookieInfo, CookieKey, Emulation, InspectLogs, InspectLogsChanged } from './browser-inspect'
+import type { BrowserPromptAnswer, BrowserPromptsState } from './browser-prompts'
 import type { EnhanceContext } from './prompt-enhance'
 import type {
   AppInfo,
@@ -313,6 +316,74 @@ export interface IpcApi extends ChatApi {
   'turn:busy': (scratchId: number) => boolean
   // The terminal tile on screen and focused (null when none): a finished turn of that tile does not notify while the window has focus.
   'notify:visible': (scratchId: number | null) => void
+  // The embedded browser panel of a project (one per project, a persistent session).
+  'browser:state': (crewId: number) => BrowserState
+  // Opens the tile and a tab (the home page when no url).
+  'browser:open': (crewId: number, url?: string) => BrowserState
+  // The user closes the tile: views are destroyed, the session data is kept.
+  'browser:close': (crewId: number) => void
+  // Where the native view sits in the main window; null hides it.
+  'browser:layout': (crewId: number, rect: BrowserRect | null) => void
+  // Address bar input; main applies toUrl().
+  'browser:navigate': (crewId: number, tabId: number, input: string) => void
+  'browser:nav': (crewId: number, tabId: number, action: BrowserNav) => void
+  'browser:tabNew': (crewId: number, url?: string) => number
+  'browser:tabClose': (crewId: number, tabId: number) => void
+  'browser:tabSelect': (crewId: number, tabId: number) => void
+  // Take control / Let AI continue.
+  'browser:control': (crewId: number, who: 'user' | 'ai') => BrowserState
+  // Clears the project's browser session data; returns how many cookies went.
+  'browser:clearData': (crewId: number) => { cookies: number }
+  // Human browser tools. Tab order: the tab lands at the index `to`; duplicate returns the new tab id.
+  'browser:tabMove': (crewId: number, tabId: number, to: number) => void
+  'browser:tabDuplicate': (crewId: number, tabId: number) => number
+  'browser:history': (crewId: number) => BrowserHistoryEntry[]
+  'browser:devtools': (crewId: number, tabId: number, mode: BrowserDevTools) => void
+  'browser:zoom': (crewId: number, tabId: number, action: BrowserZoom) => void
+  'browser:find': (crewId: number, tabId: number, text: string, forward: boolean, next: boolean) => void
+  'browser:findStop': (crewId: number, tabId: number) => void
+  'browser:viewSource': (crewId: number, tabId: number) => number
+  'browser:print': (crewId: number, tabId: number) => void
+  // Opens a save dialog; returns the saved path or null when cancelled.
+  'browser:savePdf': (crewId: number, tabId: number) => string | null
+  // Screenshot to the clipboard, or to a file through a save dialog (path, or null when cancelled).
+  'browser:capture': (crewId: number, tabId: number, opts: BrowserCapture) => string | null
+  // The AI action log of a project (last 200 calls, oldest first).
+  'browser:actions': (crewId: number) => BrowserAction[]
+  // Approvals the AI is waiting for in this project (a prompt missed while the window was closed).
+  'browser:confirms': (crewId: number) => BrowserConfirm[]
+  // The user's answer to a browser:confirm prompt. False when it is no longer pending (answered, timed out or cancelled).
+  // With all, an allow also approves every later request from that AI tile until it is stopped (browser:allowAllStop).
+  'browser:confirmAnswer': (id: string, allow: boolean, all?: boolean) => boolean
+  // Whether the AI in this project is allowed to do everything without asking ("Allow all").
+  'browser:allowAll': (crewId: number) => boolean
+  // Ends "Allow all" for this project.
+  'browser:allowAllStop': (crewId: number) => void
+  // Prompts the page raised (dialogs, permissions, basic auth, certificates) and the project's downloads.
+  'browser:promptsState': (crewId: number) => BrowserPromptsState
+  'browser:promptAnswer': (id: string, answer: BrowserPromptAnswer) => void
+  'browser:downloadCancel': (id: string) => void
+  // False when refused (programs and scripts) or the file is gone.
+  'browser:downloadOpen': (id: string) => boolean
+  'browser:downloadShow': (id: string) => void
+  // The built-in console and network log, emulation, cookies, storage and bookmarks.
+  'browser:inspectLogs': (crewId: number, tabId: number) => InspectLogs
+  'browser:inspectClear': (crewId: number, tabId: number, which: 'console' | 'net' | 'both') => void
+  'browser:emulationGet': (crewId: number, tabId: number) => Emulation
+  'browser:emulationSet': (crewId: number, tabId: number, e: Emulation) => Emulation
+  'browser:cookies': (crewId: number, url?: string) => CookieInfo[]
+  'browser:cookieSet': (crewId: number, draft: CookieDraft, replacing?: CookieKey) => void
+  'browser:cookieRemove': (crewId: number, key: CookieKey) => void
+  'browser:clearSite': (crewId: number, origin: string) => ClearResult
+  'browser:clearAll': (crewId: number) => ClearResult
+  'browser:bookmarks': (crewId: number) => Bookmark[]
+  'browser:bookmarkAdd': (crewId: number, url: string, title: string) => Bookmark[]
+  'browser:bookmarkEdit': (crewId: number, id: string, patch: { url?: string; title?: string }) => Bookmark[]
+  'browser:bookmarkRemove': (crewId: number, id: string) => Bookmark[]
+  'browser:historyClear': (crewId: number) => void
+  // The panel in its own window, and back.
+  'browser:popOut': (crewId: number) => void
+  'browser:popIn': (crewId: number) => void
 }
 
 export type IpcChannel = keyof IpcApi
@@ -335,6 +406,54 @@ export type MainChannel =
   | 'app:closeReply'
   | 'turn:busy'
   | 'notify:visible'
+  | 'browser:state'
+  | 'browser:open'
+  | 'browser:close'
+  | 'browser:layout'
+  | 'browser:navigate'
+  | 'browser:nav'
+  | 'browser:tabNew'
+  | 'browser:tabClose'
+  | 'browser:tabSelect'
+  | 'browser:control'
+  | 'browser:clearData'
+  | 'browser:tabMove'
+  | 'browser:tabDuplicate'
+  | 'browser:history'
+  | 'browser:devtools'
+  | 'browser:zoom'
+  | 'browser:find'
+  | 'browser:findStop'
+  | 'browser:viewSource'
+  | 'browser:print'
+  | 'browser:savePdf'
+  | 'browser:capture'
+  | 'browser:actions'
+  | 'browser:confirms'
+  | 'browser:confirmAnswer'
+  | 'browser:allowAll'
+  | 'browser:allowAllStop'
+  | 'browser:promptsState'
+  | 'browser:promptAnswer'
+  | 'browser:downloadCancel'
+  | 'browser:downloadOpen'
+  | 'browser:downloadShow'
+  | 'browser:inspectLogs'
+  | 'browser:inspectClear'
+  | 'browser:emulationGet'
+  | 'browser:emulationSet'
+  | 'browser:cookies'
+  | 'browser:cookieSet'
+  | 'browser:cookieRemove'
+  | 'browser:clearSite'
+  | 'browser:clearAll'
+  | 'browser:bookmarks'
+  | 'browser:bookmarkAdd'
+  | 'browser:bookmarkEdit'
+  | 'browser:bookmarkRemove'
+  | 'browser:historyClear'
+  | 'browser:popOut'
+  | 'browser:popIn'
 export type CoreChannel = Exclude<IpcChannel, MainChannel>
 
 // Push messages: main -> renderer.
@@ -343,7 +462,8 @@ export interface IpcEvents {
   'scratch:data': { scratchId: number; data: string }
   // The batched updates of a Chat view tile (see shared/claude-chat.ts).
   'chat:ops': ChatEvents['chat:ops']
-  'scratch:exit': { scratchId: number; exitCode: number }
+  // switching: the process ended for a Chat/Terminal view switch; the tile starts again at once.
+  'scratch:exit': { scratchId: number; exitCode: number; switching?: boolean }
   'index:status': { crewId: number; status: IndexStatus }
   // A project went over its warning share of a daily budget.
   // crewId is null for the all-projects cap.
@@ -360,6 +480,24 @@ export interface IpcEvents {
   'app:closeRequest': RunningCounts
   // A finished or waiting Claude tile was clicked in a notification: show that tile.
   'notify:open': { scratchId: number; crewId: number }
+  // A project's browser panel changed (tabs, navigation, AI activity or control).
+  'browser:state': BrowserState
+  // The project's visited pages changed (address bar suggestions).
+  'browser:history': { crewId: number; entries: BrowserHistoryEntry[] }
+  // Find in page found something (or nothing).
+  'browser:found': BrowserFound
+  // The AI action log of a project changed (the whole list, oldest first).
+  'browser:actions': { crewId: number; actions: BrowserAction[] }
+  // The AI asks to do something risky and waits for browser:confirmAnswer (autonomy 'confirm').
+  'browser:confirm': BrowserConfirm
+  // A pending approval is over (answered, 5 minutes passed, or the AI call was cancelled): close its prompt.
+  'browser:confirmEnd': BrowserConfirmEnd
+  // "Allow all" started or ended for a project.
+  'browser:allowAllChanged': { crewId: number; active: boolean }
+  'browser:prompts': BrowserPromptsState
+  // The console or network log of a tab changed (coalesced); the renderer refetches while the panel is open.
+  'browser:inspectLogs': InspectLogsChanged
+  'browser:bookmarks': { crewId: number; entries: Bookmark[] }
 }
 
 export type IpcEventName = keyof IpcEvents
@@ -541,6 +679,54 @@ export const MAIN_CHANNELS: MainChannel[] = [
   'app:closeReply',
   'turn:busy',
   'notify:visible',
+  'browser:state',
+  'browser:open',
+  'browser:close',
+  'browser:layout',
+  'browser:navigate',
+  'browser:nav',
+  'browser:tabNew',
+  'browser:tabClose',
+  'browser:tabSelect',
+  'browser:control',
+  'browser:clearData',
+  'browser:tabMove',
+  'browser:tabDuplicate',
+  'browser:history',
+  'browser:devtools',
+  'browser:zoom',
+  'browser:find',
+  'browser:findStop',
+  'browser:viewSource',
+  'browser:print',
+  'browser:savePdf',
+  'browser:capture',
+  'browser:actions',
+  'browser:confirms',
+  'browser:confirmAnswer',
+  'browser:allowAll',
+  'browser:allowAllStop',
+  'browser:promptsState',
+  'browser:promptAnswer',
+  'browser:downloadCancel',
+  'browser:downloadOpen',
+  'browser:downloadShow',
+  'browser:inspectLogs',
+  'browser:inspectClear',
+  'browser:emulationGet',
+  'browser:emulationSet',
+  'browser:cookies',
+  'browser:cookieSet',
+  'browser:cookieRemove',
+  'browser:clearSite',
+  'browser:clearAll',
+  'browser:bookmarks',
+  'browser:bookmarkAdd',
+  'browser:bookmarkEdit',
+  'browser:bookmarkRemove',
+  'browser:historyClear',
+  'browser:popOut',
+  'browser:popIn',
 ]
 
 // What a rejected call carries. Electron only passes an error's message across the bridge, so main encodes

@@ -59,11 +59,14 @@ export interface ClaudeChild {
 
 export type ClaudeSpawn = (file: string, args: string[], opts: { cwd: string }) => ClaudeChild
 
-// Tests and e2e runs must never reach the owner's real `claude` or `opencode` (they cost money and run their hooks):
-// the first one on PATH has to be a fixture, and unit tests have to inject a spawn.
+export { e2eClaudeModel } from './launch'
+
+// Unit tests must never reach the owner's real `claude` or `opencode` (they cost money and run their hooks): they inject a spawn.
+// e2e runs use the real `claude` (always on Haiku, see e2eClaudeModel), but `opencode` must still be the fixture first on PATH.
 export function assertFakeClaude(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, cli: 'claude' | 'opencode' = 'claude'): void {
   if (!env.VITEST && !env.OPERANT_E2E) return
   if (env.VITEST) throw new Error(`A test tried to start the real ${cli}: inject a spawn or a model instead`)
+  if (cli === 'claude') return
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
   const names = platform === 'win32' ? [`${cli}.cmd`, `${cli}.exe`, `${cli}.bat`, cli] : [cli]
   for (const dir of (env[key] ?? '').split(platform === 'win32' ? ';' : ':')) {

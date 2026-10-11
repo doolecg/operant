@@ -3,22 +3,23 @@
 // after a restart. Runs in the background with throwaway data and saves screenshots.
 // Usage: node e2e/themes.mjs [outDir]   (docs/specs/screenshots keeps the spec's themes-*.png and theme-*.png)
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 import { BUILTIN_THEMES, tokensFor } from '../shared/themes.ts'
 
 const outDir = resolve(process.argv[2] ?? 'out/e2e')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-e2e-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 writeFileSync(join(project, 'app.ts'), 'export const x = 1\n')
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir })
 
 const def = (id) => BUILTIN_THEMES.find((t) => t.id === id)
 const rgb = (hex) => {

@@ -1,9 +1,15 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn as spawnPty } from '@lydell/node-pty'
 import { app, BrowserWindow, dialog, nativeTheme, safeStorage, screen, shell } from 'electron'
 import { scrubLogLine } from '../core/agents'
-import { CliServer } from '../core/cli-server'
+import { CdpProxy } from '../core/browser/cdp-proxy'
+import { BrowserHub } from '../core/browser/hub'
+import { createExtras, type Extras } from '../core/browser/extras'
+import { McpHost } from '../core/browser/mcp-host'
+import { assessCall, confirmSummary } from '../core/browser/risk'
+import { CliServer, type CliTarget } from '../core/cli-server'
 import { CrewIndexes } from '../core/codegraph'
 import { consoleLog } from '../core/console'
 import { FileSecretStore } from '../core/secrets'
@@ -11,7 +17,11 @@ import { Operant } from '../core/operant'
 import { appDataDir } from '../core/paths'
 import { SessionManager } from '../core/sessions'
 import { Store } from '../core/store'
+import { DEFAULT_CREW_BROWSER, sanitizeCrewBrowser } from '../shared/browser-compat'
 import { DEFAULT_APPEARANCE, windowBackground } from '../shared/themes'
+import { BrowserPanels } from './browser'
+import { BrowserPopout } from './browser-popout'
+import { hideAutomationFlag } from './browser-stealth'
 import { loadEnv } from './env'
 import { isAppUrl, type AppOrigin } from './guard'
 import { attachCloseGuard, type CloseGuard } from './closeGuard'
@@ -26,6 +36,19 @@ loadEnv({ dir: envDir, log: (line) => console.log(line) })
 
 // Keep data apart from Operant 1, which owns the plain "Operant" folder.
 app.setPath('userData', appDataDir())
+
+// The embedded browser is driven over CDP through a filtering proxy. Chromium picks a free port on 127.0.0.1 and writes
+// it to <userData>/DevToolsActivePort. A switch that is already there (the e2e harness) is left alone.
+if (!app.commandLine.hasSwitch('remote-debugging-port')) app.commandLine.appendSwitch('remote-debugging-port', '0')
+// With a debugging port Chromium reports navigator.webdriver = true to every page; the browser panel should look like a normal browser.
+hideAutomationFlag(app)
+
+// ws://127.0.0.1:<port><path> of the app's own DevTools endpoint; never logged. Throws while the file is not there yet.
+function devToolsUpstream(): string {
+  const [port, path] = readFileSync(join(app.getPath('userData'), 'DevToolsActivePort'), 'utf8').split(/\r?\n/)
+  if (!port || !path) throw new Error('DevTools port not ready')
+  return `ws://127.0.0.1:${port.trim()}${path.trim()}`
+}
 
 // Test runs set OPERANT_BACKGROUND=1 so the window opens behind others without taking focus.
 const background = process.env.OPERANT_BACKGROUND === '1'
@@ -52,6 +75,16 @@ let quitting = false
 let ending = false
 let turns: TurnWatch | null = null
 let guard: CloseGuard | null = null
+let cliServer: CliServer | null = null
+let cliTarget: CliTarget | null = null
+let browserHub: BrowserHub | null = null
+let browserPanels: BrowserPanels | null = null
+let browserPopout: BrowserPopout | null = null
+let browserProxy: CdpProxy | null = null
+let browserMcp: McpHost | null = null
+let browserExtras: Extras | null = null
+let browserMcpUrl: string | null = null
+const browserOut = join(tmpdir(), `operant-browser-${process.pid}`)
 let installing = (): boolean => false
 
 // A notification was clicked: bring the window forward and show its Claude tile.
@@ -61,6 +94,117 @@ function openFromNotice(scratchId: number, crewId: number): void {
   win.show()
   win.focus()
   push(win, 'notify:open', { scratchId, crewId })
+}
+
+// The browser panels, the hub, the CDP proxy and the MCP host. Panels and hub exist at once; the two servers listen
+// a moment later, and tiles launched before that simply get no browser.
+function startBrowser(core: Operant): void {
+  const hub: BrowserHub = new BrowserHub({
+    host: {
+      ensureOpen: (id) => panels.ensureOpen(id),
+      newTab: (id, url) => panels.newTab(id, url),
+      closeTab: (id, tab) => panels.closeTab(id, tab),
+      selectTab: (id, tab) => panels.selectTab(id, tab),
+    },
+    aiAllowed: () => core.currentSettings.browser.aiControl,
+  })
+  // The panel can move into its own window; its views are carried across by the panels, the window only hosts them.
+  const popout = new BrowserPopout({
+    getMainWindow: () => win,
+    views: (id) => panels.shownViews(id),
+    load: (w, id) => {
+      if (devUrl) void w.loadURL(`${devUrl}?browserPopout=${String(id)}`)
+      else void w.loadFile(appOrigin.indexFile, { query: { browserPopout: String(id) } })
+    },
+    title: () => 'Browser',
+    webPreferences: windowWebPreferences(),
+    icon: iconFile,
+    background,
+    isAppUrl: (u) => isAppUrl(u, appOrigin),
+    onChange: (id) => {
+      panels.hostChanged(id)
+      hub.refresh(id)
+    },
+  })
+  browserPopout = popout
+  const panels: BrowserPanels = new BrowserPanels({
+    getWindow: () => win,
+    popout,
+    dataDir: app.getPath('userData'),
+    getHub: () => hub,
+    homeUrl: () => core.currentSettings.browser.homeUrl,
+    searchUrl: () => core.currentSettings.browser.searchUrl,
+    crewOptions: (id) => core.currentSettings.browser.perCrew[String(id)] ?? DEFAULT_CREW_BROWSER,
+  })
+  browserHub = hub
+  browserPanels = panels
+  if (!cliServer || !cliTarget) return
+  const target = cliTarget
+  const proxy = new CdpProxy({ hub, host: panels, upstreamUrl: devToolsUpstream })
+  const extras = createExtras({ hub, cdpEndpoint: (crewId) => proxy.endpointFor(crewId), autonomy: () => core.currentSettings.browser.autonomy,
+    permissions: { grant: (id, origin, perms) => panels.prompts.grantPermissions(id, origin, perms), reset: (id) => panels.prompts.resetGrants(id) },
+    compat: {
+      get: (id) => {
+        const o = core.currentSettings.browser.perCrew[String(id)] ?? DEFAULT_CREW_BROWSER
+        return { relaxCors: o.relaxCors, ignoreCertErrors: o.ignoreCertErrors }
+      },
+      // The same settings write the Settings page uses, so it persists, shows in the toolbar warning and reapplies the sessions.
+      set: async (id, patch) => {
+        const { perCrew } = core.currentSettings.browser
+        const cur = perCrew[String(id)] ?? DEFAULT_CREW_BROWSER
+        await core.handlers['settings:set']({ browser: { perCrew: { ...perCrew, [String(id)]: sanitizeCrewBrowser({ ...cur, ...patch }) } } })
+      },
+    },
+    downloads: { list: (id) => panels.prompts.listDownloads(id), read: (id, dlId, max) => panels.prompts.readDownload(id, dlId, max) },
+  })
+  browserExtras = extras
+  const mcp = new McpHost({
+    hub,
+    auth: cliServer,
+    crewOf: (tileId) => target.identify(tileId)?.crewId ?? null,
+    aiAllowed: () => core.currentSettings.browser.aiControl,
+    cdpEndpoint: (crewId) => proxy.endpointFor(crewId),
+    outputDir: (crewId) => join(browserOut, String(crewId)),
+    // Snapshots tell the overlay which element an AI ref points at; the text goes nowhere else.
+    onResult: (crewId, _tool, text) => panels.learnRefs(crewId, text),
+    extras: extras.tools,
+    // 'full' lets the AI act freely; 'confirm' (default) asks first for risky calls, see core/browser/risk.ts.
+    policy: (call) => (core.currentSettings.browser.autonomy === 'full' ? 'allow' : assessCall(call).risk),
+    confirm: (call, signal) => hub.confirms.request({ crewId: call.crewId, tileId: call.tileId, tool: call.name, summary: confirmSummary(call) }, signal),
+  })
+  browserProxy = proxy
+  browserMcp = mcp
+  void proxy
+    .start()
+    .then(() => mcp.listen())
+    .then((url) => {
+      browserMcpUrl = url
+    })
+    .catch(() => {
+      console.log('browser: could not start the AI browser endpoint')
+    })
+  // "Allow all" ends with the AI tile's session, when the user takes control, and when the settings change.
+  cliServer.onRevoke((tileId) => hub.confirms.revokeTile(tileId))
+  hub.onControl((crewId, paused) => {
+    if (paused) hub.confirms.revokeCrew(crewId)
+  })
+  let lastAutonomy = core.currentSettings.browser.autonomy
+  // Turning AI control off takes effect at once.
+  core.on('settings', () => {
+    const { aiControl, autonomy } = core.currentSettings.browser
+    if (!aiControl || autonomy !== lastAutonomy) hub.confirms.revokeAll()
+    lastAutonomy = autonomy
+    panels.reapplySessions()
+    if (!core.currentSettings.browser.aiControl) {
+      mcp.closeAllSessions()
+      proxy.dropClients()
+    }
+    for (const id of panels.crewIds()) hub.refresh(id)
+  })
+}
+
+function windowWebPreferences(): Electron.WebPreferences {
+  return { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
 }
 
 function createWindow(): void {
@@ -74,12 +218,7 @@ function createWindow(): void {
     title: 'Operant 3',
     icon: iconFile,
     autoHideMenuBar: true,
-    webPreferences: {
-      preload: join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
+    webPreferences: windowWebPreferences(),
   })
 
   win.once('ready-to-show', () => (background ? win?.showInactive() : win?.show()))
@@ -118,6 +257,8 @@ function createWindow(): void {
   }
 
   win.on('closed', () => {
+    // The pop-out windows go with the app window.
+    browserPopout?.closeAll()
     guard = null
     win = null
   })
@@ -153,7 +294,20 @@ app.whenReady().then(() => {
       script: app.isPackaged ? join(process.resourcesPath, 'claude-mods', 'op-event.mjs') : join(app.getAppPath(), 'scripts', 'op-event.mjs'),
       eventsDir: join(app.getPath('userData'), 'events'),
     },
-    cliServer: (target) => new CliServer({ target }),
+    cliServer: (target) => {
+      cliTarget = target
+      cliServer = new CliServer({ target })
+      return cliServer
+    },
+    // Claude tiles get the browser's MCP endpoint once it is listening (null until then, or when it failed).
+    browserMcp: () => browserMcpUrl,
+    onCrewDeleted: (crewId) => {
+      browserMcp?.closeCrew(crewId)
+      browserExtras?.dropCrew(crewId)
+      browserHub?.confirms.cancelCrew(crewId)
+      browserProxy?.dropCrew(crewId)
+      void browserPanels?.destroyCrew(crewId)
+    },
     // Where usage exports are saved and import files are picked.
     fileDialogs: {
       save: async (defaultPath, filter) => {
@@ -183,6 +337,7 @@ app.whenReady().then(() => {
   void core.start()
   // First plan-limit and provider reading now; the core asks again when each is due.
   void core.providers.refresh().catch(() => undefined)
+  startBrowser(core)
   const updater = createUpdater({ send: (s) => push(win, 'update', s), getSettings: () => core.currentSettings, beforeInstall: (v) => core.snapshotBeforeUpdate(v) })
   core.on('settings', () => updater.reschedule())
   installing = () => updater.status.state === 'installing'
@@ -190,6 +345,7 @@ app.whenReady().then(() => {
     answerClose: (action) => guard?.answer(action),
     turnBusy: (scratchId) => turns?.busy(scratchId) ?? false,
     setVisible: (scratchId) => turns?.setVisible(scratchId),
+    browser: { panels: browserPanels!, hub: browserHub!, popout: browserPopout! },
   })
   updater.start()
   createWindow()
@@ -215,6 +371,17 @@ app.on('before-quit', (e) => {
 })
 
 app.on('will-quit', () => {
+  browserPopout?.closeAll()
+  browserExtras?.dispose()
+  void browserMcp?.close().catch(() => undefined)
+  void browserProxy?.close().catch(() => undefined)
+  browserPanels?.dispose()
+  browserHub?.dispose()
+  try {
+    rmSync(browserOut, { recursive: true, force: true })
+  } catch {
+    /* already gone */
+  }
   // Exits arrive after the store is closed, so stop listening before killing the shells.
   sessions?.removeAllListeners()
   sessions?.stopAll()

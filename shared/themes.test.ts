@@ -149,11 +149,14 @@ describe('themes: Claude neutrals', () => {
 
 describe('themes: sanitising', () => {
   it('fills defaults and drops anything malformed', () => {
-    expect(sanitizeAppearance(undefined)).toEqual({ theme: 'dark', accent: '', terminalFollowsTheme: true, customThemes: [] })
+    expect(sanitizeAppearance(undefined)).toEqual({ theme: 'dark', accent: '', terminalFollowsTheme: true, noise: 25, customThemes: [] })
     const a = sanitizeAppearance({ theme: 'nope', accent: 'red', terminalFollowsTheme: 'x', customThemes: 'x' })
-    expect(a).toEqual({ theme: 'dark', accent: '', terminalFollowsTheme: true, customThemes: [] })
+    expect(a).toEqual({ theme: 'dark', accent: '', terminalFollowsTheme: true, noise: 25, customThemes: [] })
     expect(sanitizeAppearance({ theme: 'system', accent: '#ABC' })).toMatchObject({ theme: 'system', accent: '#aabbcc' })
     expect(sanitizeAppearance({ theme: 'nord', accent: 'D97757' }).accent).toBe('#d97757')
+    expect(sanitizeAppearance({ noise: 400 }).noise).toBe(100)
+    expect(sanitizeAppearance({ noise: -3 }).noise).toBe(0)
+    expect(sanitizeAppearance({ noise: 'x' }).noise).toBe(25)
   })
 
   it('keeps a custom theme id only while that theme exists', () => {

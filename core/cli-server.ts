@@ -89,6 +89,7 @@ export class CliServer {
   private readonly tokens = new Map<number, Buffer>()
   private readonly active = new Map<number, Set<Socket>>()
   private readonly sockets = new Set<Socket>()
+  private readonly revokeListeners = new Set<(tileId: number) => void>()
   private server: Server | null = null
   private path = ''
 
@@ -135,16 +136,40 @@ export class CliServer {
 
   // Refuses the tile's token from now on and drops its open connections (a waiting inbox included).
   revokeToken(tileId: number): void {
-    this.tokens.delete(tileId)
+    const had = this.tokens.delete(tileId)
     for (const s of this.active.get(tileId) ?? []) s.destroy()
     this.active.delete(tileId)
+    if (had) this.notifyRevoked(tileId)
+  }
+
+  // The tile a token belongs to, or null (unknown or revoked). Timing-safe, like every other check.
+  whoIs(token: unknown): number | null {
+    return this.authenticate(token)
+  }
+
+  // Called whenever a tile's token stops being valid (revoked, replaced or the server closing).
+  onRevoke(cb: (tileId: number) => void): () => void {
+    this.revokeListeners.add(cb)
+    return () => this.revokeListeners.delete(cb)
+  }
+
+  private notifyRevoked(tileId: number): void {
+    for (const cb of this.revokeListeners) {
+      try {
+        cb(tileId)
+      } catch {
+        // A listener must not break revocation.
+      }
+    }
   }
 
   async close(): Promise<void> {
     const server = this.server
     if (!server) return
     this.server = null
+    const ids = [...this.tokens.keys()]
     this.tokens.clear()
+    for (const id of ids) this.notifyRevoked(id)
     for (const s of this.sockets) s.destroy()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     if (process.platform !== 'win32') {

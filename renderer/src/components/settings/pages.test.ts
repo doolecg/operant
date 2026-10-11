@@ -4,7 +4,7 @@ import { SETTINGS_CATEGORIES, SETTINGS_PAGES, SETTINGS_SECTION_IDS, resolveSetti
 // The section ids the settings page had before it was grouped. Each must still open a page (deep links).
 const OLD_SECTION_IDS = [
   'general', 'appearance', 'projects', 'topbar', 'terminals', 'terminal', 'tiles', 'mods', 'tokens', 'budgets', 'presets', 'teams',
-  'learning', 'memory', 'aux', 'hindsight', 'codegraph', 'backups', 'superpowers', 'mcp', 'import', 'shortcuts', 'reset',
+  'learning', 'memory', 'aux', 'hindsight', 'codegraph', 'backups', 'superpowers', 'mcp', 'import', 'shortcuts', 'browser', 'reset',
 ]
 
 describe('settings page registry', () => {

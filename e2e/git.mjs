@@ -8,11 +8,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-git-data-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-git-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-git-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 const root = mkdtempSync(join(tmpdir(), 'operant-git-repo-'))
 const repo = join(root, 'shop')
 mkdirSync(repo)

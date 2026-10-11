@@ -32,11 +32,17 @@ const tile = (over: Partial<ScratchTerminal> = {}): ScratchTerminal => ({
 const STREAM = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--include-hook-events', '--forward-subagent-text', '--permission-prompt-tool', 'stdio']
 
 describe('buildChatLaunch', () => {
+  it('gives a chat tile the browser MCP config too', () => {
+    const l = buildChatLaunch(tile(), { ...ctx, browserMcp: { url: 'http://127.0.0.1:53817/mcp' } })
+    expect(l.args[l.args.indexOf('--mcp-config') + 1]).toBe('/tmp/launch/browser-mcp.json')
+    expect(buildChatLaunch(tile(), ctx).args).not.toContain('--mcp-config')
+  })
+
   it('prepends the stream flags to the tile launch for a new session', () => {
     const l = buildChatLaunch(tile(), ctx)
     expect(l.file).toBe('claude')
     expect(l.args.slice(0, STREAM.length)).toEqual(STREAM)
-    expect(l.args.slice(STREAM.length)).toEqual(['--model', 'claude-sonnet-5-5', '--effort', 'high', '--plugin-dir', '/app/plugin', '--session-id', ctx.sessionId])
+    expect(l.args.slice(STREAM.length)).toEqual(['--permission-mode', 'auto', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--plugin-dir', '/app/plugin', '--session-id', ctx.sessionId])
     expect(l.args).not.toContain('--allow-dangerously-skip-permissions')
     expect(l.env.OPERANT_TILE_ID).toBeUndefined()
     expect(l.cwd).toBe('/code/shop')

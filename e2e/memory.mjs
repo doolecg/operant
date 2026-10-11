@@ -1,6 +1,5 @@
 // Learning loop UI e2e (R16, R18): the Memory page (lessons, Hindsight, CodeGraph notes, personal memory, skill drafts),
-// the learning status panel, the header badge and the Learning settings. The learn model is the fake
-// claude answering from learn-response.json; lessons, skill drafts and a learn run are seeded into the database, since nothing in the app triggers a learn step on demand. Hindsight points at a closed port, so it is skipped and says why.
+// the learning status panel, the header badge and the Learning settings. The Learning AI Test button runs the real claude on Haiku (one tiny turn); lessons, skill drafts and a learn run are seeded into the database, since nothing in the app triggers a learn step on demand. Hindsight points at a closed port, so it is skipped and says why.
 // Runs in the background with throwaway data. Usage: node e2e/memory.mjs [outDir]  (default docs/specs/screenshots)
 // Set OPERANT_E2E_EXE to a packaged executable to test a build instead of the dev app.
 import assert from 'node:assert/strict'
@@ -8,19 +7,20 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-memory-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-memory-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-memory-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-memory-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 writeFileSync(join(project, 'app.ts'), 'export function main() { return helper() }\nfunction helper() { return 1 }\n')
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir })
 const packaged = process.env.OPERANT_E2E_EXE
 
 const consoleNotes = []
@@ -65,7 +65,6 @@ async function until(label, fn, timeout = 60_000) {
   throw new Error(`timed out waiting for ${label}${last instanceof Error ? `: ${last.message}` : ''}`)
 }
 const mode = (label) => page.getByRole('group', { name: 'Dashboard mode' }).getByRole('button', { name: label, exact: true })
-const respond = (lessons) => writeFileSync(join(claudeDir, 'learn-response.json'), JSON.stringify(lessons))
 const pick = async (label, option) => {
   await page.getByRole('combobox', { name: label }).click()
   await page.getByRole('option', { name: option, exact: true }).click()
@@ -101,7 +100,6 @@ try {
   await page.getByText('Welcome to Operant 3').waitFor()
 
   await step('set up a project with seeded lessons, drafts and a learn run', async () => {
-    respond([])
     ids.crew = (await inv('crews:create', { name: 'alpha', folder: project })).id
     const db = new DatabaseSync(join(dataDir, 'operant.db'))
     db.exec('PRAGMA busy_timeout = 5000')
@@ -152,7 +150,6 @@ try {
     assert.equal(learnNow.cli, 'claude')
     assert.equal(learnNow.model, '', 'no model chosen: the cheap default')
     await card.getByTestId('learn-ai-resolved').getByText('claude-haiku-5-5').waitFor()
-    respond([])
     await card.getByRole('button', { name: 'Test', exact: true }).click()
     await card.getByTestId('learn-ai-result').getByText(/^OK, /).waitFor()
     // OpenCode: nothing in the fake list is a cheap model, so the default says so; an own model resolves.

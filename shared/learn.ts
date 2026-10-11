@@ -143,6 +143,9 @@ export interface LearnSettings {
   // Trivial-session gate, checked in code before any model call.
   minUserTurns: number
   minTokens: number
+  // Minutes a Claude session must sit quiet before the app learns from it on its own (the app's timer, no model call to
+  // decide); 0 turns it off. A tile whose turn has finished (the finished flag) is learned from after a few seconds of quiet. Closing a tile still learns.
+  idleMinutes: number
 }
 
 export type LearnMode = 'off' | 'suggest' | 'controlled' | 'advanced'
@@ -195,6 +198,7 @@ export const DEFAULT_LEARN_SETTINGS: LearnSettings = {
   onLimit: 'stop',
   minUserTurns: 3,
   minTokens: 2000,
+  idleMinutes: 5,
 }
 
 // A recorded automatic change (or a proposal waiting for review): what it was, what it became, and why.

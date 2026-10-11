@@ -39,9 +39,9 @@ export function useTerminals(crews: Crew[] | undefined, defaultModel: string, ma
 
   useEffect(
     () =>
-      bridge().on('scratch:exit', ({ scratchId }) =>
-        setTabs((t) => t.map((x) => (x.scratchId === scratchId ? { ...x, exited: true } : x))),
-      ),
+      bridge().on('scratch:exit', ({ scratchId, switching }) => {
+        if (!switching) setTabs((t) => t.map((x) => (x.scratchId === scratchId ? { ...x, exited: true } : x)))
+      }),
     [],
   )
 

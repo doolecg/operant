@@ -5,15 +5,18 @@
 // Usage: node e2e/projects.mjs [outDir]  (default docs/specs/screenshots)
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-prj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-prj-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-prj-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 const root = mkdtempSync(join(tmpdir(), 'operant-prj-dirs-'))
 const folders = {}
 for (const n of ['shop', 'blog', 'api']) {
@@ -29,9 +32,7 @@ writeFileSync(join(folders.shop, 'readme.txt'), 'changed')
 writeFileSync(join(folders.shop, 'extra.txt'), 'new')
 const ideOut = join(root, 'ide-calls.txt')
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir, FAKE_IDE_OUT: ideOut }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir, extra: { FAKE_IDE_OUT: ideOut } })
 const packaged = process.env.OPERANT_E2E_EXE
 
 let app = null

@@ -4,16 +4,19 @@
 // Usage: node e2e/sidebar.mjs [outDir] [shotPrefix]   (shotPrefix: only take the screenshots, named <prefix>-*.png)
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const outDir = resolve(process.argv[2] ?? 'docs/specs/screenshots')
 const prefix = process.argv[3] ?? ''
 mkdirSync(outDir, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-side-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-side-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-side-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 const root = mkdtempSync(join(tmpdir(), 'operant-side-dirs-'))
 const names = ['atlas', 'beacon', 'cobalt', 'delta', 'ember', 'fjord']
 const folders = {}
@@ -31,9 +34,7 @@ for (const n of ['atlas', 'cobalt']) {
   if (n === 'atlas') writeFileSync(join(folders[n], 'extra.txt'), 'new')
 }
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let app = null

@@ -21,9 +21,10 @@ function contextTokens(s: ClaudeSessionStatus | null): number | null {
 
 const costText = (n: number) => (n > 0 && n < 0.01 ? '<$0.01' : usd(n))
 
-function Item({ label, children, title }: { label: string; children: React.ReactNode; title?: string }) {
+// Only the folder and branch shrink (and truncate); the others keep their width so no text runs into the next item.
+function Item({ label, children, title, shrink }: { label: string; children: React.ReactNode; title?: string; shrink?: boolean }) {
   return (
-    <span title={title} className="inline-flex min-w-0 items-center gap-1">
+    <span title={title} className={cn('inline-flex items-center gap-1', shrink ? 'min-w-0 overflow-hidden' : 'shrink-0')}>
       <span className="sr-only">{label}: </span>
       {children}
     </span>
@@ -118,13 +119,13 @@ export function TileInfoBar({ tile, crew }: { tile: TerminalTab; crew: Crew | un
         {!claude && cost !== undefined && <span className="text-muted-foreground/70"> 24h</span>}
       </Item>
       {folder && (
-        <Item label="Folder" title={crew?.folder}>
+        <Item label="Folder" title={crew?.folder} shrink>
           <Folder className="size-3 shrink-0" aria-hidden />
           <span className="truncate">{folder}</span>
         </Item>
       )}
       {branch && (
-        <Item label="Branch">
+        <Item label="Branch" shrink>
           <GitBranch className="size-3 shrink-0" aria-hidden />
           <span className="truncate">{branch}</span>
           {git && git.changes > 0 ? (

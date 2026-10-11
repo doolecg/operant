@@ -3,7 +3,6 @@ import { ArrowDown } from 'lucide-react'
 import { cliBlocked } from '@/lib/capabilities'
 import { useCapabilities } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import { ActivityBox } from './ActivityBox'
 import { Composer } from './Composer'
 import { ConversationList } from './ConversationList'
 import { StatusLine } from './StatusLine'
@@ -143,7 +142,6 @@ export function ChatView({ scratchId, launchEffort, tileModel, onTerminal }: Pro
       </div>
       <StatusLine state={state} />
       <Composer scratchId={scratchId} state={state} launchEffort={launchEffort} tileModel={tileModel} onSent={jump} />
-      <ActivityBox scratchId={scratchId} />
     </div>
   )
 }

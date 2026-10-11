@@ -37,6 +37,7 @@ const LABELS: Record<keyof Settings, string> = {
   confirm: 'Close confirmations',
   notify: 'Notifications',
   tokens: 'Tokens and cache',
+  browser: 'Browser',
 }
 
 const SECTIONS = Object.keys(DEFAULT_SETTINGS) as Array<keyof Settings>

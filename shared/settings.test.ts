@@ -140,6 +140,22 @@ describe('settings', () => {
   })
 })
 
+describe('browser settings', () => {
+  it('defaults to AI control on with a search page', () => {
+    expect(DEFAULT_SETTINGS.browser).toMatchObject({ aiControl: true })
+    expect(DEFAULT_SETTINGS.browser.searchUrl).toContain('%s')
+  })
+  it('drops malformed values', () => {
+    const b = sanitizeSettings({ browser: { aiControl: 'no', homeUrl: 'javascript:alert(1)', searchUrl: 'https://s.example/' } }).browser
+    expect(b).toEqual(DEFAULT_SETTINGS.browser)
+  })
+  it('keeps good values and merges a patch', () => {
+    const b = mergeSettings(DEFAULT_SETTINGS, { browser: { aiControl: false, homeUrl: 'http://localhost:3000', searchUrl: 'https://s.example/?q=%s' } }).browser
+    expect(b).toEqual({ ...DEFAULT_SETTINGS.browser, aiControl: false, homeUrl: 'http://localhost:3000', searchUrl: 'https://s.example/?q=%s' })
+    expect(mergeSettings(DEFAULT_SETTINGS, { browser: { aiControl: false } }).browser.homeUrl).toBe(DEFAULT_SETTINGS.browser.homeUrl)
+  })
+})
+
 describe('claudeMods settings', () => {
   const allOff = { subagents: false, promptEnhancer: false, designPicker: false, ideaShelf: false, folderTracker: false, plainEnglish: false }
 

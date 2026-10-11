@@ -237,6 +237,9 @@ export function LearningSection() {
           <Row label="Minimum tokens" hint="Smaller sessions are skipped without a model call." htmlFor="learn-mintokens">
             <NumberField id="learn-mintokens" value={l.minTokens} min={0} max={10000000} onCommit={(n) => save.mutate({ learn: { minTokens: n } })} />
           </Row>
+          <Row label="Learn when idle (minutes)" hint="Learns from a Claude session on its own after it has been quiet this long, or right after a turn finishes. 0 turns it off; closing a tile still learns." htmlFor="learn-idle">
+            <NumberField id="learn-idle" value={l.idleMinutes} min={0} max={1440} onCommit={(n) => save.mutate({ learn: { idleMinutes: n } })} />
+          </Row>
         </CardContent>
       </Card>
       <RecordsCard />

@@ -3,23 +3,24 @@
 // provider and model names, focuses the filter on open and has a Refresh button.
 // Usage: node e2e/models.mjs   (the screenshot goes to docs/specs/screenshots/opencode-models.png)
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const shots = resolve('docs/specs/screenshots')
 mkdirSync(shots, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-models-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-models-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-models-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-models-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 const ocFile = join(dataDir, 'opencode.json')
 writeFileSync(join(project, 'app.ts'), 'export const a = 1\n')
 writeFileSync(ocFile, JSON.stringify({ mcp: { servers: {} } }))
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir, OPENCODE_CONFIG: ocFile, OPENCODE_FAKE_MODELS: 'multi' }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir, extra: { OPENCODE_CONFIG: ocFile, OPENCODE_FAKE_MODELS: 'multi' } })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let app = null

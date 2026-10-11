@@ -7,6 +7,7 @@ import pkg from './package.json' with { type: 'json' }
 const external = [
   'electron',
   ...Object.keys(pkg.dependencies),
+  /^(@playwright\/mcp|playwright-core|ws)\//,
   ...builtinModules,
   ...builtinModules.map((m) => `node:${m}`),
 ]
@@ -51,7 +52,8 @@ export default defineConfig(({ mode }) => {
         formats: ['cjs'],
         fileName: () => (preload ? 'preload.cjs' : 'index.cjs'),
       },
-      rollupOptions: { external },
+      // dynamicImportInCjs keeps import('@playwright/mcp') a real import() (it is ESM-only).
+      rollupOptions: { external, output: { dynamicImportInCjs: true } },
     },
   }
 })

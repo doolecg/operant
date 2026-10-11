@@ -117,6 +117,13 @@ describe('learn model per CLI', () => {
     expect(() => assertFakeClaude({ OPERANT_E2E: '1', PATH: '' }, 'linux', 'opencode')).toThrow('real opencode')
   })
 
+  it('an e2e run may start the real claude but only the fixture opencode, and unit tests start neither', () => {
+    expect(() => assertFakeClaude({ OPERANT_E2E: '1', PATH: '' }, 'linux', 'claude')).not.toThrow()
+    expect(() => assertFakeClaude({ OPERANT_E2E: '1', PATH: '' }, 'linux', 'opencode')).toThrow('real opencode')
+    expect(() => assertFakeClaude({ VITEST: 'true', OPERANT_E2E: '1' }, 'linux', 'claude')).toThrow('A test tried to start the real claude')
+    expect(() => assertFakeClaude({}, 'linux', 'claude')).not.toThrow()
+  })
+
   it('a missing opencode shows up in the Test result and the learn run records the AI used', async () => {
     const store = new Store(':memory:')
     const crewId = store.createCrew('shop', '/code/shop').id

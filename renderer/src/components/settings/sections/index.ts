@@ -3,6 +3,7 @@ import type { SettingsSectionId } from "../pages";
 import { AppearanceSection } from "./AppearanceSection";
 import { AuxSection } from "./AuxSection";
 import { BackupsSection } from "./BackupsSection";
+import { BrowserSection } from "./BrowserSection";
 import { BudgetsSection } from "./BudgetsSection";
 import { CodegraphSection } from "./CodegraphSection";
 import { GeneralSection } from "./GeneralSection";
@@ -47,5 +48,6 @@ export const SECTION_COMPONENTS: Record<SettingsSectionId, ComponentType> = {
   mcp: McpSection,
   import: ImportExportSection,
   shortcuts: ShortcutsSection,
+  browser: BrowserSection,
   reset: ResetSection,
 };

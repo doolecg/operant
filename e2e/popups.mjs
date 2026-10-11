@@ -4,16 +4,19 @@
 // Usage: node e2e/popups.mjs   (screenshots go to docs/specs/screenshots)
 import assert from 'node:assert/strict'
 import { execSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright-core'
+import { claudeHome, e2eEnv } from './fixtures/real-claude.mjs'
 
 const shots = resolve('docs/specs/screenshots')
 mkdirSync(shots, { recursive: true })
 const dataDir = mkdtempSync(join(tmpdir(), 'operant-popups-'))
 const project = mkdtempSync(join(tmpdir(), 'operant-popups-proj-'))
-const claudeDir = mkdtempSync(join(tmpdir(), 'operant-popups-claude-'))
+const claudeRoot = mkdtempSync(join(tmpdir(), 'operant-popups-claude-'))
+const claudeDir = claudeHome(claudeRoot)
+process.on('exit', () => rmSync(claudeRoot, { recursive: true, force: true }))
 const ocFile = join(dataDir, 'opencode.json')
 writeFileSync(join(project, 'app.ts'), 'export const a = 1\n')
 execSync('git init -q', { cwd: project })
@@ -23,9 +26,7 @@ for (let i = 0; i < 40; i++) servers[`mcp-server-${String(i).padStart(2, '0')}`]
 writeFileSync(join(claudeDir, '.claude.json'), JSON.stringify({ mcpServers: servers }))
 writeFileSync(ocFile, JSON.stringify({ mcp: { servers: {} } }))
 
-const env = { ...process.env, OPERANT_BACKGROUND: '1', OPERANT_E2E: '1', OPERANT_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: claudeDir, OPENCODE_CONFIG: ocFile, OPENCODE_FAKE_MODELS: '300' }
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-env[pathKey] = resolve('e2e/fixtures/bin') + delimiter + env[pathKey]
+const env = e2eEnv({ dataDir, claudeDir, extra: { OPENCODE_CONFIG: ocFile, OPENCODE_FAKE_MODELS: '300' } })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // Settings pages: the nav buttons, or the page select below 900px wide (UI scale 200% and small windows).
 const openSettingsPage = async (label) => {

@@ -158,6 +158,10 @@ export interface OperantOptions {
   importDeps?: ImportDeps
   // How a Chat view tile starts Claude Code (tests pass a fake child).
   chatSpawn?: ChatSpawn
+  // The embedded browser's MCP URL, or null while it is not running. Used when Settings > Browser > AI control is on.
+  browserMcp?: () => string | null
+  // Called after a project is deleted (main clears that project's browser partition).
+  onCrewDeleted?: (crewId: number) => void
 }
 
 export interface FileDialogs {
@@ -175,6 +179,8 @@ const HOUR = 60 * 60 * 1000
 // Transcripts are polled rather than watched: fs.watch is unreliable across platforms for appends.
 const USAGE_POLL_MS = 2_000
 const PROVIDER_TICK_MS = 30_000
+// How long a tile that has the finished flag must sit still before the idle learn runs.
+const FINISHED_QUIET_MS = 5_000
 
 // A running Claude tile's transcript, followed so its spend counts.
 interface ScratchFeed {
@@ -183,6 +189,10 @@ interface ScratchFeed {
   prevContext: number | null
   current: { messageId: string; toolUse: boolean } | null
   currentContext: number
+  // When the transcript last grew; null once learned from (until it grows again).
+  activityAt: number | null
+  // The tile's turn went from working to idle (the finished flag) and has not started again.
+  finished: boolean
 }
 
 function shellKind(file: string, platform: NodeJS.Platform): ShellKind {
@@ -284,9 +294,14 @@ export class Operant extends EventEmitter<PushEvents> {
   shutdownStepMs = 3000
   // Scratch terminals: transcript followers and the sessions Operant opened.
   private readonly scratchFeeds = new Map<number, ScratchFeed>()
+  // The last turn phase each tile reported, from the Chat view's ops and from the Terminal view's hooks.
+  private readonly chatPhase = new Map<number, string>()
+  private readonly modsPhase = new Map<number, string>()
   // Chat view tiles: one Claude Code stream-json process each (claude-chat.ts).
   readonly chat: ChatHub
   private readonly chatSpawn: ChatSpawn | undefined
+  private readonly browserMcp: (() => string | null) | undefined
+  private readonly onCrewDeleted: ((crewId: number) => void) | undefined
   // Tiles switching between the Chat and Terminal views (their end is not a closed session: no learning) and tiles the
   // owner closed (a chat process that ends then is the end of the session).
   private readonly switching = new Set<number>()
@@ -314,7 +329,10 @@ export class Operant extends EventEmitter<PushEvents> {
       ? new ClaudeAgents({
           eventsDir: opts.claudeMods.eventsDir,
           now: this.now,
-          emit: (state) => this.emit('claudeMods:state', state),
+          emit: (state) => {
+            this.noteTurn(this.modsPhase, state.tileId, state.session.phase)
+            this.emit('claudeMods:state', state)
+          },
         })
       : null
     this.prober = new CapabilityProber(opts.capabilityProbe ?? systemProbeDeps(openCodeDbPath()))
@@ -324,7 +342,14 @@ export class Operant extends EventEmitter<PushEvents> {
     this.fileDialogs = opts.fileDialogs
     this.importDeps = opts.importDeps ?? {}
     this.chatSpawn = opts.chatSpawn
-    this.chat = new ChatHub({ push: (scratchId, ops) => this.emit('chat:ops', { scratchId, ops }) })
+    this.browserMcp = opts.browserMcp
+    this.onCrewDeleted = opts.onCrewDeleted
+    this.chat = new ChatHub({
+      push: (scratchId, ops) => {
+        for (const op of ops) if (op.op === 'meta' && op.patch.turn) this.noteTurn(this.chatPhase, scratchId, op.patch.turn.phase)
+        this.emit('chat:ops', { scratchId, ops })
+      },
+    })
 
     this.providers =
       opts.providers ??
@@ -514,6 +539,11 @@ export class Operant extends EventEmitter<PushEvents> {
         }
         store.deleteCrew(crewId)
         this.log('crew', `Project ${crew.name} deleted`)
+        try {
+          this.onCrewDeleted?.(crewId)
+        } catch (e) {
+          this.log('crew', `Browser data cleanup failed: ${e instanceof Error ? e.message : String(e)}`)
+        }
       },
     }
   }
@@ -1165,6 +1195,36 @@ export class Operant extends EventEmitter<PushEvents> {
     let rows = 0
     for (const id of [...this.scratchFeeds.keys()]) rows += this.pollScratch(id)
     if (rows > 0) this.checkBudgets()
+    this.learnIdle()
+  }
+
+  // The finished flag: a turn going from working to idle sets it, the next turn starting clears it.
+  private noteTurn(phases: Map<number, string>, scratchId: number, phase: string): void {
+    const prev = phases.get(scratchId)
+    phases.set(scratchId, phase)
+    const feed = this.scratchFeeds.get(scratchId)
+    if (!feed) return
+    if (phase === 'working') feed.finished = false
+    else if (prev === 'working' && phase === 'idle') feed.finished = true
+  }
+
+  // The app's own timer: a Claude tile whose transcript has not grown for learn.idleMinutes (or a few seconds when the tile has
+  // the finished flag) and is not mid-turn is learned from once, until it grows again.
+  private learnIdle(): void {
+    const l = this.settings.learn
+    if (!l.enabled || l.mode === 'off' || l.idleMinutes <= 0) return
+    const now = this.now()
+    for (const [id, feed] of this.scratchFeeds) {
+      if (feed.activityAt === null) continue
+      if (now - feed.activityAt < (feed.finished ? FINISHED_QUIET_MS : l.idleMinutes * 60_000)) continue
+      const phase = this.chat.get(id)?.snapshot().turn.phase
+      if (phase && phase !== 'idle') continue
+      const scratch = this.store.getScratch(id)
+      if (scratch?.agent !== 'claude' || !scratch.sessionId) continue
+      feed.activityAt = null
+      feed.finished = false
+      void this.learn.learnNow(scratch.crewId, scratch.sessionId)
+    }
   }
 
   // Notices
@@ -1273,6 +1333,7 @@ export class Operant extends EventEmitter<PushEvents> {
   private launchContext(crewId: number, crewFolder: string, sessionId: string): LaunchContext {
     const platform = this.launch.platform ?? process.platform
     const cliDir = this.launch.cliDir
+    const browserUrl = this.settings.browser.aiControl ? (this.browserMcp?.() ?? null) : null
     return {
       platform,
       shell: shellKind(this.settings.shell.file, platform),
@@ -1290,6 +1351,7 @@ export class Operant extends EventEmitter<PushEvents> {
       pinClaudeVersion: this.settings.tokens.pinClaudeVersion,
       mods: this.claudeModsConfig(),
       modPlugins: this.settings.claudeMods.enabled ? this.modPluginDirs() : [],
+      browserMcp: browserUrl ? { url: browserUrl } : undefined,
     }
   }
 
@@ -1385,7 +1447,7 @@ export class Operant extends EventEmitter<PushEvents> {
     this.detachScratch(scratchId)
     this.cli?.revokeToken(scratchId)
     this.claudeAgents?.end(scratchId)
-    this.emit('scratch:exit', { scratchId, exitCode })
+    this.emit('scratch:exit', { scratchId, exitCode, switching: this.switching.has(scratchId) })
     const scratch = this.store.getScratch(scratchId)
     if (scratch) this.log('scratch', `Tile ${scratch.title} closed${exitCode ? ` (exit ${exitCode})` : ''}`, scratch.crewId)
     // The learn step for a finished Claude session; it does nothing when learning is off.
@@ -1466,7 +1528,7 @@ export class Operant extends EventEmitter<PushEvents> {
     this.detachScratch(scratchId)
     this.cli?.revokeToken(scratchId)
     this.claudeAgents?.end(scratchId)
-    this.emit('scratch:exit', { scratchId, exitCode: info.code ?? 0 })
+    this.emit('scratch:exit', { scratchId, exitCode: info.code ?? 0, switching: this.switching.has(scratchId) })
     const scratch = this.store.getScratch(scratchId)
     const closing = this.closing.delete(scratchId)
     if (scratch) this.log('scratch', `Tile ${scratch.title} ${info.expected ? 'closed' : 'stopped unexpectedly'}${info.code ? ` (exit ${info.code})` : ''}`, scratch.crewId)
@@ -1603,7 +1665,7 @@ export class Operant extends EventEmitter<PushEvents> {
 
   // Tile spend: one usage row per assistant message with scratch_id set.
   private attachScratch(scratchId: number, file: string, sessionId: string): void {
-    this.scratchFeeds.set(scratchId, { tail: new JsonlTail(file), sessionId, prevContext: null, current: null, currentContext: 0 })
+    this.scratchFeeds.set(scratchId, { tail: new JsonlTail(file), sessionId, prevContext: null, current: null, currentContext: 0, activityAt: null, finished: false })
   }
 
   // Reads what is left of a closed or deleted tile's transcript, then stops following it.
@@ -1617,7 +1679,9 @@ export class Operant extends EventEmitter<PushEvents> {
     const feed = this.scratchFeeds.get(scratchId)
     if (!feed || !this.store.getScratch(scratchId)) return 0
     let n = 0
-    for (const line of feed.tail.read()) {
+    const lines = feed.tail.read()
+    if (lines.length > 0) feed.activityAt = this.now()
+    for (const line of lines) {
       const u = parseLine(line)
       if (!u) continue
       if (feed.current?.messageId !== u.messageId) {
